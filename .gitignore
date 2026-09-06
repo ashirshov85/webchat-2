@@ -6,8 +6,8 @@
 .gradle/
 build/
 
-# Frontend
-node_modules/
+# Frontend (no trailing slash: also ignores node_modules symlinks, e.g. on WSL/drvfs)
+node_modules
 dist/
 
 # Secrets / local env

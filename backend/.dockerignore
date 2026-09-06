@@ -1,0 +1,9 @@
+# Gradle build cache and outputs are rebuilt inside the Docker build stage
+.gradle/
+build/
+out/
+
+# Local env and logs never enter the image build context
+.env
+.env.*
+*.log
