@@ -28,7 +28,7 @@ description: "Task list: Каркас проекта, CI/CD и базовая и
 
 **Purpose**: Инициализация репозитория и структуры монорепо
 
-- [ ] T001 Инициализировать git-репозиторий (ветка `main`, рабочая ветка `001-project-foundation`), создать структуру каталогов монорепо — `backend/`, `frontend/`, `contracts/`, `deploy/k8s/base/`, `deploy/k8s/overlays/dev/`, `.github/workflows/`, `docs/` — и корневой `.gitignore` (Gradle: `.gradle/`, `build/`; frontend: `node_modules/`, `dist/`; секреты: `.env`, `.env.*`) согласно plan.md → Project Structure
+- [X] T001 Инициализировать git-репозиторий (ветка `main`, рабочая ветка `001-project-foundation`), создать структуру каталогов монорепо — `backend/`, `frontend/`, `contracts/`, `deploy/k8s/base/`, `deploy/k8s/overlays/dev/`, `.github/workflows/`, `docs/` — и корневой `.gitignore` (Gradle: `.gradle/`, `build/`; frontend: `node_modules/`, `dist/`; секреты: `.env`, `.env.*`) согласно plan.md → Project Structure
 
 ---
 
