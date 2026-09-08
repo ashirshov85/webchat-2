@@ -54,7 +54,7 @@ description: "Task list: Каркас проекта, CI/CD и базовая и
 ### Tests for User Story 1 (Test-First: тесты T004 падают до конфигурации T006)
 
 - [X] T004 [P] [US1] Написать backend smoke-тесты: `backend/src/test/kotlin/webchat/backend/BackendApplicationTests.kt` (context-load: `@SpringBootTest` + `contextLoads()`) и `backend/src/test/kotlin/webchat/backend/HealthEndpointTests.kt` (GET `/actuator/health/liveness` и `/actuator/health/readiness` → 200 + `{"status":"UP"}`; `/actuator/prometheus` содержит `http_server_requests_seconds`); критерий: тесты написаны и FAIL до включения проб (spec.md US1-4, contracts/technical-endpoints.md §1)
-- [ ] T005 [P] [US1] Добавить dev-зависимости Vitest-стека (`@testing-library/react`, `@testing-library/jest-dom`, `jsdom`) в `frontend/package.json` и написать smoke-тест `frontend/src/App.test.tsx` (рендер `<App />`, проверка заголовка через Testing Library + jest-dom); критерий: `pnpm test` exit 0 (research.md §7, spec.md US1-4)
+- [X] T005 [P] [US1] Добавить dev-зависимости Vitest-стека (`@testing-library/react`, `@testing-library/jest-dom`, `jsdom`) в `frontend/package.json` и написать smoke-тест `frontend/src/App.test.tsx` (рендер `<App />`, проверка заголовка через Testing Library + jest-dom); критерий: `pnpm test` exit 0 (research.md §7, spec.md US1-4)
 
 ### Implementation for User Story 1
 
