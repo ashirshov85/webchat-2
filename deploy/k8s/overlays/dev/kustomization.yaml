@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+namespace: dev
+
+# Host per environment; placeholder until real DNS is provisioned.
+patches:
+  - path: ingress-host.yaml
+    target:
+      kind: Ingress
+      name: webchat
+
+# Deploy-time substitution: `kustomize edit set image \
+#   backend=${REGISTRY}/${IMAGE_PREFIX}/backend:${SHA} \
+#   frontend=${REGISTRY}/${IMAGE_PREFIX}/frontend:${SHA}`.
+# Immutable SHA tags only — `latest`/`main` never reach the cluster
+# (research.md §12, data-model.md Сущность 4, FR-004).
+images:
+  - name: backend
+    newTag: placeholder
+  - name: frontend
+    newTag: placeholder
