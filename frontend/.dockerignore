@@ -1,0 +1,9 @@
+# Dependencies and build outputs are rebuilt inside the Docker build stage
+node_modules/
+dist/
+coverage/
+
+# Local env and logs never enter the image build context
+.env
+.env.*
+*.log

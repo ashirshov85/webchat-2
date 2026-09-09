@@ -1,9 +1,12 @@
 <!--
 ## Sync Impact Report
-- Version change: (template) → 1.0.0
-- Modified principles: all template placeholders ([PROJECT_NAME], [PRINCIPLE_*]) resolved
+- Version change: (template) → 1.0.0 → 1.1.0
+- Modified principles: all template placeholders ([PROJECT_NAME], [PRINCIPLE_*]) resolved;
+  principle VIII сжат и сужен (OCP ограничен точками расширения из IV, добавлена
+  оговорка YAGNI) в рамках того же релиза 1.1.0 — принцип ещё не использовался
 - Added sections: Technology Stack Constraints; Performance & Data Retention Standards;
-  Security & Privacy Requirements; Development Workflow & Quality Gates
+  Security & Privacy Requirements; Development Workflow & Quality Gates;
+  principle VIII (SOLID на уровне кода)
 - Removed sections: none
 - Follow-up TODOs: none
 -->
@@ -72,6 +75,19 @@
 перед самописными. Выбор конкретных middleware фиксируется в `plan.md` с обоснованием.
 Начинать с простого вертикального среза, усложнение — только по требованию спецификации.
 
+### VIII. SOLID на уровне кода
+Применяется к исходному коду; ограничивается принципом VII (YAGNI): абстракции
+вводятся при появлении второй реализации, не заранее.
+- **SRP**: один класс/модуль — одна причина для изменения; god-классы запрещены.
+- **OCP**: в точках расширения из принципа IV (типы контента, провайдеры) новое
+  добавляется новыми виджетами/плагинами, без правки ядра.
+- **LSP**: реализация обязана сохранять контракт интерфейса, включая поведение
+  при ошибках; нарушение контракта — баг.
+- **ISP**: клиенты зависят только от используемых методов; «толстые» интерфейсы
+  не допускаются.
+- **DIP**: доменная логика зависит от абстракций; технологии из Technology Stack
+  Constraints подключаются адаптерами и в доменный код не попадают.
+
 ## Technology Stack Constraints
 
 - Backend: Kotlin 2.x + Spring Boot 3.x; сборка Maven или Gradle (выбор фиксируется
@@ -125,4 +141,4 @@
 - Каждый PR/коммит обязан проходить проверку на соответствие конституции;
   сложность сверх необходимой MUST быть обоснована в `plan.md`.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-04 | **Last Amended**: 2026-09-04
+**Version**: 1.1.0 | **Ratified**: 2026-09-04 | **Last Amended**: 2026-09-06

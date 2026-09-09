@@ -1,2 +1,20 @@
 # IDE
 .idea/
+.vscode/
+
+# Gradle (backend) (no trailing slash: also ignores build symlinks, e.g. on WSL/drvfs)
+.gradle/
+build
+
+# Frontend (no trailing slash: also ignores node_modules symlinks, e.g. on WSL/drvfs)
+node_modules
+dist/
+
+# Secrets / local env
+.env
+.env.*
+
+# OS / misc
+.DS_Store
+*.log
+*.tmp
