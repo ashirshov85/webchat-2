@@ -7,3 +7,14 @@ out/
 .env
 .env.*
 *.log
+
+# VCS and image metadata stay out of the build context
+.git
+.gitignore
+.dockerignore
+Dockerfile
+
+# IDE and OS artifacts
+.idea/
+.vscode/
+.DS_Store
