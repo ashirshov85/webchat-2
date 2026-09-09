@@ -74,7 +74,7 @@ description: "Task list: Каркас проекта, CI/CD и базовая и
 ### Implementation for User Story 2
 
 - [X] T008 [US2] Создать `.github/workflows/ci.yml`: триггеры `pull_request` (в `main`) и `push` в `main`; `concurrency` (cancel-in-progress); джобы `backend` (setup-java temurin 21 + Gradle cache → `./gradlew check`), `frontend` (pnpm + Node 24 + pnpm-store cache → `pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck && pnpm test && pnpm build`), `gitleaks` (gitleaks-action — FR-014, edge case «секрет в коде»); минимальные `permissions`; критерий: все три джоба запускаются на PR и зелёные на текущем коде (research.md §8–§9, contracts/technical-endpoints.md §5)
-- [ ] T009 [US2] Настроить branch protection на `main` (gh CLI / настройки репозитория): запрет прямых push, обязательные PR, required status checks `backend`, `frontend`, `gitleaks`; критерий: merge блокируется при красном любом из required checks, причина видна в результатах проверки (spec.md US2-1, FR-003)
+- [X] T009 [US2] Настроить branch protection на `main` (gh CLI / настройки репозитория): запрет прямых push, обязательные PR, required status checks `backend`, `frontend`, `gitleaks`; критерий: merge блокируется при красном любом из required checks, причина видна в результатах проверки (spec.md US2-1, FR-003)
 - [ ] T010 [US2] Верифицировать US2: открыть тест-PR с заведомо падающим unit-тестом → required check красный, merge заблокирован, причина видна в логе джоба; добавить фикс → проверки зелёные, merge разрешён без ручных действий; параллельные PR получают независимые runs (spec.md US2 acceptance 1–3, quickstart.md сценарий 8)
 
 **Checkpoint**: US1 и US2 работают независимо; путь merge защищён с первой фичи (SC-002)
