@@ -264,13 +264,22 @@ EOF
 
   echo "  pull secret regcred: upserting (docker-server=${DOCKER_SERVER})"
   if [[ "$DRY_RUN" != true ]]; then
-    printf '%s' "$REGISTRY_PASSWORD" |
-      "${KCTL[@]}" -n "$NAMESPACE" create secret docker-registry regcred \
-        --docker-server="$DOCKER_SERVER" \
-        --docker-username="$REGISTRY_USERNAME" \
-        --docker-password-stdin \
-        --dry-run=client -o yaml |
-      "${KCTL[@]}" apply -f - >/dev/null
+    local auth user_escaped pass_escaped
+    user_escaped="${REGISTRY_USERNAME//\\/\\\\}"
+    user_escaped="${user_escaped//\"/\\\"}"
+    pass_escaped="${REGISTRY_PASSWORD//\\/\\\\}"
+    pass_escaped="${pass_escaped//\"/\\\"}"
+    auth="$(printf '%s:%s' "$REGISTRY_USERNAME" "$REGISTRY_PASSWORD" | base64 -w0)"
+    cat <<EOF | "${KCTL[@]}" apply -f - >/dev/null
+apiVersion: v1
+kind: Secret
+metadata:
+  name: regcred
+  namespace: ${NAMESPACE}
+type: kubernetes.io/dockerconfigjson
+stringData:
+  .dockerconfigjson: '{"auths":{"${DOCKER_SERVER}":{"username":"${user_escaped}","password":"${pass_escaped}","auth":"${auth}"}}}'
+EOF
   fi
 
   echo "  kubeconfig for ServiceAccount: generating (token duration ${TOKEN_DURATION})"
