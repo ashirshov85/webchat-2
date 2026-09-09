@@ -1,0 +1,38 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webchat
+  labels:
+    app: webchat
+spec:
+  ingressClassName: nginx
+  # Placeholder host — replaced by overlay (deploy/k8s/overlays/dev) per environment.
+  rules:
+    - host: webchat.example.com
+      http:
+        paths:
+          # Public API (contracts/openapi.yaml) — business endpoints appear in later features.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http
+          # Backend health endpoint reachable through ingress for trace-correlation
+          # verification (quickstart.md scenario 7, US5); metrics stay cluster-internal.
+          - path: /actuator/health
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http
+          # SPA: all remaining routes served by frontend (try_files → index.html).
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  name: http
