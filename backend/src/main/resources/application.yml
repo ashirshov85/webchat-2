@@ -1,6 +1,8 @@
 spring:
   application:
     name: backend
+  main:
+    banner-mode: "off"
 
 server:
   port: 8080
