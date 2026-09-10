@@ -17,8 +17,16 @@
     "generate:api": "openapi-typescript ../contracts/openapi.yaml -o src/api/schema.d.ts"
   },
   "dependencies": {
+    "@opentelemetry/context-zone": "^2.0.0",
+    "@opentelemetry/core": "^2.0.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
+    "@opentelemetry/instrumentation": "^0.222.0",
+    "@opentelemetry/instrumentation-fetch": "^0.222.0",
+    "@opentelemetry/resources": "^2.0.0",
+    "@opentelemetry/sdk-trace-web": "^2.0.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "zone.js": "^0.16.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

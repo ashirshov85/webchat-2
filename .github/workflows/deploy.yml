@@ -65,6 +65,12 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }}
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:main
+          # Browser OTLP endpoint (US5, T028): OTel Collector OTLP HTTP ingress
+          # reachable from browsers, e.g. https://otel-dev.webchat.lkshr.ru/v1/traces.
+          # Baked into the bundle at build time — public info, hence a variable,
+          # not a secret (FR-014).
+          build-args: |
+            VITE_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=${{ vars.VITE_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

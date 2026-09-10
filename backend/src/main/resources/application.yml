@@ -1,6 +1,8 @@
 spring:
   application:
     name: backend
+  main:
+    banner-mode: "off"
 
 server:
   port: 8080
@@ -22,3 +24,11 @@ management:
     metrics:
       export:
         enabled: true
+  metrics:
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  otlp:
+    tracing:
+      # Env var wins in k8s (dev overlay, T028); localhost default keeps tests/local runs green without a collector
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}

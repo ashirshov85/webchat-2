@@ -28,12 +28,28 @@ class HealthEndpointTests(
     }
 
     @Test
-    fun prometheusExposesHttpServerRequestsMetric() {
+    fun prometheusExposesHttpServerRequestsHistogram() {
         restTemplate.getForEntity("/actuator/health", String::class.java)
 
         val response = restTemplate.getForEntity("/actuator/prometheus", String::class.java)
 
         assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
-        assertThat(response.body).contains("http_server_requests_seconds")
+        assertThat(response.body).contains("http_server_requests_seconds_bucket")
+        assertThat(response.body).contains("http_server_requests_seconds_count")
+        assertThat(response.body).contains("http_server_requests_seconds_sum")
+    }
+
+    @Test
+    fun httpServerRequestsMetricCarriesRequiredTags() {
+        restTemplate.getForEntity("/actuator/health", String::class.java)
+
+        val response = restTemplate.getForEntity("/actuator/prometheus", String::class.java)
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
+        assertThat(response.body).contains("method=\"GET\"")
+        assertThat(response.body).contains("uri=")
+        assertThat(response.body).contains("status=\"200\"")
+        assertThat(response.body).contains("outcome=\"SUCCESS\"")
+        assertThat(response.body).contains("exception=\"none\"")
     }
 }
