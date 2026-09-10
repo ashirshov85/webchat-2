@@ -8,6 +8,8 @@ namespace: dev
 
 # Host per environment (DNS A-record dev.webchat.lkshr.ru -> cluster),
 # TLS via cert-manager (cluster issuer letsencrypt-prod, HTTP-01).
+# Backend OTLP endpoint (US5): traces go to the in-cluster OTel Collector
+# in front of the dev LGTM stack (T028, research.md §21).
 patches:
   - path: ingress-host.yaml
     target:
@@ -17,6 +19,10 @@ patches:
     target:
       kind: Ingress
       name: webchat
+  - path: backend-otlp-env.yaml
+    target:
+      kind: Deployment
+      name: backend
 
 # Deploy-time substitution: `kustomize edit set image \
 #   backend=${REGISTRY}/${IMAGE_PREFIX}/backend:${SHA} \

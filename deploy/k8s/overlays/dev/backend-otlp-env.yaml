@@ -1,0 +1,17 @@
+# OTLP export endpoint for backend traces in dev (T028, research.md §21):
+# in-cluster OTel Collector gateway (OTLP HTTP :4318) in front of the LGTM stack
+# (Tempo). Cluster-internal DNS — not reachable from the browser; the frontend
+# exporter gets its endpoint at build time via VITE_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT.
+# Read by backend/src/main/resources/application.yml (management.otlp.tracing.endpoint).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://otel-collector.observability.svc.cluster.local:4318/v1/traces
