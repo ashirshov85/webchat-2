@@ -84,3 +84,81 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  contract:
+    name: contract (openapi lint + drift + breaking)
+    runs-on: ubuntu-latest
+    env:
+      VACUUM_VERSION: v0.30.3
+      OASDIFF_VERSION: v1.31.0
+    steps:
+      - name: Checkout (full history for base contract on origin/main)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install vacuum (OpenAPI linter)
+        run: |
+          ver="${VACUUM_VERSION#v}"
+          curl -sSL --fail -o /tmp/vacuum.tar.gz \
+            "https://github.com/daveshanley/vacuum/releases/download/${VACUUM_VERSION}/vacuum_${ver}_linux_x86_64.tar.gz"
+          sudo tar -xzf /tmp/vacuum.tar.gz -C /usr/local/bin vacuum
+          vacuum version
+
+      - name: Install oasdiff (breaking-change detector)
+        run: |
+          ver="${OASDIFF_VERSION#v}"
+          curl -sSL --fail -o /tmp/oasdiff.tar.gz \
+            "https://github.com/oasdiff/oasdiff/releases/download/${OASDIFF_VERSION}/oasdiff_${ver}_linux_amd64.tar.gz"
+          sudo tar -xzf /tmp/oasdiff.tar.gz -C /usr/local/bin oasdiff
+          oasdiff --version
+
+      - name: Lint OpenAPI contract
+        run: vacuum lint -e contracts/openapi.yaml
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - name: Set up Node 24 with pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Regenerate TypeScript types from contract
+        run: pnpm --dir frontend generate:api
+
+      - name: Drift check (committed schema.d.ts must match contract)
+        run: git diff --exit-code -- frontend/src/api/schema.d.ts
+
+      - name: Detect intentional breaking-change marker
+        id: breaking
+        run: |
+          if [ -f contracts/BREAKING.md ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "contracts/BREAKING.md present — breaking check skipped (intentional, FR-010)"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract base contract from origin/main
+        id: base
+        if: steps.breaking.outputs.skip != 'true'
+        run: |
+          if git cat-file -e "origin/main:contracts/openapi.yaml" 2>/dev/null; then
+            git show "origin/main:contracts/openapi.yaml" > "$RUNNER_TEMP/openapi-base.yaml"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "contracts/openapi.yaml not on origin/main yet — first introduction, nothing to compare"
+          fi
+
+      - name: Breaking change detection (oasdiff)
+        if: steps.breaking.outputs.skip != 'true' && steps.base.outputs.exists == 'true'
+        run: oasdiff breaking --fail-on ERR "$RUNNER_TEMP/openapi-base.yaml" contracts/openapi.yaml
