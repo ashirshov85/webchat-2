@@ -1,0 +1,8 @@
+openapi: 3.1.0
+info:
+  title: WebChat Public API
+  version: 0.1.0
+  description: >
+    Публичный API веб-чата. Единственный источник истины публичного API;
+    TypeScript-типы фронтенда генерируются из этого файла автоматически.
+paths: {}
