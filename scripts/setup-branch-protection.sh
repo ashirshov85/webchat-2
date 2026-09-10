@@ -8,6 +8,7 @@ REQUIRED_CHECKS=(
   "backend (lint + build + test)"
   "frontend (lint + typecheck + test + build)"
   "gitleaks (secret scanning)"
+  "contract (openapi lint + drift + breaking)"
 )
 
 ENFORCE_ADMINS="${ENFORCE_ADMINS:-true}"
@@ -17,9 +18,9 @@ usage() {
   cat <<'EOF'
 Usage: scripts/setup-branch-protection.sh [owner/repo] [--dry-run]
 
-Configures branch protection on `main` (task T009, US2, FR-003):
+Configures branch protection on `main` (task T009, US2, FR-003; updated by T023):
   - direct pushes to main forbidden, changes go through pull requests only
-  - required status checks: backend, frontend, gitleaks
+  - required status checks: backend, frontend, gitleaks, contract
   - force pushes and branch deletion forbidden
   - admins included by default (ENFORCE_ADMINS)
 
@@ -37,8 +38,7 @@ Environment overrides:
   REQUIRE_UP_TO_DATE=true|false    PR branch must be up to date with main (default: false)
 
 Note: required check names must exactly match the job `name:` values in
-.github/workflows/ci.yml. When T023 adds the `contract` job, append its
-name to REQUIRED_CHECKS above and re-run this script.
+.github/workflows/ci.yml (contract job added in T023).
 EOF
 }
 
