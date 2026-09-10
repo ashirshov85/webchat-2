@@ -72,7 +72,7 @@ oasdiff breaking /tmp/base.yaml contracts/openapi.yaml
 
 Ожидания:
 - Валидация — exit 0.
-- После регенерации `git status` по `frontend/src/api/schema.d.ts` пуст (детерминированность, US4-4). Демонстрация drift: изменить `info.title` в контракте без регенерации → CI-джоб `contract` падает (US4-2).
+- После регенерации `git status` по `frontend/src/api/schema.d.ts` пуст (детерминированность, US4-4). Демонстрация drift: изменить контракт так, чтобы изменение отражалось в генерируемых типах (например, добавить путь `/ping`), и не закоммитить регенерированный `schema.d.ts` → CI-джоб `contract` падает (US4-2). Примечание: правки только `info.*` (например, `info.title`) не попадают в вывод openapi-typescript 7.x и drift не дают.
 - Демонстрация breaking: удалить/переименовать существующий путь контракта → `oasdiff breaking` exit ≠ 0 без `contracts/BREAKING.md` (US4-3).
 
 ## Сценарий 5 — Docker-образы локально (US3-2)
