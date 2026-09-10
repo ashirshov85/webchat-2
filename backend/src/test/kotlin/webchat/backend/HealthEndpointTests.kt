@@ -51,5 +51,6 @@ class HealthEndpointTests(
         assertThat(response.body).contains("status=\"200\"")
         assertThat(response.body).contains("outcome=\"SUCCESS\"")
         assertThat(response.body).contains("exception=\"none\"")
+        assertThat(response.body).contains("application=\"backend\"")
     }
 }

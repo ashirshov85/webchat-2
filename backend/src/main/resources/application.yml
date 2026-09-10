@@ -12,6 +12,10 @@ server:
       tracking-modes: ""
 
 management:
+  # Common tag required on every metric (contracts/technical-endpoints.md §1)
+  observations:
+    key-values:
+      application: backend
   endpoints:
     web:
       exposure:
