@@ -143,9 +143,9 @@ description: "Task list: Каркас проекта, CI/CD и базовая и
 
 **Purpose**: Сквозные улучшения поверх всех user stories
 
-- [ ] T030 [P] Создать `docs/README.md`: ссылка на `specs/001-project-foundation/quickstart.md` и соглашения — параметризация registry (`REGISTRY`/`IMAGE_PREFIX`), правила контракта и `BREAKING.md`, OTLP/LGTM dev-инфраструктура, требование stateless (plan.md → Project Structure, research.md → сводка)
-- [ ] T031 [P] Финальный security-проход: локальный запуск gitleaks по всей истории репозитория; проверить отсутствие секретов в `deploy/k8s/`-манифестах, образах и логах; `.gitignore` покрывает `.env` (FR-014, spec.md edge case «секрет в коде»)
-- [ ] T032 Прогнать полную валидацию `specs/001-project-foundation/quickstart.md` (сценарии 1–8, где доступна инфраструктура) с чистого клона: все команды exit 0, onboarding ≤ 30 минут (SC-001); сверить покрытие acceptance-сценариев и edge cases из spec.md
+- [X] T030 [P] Создать `docs/README.md`: ссылка на `specs/001-project-foundation/quickstart.md` и соглашения — параметризация registry (`REGISTRY`/`IMAGE_PREFIX`), правила контракта и `BREAKING.md`, OTLP/LGTM dev-инфраструктура, требование stateless (plan.md → Project Structure, research.md → сводка)
+- [X] T031 [P] Финальный security-проход: локальный запуск gitleaks по всей истории репозитория; проверить отсутствие секретов в `deploy/k8s/`-манифестах, образах и логах; `.gitignore` покрывает `.env` (FR-014, spec.md edge case «секрет в коде»)
+- [X] T032 Прогнать полную валидацию `specs/001-project-foundation/quickstart.md` (сценарии 1–8, где доступна инфраструктура) с чистого клона: все команды exit 0, onboarding ≤ 30 минут (SC-001); сверить покрытие acceptance-сценариев и edge cases из spec.md
 
 ---
 
