@@ -1,0 +1,14 @@
+# TLS for dev.webchat.lkshr.ru: cert-manager watches the ingress (annotation below),
+# passes the HTTP-01 challenge through ingress-nginx and fills the webchat-dev-tls
+# secret. ssl-redirect makes HTTP-only access impossible (301 to HTTPS).
+- op: add
+  path: /metadata/annotations
+  value:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+- op: add
+  path: /spec/tls
+  value:
+    - hosts:
+        - dev.webchat.lkshr.ru
+      secretName: webchat-dev-tls

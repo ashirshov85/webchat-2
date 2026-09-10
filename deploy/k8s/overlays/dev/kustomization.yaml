@@ -6,9 +6,14 @@ resources:
 
 namespace: dev
 
-# Host per environment; placeholder until real DNS is provisioned.
+# Host per environment (DNS A-record dev.webchat.lkshr.ru -> cluster),
+# TLS via cert-manager (cluster issuer letsencrypt-prod, HTTP-01).
 patches:
   - path: ingress-host.yaml
+    target:
+      kind: Ingress
+      name: webchat
+  - path: ingress-tls.yaml
     target:
       kind: Ingress
       name: webchat
