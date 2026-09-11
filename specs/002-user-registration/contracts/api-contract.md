@@ -13,7 +13,7 @@ drift-check → oasdiff) применяется без изменений. TS-т
 
 | # | Метод и путь | Тело (request) | Успех | Ошибки |
 |---|---|---|---|---|
-| 1 | `POST /auth/register` | `{username, email}` | `202` — аккаунт создан/возобновлён, письмо поставлено в очередь | `400` валидация полей; `409` username/email занят **активным** аккаунтом (поля `username`/`email`); `429` |
+| 1 | `POST /auth/register` | `{username, email}` | `202` — аккаунт создан/возобновлён, письмо поставлено в очередь | `400` валидация полей; `409` username/email занят аккаунтом **любого статуса** — активным или незавершённым — без раскрытия статуса держателя (поля `username`/`email`); `429` |
 | 2 | `POST /auth/register/resend` | `{email}` | `202` **всегда** единообразно (не раскрывает существование/статус, US4-4-стиль) | `400`; `429` (cooldown 60 с / лимиты) |
 | 3 | `POST /auth/register/confirm` | `{token}` | `200` → `{setupToken, setupTokenType:"password_setup", expiresInSec}` | `400` «token invalid or expired» (единообразно; предложение запросить новый) ; `429` |
 | 4 | `POST /auth/register/password` | `{setupToken, password, confirmPassword}` | `204` — аккаунт `active` | `400` (токен недействителен / политика пароля / несовпадение подтверждения); `429` |
@@ -76,7 +76,7 @@ Argon2-хеша, тот же код-путь и сообщение ([research.md
 
 | Схема | Поля |
 |---|---|
-| `RegisterRequest` | `username: string(3..32, pattern)`, `email: string(email, ≤254)` |
+| `RegisterRequest` | `username: string(3..32, pattern ^[a-zA-Z0-9_-]{3,32}$; регистронезависимая уникальность по lower())`, `email: string(email, ≤254)` |
 | `LoginRequest` | `identifier: string`, `password: string(8..128)` |
 | `TokenPair` | `accessToken: string(jwt)`, `refreshToken: string(base64url, ~43)`, `tokenType: "Bearer"`, `expiresInSec: int` |
 | `PublicUser` | `id: uuid`, `username`, `email`, `status: enum`, `createdAt` |
