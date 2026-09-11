@@ -100,6 +100,9 @@ backend/src/main/kotlin/webchat/backend/
 │   │   ├── port/                            # UserRepository, TokenRepository, SessionRepository, Clock
 │   │   └── service/                         # RegistrationService, LoginService, SessionService (ротация/reuse),
 │   │                                        # PasswordResetService, TokenService
+│   ├── repository/                          # JDBC-адаптеры портов (JdbcTemplate): JdbcUserRepository,
+│   │                                        # JdbcOneTimeTokenRepository, JdbcSessionRepository,
+│   │                                        # JdbcRefreshTokenRepository
 │   ├── security/
 │   │   ├── JwtService.kt                    # ES256 подпись/проверка, kid, claims (sub,sid,jti,typ)
 │   │   ├── AuthJwtDecoder.kt                # JwtDecoder по kid + denylist sid (Redis)
@@ -111,6 +114,7 @@ backend/src/main/kotlin/webchat/backend/
 ├── email/
 │   ├── EmailGateway.kt                      # ПОРТ (домен)
 │   ├── SmtpEmailGateway.kt                  # адаптер spring-boot-starter-mail
+│   ├── JdbcEmailOutboxRepository.kt         # вставка pending-строк (TX), cooldown resend 60 с
 │   ├── OutboxPoller.kt                      # @Scheduled, FOR UPDATE SKIP LOCKED, backoff
 │   └── templates/                           # тексты писем + ссылки (SPA-маршруты)
 ├── users/api/UsersController.kt             # GET /api/v1/users/me
