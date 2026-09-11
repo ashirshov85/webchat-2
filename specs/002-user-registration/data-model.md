@@ -127,7 +127,10 @@ WHERE user_id=:u AND status='active'` + denylist каждого `sid` (FR-010, U
 между commit и отправкой); поллер — `SELECT ... FOR UPDATE SKIP LOCKED` (безопасен при N реплик);
 сбой SMTP ≠ 5xx публичного endpoint; каждая попытка — метрика `email_delivery_total{type,outcome}`
 и структурный лог (`outbox_id`, `recipient_hash`). Повторная отправка (resend) — новая outbox-строка
-только если не существует `pending`-строки того же типа для того же user (cooldown 60 с, US1-6).
+только если последняя строка того же типа для того же user старше 60 с (`MAX(created_at)` независимо
+от статуса pending/sent/failed — poller помечает `sent` за секунды, привязка к `pending` делала бы
+cooldown пустым); это второй эшелон после бакета `rl:email:resend`, приоритет механизмов —
+[research.md §11](./research.md) (US1-6).
 
 ## Сущность 6: AuthEvent (журнал событий безопасности)
 

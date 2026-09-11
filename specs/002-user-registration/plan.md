@@ -132,7 +132,7 @@ frontend/src/
 ├── auth/
 │   ├── pages/                               # RegisterPage, ConfirmRegistrationPage, SetPasswordPage,
 │   │                                        # LoginPage, ForgotPasswordPage, ResetPasswordPage
-│   └── session.ts                           # хранение токенов (access — память, refresh — localStorage)
+│   └── session.ts                           # хранение токенов (access — память, refresh — localStorage; обоснование — research §4)
 └── App.tsx                                  # маршруты
 
 contracts/openapi.yaml                       # + endpoints 1–10, components.schemas, bearerAuth (0.2.0)

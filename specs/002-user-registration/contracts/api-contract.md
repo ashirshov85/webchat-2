@@ -29,7 +29,9 @@ drift-check → oasdiff) применяется без изменений. TS-т
 Семантика resend (№2) зависит от статуса аккаунта, ответ всегда единый 202 без раскрытия статуса:
 `pending_email_confirmation` → письмо `email_verification_repeat`; `awaiting_password` (в т.ч. после
 истечения setupToken) → письмо `password_setup` со ссылкой `/set-password?token=...`;
-`active`/несуществующий email → письмо не отправляется (edge spec).
+`active`/несуществующий email → письмо не отправляется (edge spec). Источник 429 для resend:
+сначала бакет (IP/email, `Retry-After`), затем cooldown 60 с на аккаунт (`Retry-After` = 60 − elapsed) —
+детали [research.md §11](../research.md).
 
 №7 (`POST /auth/logout`) перенесён в §2: требует Bearer и не входит в публичный перечень US3-4
 (US2-5, FR-011). Нумерация 1–10 сохранена без изменений для стабильности ссылок.

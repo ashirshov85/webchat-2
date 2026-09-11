@@ -155,6 +155,8 @@
 - **Session (пара токенов)**: короткоживущий токен сессии + связанный refresh-токен; принадлежит User; поддерживает ротацию refresh, отзыв по выходу и массовый отзыв при смене пароля.
 - **Transactional Email**: письмо, отправленное через внешний email-сервис (подтверждение / повторная отправка / восстановление); фиксируется для наблюдаемости доставки.
 
+Терминологическое соответствие: «Email Verification Token» / «Password Reset Token» — логические представления единой сущности `OneTimeToken` (различаются `purpose` = `email_verification` / `password_reset`); «Session (пара токенов)» реализуется таблицами `sessions` + `refresh_tokens` (цепочка поколений refresh) — см. data-model.md §2–§4.
+
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
