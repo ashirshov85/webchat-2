@@ -46,7 +46,7 @@ set-password/login/reset + типизированный клиент с инте
 
 **Constraints**: stateless-поды (состояние только в PG/Redis); пароли только Argon2id-хеш, нигде не логируются (FR-004, SC-005); ответы не раскрывают существование аккаунтов (FR-005, US2-3); публичные endpoints — rate limiting во внешнем хранилище (FR-009); замена email-шлюза без правки ядра (FR-008); SSO-фича 003 не должна требовать переделки сессий (Assumptions); секреты — только env/K8s Secrets.
 
-**Scale/Scope**: ~8 публичных + 2 защищённых endpoint (№7 `logout`, №10 `/users/me`); 6 таблиц PG + 4 семейства Redis-ключей; 8 Flyway-миграций (ориентир); страницы SPA: register, confirm-registration, set-password, login, forgot/reset-password; 3 dev-манифеста + 1 compose-файл + 1 k6-сценарий (нагрузочный smoke).
+**Scale/Scope**: ~8 публичных + 2 защищённых endpoint (№7 `logout`, №10 `/users/me`); 6 таблиц PG + 4 семейства Redis-ключей; 6 Flyway-миграций (по одной на таблицу, data-model.md §1–§6); страницы SPA: register, confirm-registration, set-password, login, forgot/reset-password; 3 dev-манифеста + 1 compose-файл + 1 k6-сценарий (нагрузочный smoke).
 
 ## Constitution Check
 
