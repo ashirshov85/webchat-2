@@ -97,7 +97,8 @@ pnpm --dir frontend dev  # SPA на :5173
    `docker run --rm --network host -v "$PWD/load/k6:/k6" grafana/k6 run /k6/auth.smoke.js`
 2. Ожидание: burst register/login сверх лимитов → **429** + `Retry-After`; **0×5xx**;
    `/actuator/health` — **200** на протяжении прогона; валидные запросы под лимитом —
-   200/202/204. Критерии зашиты как k6 thresholds — ненулевой exit code при нарушении
+   200/202/204, их `http_req_duration` **p95 ≤ 500 мс** (SC-003). Критерии зашиты как
+   k6 thresholds — ненулевой exit code при нарушении
    (профиль — [research.md §13](./research.md)).
 
 ## 5. Автопроверка
