@@ -11,9 +11,11 @@
 username/email → пара токенов (короткоживущий access JWT ES256 5 мин + opaque refresh 256-bit
 с ротацией при каждом использовании и детекцией повторного применения) → logout/смена пароля с
 мгновенным отзывом через Redis denylist. Весь API чата закрыт Bearer-аутентификацией, публичны
-только 9 зафиксированных auth-endpoints в OpenAPI-контракте (minor 0.2.0, additive).
+только 8 зафиксированных auth-endpoints в OpenAPI-контракте (№1–6, №8–9; minor 0.2.0, additive);
+logout (№7) и `/users/me` (№10) — аутентифицированные.
 Вводится инфраструктура: PostgreSQL 17 (Flyway SQL-миграции, Spring JDBC) для User/токенов/
-сессий/outbox, Redis 7 (Bucket4j) для rate limiting на источник и аккаунт/email + счётчиков
+сессий/outbox, Redis 7 (Bucket4j) для rate limiting всех публичных endpoints — ключи по
+источнику и аккаунтам/email, токен-consuming маршруты и refresh по IP (FR-009) — + счётчиков
 подбора, Mailpit + заменяемый SMTP-шлюз с transactional outbox в PG для транзакционных писем.
 Пароли — Argon2id (DelegatingPasswordEncoder). Spring Security: resource-server с кастомным
 JwtDecoder, stateless, единый 401 problem+json. Frontend: страницы register/confirm/
@@ -34,7 +36,7 @@ set-password/login/reset + типизированный клиент с инте
 
 **Storage**: **PostgreSQL 17** (долговечное: users, one_time_tokens, sessions, refresh_tokens, email_outbox, auth_events; уникальные lower()-индексы username/email) + **Redis 7** (эфемерное: бакеты лимитов, счётчики подбора, denylist sid). Dev-манифесты Kustomize + локальный docker-compose (Mailpit). Пароли/токены — только в виде хешей.
 
-**Testing**: Backend — JUnit 5 + Testcontainers (PG+Redis, `@ServiceConnection`, static-контейнер в базовом классе): контракты endpoints, ротация/reuse, отзыв, 401-единообразие, 429/Retry-After, прогрессирующая задержка, идемпотентность ссылок, outbox на fake-шлюзе, отсутствие секретов в логах. Frontend — Vitest + Testing Library (потоки страниц, refresh-интерцептор). Контракт — конвейер 001 без изменений (vacuum/drift/oasdiff).
+**Testing**: Backend — JUnit 5 + Testcontainers (PG+Redis, `@ServiceConnection`, static-контейнер в базовом классе): контракты endpoints, ротация/reuse, отзыв, 401-единообразие, 429/Retry-After, прогрессирующая задержка, идемпотентность ссылок, outbox на fake-шлюзе, отсутствие секретов в логах. Frontend — Vitest + Testing Library (потоки страниц, refresh-интерцептор). Контракт — конвейер 001 без изменений (vacuum/drift/oasdiff). Нагрузочный smoke — k6 (`load/k6/auth.smoke.js`, профиль research §13): 429 вместо 5xx при превышении лимитов (SC-008).
 
 **Target Platform**: без изменений: Linux-контейнеры в K8s dev (stateless-поды backend/frontend; PG/Redis/Mailpit — dev-only Deployment+PVC).
 
@@ -44,7 +46,7 @@ set-password/login/reset + типизированный клиент с инте
 
 **Constraints**: stateless-поды (состояние только в PG/Redis); пароли только Argon2id-хеш, нигде не логируются (FR-004, SC-005); ответы не раскрывают существование аккаунтов (FR-005, US2-3); публичные endpoints — rate limiting во внешнем хранилище (FR-009); замена email-шлюза без правки ядра (FR-008); SSO-фича 003 не должна требовать переделки сессий (Assumptions); секреты — только env/K8s Secrets.
 
-**Scale/Scope**: ~9 публичных + 1 защищённый endpoint; 6 таблиц PG + 4 семейства Redis-ключей; 8 Flyway-миграций (ориентир); страницы SPA: register, confirm-registration, set-password, login, forgot/reset-password; 3 dev-манифеста + 1 compose-файл.
+**Scale/Scope**: ~8 публичных + 2 защищённых endpoint (№7 `logout`, №10 `/users/me`); 6 таблиц PG + 4 семейства Redis-ключей; 8 Flyway-миграций (ориентир); страницы SPA: register, confirm-registration, set-password, login, forgot/reset-password; 3 dev-манифеста + 1 compose-файл + 1 k6-сценарий (нагрузочный smoke).
 
 ## Constitution Check
 
@@ -57,7 +59,7 @@ set-password/login/reset + типизированный клиент с инте
 | III | Доставка без дублей (NON-NEGOTIABLE) | ✅ N/A | Пути доставки сообщений чата в этой фиче нет. Идемпотентность по месту применения: поглощение one-time-ссылок условным UPDATE (FR-012), outbox-поллер `FOR UPDATE SKIP LOCKED` — без дублей писем. |
 | IV | API-First | ✅ PASS | Все endpoints — сначала в `contracts/openapi.yaml` (minor 0.2.0, additive, без BREAKING.md); TS-типы — codegen; drift/breaking-детекция CI 001 действует. |
 | V | Безопасность и приватность | ✅ PASS | Ядро фичи: Argon2id с солью (FR-004), ES256 + ротация refresh + denylist (FR-006), единые ошибки без перечисления аккаунтов (FR-005), rate limiting во внешнем хранилище (FR-009), секреты в env/K8s Secrets, логи без паролей/токенов/сырого PII (ip_hash, recipient_hash) (FR-013, SC-005). E2EE — вне scope этой фичи. |
-| VI | Test-First (NON-NEGOTIABLE) | ✅ PASS | Тесты обязательны в каждой задаче (DoD): Testcontainers IT по всем acceptance-сценариям, контрактные проверки, brute-force-тесты ([research.md §9](./research.md)). Нагрузочные тесты — не требуются (аутентификация не в продуктивном трафике сообщений; расчёт в research §13). |
+| VI | Test-First (NON-NEGOTIABLE) | ✅ PASS | Тесты обязательны в каждой задаче (DoD): Testcontainers IT по всем acceptance-сценариям, контрактные проверки, brute-force-тесты ([research.md §9](./research.md)). Нагрузочный smoke-тест (k6) обязателен — SC-008: профиль [research.md §13](./research.md), критерий — контролируемая деградация (429 + `Retry-After`, без 5xx); расчёт несущей способности — там же. |
 | VII | Простота (YAGNI) | ✅ PASS | Минимально: JdbcTemplate вместо JPA/jOOQ; Bucket4j+Redis без самописного Lua; один SMTP-адаптер (HTTP-API — позже); outbox в PG вместо брокера; Deployment+PVC вместо операторов; без `user_identities` до фичи 003. Все middleware-выборы обоснованы в research.md. |
 | VIII | SOLID на уровне кода | ✅ PASS | SRP: package-by-feature (`auth/…`); DIP: домен зависит от порта `EmailGateway` (адаптер SMTP снаружи), порты репозиториев; OCP: новые email-адаптеры/провайдеры — новыми классами (точка расширения IV); без спекулятивных абстракций (VII). |
 
@@ -138,7 +140,12 @@ deploy/
 │   └── mailpit.yaml                         # Deployment+Service
 └── local/docker-compose.yml                 # postgres:17 + redis:7 + mailpit (локальная разработка)
 
-.github/workflows/ci.yml                     # без изменений (IT-тесты используют Docker-сервисы CI)
+load/
+└── k6/
+    └── auth.smoke.js                        # нагрузочный smoke SC-008: профиль research §13
+                                             # (docker run grafana/k6 — quickstart §4.7)
+
+.github/workflows/ci.yml                     # без изменений (IT-тесты используют Docker-сервисы CI; k6 smoke — локально, вне CI)
 ```
 
 **Structure Decision**: структура 001 сохранена (плоский монорепозиторий `backend/` +

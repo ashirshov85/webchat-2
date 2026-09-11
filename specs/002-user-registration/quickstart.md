@@ -81,6 +81,8 @@ pnpm --dir frontend dev  # SPA на :5173
    истечения блокировки корректный пароль входит сразу.
 3. Лимиты считаются в Redis (общие для всех реплик): перезапуск backend не сбрасывает
    заблокированный счётчик.
+4. 31-я попытка `POST /auth/refresh` или `POST /auth/register/confirm` в минуту с одного IP →
+   **429** + `Retry-After` (FR-009: лимиты действуют на всех публичных endpoints).
 
 ### 4.6 Отказ email-сервиса (US6) — SC-007
 
@@ -88,6 +90,15 @@ pnpm --dir frontend dev  # SPA на :5173
 2. `docker compose ... up -d` снова → поллер outbox доносит письмо (backoff), метрика
    `email_delivery_total{outcome=...}` и лог `outbox_id/last_error` фиксируют сбой и доставку;
    gauge `email_outbox_pending` виден на `/actuator/prometheus`.
+
+### 4.7 Нагрузочный smoke (SC-008)
+
+1. При поднятом стеке (§2) выполнить из корня репо:
+   `docker run --rm --network host -v "$PWD/load/k6:/k6" grafana/k6 run /k6/auth.smoke.js`
+2. Ожидание: burst register/login сверх лимитов → **429** + `Retry-After`; **0×5xx**;
+   `/actuator/health` — **200** на протяжении прогона; валидные запросы под лимитом —
+   200/202/204. Критерии зашиты как k6 thresholds — ненулевой exit code при нарушении
+   (профиль — [research.md §13](./research.md)).
 
 ## 5. Автопроверка
 

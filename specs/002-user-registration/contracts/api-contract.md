@@ -18,8 +18,7 @@ drift-check → oasdiff) применяется без изменений. TS-т
 | 3 | `POST /auth/register/confirm` | `{token}` | `200` → `{setupToken, setupTokenType:"password_setup", expiresInSec}` | `400` «token invalid or expired» (единообразно; предложение запросить новый) ; `429` |
 | 4 | `POST /auth/register/password` | `{setupToken, password, confirmPassword}` | `204` — аккаунт `active` | `400` (токен недействителен / политика пароля / несовпадение подтверждения); `429` |
 | 5 | `POST /auth/login` | `{identifier, password}` — identifier = username ИЛИ email | `200` → `{accessToken, refreshToken, tokenType:"Bearer", expiresInSec, user:{id, username, email}}` | `401` единая обобщённая ошибка (US2-3); `403` «завершите регистрацию» (US1-5); `429` + `Retry-After` (лимит/блокировка подбора) |
-| 6 | `POST /auth/refresh` | `{refreshToken}` | `200` → новая пара `{accessToken, refreshToken, ...}` (ротация) | `401` единая (истёк/отозван/reuse-detected — без различий) |
-| 7 | `POST /auth/logout` | Bearer + `{refreshToken}` | `204` — сессия отозвана | `401` |
+| 6 | `POST /auth/refresh` | `{refreshToken}` | `200` → новая пара `{accessToken, refreshToken, ...}` (ротация) | `401` единая (истёк/отозван/reuse-detected — без различий); `429` + `Retry-After` (IP-лимит, FR-009) |
 | 8 | `POST /auth/password-reset` | `{email}` | `202` **всегда** единообразно (US4-4) | `400`; `429` |
 | 9 | `POST /auth/password-reset/confirm` | `{token, password, confirmPassword}` | `204` — пароль изменён, все сессии отозваны | `400` (токен/политика); `429` |
 
@@ -27,18 +26,25 @@ drift-check → oasdiff) применяется без изменений. TS-т
 `/set-password?token=...`, `/reset-password?token=...` — SPA вызывает endpoints 3/4/9.
 Открытое значение токена существует только в ссылке; сервер хранит SHA-256 ([data-model.md §2](../data-model.md)).
 
+№7 (`POST /auth/logout`) перенесён в §2: требует Bearer и не входит в публичный перечень US3-4
+(US2-5, FR-011). Нумерация 1–10 сохранена без изменений для стабильности ссылок.
+
 ## 2. Аутентифицированные endpoints
 
 | # | Метод и путь | Успех | Ошибки |
 |---|---|---|---|
+| 7 | `POST /auth/logout` (тело: `{refreshToken}`) | `204` — сессия отозвана | `401` |
 | 10 | `GET /users/me` | `200` → `{id, username, email, status, createdAt}` | `401` |
 
+`POST /auth/logout` — защищённый auth-endpoint: отзыв сессии выполняется только при
+действительном access-токене (US2-5, FR-011); в публичный перечень US3-4 не входит.
 `GET /users/me` — минимальный защищённый ресурс для проверки границы аутентификации (US3,
 SC-002); все последующие endpoints чата (следующие фичи) — только за Bearer.
 
-**Инвариант US3-4**: публичны ТОЛЬКО endpoints 1–9 (+ технические health/metrics вне контракта —
+**Инвариант US3-4**: публичны ТОЛЬКО endpoints №1–6, №8, №9 — 8 путей (+ технические
+health/metrics вне контракта —
 [technical-endpoints.md фичи 001](../../001-project-foundation/contracts/technical-endpoints.md));
-`anyRequest().authenticated()` — всё остальное.
+№7 `logout` и №10 `/users/me` — только с Bearer; `anyRequest().authenticated()` — всё остальное.
 
 ## 3. Модель ошибок
 

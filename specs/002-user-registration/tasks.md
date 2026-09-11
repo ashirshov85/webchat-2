@@ -115,13 +115,13 @@ description: "Task list for feature 002-user-registration (register, login, sess
 
 ## Phase 5: User Story 3 — API чата только для аутентифицированных (Priority: P1)
 
-**Goal**: единообразный 401 на любой защищённый путь без действительного токена; публичны ровно endpoints 1–9 (+health); минимальный защищённый ресурс `GET /users/me` ([spec.md US3](./spec.md)).
+**Goal**: единообразный 401 на любой защищённый путь без действительного токена; публичны ровно endpoints №1–6, №8–9 (+health); logout №7 и `GET /users/me` №10 — только с Bearer ([spec.md US3](./spec.md)).
 
 **Independent Test**: API/IT: без токена / мусорный / истёкший / отозванный → один и тот же 401 problem+json; валидный access → 200 от `/users/me`; перечень публичных путей совпадает с контрактом и полон (SC-002).
 
 ### Tests for User Story 3 (сначала RED)
 
-- [ ] T037 [P] [US3] Написать IT `backend/src/test/kotlin/webchat/backend/auth/AuthenticationBoundaryIT.kt`: US3-1…US3-4 — все комбинации недействительных токенов → единый 401 `Not authenticated`; валидный → 200; аудит публичных путей = ровно контракт №1–9 + `/actuator/health` — SC-002, [api-contract.md §2–§3](./contracts/api-contract.md)
+- [ ] T037 [P] [US3] Написать IT `backend/src/test/kotlin/webchat/backend/auth/AuthenticationBoundaryIT.kt`: US3-1…US3-4 — все комбинации недействительных токенов → единый 401 `Not authenticated`; валидный → 200; аудит публичных путей = ровно контракт №1–6, №8–9 + `/actuator/health` (№7 logout и №10 — только с Bearer) — SC-002, [api-contract.md §1–§3](./contracts/api-contract.md)
 
 ### Implementation for User Story 3
 
@@ -155,18 +155,18 @@ description: "Task list for feature 002-user-registration (register, login, sess
 
 ## Phase 7: User Story 5 — Rate limiting и защита от подбора (Priority: P2)
 
-**Goal**: Bucket4j+Redis лимиты на источник и email для всех публичных endpoints; прогрессирующая задержка и блокировка подбора; лимиты общие для всех реплик ([spec.md US5](./spec.md)).
+**Goal**: Bucket4j+Redis лимиты на всех публичных endpoints — по источнику везде, по email/identifier где он есть в запросе; прогрессирующая задержка и блокировка подбора; лимиты общие для всех реплик ([spec.md US5](./spec.md)).
 
-**Independent Test**: API/IT: 6-й register/час с IP → 429 + `Retry-After`; 11 неудачных логинов в аккаунт → возрастающие задержки, затем 429 ≈ остаток 15 мин, после истечения валидный пароль входит сразу; счётчики в Redis переживают рестарт backend (SC-004, [quickstart §4.5](./quickstart.md)).
+**Independent Test**: API/IT: 6-й register/час с IP → 429 + `Retry-After`; 11 неудачных логинов в аккаунт → возрастающие задержки, затем 429 ≈ остаток 15 мин, после истечения валидный пароль входит сразу; 31-й `refresh`/`confirm` в минуту с одного IP → 429 (FR-009); счётчики в Redis переживают рестарт backend (SC-004, [quickstart §4.5](./quickstart.md)).
 
 ### Tests for User Story 5 (сначала RED)
 
-- [ ] T045 [P] [US5] Написать IT `backend/src/test/kotlin/webchat/backend/auth/RateLimitIT.kt`: US5-1…US5-4 — 429 + Retry-After по IP и по email на register/resend/login/password-reset; прогрессирующая задержка (замеряемые тайминги) и блокировка с 10-й неудачи; валидный трафик под лимитом не затронут; счётчики сохраняются при рестарте приложения — SC-004
+- [ ] T045 [P] [US5] Написать IT `backend/src/test/kotlin/webchat/backend/auth/RateLimitIT.kt`: US5-1…US5-4 — 429 + Retry-After по IP и по email на register/resend/login/password-reset; по IP (без email-ключа) на confirm/password/reset-confirm/refresh — все 8 публичных маршрутов ([research.md §11](./research.md)); прогрессирующая задержка (замеряемые тайминги) и блокировка с 10-й неудачи; валидный трафик под лимитом не затронут; счётчики сохраняются при рестарте приложения — SC-004
 
 ### Implementation for User Story 5
 
 - [ ] T046 [P] [US5] Реализовать `backend/src/main/kotlin/webchat/backend/auth/ratelimit/ClientIpResolver.kt`: XFF leftmost (единый доверенный ingress-хоп), fallback `remoteAddr`, IPv6 → /64-префикс — [research.md §7](./research.md)
-- [ ] T047 [US5] Реализовать `backend/src/main/kotlin/webchat/backend/auth/ratelimit/RateLimitFilter.kt`: Bucket4j `LettuceBasedProxyManager`, ключи `rl:ip:<route>:<ip>` и `rl:email:<route>:<sha256(email)}`, лимиты из `auth.ratelimit.*` ([research.md §11](./research.md)), ответ 429 problem+json + `Retry-After`; регистрация фильтра в `backend/src/main/kotlin/webchat/backend/config/SecurityConfig.kt` — FR-009 (зависит от T046)
+- [ ] T047 [US5] Реализовать `backend/src/main/kotlin/webchat/backend/auth/ratelimit/RateLimitFilter.kt`: Bucket4j `LettuceBasedProxyManager`, ключи `rl:ip:<route>:<ip>` (все 8 публичных маршрутов) и `rl:email:<route>:<sha256(email)}` (только register/resend/login/password-reset — где email/identifier есть в запросе), лимиты из `auth.ratelimit.*` ([research.md §11](./research.md)), ответ 429 problem+json + `Retry-After`; регистрация фильтра в `backend/src/main/kotlin/webchat/backend/config/SecurityConfig.kt` — FR-009 (зависит от T046)
 - [ ] T048 [US5] Реализовать `backend/src/main/kotlin/webchat/backend/auth/ratelimit/LoginThrottle.kt`: Redis-счётчик `login:fail:<sha256(identifier)>` (INCR + EXPIRE NX 15 мин, сброс при успехе); задержка `min(250ms × 2^(n−3), 15s)` с 4-й неудачи; блокировка с 10-й — 429 + Retry-After ДО проверки пароля; интеграция вызовов в `backend/src/main/kotlin/webchat/backend/auth/domain/service/LoginService.kt` — [research.md §8](./research.md), SC-004; GREEN по T045
 - [ ] T049 [P] [US5] Обработать 429 + Retry-After в `frontend/src/auth/pages/RegisterPage.tsx`, `LoginPage.tsx`, `ForgotPasswordPage.tsx` (понятное сообщение о лимите и времени повтора)
 
@@ -201,6 +201,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 - [ ] T054 [P] Линт и форматирование: `./gradlew ktlintCheck detekt` (workdir `backend/`), `pnpm --dir frontend lint`
 - [ ] T055 Аудит секретов (SC-005): gitleaks по репозиторию; в логах/БД/выгрузках нет открытых паролей и токенов (только Argon2-хеши и SHA-256); креды только env/K8s Secrets
 - [ ] T056 Контрактный конвейер и CI зелёные: `vacuum lint -e contracts/openapi.yaml`, drift-check TS-типов (regen + `git diff --exit-code`), `oasdiff breaking` — только additive 0.2.0; полный прогон `./gradlew test` и `pnpm --dir frontend test`
+- [ ] T057 [P] Создать нагрузочный smoke-сценарий `load/k6/auth.smoke.js`: burst `login` ≈280 rps (вращающиеся identifier'ы) + burst `register` 50 rps с одного источника — профиль [research.md §13](./research.md); k6 thresholds: 0×5xx, `/actuator/health` 200 весь прогон, 429 с `Retry-After` при превышении лимитов, валидный трафик под лимитом обслуживается; прогон по [quickstart.md §4.7](./quickstart.md) локально против docker-compose (SC-008, конституция VI)
 
 ---
 
