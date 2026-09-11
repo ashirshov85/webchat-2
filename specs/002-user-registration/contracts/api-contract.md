@@ -76,7 +76,7 @@ Argon2-хеша, тот же код-путь и сообщение ([research.md
 
 | Схема | Поля |
 |---|---|
-| `RegisterRequest` | `username: string(3..32, pattern ^[a-zA-Z0-9_-]{3,32}$; регистронезависимая уникальность по lower())`, `email: string(email, ≤254)` |
+| `RegisterRequest` | `username: string(3..32, pattern ^[a-zA-Z0-9]([a-zA-Z0-9_.-]{1,30}[a-zA-Z0-9])$ — буквенно-цифровые границы; регистронезависимая уникальность по lower())`, `email: string(email, ≤254)` |
 | `LoginRequest` | `identifier: string`, `password: string(8..128)` |
 | `TokenPair` | `accessToken: string(jwt)`, `refreshToken: string(base64url, ~43)`, `tokenType: "Bearer"`, `expiresInSec: int` |
 | `PublicUser` | `id: uuid`, `username`, `email`, `status: enum`, `createdAt` |

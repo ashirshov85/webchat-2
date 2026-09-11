@@ -71,7 +71,7 @@ pnpm --dir frontend dev  # SPA на :5173
 
 1. `POST /auth/password-reset` на существующий email → письмо со ссылкой (TTL 1 ч);
    на несуществующий → тот же **202** (не раскрывает).
-2. `POST /auth/password-reset/confirm` `{token, newPassword}` → **204**; вход старым паролем →
+2. `POST /auth/password-reset/confirm` `{token, password, confirmPassword}` → **204**; вход старым паролем →
    **401**, новым → **200**; прежние refresh/access отозваны (denylist).
 3. Повторное применение ссылки → **400** с предложением запросить новую.
 
