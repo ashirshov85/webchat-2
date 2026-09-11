@@ -44,7 +44,7 @@ awaiting_password ──(задание пароля, политика FR-004)�
 |---|---|---|
 | `id` | UUID PK | — |
 | `user_id` | UUID FK → users | CASCADE |
-| `purpose` | enum | `email_verification` (TTL 24 ч) / `password_setup` (TTL 15 мин) / `password_reset` (TTL 1 ч) |
+| `purpose` | enum | `email_verification` (TTL 24 ч) / `password_setup` (TTL 1 ч) / `password_reset` (TTL 1 ч) |
 | `token_hash` | char(64) | **SHA-256** от 256-bit opaque-значения; UNIQUE; открытое значение существует только в ссылке письма |
 | `expires_at` | timestamptz | по purpose (таблица [research.md §11](./research.md)) |
 | `used_at` | timestamptz NULL | single-use |
@@ -55,8 +55,9 @@ awaiting_password ──(задание пароля, политика FR-004)�
 rowcount = 0 → «ссылка использована/истекла — запросите новую» (edge spec), дублей и
 side-effects нет. Новая ссылка того же purpose аннулирует предыдущие активные того же user
 (одна живая ссылка на пользователя+purpose). `password_setup` выдаётся ответом endpoint
-подтверждения email; его истечение → повторный запрос письма (для подтверждённого email
-шлётся письмо «завершите регистрацию»). `password_reset`: применение меняет пароль и отзывает
+подтверждения email ИЛИ письмом при возобновлении незавершённой регистрации (resend/повторный
+register в статусе `awaiting_password`, включая истечение setupToken — edge spec); письмо — тип
+`password_setup` со ссылкой `/set-password?token=...`. `password_reset`: применение меняет пароль и отзывает
 все сессии пользователя (FR-010).
 
 ## Сущность 3: Session (сессия = цепочка refresh-поколений)

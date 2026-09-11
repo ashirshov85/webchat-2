@@ -26,6 +26,11 @@ drift-check → oasdiff) применяется без изменений. TS-т
 `/set-password?token=...`, `/reset-password?token=...` — SPA вызывает endpoints 3/4/9.
 Открытое значение токена существует только в ссылке; сервер хранит SHA-256 ([data-model.md §2](../data-model.md)).
 
+Семантика resend (№2) зависит от статуса аккаунта, ответ всегда единый 202 без раскрытия статуса:
+`pending_email_confirmation` → письмо `email_verification_repeat`; `awaiting_password` (в т.ч. после
+истечения setupToken) → письмо `password_setup` со ссылкой `/set-password?token=...`;
+`active`/несуществующий email → письмо не отправляется (edge spec).
+
 №7 (`POST /auth/logout`) перенесён в §2: требует Bearer и не входит в публичный перечень US3-4
 (US2-5, FR-011). Нумерация 1–10 сохранена без изменений для стабильности ссылок.
 

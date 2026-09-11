@@ -214,7 +214,7 @@ attach); volatile-ttl безвреден — все ключи TTL-ирован�
 | access-token TTL | 5 мин | FR-006 «короткоживущий» |
 | refresh-token TTL (sliding) | 3 дня | FR-006 |
 | ссылка подтверждения email | 24 ч, single-use | FR-002 |
-| password-setup токен (после confirm) | 15 мин, single-use | FR-003 |
+| password-setup токен (ответ confirm; письмо resend при `awaiting_password`) | 1 ч, single-use (15 мин недостаточно для ссылки в письме) | FR-003 |
 | ссылка восстановления пароля | 1 ч, single-use | FR-010 |
 | cooldown повторной отправки письма | 60 с | US1-6 |
 | register: лимиты | 5/час на IP; 3/час на email | FR-009 |
