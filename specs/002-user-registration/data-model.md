@@ -153,7 +153,7 @@ FR-013. Без секретов: ни паролей, ни открытых то
 | Ключ | Значение | TTL | Назначение |
 |---|---|---|---|
 | `rl:ip:<route>:<ip>` | бакет Bucket4j | по лимиту маршрута | лимит на источник (FR-009) |
-| `rl:email:<route>:<sha256(email)>` | бакет Bucket4j | по лимиту маршрута | лимит на email/аккаунт (FR-009) |
+| `rl:email:<route>:<sha256(email)>` | бакет Bucket4j | по лимиту маршрута | лимит на email/аккаунт (FR-009); для маршрута login ключ — sha256(identifier) (username ИЛИ email): имя семейства `rl:email` условное |
 | `login:fail:<sha256(identifier)>` | счётчик INCR | 15 мин (EXPIRE NX), сброс при успехе | прогрессивная задержка/блокировка ([research.md §8](./research.md)) |
 | `auth:denylist:sid:<sid>` | маркер | ≤ остаток TTL access-токена | мгновенный отзыв (FR-006/010/011) |
 
