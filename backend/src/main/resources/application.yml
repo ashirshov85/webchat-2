@@ -46,6 +46,9 @@ auth:
   resend:
     # second-tier PG cooldown per account (US1-6, data-model.md §5); first tier = rl:email:resend bucket
     cooldown: 60s
+  outbox:
+    # dispatcher tick (research.md §11: 5 s fixed delay); attempts 2-4 retry every 60 s (T021)
+    poll-fixed-delay: 5s
   password:
     # top-10k weak passwords, lowercase (research.md §3, FR-004)
     blocklist-path: classpath:auth/password-blocklist.txt
