@@ -29,6 +29,10 @@ patches:
     target:
       kind: Deployment
       name: backend
+  - path: backend-auth-env.yaml
+    target:
+      kind: Deployment
+      name: backend
 
 # Deploy-time substitution: `kustomize edit set image \
 #   backend=${REGISTRY}/${IMAGE_PREFIX}/backend:${SHA} \
