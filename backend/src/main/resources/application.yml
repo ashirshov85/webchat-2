@@ -74,6 +74,9 @@ auth:
       max-delay: 15s
       lockout-threshold: 10
       window: 15m
+  mail:
+    # transactional sender address; prod value from env / K8s Secret (research.md §6)
+    from: ${AUTH_MAIL_FROM:noreply@webchat.local}
   # secrets come from env / K8s Secrets only (SC-005); no values in the repo
   ip-hash-pepper: ${AUTH_IP_HASH_PEPPER}
   jwt:
