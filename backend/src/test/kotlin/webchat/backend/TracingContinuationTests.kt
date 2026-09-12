@@ -7,7 +7,6 @@ import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability
-import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.test.web.client.TestRestTemplate
 import org.springframework.context.annotation.Bean
@@ -16,23 +15,11 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpMethod
 import java.time.Duration
 
-@SpringBootTest(
-    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = [
-        "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration," +
-            "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration," +
-            "org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration," +
-            "org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration," +
-            "org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration," +
-            "org.springframework.boot.autoconfigure.security.servlet.SecurityFilterAutoConfiguration," +
-            "org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration",
-    ],
-)
 @AutoConfigureObservability
 class TracingContinuationTests(
     @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val exporter: CollectingSpanExporter,
-) {
+) : AbstractIntegrationTest() {
     @Test
     fun httpServerSpanContinuesIncomingTraceparent() {
         val traceId = "0af7651916cd43dd8448eb211c80319c"
