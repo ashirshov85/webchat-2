@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-06
 
-**Status**: Draft
+**Status**: Approved
 
 **Input**: User description: "Создать каркас проекта веб-чата: монорепозиторий с backend-сервисом (Kotlin 2.x + Spring Boot 3.x) и frontend-приложением (React + TypeScript, strict), Docker-образы и базовые манифесты Kubernetes, CI/CD-пайплайн (сборка, линт, тесты, деплой) с первой фичи. Настроить пайплайн публичного OpenAPI-контракта с генерацией TypeScript-типов для фронтенда и базовую observability (структурированные логи, распределённый трейсинг, метрики latency/throughput/errors). Все сервисы stateless. Бизнес-функций в этой фиче нет."
 

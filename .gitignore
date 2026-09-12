@@ -5,6 +5,7 @@
 # Gradle (backend) (no trailing slash: also ignores build symlinks, e.g. on WSL/drvfs)
 .gradle/
 build
+.kotlin/
 
 # Frontend (no trailing slash: also ignores node_modules symlinks, e.g. on WSL/drvfs)
 node_modules

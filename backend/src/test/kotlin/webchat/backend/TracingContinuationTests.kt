@@ -7,7 +7,6 @@ import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability
-import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.test.web.client.TestRestTemplate
 import org.springframework.context.annotation.Bean
@@ -16,12 +15,11 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpMethod
 import java.time.Duration
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureObservability
 class TracingContinuationTests(
     @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val exporter: CollectingSpanExporter,
-) {
+) : AbstractIntegrationTest() {
     @Test
     fun httpServerSpanContinuesIncomingTraceparent() {
         val traceId = "0af7651916cd43dd8448eb211c80319c"

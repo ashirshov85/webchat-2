@@ -3,6 +3,12 @@ kind: Kustomization
 
 resources:
   - ../../base
+  # Dev-only stateful infrastructure of feature 002 (research.md §10):
+  # first durable (PostgreSQL) and ephemeral (Redis) stores + Mailpit.
+  # Prod uses managed Postgres/Redis — outside the feature scope.
+  - postgres.yaml
+  - redis.yaml
+  - mailpit.yaml
 
 namespace: dev
 

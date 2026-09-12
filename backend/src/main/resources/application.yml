@@ -3,13 +3,83 @@ spring:
     name: backend
   main:
     banner-mode: "off"
+  datasource:
+    # Dev defaults mirror deploy/local/docker-compose.yml; real credentials come from env / K8s Secrets (SC-005)
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/webchat}
+    username: ${SPRING_DATASOURCE_USERNAME:webchat}
+    password: ${SPRING_DATASOURCE_PASSWORD:webchat}
+  flyway:
+    enabled: true
+    # migrations live in classpath:db/migration (V1–V6, data-model.md §1–§6)
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+  mail:
+    # dev: Mailpit SMTP (quickstart.md §2)
+    host: ${SPRING_MAIL_HOST:localhost}
+    port: ${SPRING_MAIL_PORT:1025}
 
 server:
   port: 8080
+  # Trust X-Forwarded-* from the single ingress hop; client IP = leftmost XFF (research.md §7)
+  forward-headers-strategy: framework
   servlet:
     session:
       persistent: false
       tracking-modes: ""
+
+auth:
+  token:
+    # research.md §11: access 5 min (FR-006), refresh 3 days sliding (FR-006)
+    access-ttl: 5m
+    refresh-ttl: 3d
+    # one-time links: email_verification 24 h (FR-002), password_setup 1 h (FR-003), password_reset 1 h (FR-010)
+    email-verification-ttl: 24h
+    password-setup-ttl: 1h
+    password-reset-ttl: 1h
+  resend:
+    # second-tier PG cooldown per account (US1-6, data-model.md §5); first tier = rl:email:resend bucket
+    cooldown: 60s
+  password:
+    # top-10k weak passwords, lowercase (research.md §3, FR-004)
+    blocklist-path: classpath:auth/password-blocklist.txt
+  ratelimit:
+    # "<count>/<window>" per key; research.md §11 (FR-009)
+    register:
+      ip: 5/1h
+      email: 3/1h
+    resend:
+      ip: 3/1h
+      email: 3/1h
+    login:
+      ip: 10/1m
+      account: 10/1m
+    password-reset:
+      ip: 5/1h
+      email: 3/1h
+    # token-bearing POSTs: IP-only key, flood guard (research.md §11)
+    confirm:
+      ip: 30/1m
+    password:
+      ip: 30/1m
+    reset-confirm:
+      ip: 30/1m
+    refresh:
+      ip: 30/1m
+  login:
+    throttle:
+      # delay = min(base * 2^(n-3), max) from 4th accumulated failure; lockout at >= 10 for TTL window (research.md §8, SC-004)
+      base-delay: 250ms
+      max-delay: 15s
+      lockout-threshold: 10
+      window: 15m
+  # secrets come from env / K8s Secrets only (SC-005); no values in the repo
+  ip-hash-pepper: ${AUTH_IP_HASH_PEPPER}
+  jwt:
+    # AUTH_JWT_KEYS: kid -> P-256 PEM mapping; ES256 access tokens (research.md §4)
+    keys: ${AUTH_JWT_KEYS}
+    active-kid: ${AUTH_JWT_ACTIVE_KID}
 
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)
@@ -19,7 +89,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,prometheus
+        # metrics: p95 verification for SC-003 in T057b (same data as prometheus)
+        include: health,prometheus,metrics
   endpoint:
     health:
       probes:
@@ -32,6 +103,9 @@ management:
     distribution:
       percentiles-histogram:
         http.server.requests: true
+      # server-side p95 SLO budget (SC-003: <= 500 ms)
+      slo:
+        http.server.requests: 500ms
   otlp:
     tracing:
       # Env var wins in k8s (dev overlay, T028); localhost default keeps tests/local runs green without a collector

@@ -1,8 +1,614 @@
 openapi: 3.1.0
 info:
   title: WebChat Public API
-  version: 0.1.0
+  version: 0.2.0
   description: >
     Публичный API веб-чата. Единственный источник истины публичного API;
     TypeScript-типы фронтенда генерируются из этого файла автоматически.
-paths: {}
+
+    Фича 002 (auth): endpoints №1–10 — регистрация с email-подтверждением,
+    вход по паролю, refresh-ротация, logout, восстановление пароля, /users/me.
+    Публичны ровно endpoints №1–6, №8–9 (8 путей); №7 logout и №10 /users/me
+    требуют Bearer. Все ответы об ошибках — RFC 9457 application/problem+json
+    (схема Problem). Ссылки в письмах указывают на маршруты SPA, а не на API.
+tags:
+  - name: auth
+    description: Регистрация, вход, сессии, восстановление пароля
+  - name: users
+    description: Данные пользователя
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/auth/register:
+    post:
+      operationId: register
+      tags: [auth]
+      summary: Регистрация (№1)
+      description: >
+        Создаёт аккаунт (pending_email_confirmation) и ставит письмо со ссылкой
+        подтверждения в очередь. Полное совпадение пары (username+email) на
+        незавершённом аккаунте возобновляет регистрацию без дубля. Занятые
+        username/email аккаунтом любого статуса → 409 с указанием поля, без
+        раскрытия статуса держателя.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '202':
+          description: Аккаунт создан или незавершённая регистрация возобновлена; письмо поставлено в очередь
+        '400':
+          description: Ошибка валидации полей (username/email); коды — в Problem.errors
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: username или email занят аккаунтом любого статуса; занятое поле указано, статус держателя не раскрывается
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит запросов (IP/email)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/register/resend:
+    post:
+      operationId: resendRegistrationEmail
+      tags: [auth]
+      summary: Повторная отправка письма регистрации (№2)
+      description: >
+        202 всегда единообразно — не раскрывает существование/статус аккаунта.
+        pending_email_confirmation → письмо email_verification_repeat;
+        awaiting_password (вкл. истечение setupToken) → письмо password_setup
+        со ссылкой /set-password; active/несуществующий email → письмо не
+        отправляется. Источник 429: сначала бакеты (IP/email), затем cooldown
+        60 с на аккаунт (Retry-After = 60 − elapsed).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendRequest'
+      responses:
+        '202':
+          description: Принято единообразно (существование/статус аккаунта не раскрывается)
+        '400':
+          description: Ошибка валидации email
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит (IP/email) или cooldown 60 с на аккаунт
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/register/confirm:
+    post:
+      operationId: confirmRegistration
+      tags: [auth]
+      summary: Подтверждение email по ссылке (№3)
+      description: >
+        Поглощает одноразовый токен email_verification и выдаёт setupToken для
+        задания пароля. Недействительная/использованная/истёкшая ссылка →
+        единообразное 400 с предложением запросить новую (FR-012).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmRegistrationRequest'
+      responses:
+        '200':
+          description: Email подтверждён; выдан setupToken для задания пароля (TTL 1 ч)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [setupToken, setupTokenType, expiresInSec]
+                properties:
+                  setupToken:
+                    type: string
+                    pattern: '^[A-Za-z0-9_-]{43}$'
+                    description: Одноразовый токен password_setup (256-bit, base64url)
+                  setupTokenType:
+                    type: string
+                    const: password_setup
+                  expiresInSec:
+                    type: integer
+                    minimum: 1
+                    description: TTL setupToken, секунды (3600)
+        '400':
+          description: Токен недействителен, использован или истёк (единообразно; предложение запросить новую ссылку)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит запросов (IP)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/register/password:
+    post:
+      operationId: setPassword
+      tags: [auth]
+      summary: Задание пароля после подтверждения email (№4)
+      description: >
+        Поглощает setupToken, проверяет политику пароля FR-004 (8–128 символов;
+        не пустой/пробельный; вне топ-листа тривиальных; не совпадает с
+        username/email) и устанавливает Argon2id-хеш; аккаунт → active.
+        Неверный пароль/несовпадение подтверждения не поглощают setupToken.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetPasswordRequest'
+      responses:
+        '204':
+          description: Пароль установлен, аккаунт active
+        '400':
+          description: Токен недействителен / нарушение политики пароля / несовпадение confirmPassword
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит запросов (IP)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Вход по username или email и паролю (№5)
+      description: >
+        identifier = username ИЛИ email. Неверный пароль / несуществующий
+        идентификатор → единая 401 «Invalid credentials» (тайминговая защита —
+        фиктивный Argon2-хеш). Незавершённый аккаунт → 403 «завершите
+        регистрацию». Успех → пара токенов: access JWT ES256 (5 мин) + opaque
+        refresh (3 дня sliding).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Пара токенов выдана; сессия создана
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - type: object
+                    additionalProperties: false
+                    required: [user]
+                    properties:
+                      user:
+                        type: object
+                        additionalProperties: false
+                        required: [id, username, email]
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          username:
+                            type: string
+                          email:
+                            type: string
+                            format: email
+        '401':
+          description: Единая обобщённая ошибка «Invalid credentials» (без различий причин)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: Регистрация не завершена (подтвердите email / задайте пароль)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит запросов (IP/identifier) или блокировка подбора
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды (≈ остаток окна блокировки при подборе)
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/refresh:
+    post:
+      operationId: refresh
+      tags: [auth]
+      summary: Ротация refresh-токена (№6)
+      description: >
+        Выдаёт новую пару токенов, старый refresh поглощается (single-use).
+        Повторное применение ротированного токена → компрометация цепочки:
+        401, сессия и вся цепочка отозваны (FR-006). 401 единая, без различий
+        (истёк / отозван / reuse).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: Новая пара токенов (ротация)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: Единая ошибка (истёк / отозван / reuse-detected — без различий)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен IP-лимит
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Выход (№7, Bearer)
+      description: >
+        Отзывает сессию: access-токен должен быть действителен; переданный
+        refresh отзывается, sid попадает в denylist (FR-011). Требует
+        Authorization: Bearer.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+      responses:
+        '204':
+          description: Сессия отозвана; оба токена недействительны
+        '401':
+          description: Не аутентифицирован
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/password-reset:
+    post:
+      operationId: requestPasswordReset
+      tags: [auth]
+      summary: Запрос восстановления пароля (№8)
+      description: >
+        202 всегда единообразно — не раскрывает существование email (US4-4).
+        Для существующего аккаунта ставит письмо с одноразовой ссылкой
+        reset-password (TTL 1 ч) в очередь; предыдущие ссылки аннулируются.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequest'
+      responses:
+        '202':
+          description: Принято всегда единообразно (существование email не раскрывается)
+        '400':
+          description: Ошибка валидации email
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит запросов (IP/email)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/password-reset/confirm:
+    post:
+      operationId: confirmPasswordReset
+      tags: [auth]
+      summary: Установка нового пароля по ссылке восстановления (№9)
+      description: >
+        Поглощает одноразовый токен password_reset, устанавливает новый пароль
+        (политика FR-004) и отзывает все сессии пользователя (FR-010).
+        Нарушение политики/несовпадение подтверждения не поглощают ссылку.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+      responses:
+        '204':
+          description: Пароль изменён; все сессии отозваны
+        '400':
+          description: Токен недействителен / нарушение политики пароля / несовпадение confirmPassword
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит запросов (IP)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/users/me:
+    get:
+      operationId: getCurrentUser
+      tags: [users]
+      summary: Текущий пользователь (№10, Bearer)
+      description: Минимальный защищённый ресурс для проверки границы аутентификации (US3, SC-002).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Данные аутентифицированного пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUser'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Authorization: Bearer <accessToken>'
+  schemas:
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [username, email]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9]([a-zA-Z0-9_.-]{1,30}[a-zA-Z0-9])$'
+          description: Буквенно-цифровые границы; уникальность регистронезависимая (по lower())
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    ResendRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    ConfirmRegistrationRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Одноразовый токен email_verification (256-bit, base64url)
+    SetPasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [setupToken, password, confirmPassword]
+      properties:
+        setupToken:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Одноразовый токен password_setup (256-bit, base64url)
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: 'Политика FR-004: 8–128 символов; не пустой/пробельный; вне топ-листа тривиальных; ≠ username/email'
+        confirmPassword:
+          type: string
+          minLength: 8
+          maxLength: 128
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [identifier, password]
+      properties:
+        identifier:
+          type: string
+          minLength: 1
+          description: username ИЛИ email
+        password:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Без политики на входе — любой неверный пароль даёт единый 401; потолок 128 — DoS-защита
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Opaque refresh-токен (256-bit, base64url)
+    LogoutRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Opaque refresh-токен (256-bit, base64url)
+    PasswordResetRequest:
+      type: object
+      additionalProperties: false
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    PasswordResetConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [token, password, confirmPassword]
+      properties:
+        token:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Одноразовый токен password_reset (256-bit, base64url)
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+          description: 'Политика FR-004: 8–128 символов; не пустой/пробельный; вне топ-листа тривиальных; ≠ username/email'
+        confirmPassword:
+          type: string
+          minLength: 8
+          maxLength: 128
+    TokenPair:
+      type: object
+      additionalProperties: false
+      required: [accessToken, refreshToken, tokenType, expiresInSec]
+      properties:
+        accessToken:
+          type: string
+          format: jwt
+          description: Короткоживущий access-токен, JWT ES256 (TTL 5 мин)
+        refreshToken:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Opaque refresh-токен (256-bit, base64url, TTL 3 дня sliding); ротация при каждом использовании
+        tokenType:
+          type: string
+          const: Bearer
+        expiresInSec:
+          type: integer
+          minimum: 1
+          description: TTL access-токена, секунды
+    PublicUser:
+      type: object
+      additionalProperties: false
+      required: [id, username, email, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9]([a-zA-Z0-9_.-]{1,30}[a-zA-Z0-9])$'
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        status:
+          type: string
+          enum: [pending_email_confirmation, awaiting_password, active]
+        createdAt:
+          type: string
+          format: date-time
+    Problem:
+      type: object
+      description: 'RFC 9457: единая модель ошибок; расширения допускаются'
+      required: [title, status]
+      properties:
+        type:
+          type: string
+          description: URI-reference на тип ошибки (опционально)
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        errors:
+          type: object
+          description: Коды ошибок валидации по полям (в 400-ответах)
+          additionalProperties:
+            type: array
+            items:
+              type: string
+              description: Код ошибки, например invalid_format

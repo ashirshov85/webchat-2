@@ -3,10 +3,295 @@
  * Do not make direct changes to the file.
  */
 
-export type paths = Record<string, never>;
+export interface paths {
+    "/api/v1/auth/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Регистрация (№1)
+         * @description Создаёт аккаунт (pending_email_confirmation) и ставит письмо со ссылкой подтверждения в очередь. Полное совпадение пары (username+email) на незавершённом аккаунте возобновляет регистрацию без дубля. Занятые username/email аккаунтом любого статуса → 409 с указанием поля, без раскрытия статуса держателя.
+         */
+        post: operations["register"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/register/resend": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Повторная отправка письма регистрации (№2)
+         * @description 202 всегда единообразно — не раскрывает существование/статус аккаунта. pending_email_confirmation → письмо email_verification_repeat; awaiting_password (вкл. истечение setupToken) → письмо password_setup со ссылкой /set-password; active/несуществующий email → письмо не отправляется. Источник 429: сначала бакеты (IP/email), затем cooldown 60 с на аккаунт (Retry-After = 60 − elapsed).
+         */
+        post: operations["resendRegistrationEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/register/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Подтверждение email по ссылке (№3)
+         * @description Поглощает одноразовый токен email_verification и выдаёт setupToken для задания пароля. Недействительная/использованная/истёкшая ссылка → единообразное 400 с предложением запросить новую (FR-012).
+         */
+        post: operations["confirmRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/register/password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Задание пароля после подтверждения email (№4)
+         * @description Поглощает setupToken, проверяет политику пароля FR-004 (8–128 символов; не пустой/пробельный; вне топ-листа тривиальных; не совпадает с username/email) и устанавливает Argon2id-хеш; аккаунт → active. Неверный пароль/несовпадение подтверждения не поглощают setupToken.
+         */
+        post: operations["setPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Вход по username или email и паролю (№5)
+         * @description identifier = username ИЛИ email. Неверный пароль / несуществующий идентификатор → единая 401 «Invalid credentials» (тайминговая защита — фиктивный Argon2-хеш). Незавершённый аккаунт → 403 «завершите регистрацию». Успех → пара токенов: access JWT ES256 (5 мин) + opaque refresh (3 дня sliding).
+         */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ротация refresh-токена (№6)
+         * @description Выдаёт новую пару токенов, старый refresh поглощается (single-use). Повторное применение ротированного токена → компрометация цепочки: 401, сессия и вся цепочка отозваны (FR-006). 401 единая, без различий (истёк / отозван / reuse).
+         */
+        post: operations["refresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Выход (№7, Bearer)
+         * @description Отзывает сессию: access-токен должен быть действителен; переданный refresh отзывается, sid попадает в denylist (FR-011). Требует Authorization: Bearer.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Запрос восстановления пароля (№8)
+         * @description 202 всегда единообразно — не раскрывает существование email (US4-4). Для существующего аккаунта ставит письмо с одноразовой ссылкой reset-password (TTL 1 ч) в очередь; предыдущие ссылки аннулируются.
+         */
+        post: operations["requestPasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password-reset/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Установка нового пароля по ссылке восстановления (№9)
+         * @description Поглощает одноразовый токен password_reset, устанавливает новый пароль (политика FR-004) и отзывает все сессии пользователя (FR-010). Нарушение политики/несовпадение подтверждения не поглощают ссылку.
+         */
+        post: operations["confirmPasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Текущий пользователь (№10, Bearer)
+         * @description Минимальный защищённый ресурс для проверки границы аутентификации (US3, SC-002).
+         */
+        get: operations["getCurrentUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: never;
+    schemas: {
+        RegisterRequest: {
+            /** @description Буквенно-цифровые границы; уникальность регистронезависимая (по lower()) */
+            username: string;
+            /** Format: email */
+            email: string;
+        };
+        ResendRequest: {
+            /** Format: email */
+            email: string;
+        };
+        ConfirmRegistrationRequest: {
+            /** @description Одноразовый токен email_verification (256-bit, base64url) */
+            token: string;
+        };
+        SetPasswordRequest: {
+            /** @description Одноразовый токен password_setup (256-bit, base64url) */
+            setupToken: string;
+            /** @description Политика FR-004: 8–128 символов; не пустой/пробельный; вне топ-листа тривиальных; ≠ username/email */
+            password: string;
+            confirmPassword: string;
+        };
+        LoginRequest: {
+            /** @description username ИЛИ email */
+            identifier: string;
+            /** @description Без политики на входе — любой неверный пароль даёт единый 401; потолок 128 — DoS-защита */
+            password: string;
+        };
+        RefreshRequest: {
+            /** @description Opaque refresh-токен (256-bit, base64url) */
+            refreshToken: string;
+        };
+        LogoutRequest: {
+            /** @description Opaque refresh-токен (256-bit, base64url) */
+            refreshToken: string;
+        };
+        PasswordResetRequest: {
+            /** Format: email */
+            email: string;
+        };
+        PasswordResetConfirmRequest: {
+            /** @description Одноразовый токен password_reset (256-bit, base64url) */
+            token: string;
+            /** @description Политика FR-004: 8–128 символов; не пустой/пробельный; вне топ-листа тривиальных; ≠ username/email */
+            password: string;
+            confirmPassword: string;
+        };
+        TokenPair: {
+            /**
+             * Format: jwt
+             * @description Короткоживущий access-токен, JWT ES256 (TTL 5 мин)
+             */
+            accessToken: string;
+            /** @description Opaque refresh-токен (256-bit, base64url, TTL 3 дня sliding); ротация при каждом использовании */
+            refreshToken: string;
+            /** @constant */
+            tokenType: "Bearer";
+            /** @description TTL access-токена, секунды */
+            expiresInSec: number;
+        };
+        PublicUser: {
+            /** Format: uuid */
+            id: string;
+            username: string;
+            /** Format: email */
+            email: string;
+            /** @enum {string} */
+            status: "pending_email_confirmation" | "awaiting_password" | "active";
+            /** Format: date-time */
+            createdAt: string;
+        };
+        /** @description RFC 9457: единая модель ошибок; расширения допускаются */
+        Problem: {
+            /** @description URI-reference на тип ошибки (опционально) */
+            type?: string;
+            title: string;
+            status: number;
+            detail?: string;
+            instance?: string;
+            /** @description Коды ошибок валидации по полям (в 400-ответах) */
+            errors?: {
+                [key: string]: string[];
+            };
+        };
+    };
     responses: never;
     parameters: never;
     requestBodies: never;
@@ -14,4 +299,440 @@ export interface components {
     pathItems: never;
 }
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    register: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisterRequest"];
+            };
+        };
+        responses: {
+            /** @description Аккаунт создан или незавершённая регистрация возобновлена; письмо поставлено в очередь */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка валидации полей (username/email); коды — в Problem.errors */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description username или email занят аккаунтом любого статуса; занятое поле указано, статус держателя не раскрывается */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP/email) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    resendRegistrationEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResendRequest"];
+            };
+        };
+        responses: {
+            /** @description Принято единообразно (существование/статус аккаунта не раскрывается) */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка валидации email */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит (IP/email) или cooldown 60 с на аккаунт */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    confirmRegistration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmRegistrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Email подтверждён; выдан setupToken для задания пароля (TTL 1 ч) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Одноразовый токен password_setup (256-bit, base64url) */
+                        setupToken: string;
+                        /** @constant */
+                        setupTokenType: "password_setup";
+                        /** @description TTL setupToken, секунды (3600) */
+                        expiresInSec: number;
+                    };
+                };
+            };
+            /** @description Токен недействителен, использован или истёк (единообразно; предложение запросить новую ссылку) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    setPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Пароль установлен, аккаунт active */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Токен недействителен / нарушение политики пароля / несовпадение confirmPassword */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Пара токенов выдана; сессия создана */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenPair"] & {
+                        user: {
+                            /** Format: uuid */
+                            id: string;
+                            username: string;
+                            /** Format: email */
+                            email: string;
+                        };
+                    };
+                };
+            };
+            /** @description Единая обобщённая ошибка «Invalid credentials» (без различий причин) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Регистрация не завершена (подтвердите email / задайте пароль) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP/identifier) или блокировка подбора */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды (≈ остаток окна блокировки при подборе) */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    refresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RefreshRequest"];
+            };
+        };
+        responses: {
+            /** @description Новая пара токенов (ротация) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenPair"];
+                };
+            };
+            /** @description Единая ошибка (истёк / отозван / reuse-detected — без различий) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен IP-лимит */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LogoutRequest"];
+            };
+        };
+        responses: {
+            /** @description Сессия отозвана; оба токена недействительны */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не аутентифицирован */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    requestPasswordReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Принято всегда единообразно (существование email не раскрывается) */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Ошибка валидации email */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP/email) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    confirmPasswordReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordResetConfirmRequest"];
+            };
+        };
+        responses: {
+            /** @description Пароль изменён; все сессии отозваны */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Токен недействителен / нарушение политики пароля / несовпадение confirmPassword */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getCurrentUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Данные аутентифицированного пользователя */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicUser"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+}

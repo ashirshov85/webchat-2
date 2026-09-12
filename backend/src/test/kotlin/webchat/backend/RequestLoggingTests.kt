@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability
-import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.system.CapturedOutput
 import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.boot.test.web.client.TestRestTemplate
@@ -17,10 +16,9 @@ import java.time.Duration
 
 @ExtendWith(OutputCaptureExtension::class)
 @AutoConfigureObservability
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class RequestLoggingTests(
     @Autowired private val restTemplate: TestRestTemplate,
-) {
+) : AbstractIntegrationTest() {
     @Test
     fun requestLogRecordCarriesIncomingTraceId(capturedOutput: CapturedOutput) {
         val traceId = "0af7651916cd43dd8448eb211c80319c"

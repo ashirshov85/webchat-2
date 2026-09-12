@@ -1,0 +1,74 @@
+# Dev-only Mailpit (T003, research.md §10): observable mailbox for transactional
+# email of feature 002 without external accounts. Pinned tag (never latest in
+# cluster — deploy/k8s/base/kustomization.yaml image policy). SMTP endpoints of
+# the backend target mailpit.dev.svc.cluster.local:1025; the UI (:8025) is
+# reachable via port-forward (research.md §10).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  labels:
+    app: mailpit
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: mailpit
+  template:
+    metadata:
+      labels:
+        app: mailpit
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.29.7
+          ports:
+            - name: http
+              containerPort: 8025
+              protocol: TCP
+            - name: smtp
+              containerPort: 1025
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /livez
+              port: 8025
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 8025
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 6
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  labels:
+    app: mailpit
+spec:
+  type: ClusterIP
+  selector:
+    app: mailpit
+  ports:
+    - name: http
+      port: 8025
+      targetPort: 8025
+      protocol: TCP
+    - name: smtp
+      port: 1025
+      targetPort: 1025
+      protocol: TCP
