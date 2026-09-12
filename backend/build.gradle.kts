@@ -34,6 +34,7 @@ dependencies {
     implementation(libs.bucket4j.jdk17.lettuce)
     implementation(libs.flyway.core)
     implementation(libs.flyway.database.postgresql)
+    implementation(libs.kotlin.reflect)
     runtimeOnly(libs.postgresql)
     testImplementation(libs.spring.boot.starter.test)
     testImplementation(libs.spring.boot.testcontainers)
