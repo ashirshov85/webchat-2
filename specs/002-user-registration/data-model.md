@@ -119,7 +119,7 @@ WHERE user_id=:u AND status='active'` + denylist каждого `sid` (FR-010, U
 | `payload` | jsonb | параметры рендера: ссылка (open-значение токена), username, base-url |
 | `status` | enum | `pending` → `sent` \| `failed_permanent` |
 | `attempts` | int | максимум 10 |
-| `next_attempt_at` | timestamptz | поллинг 5 с; backoff 1→5→15 мин, потолок 1 ч |
+| `next_attempt_at` | timestamptz | поллинг 5 с; backoff по расписанию research §11 (попытки 2–4 — 60 с, далее 5→15→30→60 мин, потолок 1 ч) |
 | `last_error` | text NULL | без секретов |
 | `sent_at` | timestamptz NULL | — |
 | `created_at` | timestamptz | — |
@@ -128,7 +128,7 @@ WHERE user_id=:u AND status='active'` + denylist каждого `sid` (FR-010, U
 между commit и отправкой); поллер — `SELECT ... FOR UPDATE SKIP LOCKED` (безопасен при N реплик);
 сбой SMTP ≠ 5xx публичного endpoint; каждая попытка — метрика `email_delivery_total{type,outcome}`
 и структурный лог (`outbox_id`, `recipient_hash`). Повторная отправка (resend) — новая outbox-строка
-только если последняя строка того же типа для того же user старше 60 с (`MAX(created_at)` независимо
+только если последняя строка того же шага (семья типов: `email_verification` ∪ `email_verification_repeat`; отдельно `password_setup`, `password_reset`) для того же user старше 60 с (`MAX(created_at)` независимо
 от статуса pending/sent/failed — poller помечает `sent` за секунды, привязка к `pending` делала бы
 cooldown пустым); это второй эшелон после бакета `rl:email:resend`, приоритет механизмов —
 [research.md §11](./research.md) (US1-6).

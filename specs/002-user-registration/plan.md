@@ -31,7 +31,7 @@ set-password/login/reset + типизированный клиент с инте
 
 **Primary Dependencies** (новые; версии — из BOM Spring Boot, кроме отмеченных):
 - Backend: `spring-boot-starter-security`, `spring-boot-starter-oauth2-resource-server` (nimbus-jose-jwt), `spring-boot-starter-jdbc`, `org.postgresql:postgresql`, `flyway-core` + `flyway-database-postgresql`, `spring-boot-starter-data-redis` (Lettuce), `spring-boot-starter-mail`, `bucket4j_jdk17-core` + `bucket4j_jdk17-redis-lettuce` (8.x, своя версия), `net.ttddyy.observation:datasource-micrometer-spring-boot` (JDBC-трейсинг).
-- Test: `spring-boot-testcontainers`, `org.testcontainers:postgresql`, `org.testcontainers:redis`(или generic) — BOM.
+- Test: `spring-boot-testcontainers`, `org.testcontainers:postgresql` — BOM; Redis 7 — generic `GenericContainer` (`org.testcontainers:testcontainers`, уже в BOM) без стороннего Redis-модуля (VII).
 - Frontend: без новых runtime-зависимостей (типы — из codegen).
 
 **Storage**: **PostgreSQL 17** (долговечное: users, one_time_tokens, sessions, refresh_tokens, email_outbox, auth_events; уникальные lower()-индексы username/email) + **Redis 7** (эфемерное: бакеты лимитов, счётчики подбора, denylist sid). Dev-манифесты Kustomize + локальный docker-compose (Mailpit). Пароли/токены — только в виде хешей.
@@ -42,7 +42,7 @@ set-password/login/reset + типизированный клиент с инте
 
 **Project Type**: web-service (монорепозиторий, структура 001 сохраняется).
 
-**Performance Goals** (спека): письмо ≤ 2 мин в 95% (SC-001); p95 ≤ 500 мс серверной задержки успешного login (без throttle-задержек), прозрачный refresh (SC-003); 10+ неудачных входов/мин на аккаунт → эффективное ограничение подбора (SC-004); доступность публичных endpoints при отказе email-сервиса, 100% сбоев доставки в observability (SC-007); контролируемая деградация под профилем нагрузки (SC-008). Расчёт соответствия бюджетам конституции (280 rps логинов, ~100k Redis GET/s на denylist при 100k msg/s) — [research.md §13](./research.md).
+**Performance Goals** (спека): письмо ≤ 2 мин в 95% (SC-001); p95 ≤ 500 мс серверной задержки успешного login (без throttle-задержек), прозрачный refresh (SC-003); 10+ неудачных входов в один аккаунт в пределах окна счётчика 15 мин → эффективное ограничение подбора (SC-004); доступность публичных endpoints при отказе email-сервиса, 100% сбоев доставки в observability (SC-007); контролируемая деградация под профилем нагрузки (SC-008). Расчёт соответствия бюджетам конституции (280 rps логинов, ~100k Redis GET/s на denylist при 100k msg/s) — [research.md §13](./research.md).
 
 **Constraints**: stateless-поды (состояние только в PG/Redis); пароли только Argon2id-хеш, нигде не логируются (FR-004, SC-005); ответы не раскрывают существование аккаунтов (FR-005, US2-3); публичные endpoints — rate limiting во внешнем хранилище (FR-009); замена email-шлюза без правки ядра (FR-008); SSO-фича 003 не должна требовать переделки сессий (Assumptions); секреты — только env/K8s Secrets.
 
@@ -149,7 +149,8 @@ load/
     └── auth.smoke.js                        # нагрузочный smoke SC-008: профиль research §13
                                              # (docker run grafana/k6 — quickstart §4.7)
 
-.github/workflows/ci.yml                     # без изменений (IT-тесты используют Docker-сервисы CI; k6 smoke — локально, вне CI)
+.github/workflows/ci.yml                     # без изменений (IT — Testcontainers: PG/Redis поднимаются через Docker
+                                              # раннера ubuntu-latest, отдельные CI-сервисы не нужны; k6 smoke — локально, вне CI)
 ```
 
 **Structure Decision**: структура 001 сохранена (плоский монорепозиторий `backend/` +

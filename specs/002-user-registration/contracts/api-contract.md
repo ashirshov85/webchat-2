@@ -14,7 +14,7 @@ drift-check → oasdiff) применяется без изменений. TS-т
 | # | Метод и путь | Тело (request) | Успех | Ошибки |
 |---|---|---|---|---|
 | 1 | `POST /auth/register` | `{username, email}` | `202` — аккаунт создан/возобновлён, письмо поставлено в очередь | `400` валидация полей; `409` username/email занят аккаунтом **любого статуса** — активным или незавершённым — без раскрытия статуса держателя (поля `username`/`email`); `429` |
-| 2 | `POST /auth/register/resend` | `{email}` | `202` **всегда** единообразно (не раскрывает существование/статус, US4-4-стиль) | `400`; `429` (cooldown 60 с / лимиты) |
+| 2 | `POST /auth/register/resend` | `{email}` | `202` единообразно — не раскрывает существование/статус аккаунта | `400`; `429` лимиты (IP/email — единообразно); `429` cooldown 60 с — **принимаемое исключение**: возможен только для email, получившего письмо < 60 с назад (см. ниже) |
 | 3 | `POST /auth/register/confirm` | `{token}` | `200` → `{setupToken, setupTokenType:"password_setup", expiresInSec}` | `400` «token invalid or expired» (единообразно; предложение запросить новый) ; `429` |
 | 4 | `POST /auth/register/password` | `{setupToken, password, confirmPassword}` | `204` — аккаунт `active` | `400` (токен недействителен / политика пароля / несовпадение подтверждения); `429` |
 | 5 | `POST /auth/login` | `{identifier, password}` — identifier = username ИЛИ email | `200` → `{accessToken, refreshToken, tokenType:"Bearer", expiresInSec, user:{id, username, email}}` | `401` единая обобщённая ошибка (US2-3); `403` «завершите регистрацию» (US1-5); `429` + `Retry-After` (лимит/блокировка подбора) |
@@ -32,6 +32,11 @@ drift-check → oasdiff) применяется без изменений. TS-т
 `active`/несуществующий email → письмо не отправляется (edge spec). Источник 429 для resend:
 сначала бакет (IP/email, `Retry-After`), затем cooldown 60 с на аккаунт (`Retry-After` = 60 − elapsed) —
 детали [research.md §11](../research.md).
+Замечание о перечислении: cooldown-429 возникает только для существующих аккаунтов (cooldown в PG —
+по пользователю), т.е. косвенно указывает, что email зарегистрирован и недавно получал письмо.
+Это осознанный trade-off анти-флуда US1-6: занятость username/email и так раскрывается 409 на №1
+(US1-4). Гарантии неперечисления US2-3 (login) и US4-4 (password-reset) на это исключение
+не распространяются: их 429 порождаются только бакетами, единообразными для любых идентификаторов.
 
 №7 (`POST /auth/logout`) перенесён в §2: требует Bearer и не входит в публичный перечень US3-4
 (US2-5, FR-011). Нумерация 1–10 сохранена без изменений для стабильности ссылок.
@@ -77,10 +82,17 @@ Argon2-хеша, тот же код-путь и сообщение ([research.md
 | Схема | Поля |
 |---|---|
 | `RegisterRequest` | `username: string(3..32, pattern ^[a-zA-Z0-9]([a-zA-Z0-9_.-]{1,30}[a-zA-Z0-9])$ — буквенно-цифровые границы; регистронезависимая уникальность по lower())`, `email: string(email, ≤254)` |
-| `LoginRequest` | `identifier: string`, `password: string(8..128)` |
+| `LoginRequest` | `identifier: string`, `password: string(1..128)` — без политики на входе: любой неверный пароль → единый 401 (US2-3); потолок 128 — DoS-защита |
 | `TokenPair` | `accessToken: string(jwt)`, `refreshToken: string(base64url, ~43)`, `tokenType: "Bearer"`, `expiresInSec: int` |
 | `PublicUser` | `id: uuid`, `username`, `email`, `status: enum`, `createdAt` |
 | `Problem` | RFC 9457 + опционально `errors: map<string, string[]>` |
+| `ResendRequest` | `email: string(email, ≤254)` — №2 |
+| `ConfirmRegistrationRequest` | `token: string(base64url, ~43)` — №3 |
+| `SetPasswordRequest` | `setupToken: string(base64url, ~43)`, `password: string(8..128)`, `confirmPassword: string(8..128)` — №4 |
+| `RefreshRequest` | `refreshToken: string(base64url, ~43)` — №6 |
+| `LogoutRequest` | `refreshToken: string(base64url, ~43)` — №7 |
+| `PasswordResetRequest` | `email: string(email, ≤254)` — №8 |
+| `PasswordResetConfirmRequest` | `token: string(base64url, ~43)`, `password: string(8..128)`, `confirmPassword: string(8..128)` — №9 |
 | `PasswordPolicy` (описание) | 8–128 символов, не пустой/пробельный, вне топ-листа тривиальных, ≠ username/email |
 
 Токены в payload — только эти; никакие endpoint не возвращают хеши, salt, внутренние id токенов.
