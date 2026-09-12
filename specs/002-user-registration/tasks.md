@@ -52,7 +52,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 - [X] T009b Добавить бин `PasswordEncoder` в `backend/src/main/kotlin/webchat/backend/config/SecurityConfig.kt`: Argon2id m=19456,t=2,p=1 в `DelegatingPasswordEncoder` ([research.md §3](./research.md)) (после T009a — тот же файл); критерий: GREEN в T013b/T026 (Argon2-хеш задаётся и проверяется)
 - [X] T010 [P] Создать доменные перечисления и порт времени: `backend/src/main/kotlin/webchat/backend/auth/domain/model/UserStatus.kt`, `TokenPurpose.kt`, `SessionStatus.kt` (значения и переходы по data-model.md §1–§4) и `backend/src/main/kotlin/webchat/backend/auth/domain/port/Clock.kt`; критерий: `./gradlew build` exit 0; значения/переходы соответствуют data-model.md §1–§4
 - [X] T011 [P] Создать журнал событий безопасности `backend/src/main/kotlin/webchat/backend/auth/security/AuthEvents.kt`: `AuthEventRecorder` (JdbcTemplate-запись в auth_events: event_type, user_id NULL-able, `ip_hash` = SHA-256(IP + pepper), user_agent ≤256, details jsonb, trace_id; БЕЗ паролей/токенов/сырого PII) — FR-013, [data-model.md §6](./data-model.md); критерий: GREEN в T013a/T026/T045b (записи auth_events без секретов)
-- [ ] T012 Создать smoke-IT `backend/src/test/kotlin/webchat/backend/ContextLoadsIT.kt`: контекст поднимается с PG+Redis (`AbstractIntegrationTest`), Flyway применил все 6 таблиц (проверка через information_schema)
+- [X] T012 Создать smoke-IT `backend/src/test/kotlin/webchat/backend/ContextLoadsIT.kt`: контекст поднимается с PG+Redis (`AbstractIntegrationTest`), Flyway применил все 6 таблиц (проверка через information_schema)
 
 **Checkpoint**: Foundation готов — схемы в PG, security-цепочка с единым 401, тестовая база с Testcontainers. Stories можно начинать.
 
