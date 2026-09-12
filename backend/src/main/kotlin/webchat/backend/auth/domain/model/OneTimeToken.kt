@@ -35,6 +35,7 @@ data class OneTimeToken(
     companion object {
         private const val SHA_256_HEX_LENGTH = 64
 
+        @Suppress("LongParameterList") // domain factory mirroring the entity fields (data-model.md §2)
         fun issue(
             id: UUID,
             userId: UUID,
