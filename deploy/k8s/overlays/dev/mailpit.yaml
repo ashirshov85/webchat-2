@@ -22,6 +22,10 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        # image has no USER directive — explicit non-root uid required,
+        # ports >1024 and in-memory storage need no privileges
+        runAsUser: 1000
+        runAsGroup: 1000
       containers:
         - name: mailpit
           image: axllent/mailpit:v1.29.7

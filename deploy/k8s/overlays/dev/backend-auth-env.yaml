@@ -1,0 +1,40 @@
+# Dev-only wiring of backend runtime dependencies (feature 002, T003/T007):
+# PostgreSQL + Redis + Mailpit deployed by this overlay; credentials come from
+# the postgres-credentials Secret (dev placeholders, postgres.yaml). Auth
+# pepper/JWT values are dev placeholders too — real keys arrive with T028
+# (research.md §4) via K8s Secrets; no real secrets in the repo (SC-005).
+# Read by backend/src/main/resources/application.yml (spring.*, auth.*).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: SPRING_DATASOURCE_URL
+              value: jdbc:postgresql://postgres.dev.svc.cluster.local:5432/webchat
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_USER
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: POSTGRES_PASSWORD
+            - name: SPRING_DATA_REDIS_HOST
+              value: redis.dev.svc.cluster.local
+            - name: SPRING_MAIL_HOST
+              value: mailpit.dev.svc.cluster.local
+            - name: SPRING_MAIL_PORT
+              value: "1025"
+            - name: AUTH_IP_HASH_PEPPER
+              value: dev-only-pepper-placeholder
+            - name: AUTH_JWT_KEYS
+              value: dev-1=dev-placeholder-p256-pem
+            - name: AUTH_JWT_ACTIVE_KID
+              value: dev-1
