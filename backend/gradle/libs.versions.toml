@@ -1,5 +1,6 @@
 [versions]
 bucket4j = "8.19.0"
+bouncycastle = "1.81"
 detekt = "1.23.8"
 datasourceMicrometer = "1.1.2"
 kotlin = "2.2.21"
@@ -10,6 +11,7 @@ springBoot = "3.5.16"
 [libraries]
 bucket4j-jdk17-core = { module = "com.bucket4j:bucket4j_jdk17-core", version.ref = "bucket4j" }
 bucket4j-jdk17-lettuce = { module = "com.bucket4j:bucket4j_jdk17-lettuce", version.ref = "bucket4j" }
+bouncycastle-bcprov = { module = "org.bouncycastle:bcprov-jdk18on", version.ref = "bouncycastle" }
 datasource-micrometer-spring-boot = { module = "net.ttddyy.observation:datasource-micrometer-spring-boot", version.ref = "datasourceMicrometer" }
 flyway-core = { module = "org.flywaydb:flyway-core" }
 flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }

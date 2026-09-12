@@ -10,6 +10,9 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.annotation.web.invoke
 import org.springframework.security.config.http.SessionCreationPolicy
 import org.springframework.security.core.AuthenticationException
+import org.springframework.security.crypto.argon2.Argon2PasswordEncoder
+import org.springframework.security.crypto.password.DelegatingPasswordEncoder
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.savedrequest.NullRequestCache
@@ -17,6 +20,12 @@ import org.springframework.security.web.savedrequest.NullRequestCache
 @Configuration
 @EnableWebSecurity
 class SecurityConfig {
+    @Bean
+    fun passwordEncoder(): PasswordEncoder {
+        val argon2 = Argon2PasswordEncoder(SALT_BYTES, HASH_BYTES, PARALLELISM, MEMORY_KIB, ITERATIONS)
+        return DelegatingPasswordEncoder(ENCODING_ID, mapOf(ENCODING_ID to argon2))
+    }
+
     @Bean
     fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
         http {
@@ -60,5 +69,14 @@ class SecurityConfig {
             const val UNAUTHORIZED_BODY =
                 """{"title":"Unauthorized","status":401,"detail":"Not authenticated"}"""
         }
+    }
+
+    private companion object {
+        const val ENCODING_ID = "argon2"
+        const val SALT_BYTES = 16
+        const val HASH_BYTES = 32
+        const val PARALLELISM = 1
+        const val MEMORY_KIB = 19456
+        const val ITERATIONS = 2
     }
 }
