@@ -29,6 +29,11 @@ server:
       persistent: false
       tracking-modes: ""
 
+app:
+  # SPA origin for one-time links in transactional letters (api-contract.md §1);
+  # dev default is the Vite server, prod value from env (quickstart.md §2)
+  public-base-url: ${APP_PUBLIC_BASE_URL:http://localhost:5173}
+
 auth:
   token:
     # research.md §11: access 5 min (FR-006), refresh 3 days sliding (FR-006)
