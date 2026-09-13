@@ -1,0 +1,8 @@
+title = "webchat gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Kotlin invariant tokenHash.length == SHA_256_HEX_LENGTH is a length check against a named constant, not a credential (generic-api-key false positive, commit 2d456d8)"
+regexes = ['''SHA_256_HEX_LENGTH''']
