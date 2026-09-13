@@ -73,6 +73,23 @@ class TokenService(
     }
 
     /**
+     * Resolves [openValue] to its stored token WITHOUT consuming it: only an
+     * unused, unexpired token of [expectedPurpose] matches (FR-012 guards).
+     * Lets callers run pre-checks (e.g. the password policy) before the atomic
+     * consumption — a failed pre-check leaves the link usable.
+     */
+    fun findActive(
+        openValue: String,
+        expectedPurpose: TokenPurpose,
+    ): OneTimeToken? {
+        val token = tokenRepository.findByTokenHash(hash(openValue))
+        return when {
+            token == null || token.purpose != expectedPurpose -> null
+            else -> token.takeIf { it.isActive(clock.now()) }
+        }
+    }
+
+    /**
      * Resolves [openValue] to its stored token and conditionally consumes it
      * (FR-012): only an unused, unexpired token of [expectedPurpose] is
      * accepted; `null` is returned otherwise with no side effects.
