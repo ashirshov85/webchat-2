@@ -1,9 +1,23 @@
-# Dev-only wiring of backend runtime dependencies (feature 002, T003/T007):
-# PostgreSQL + Redis + Mailpit deployed by this overlay; credentials come from
-# the postgres-credentials Secret (dev placeholders, postgres.yaml). Auth
+# Dev-only wiring of backend runtime dependencies (feature 002, T003/T007/T025e):
+# PostgreSQL + Redis deployed by this overlay; credentials come from the
+# postgres-credentials Secret (dev placeholders, postgres.yaml). Auth
 # pepper/JWT values are dev placeholders too — real keys arrive with T028
 # (research.md §4) via K8s Secrets; no real secrets in the repo (SC-005).
 # Read by backend/src/main/resources/application.yml (spring.*, auth.*).
+#
+# Mail (T025e): real SMTP provider (smtp.mail.ru :465 implicit TLS) instead of
+# in-cluster Mailpit. The smtp-credentials Secret is created OUTSIDE the repo on
+# the cluster (SC-005) with a technical mailbox + "password for external apps":
+#   kubectl -n dev create secret generic smtp-credentials \
+#     --from-literal=SPRING_MAIL_USERNAME='<technical mailbox>' \
+#     --from-literal=SPRING_MAIL_PASSWORD='<external app password>'
+# AUTH_MAIL_FROM reads the same SPRING_MAIL_USERNAME key, so From always equals
+# the authenticated mailbox by construction. APP_PUBLIC_BASE_URL points one-time
+# links at the public SPA (defect: localhost links in Mailpit letters) instead
+# of the local default http://localhost:5173. Mailpit stays deployed
+# (mailpit.yaml) as a rollback target (T025f: mailpit.dev.svc.cluster.local:1025
+# + clearing the auth flags restores the quickstart scenario, no image rebuild);
+# local docker-compose keeps Mailpit too (quickstart.md §2).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,9 +43,33 @@ spec:
             - name: SPRING_DATA_REDIS_HOST
               value: redis.dev.svc.cluster.local
             - name: SPRING_MAIL_HOST
-              value: mailpit.dev.svc.cluster.local
+              value: smtp.mail.ru
             - name: SPRING_MAIL_PORT
-              value: "1025"
+              value: "465"
+            - name: SPRING_MAIL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: SPRING_MAIL_USERNAME
+            - name: SPRING_MAIL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: SPRING_MAIL_PASSWORD
+            # provider SMTP: auth + implicit TLS on :465 (T025d env plumbing)
+            - name: SPRING_MAIL_SMTP_AUTH
+              value: "true"
+            - name: SPRING_MAIL_SMTP_SSL_ENABLE
+              value: "true"
+            # transactional sender = authenticated mailbox (see header comment)
+            - name: AUTH_MAIL_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: smtp-credentials
+                  key: SPRING_MAIL_USERNAME
+            # one-time links point at the public SPA, not the local Vite default
+            - name: APP_PUBLIC_BASE_URL
+              value: https://dev.webchat.lkshr.ru
             - name: AUTH_IP_HASH_PEPPER
               value: dev-only-pepper-placeholder
             - name: AUTH_JWT_KEYS
