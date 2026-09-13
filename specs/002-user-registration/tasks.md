@@ -85,7 +85,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 - [X] T022c [US1] Дополнить `backend/src/main/kotlin/webchat/backend/auth/domain/service/RegistrationService.kt`: confirm (поглощение email_verification → выдача password_setup в ответе), setPassword (политика FR-004 через T022a; Argon2-хеш; статус `active`); записи AuthEvents — FR-003, FR-012 (зависит от T022a, T022b — тот же файл)
 - [X] T023 [US1] Реализовать `backend/src/main/kotlin/webchat/backend/auth/api/RegisterController.kt` (+ DTO в `auth/api/dto/`): POST `/auth/register` (202/400/409/429), `/auth/register/resend` (202 всегда единообразно/400/429; для 429 от cooldown — `Retry-After` = 60 − elapsed), `/auth/register/confirm` (200 `{setupToken, setupTokenType, expiresInSec}`/400/429), `/auth/register/password` (204/400/429) — problem+json строго по контракту №1–4; GREEN по T013a–T013c
 - [X] T024 [P] [US1] Создать типизированные вызовы endpoints 1–4 в `frontend/src/api/auth.ts` (типы из `frontend/src/api/schema.d.ts`); критерий: `tsc` strict без ошибок; типы только из schema.d.ts
-- [ ] T025 [P] [US1] Создать страницы `frontend/src/auth/pages/RegisterPage.tsx`, `frontend/src/auth/pages/ConfirmRegistrationPage.tsx`, `frontend/src/auth/pages/SetPasswordPage.tsx` + маршруты `/register`, `/confirm-registration`, `/set-password` в `frontend/src/App.tsx`; GREEN по T014
+- [X] T025 [P] [US1] Создать страницы `frontend/src/auth/pages/RegisterPage.tsx`, `frontend/src/auth/pages/ConfirmRegistrationPage.tsx`, `frontend/src/auth/pages/SetPasswordPage.tsx` + маршруты `/register`, `/confirm-registration`, `/set-password` в `frontend/src/App.tsx`; GREEN по T014
 
 **Checkpoint**: US1 полностью работает и проверяется независимо (quickstart §4.1–4.2 через Mailpit).
 
