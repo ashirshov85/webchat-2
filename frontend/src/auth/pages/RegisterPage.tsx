@@ -32,10 +32,10 @@ export function RegisterPage() {
     <section>
       <h2>Create your account</h2>
       {submittedEmail !== null && (
-        <p role="status">
+        <output>
           Check your email ({submittedEmail}): we sent a confirmation link. It is valid for 24
           hours.
-        </p>
+        </output>
       )}
       <form onSubmit={handleSubmit} noValidate>
         {error !== null && <p role="alert">{error}</p>}

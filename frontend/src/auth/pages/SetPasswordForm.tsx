@@ -4,11 +4,11 @@ import { setPassword } from '../../api/auth'
 import { problemMessage } from '../problem'
 
 interface SetPasswordFormProps {
-  setupToken: string
+  readonly setupToken: string
 }
 
 export function SetPasswordForm({ setupToken }: SetPasswordFormProps) {
-  const [password, setPasswordValue] = useState('')
+  const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState(false)
@@ -16,9 +16,9 @@ export function SetPasswordForm({ setupToken }: SetPasswordFormProps) {
 
   if (done) {
     return (
-      <p role="status">
+      <output>
         Password set — registration complete. You can now <a href="/login">log in</a>.
-      </p>
+      </output>
     )
   }
 
@@ -29,13 +29,13 @@ export function SetPasswordForm({ setupToken }: SetPasswordFormProps) {
 
   async function submit() {
     setError(null)
-    if (password !== confirmPassword) {
+    if (newPassword !== confirmPassword) {
       setError('Passwords do not match. The link stays valid — correct them and try again.')
       return
     }
     setSubmitting(true)
     try {
-      await setPassword({ setupToken, password, confirmPassword })
+      await setPassword({ setupToken, password: newPassword, confirmPassword })
       setDone(true)
     } catch (err) {
       setError(problemMessage(err))
@@ -54,8 +54,8 @@ export function SetPasswordForm({ setupToken }: SetPasswordFormProps) {
           name="password"
           type="password"
           autoComplete="new-password"
-          value={password}
-          onChange={(event) => setPasswordValue(event.target.value)}
+          value={newPassword}
+          onChange={(event) => setNewPassword(event.target.value)}
           required
           minLength={8}
           maxLength={128}

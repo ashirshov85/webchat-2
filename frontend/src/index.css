@@ -132,6 +132,7 @@ button:disabled {
   overflow-wrap: break-word;
 }
 
+output,
 [role='status'] {
   margin: 0 0 14px;
   padding: 10px 12px;

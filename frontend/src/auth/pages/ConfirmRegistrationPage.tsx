@@ -41,7 +41,7 @@ export function ConfirmRegistrationPage() {
       )}
       {state.phase === 'confirmed' && (
         <>
-          <p role="status">Email confirmed. Choose a password to finish creating your account.</p>
+          <output>Email confirmed. Choose a password to finish creating your account.</output>
           <SetPasswordForm setupToken={state.setupToken} />
         </>
       )}
