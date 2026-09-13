@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
+import type { SubmitEvent } from 'react'
 import { register } from '../../api/auth'
 import { problemMessage } from '../problem'
 
@@ -10,7 +10,7 @@ export function RegisterPage() {
   const [submittedEmail, setSubmittedEmail] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     void submit()
   }

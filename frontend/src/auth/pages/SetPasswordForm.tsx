@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { FormEvent } from 'react'
+import type { SubmitEvent } from 'react'
 import { setPassword } from '../../api/auth'
 import { problemMessage } from '../problem'
 
@@ -22,7 +22,7 @@ export function SetPasswordForm({ setupToken }: SetPasswordFormProps) {
     )
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault()
     void submit()
   }
