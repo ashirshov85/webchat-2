@@ -16,9 +16,23 @@ spring:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
       port: ${SPRING_DATA_REDIS_PORT:6379}
   mail:
-    # dev: Mailpit SMTP (quickstart.md §2)
+    # dev: Mailpit SMTP (quickstart.md §2); real provider via SPRING_MAIL_* env only,
+    # no code changes (SmtpEmailGateway, DIP-port unchanged); secrets only env/K8s Secrets (SC-005)
     host: ${SPRING_MAIL_HOST:localhost}
     port: ${SPRING_MAIL_PORT:1025}
+    username: ${SPRING_MAIL_USERNAME:}
+    password: ${SPRING_MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          # provider SMTP auth; defaults (false/empty) keep local Mailpit unchanged
+          auth: ${SPRING_MAIL_SMTP_AUTH:false}
+          ssl:
+            # implicit TLS (port 465)
+            enable: ${SPRING_MAIL_SMTP_SSL_ENABLE:false}
+          starttls:
+            # STARTTLS (port 587)
+            enable: ${SPRING_MAIL_SMTP_STARTTLS_ENABLE:false}
 
 server:
   port: 8080
