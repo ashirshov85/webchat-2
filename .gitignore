@@ -10,6 +10,7 @@ build
 # Frontend (no trailing slash: also ignores node_modules symlinks, e.g. on WSL/drvfs)
 node_modules
 dist/
+.scannerwork/
 
 # Secrets / local env
 .env
@@ -19,3 +20,6 @@ dist/
 .DS_Store
 *.log
 *.tmp
+
+# Local analysis reports (scripts/sonar-issues.sh)
+tmp/

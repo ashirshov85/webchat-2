@@ -71,6 +71,47 @@ jobs:
       - name: Build
         run: pnpm build
 
+  sonar:
+    name: sonar (static analysis)
+    runs-on: ubuntu-latest
+    if: vars.SONAR_ENABLED == 'true'
+    env:
+      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL || 'http://localhost:9000' }}
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 (Temurin) with Gradle cache
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Backend scan
+        working-directory: backend
+        run: ./gradlew sonar
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
+      - name: Set up Node 24 with pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm --dir frontend install --frozen-lockfile
+
+      - name: Frontend scan
+        working-directory: frontend
+        run: pnpm sonar
+
   gitleaks:
     name: gitleaks (secret scanning)
     runs-on: ubuntu-latest

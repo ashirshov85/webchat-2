@@ -1,6 +1,7 @@
 # Gradle build cache and outputs are rebuilt inside the Docker build stage
 .gradle/
 build/
+.kotlin/
 out/
 
 # Local env and logs never enter the image build context

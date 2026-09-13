@@ -1,6 +1,8 @@
 # Local development infrastructure for feature 002 (quickstart.md §2):
-#   PostgreSQL 17 :5432, Redis 7 :6379, Mailpit :8025 (UI) / :1025 (SMTP)
+#   PostgreSQL 17 :5432, Redis 7 :6379, Mailpit :8025 (UI) / :1025 (SMTP),
+#   SonarQube LTS :9000 (static analysis) + dedicated PostgreSQL for it
 # Usage: docker compose -f deploy/local/docker-compose.yml up -d
+# SonarQube on Linux requires: sudo sysctl -w vm.max_map_count=524288
 
 services:
   postgres:
@@ -48,5 +50,49 @@ services:
       retries: 10
     restart: unless-stopped
 
+  sonar-postgres:
+    image: postgres:17
+    container_name: webchat-sonar-postgres
+    environment:
+      POSTGRES_DB: ${SONAR_DB:-sonar}
+      POSTGRES_USER: ${SONAR_DB_USER:-sonar}
+      POSTGRES_PASSWORD: ${SONAR_DB_PASSWORD:-sonar}
+    volumes:
+      - sonar-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-sonar}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  sonarqube:
+    image: sonarqube:26.9.0.129388-community
+    container_name: webchat-sonarqube
+    depends_on:
+      sonar-postgres:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonar-postgres:5432/${SONAR_DB:-sonar}
+      SONAR_JDBC_USERNAME: ${SONAR_DB_USER:-sonar}
+      SONAR_JDBC_PASSWORD: ${SONAR_DB_PASSWORD:-sonar}
+    ports:
+      - "9000:9000" # Web UI + scanner API
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+      - sonarqube-logs:/opt/sonarqube/logs
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9000/api/system/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+
 volumes:
   postgres-data:
+  sonar-postgres-data:
+  sonarqube-data:
+  sonarqube-extensions:
+  sonarqube-logs:
