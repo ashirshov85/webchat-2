@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.spring.boot)
     alias(libs.plugins.ktlint)
     alias(libs.plugins.detekt)
+    alias(libs.plugins.sonarqube)
 }
 
 group = "webchat"
@@ -45,4 +46,13 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+sonar {
+    properties {
+        property("sonar.projectKey", "webchat-backend")
+        property("sonar.projectName", "webchat-backend")
+        property("sonar.host.url", providers.environmentVariable("SONAR_HOST_URL").orElse("http://localhost:9000").get())
+        providers.environmentVariable("SONAR_TOKEN").orNull?.let { property("sonar.token", it) }
+    }
 }

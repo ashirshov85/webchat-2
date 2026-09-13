@@ -6,6 +6,7 @@ datasourceMicrometer = "1.1.2"
 kotlin = "2.2.21"
 ktlintPlugin = "13.1.0"
 logstashLogbackEncoder = "8.1"
+sonarqubePlugin = "7.5.0.8588"
 springBoot = "3.5.16"
 
 [libraries]
@@ -39,4 +40,5 @@ detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-spring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintPlugin" }
+sonarqube = { id = "org.sonarqube", version.ref = "sonarqubePlugin" }
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
