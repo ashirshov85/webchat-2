@@ -7,6 +7,4 @@
  * client — no fetch calls are made in this feature (FR-015, see
  * contracts/technical-endpoints.md §2).
  */
-import type { components, paths } from './schema'
-
-export type { components, paths }
+export type { components, paths } from './schema'
