@@ -247,6 +247,17 @@ class RegistrationFlowIT(
             userId,
             oldTokenHash,
         )
+        // a real pending account has already received its registration letter —
+        // the resumption letter must be the SECOND email_verification row
+        jdbcTemplate.update(
+            """
+            INSERT INTO email_outbox (id, user_id, recipient_email, email_type, payload)
+            VALUES (?, ?, ?, 'email_verification', '{"subject":"Verify your email"}'::jsonb)
+            """.trimIndent(),
+            UUID.randomUUID(),
+            userId,
+            "resume@example.com",
+        )
 
         val response = register("resume", "resume@example.com")
 
@@ -581,7 +592,7 @@ class RegistrationFlowIT(
         val rows =
             jdbcTemplate.queryForList(
                 """
-                SELECT id, username, email, password_hash, status::text AS status, email_confirmed_at
+                SELECT id, username, email, password_hash, status::text AS status, email_confirmed_at, password_set_at
                 FROM users WHERE lower(username) = ?
                 """.trimIndent(),
                 username.lowercase(),
