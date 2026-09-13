@@ -26,6 +26,6 @@ data class EmailMessage(
  * (SC-007). Implementations must never log message bodies: they carry open
  * one-time tokens (SC-005).
  */
-interface EmailGateway {
+fun interface EmailGateway {
     fun send(message: EmailMessage)
 }
