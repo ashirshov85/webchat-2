@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components, operations } from '../../../api/schema'
+import type { ApiProblem } from '../../../api/auth'
 import { LoginPage } from '../LoginPage'
 
 type Problem = components['schemas']['Problem']
@@ -106,7 +107,7 @@ describe('LoginPage', () => {
       status: 429,
       detail: 'Too many attempts',
       retryAfterSec: 42,
-    } satisfies Problem)
+    } satisfies ApiProblem)
     render(<LoginPage />)
 
     fillLoginForm('alice', 'correct horse')

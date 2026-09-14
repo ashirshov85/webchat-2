@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ConfirmRegistrationPage } from './auth/pages/ConfirmRegistrationPage'
+import { LoginPage } from './auth/pages/LoginPage'
 import { RegisterPage } from './auth/pages/RegisterPage'
 import { SetPasswordPage } from './auth/pages/SetPasswordPage'
 
@@ -12,10 +13,13 @@ function renderRoute(pathname: string): ReactNode {
       return <ConfirmRegistrationPage />
     case '/set-password':
       return <SetPasswordPage />
+    case '/login':
+      return <LoginPage />
     default:
       return (
         <p>
-          Project foundation skeleton. <a href="/register">Create an account</a>.
+          Project foundation skeleton. <a href="/register">Create an account</a> or{' '}
+          <a href="/login">log in</a>.
         </p>
       )
   }
