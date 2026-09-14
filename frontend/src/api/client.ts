@@ -54,11 +54,9 @@ async function performRefresh(refreshToken: string): Promise<TokenPair | null> {
 let inflightRefresh: Promise<TokenPair | null> | null = null
 
 function refreshOnce(refreshToken: string): Promise<TokenPair | null> {
-  if (inflightRefresh === null) {
-    inflightRefresh = performRefresh(refreshToken).finally(() => {
-      inflightRefresh = null
-    })
-  }
+  inflightRefresh ??= performRefresh(refreshToken).finally(() => {
+    inflightRefresh = null
+  })
   return inflightRefresh
 }
 
