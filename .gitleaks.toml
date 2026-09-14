@@ -4,5 +4,6 @@ title = "webchat gitleaks configuration"
 useDefault = true
 
 [allowlist]
-description = "Kotlin invariant tokenHash.length == SHA_256_HEX_LENGTH is a length check against a named constant, not a credential (generic-api-key false positive, commit 2d456d8)"
-regexes = ['''SHA_256_HEX_LENGTH''']
+description = "Known false positives: Kotlin invariant tokenHash.length == SHA_256_HEX_LENGTH is a length check against a named constant, not a credential (generic-api-key, commit 2d456d8); JwtService PKCS8_BEGIN is the PEM header marker constant used to parse keys, not a key itself (private-key, commit 4446baf)"
+regexTarget = "line"
+regexes = ['''SHA_256_HEX_LENGTH''', '''const val PKCS8_BEGIN''']
