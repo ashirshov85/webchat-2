@@ -2,7 +2,10 @@ package webchat.backend.auth.domain.service
 
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import webchat.backend.auth.domain.model.RefreshToken
 import webchat.backend.auth.domain.model.RevokedReason
 import webchat.backend.auth.domain.model.Session
@@ -69,7 +72,20 @@ class SessionService(
     private val authEventRecorder: AuthEventRecorder,
     private val authTokenProperties: AuthTokenProperties,
     private val clock: Clock,
+    transactionManager: PlatformTransactionManager,
 ) {
+    /**
+     * Independent REQUIRES_NEW template for the reuse revocation: the
+     * surrounding rotation transaction rolls back when the uniform 401 is
+     * thrown, but the compromise verdict must SURVIVE that rollback (the
+     * Redis marker and the journal entries are written after this
+     * transaction commits).
+     */
+    private val reuseRevocationTx =
+        TransactionTemplate(transactionManager).apply {
+            propagationBehavior = TransactionDefinition.PROPAGATION_REQUIRES_NEW
+        }
+
     /**
      * Opens a fresh session at login (FR-006): session row + first refresh
      * generation + access token, atomically. The login_success event itself
@@ -200,31 +216,46 @@ class SessionService(
     /**
      * Reuse handling (data-model.md §4): only a still-active session is a NEW
      * compromise — repeat presentations of dead generations stay silent, so
-     * one incident yields exactly one journal entry of each kind.
+     * one incident yields exactly one journal entry of each kind. The PG
+     * transition runs committed in its own transaction because the caller
+     * subsequently throws the uniform 401 and rolls the rotation back.
      */
     private fun onReuseDetected(
         session: Session,
         clientIp: String,
         userAgent: String?,
     ) {
-        if (!session.isActive || !sessionRepository.markCompromised(session.id)) {
+        if (!session.isActive) {
             return
         }
-        refreshTokenRepository.revokeActiveForSession(session.id)
+        val newlyCompromised =
+            reuseRevocationTx.execute {
+                if (!sessionRepository.markCompromised(session.id)) {
+                    return@execute false
+                }
+                refreshTokenRepository.revokeActiveForSession(session.id)
+                // The journal entries join THIS transaction: written through
+                // JdbcTemplate they would otherwise participate in the outer
+                // rotation transaction and be rolled back with the 401
+                authEventRecorder.record(
+                    eventType = AuthEventType.REFRESH_REUSE_DETECTED,
+                    clientIp = clientIp,
+                    userAgent = userAgent,
+                    userId = session.userId,
+                )
+                authEventRecorder.record(
+                    eventType = AuthEventType.SESSION_REVOKED,
+                    clientIp = clientIp,
+                    userAgent = userAgent,
+                    userId = session.userId,
+                    details = mapOf(DETAIL_REASON to RevokedReason.REFRESH_REUSE_DETECTED.name.lowercase()),
+                )
+                true
+            } ?: false
+        if (!newlyCompromised) {
+            return
+        }
         denylistSid(session.id)
-        authEventRecorder.record(
-            eventType = AuthEventType.REFRESH_REUSE_DETECTED,
-            clientIp = clientIp,
-            userAgent = userAgent,
-            userId = session.userId,
-        )
-        authEventRecorder.record(
-            eventType = AuthEventType.SESSION_REVOKED,
-            clientIp = clientIp,
-            userAgent = userAgent,
-            userId = session.userId,
-            details = mapOf(DETAIL_REASON to RevokedReason.REFRESH_REUSE_DETECTED.name.lowercase()),
-        )
     }
 
     /** Mints the first generation of a fresh session plus its access token. */

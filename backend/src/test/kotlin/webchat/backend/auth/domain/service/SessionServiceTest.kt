@@ -13,6 +13,7 @@ import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.ValueOperations
+import org.springframework.transaction.PlatformTransactionManager
 import webchat.backend.auth.domain.model.RefreshToken
 import webchat.backend.auth.domain.model.RefreshTokenStatus
 import webchat.backend.auth.domain.model.RevokedReason
@@ -56,6 +57,11 @@ class SessionServiceTest {
 
     private val authEventRecorder: AuthEventRecorder = Mockito.mock(AuthEventRecorder::class.java)
 
+    // REQUIRES_NEW reuse revocation: a mocked manager still runs the callback
+    // synchronously — the unit mirror asserts the sequence, not the TX boundaries
+    private val transactionManager: PlatformTransactionManager =
+        Mockito.mock(PlatformTransactionManager::class.java)
+
     private val clock: Clock = Clock { FIXED_NOW }
 
     private lateinit var service: SessionService
@@ -71,6 +77,7 @@ class SessionServiceTest {
                 authEventRecorder = authEventRecorder,
                 authTokenProperties = TOKEN_PROPERTIES,
                 clock = clock,
+                transactionManager = transactionManager,
             )
     }
 
