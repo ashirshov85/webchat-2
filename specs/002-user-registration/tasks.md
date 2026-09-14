@@ -106,7 +106,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 ### Tests for User Story 2 (сначала RED)
 
 - [X] T026 [P] [US2] Написать IT `backend/src/test/kotlin/webchat/backend/auth/SessionIT.kt`: US2-1…US2-5 — вход по username и по email → 200 пара; единый 401 (тайминги выравнены — фиктивный хеш), в т.ч. пароль короче 8 символов → 401 `Invalid credentials`, не 400 (контракт §4: `password: string(1..128)`); 403 «завершите регистрацию»; ротация (старый refresh повторно → 401, цепочка отозвана, denylist sid); logout → 204, оба токена отклоняются; две параллельные сессии независимы — logout одной не отзывает другую (edge spec); в auth_events зафиксированы `refresh_rotated`, `logout` и `refresh_reuse_detected` + `session_revoked{reason=logout|refresh_reuse_detected}` (без секретов) — FR-013 ([api-contract.md №5–7](./contracts/api-contract.md))
-- [ ] T027 [P] [US2] Написать Vitest-тесты `frontend/src/api/__tests__/client.test.ts` и `frontend/src/auth/pages/__tests__/LoginPage.test.tsx`: Bearer-интерцептор, авто-refresh single-flight (параллельные 401 → один refresh), единый обработчик 401, поток логина
+- [X] T027 [P] [US2] Написать Vitest-тесты `frontend/src/api/__tests__/client.test.ts` и `frontend/src/auth/pages/__tests__/LoginPage.test.tsx`: Bearer-интерцептор, авто-refresh single-flight (параллельные 401 → один refresh), единый обработчик 401, поток логина
 
 ### Implementation for User Story 2
 
