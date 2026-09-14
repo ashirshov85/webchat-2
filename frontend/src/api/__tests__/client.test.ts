@@ -56,7 +56,9 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function refreshCalls(): [RequestInfo | URL, RequestInit | undefined][] {
+type FetchCall = [input: RequestInfo | URL, init?: RequestInit | undefined]
+
+function refreshCalls(): FetchCall[] {
   return fetchMock.mock.calls.filter(([input]) => urlOf(input) === '/api/v1/auth/refresh')
 }
 
@@ -150,9 +152,9 @@ describe('apiFetch auto-refresh', () => {
     expect(secondResponse.status).toBe(200)
     expect(refreshCalls()).toHaveLength(1)
     expect(session.setTokenPair).toHaveBeenCalledTimes(1)
-    expect(fetchMock).toHaveBeenCalledTimes(4)
-    const firstRetry = fetchMock.mock.calls[2]!
-    const secondRetry = fetchMock.mock.calls[3]!
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+    const firstRetry = fetchMock.mock.calls[3]!
+    const secondRetry = fetchMock.mock.calls[4]!
     expect(authorizationOf(firstRetry[0], firstRetry[1])).toBe('Bearer access-new')
     expect(authorizationOf(secondRetry[0], secondRetry[1])).toBe('Bearer access-new')
   })
