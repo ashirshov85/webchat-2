@@ -11,6 +11,7 @@ import com.nimbusds.jwt.JWTClaimsSet
 import com.nimbusds.jwt.SignedJWT
 import org.bouncycastle.jcajce.provider.asymmetric.util.EC5Util
 import org.bouncycastle.jce.ECNamedCurveTable
+import org.bouncycastle.jce.spec.ECNamedCurveParameterSpec
 import org.springframework.stereotype.Component
 import webchat.backend.auth.domain.port.Clock
 import webchat.backend.config.AuthJwtProperties
@@ -277,7 +278,7 @@ class JwtService(
         const val NEWLINE = "\n"
         const val CARRIAGE_RETURN = "\r"
 
-        val P256_PARAMETERS = ECNamedCurveTable.getParameterSpec("secp256r1")
+        val P256_PARAMETERS: ECNamedCurveParameterSpec = ECNamedCurveTable.getParameterSpec("secp256r1")
 
         // verification-side tolerance for minor clock offsets across replicas (research.md §5)
         val CLOCK_SKEW: Duration = Duration.ofSeconds(60)
