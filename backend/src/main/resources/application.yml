@@ -102,7 +102,8 @@ auth:
   # secrets come from env / K8s Secrets only (SC-005); no values in the repo
   ip-hash-pepper: ${AUTH_IP_HASH_PEPPER}
   jwt:
-    # AUTH_JWT_KEYS: kid -> P-256 PEM mapping; ES256 access tokens (research.md §4)
+    # AUTH_JWT_KEYS: comma-separated kid=P-256 PEM (raw or Base64-of-PEM);
+    # active kid signs, the rest stay verifiable for rotation (research.md §4)
     keys: ${AUTH_JWT_KEYS}
     active-kid: ${AUTH_JWT_ACTIVE_KID}
 

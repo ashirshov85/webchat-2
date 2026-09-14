@@ -42,13 +42,14 @@ class RegisterController(
         @RequestBody request: RegisterRequest,
         servletRequest: HttpServletRequest,
     ): ResponseEntity<Unit> {
-        requireFields(
-            USERNAME_FIELD to request.username,
-            EMAIL_FIELD to request.email,
-        )
+        val fields =
+            requireFields(
+                USERNAME_FIELD to request.username,
+                EMAIL_FIELD to request.email,
+            )
         registrationService.register(
-            username = request.username!!,
-            email = request.email!!,
+            username = fields.getValue(USERNAME_FIELD),
+            email = fields.getValue(EMAIL_FIELD),
             clientIp = clientIp(servletRequest),
             userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
         )
@@ -61,9 +62,9 @@ class RegisterController(
         @RequestBody request: ResendRequest,
         servletRequest: HttpServletRequest,
     ): ResponseEntity<Unit> {
-        requireFields(EMAIL_FIELD to request.email)
+        val fields = requireFields(EMAIL_FIELD to request.email)
         registrationService.resend(
-            email = request.email!!,
+            email = fields.getValue(EMAIL_FIELD),
             clientIp = clientIp(servletRequest),
             userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
         )
@@ -99,14 +100,15 @@ class RegisterController(
         servletRequest: HttpServletRequest,
     ): ResponseEntity<Unit> {
         val setupToken = request.setupToken ?: throw InvalidRegistrationTokenException()
-        requireFields(
-            PASSWORD_FIELD to request.password,
-            CONFIRM_PASSWORD_FIELD to request.confirmPassword,
-        )
+        val fields =
+            requireFields(
+                PASSWORD_FIELD to request.password,
+                CONFIRM_PASSWORD_FIELD to request.confirmPassword,
+            )
         registrationService.setPassword(
             setupToken = setupToken,
-            password = request.password!!,
-            confirmPassword = request.confirmPassword!!,
+            password = fields.getValue(PASSWORD_FIELD),
+            confirmPassword = fields.getValue(CONFIRM_PASSWORD_FIELD),
             clientIp = clientIp(servletRequest),
             userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
         )
@@ -116,15 +118,14 @@ class RegisterController(
     /**
      * Presence gate: absent fields become a field-level `Problem.errors`
      * 400 (api-contract.md §3); format rules are the service's (T022b).
+     * Returns the resolved non-null values keyed by field name.
      */
-    private fun requireFields(vararg fields: Pair<String, String?>) {
-        val missing =
-            fields
-                .mapNotNull { (name, value) -> name.takeIf { value == null }?.let { it to listOf(CODE_MISSING) } }
-                .toMap()
+    private fun requireFields(vararg fields: Pair<String, String?>): Map<String, String> {
+        val missing = fields.filter { it.second == null }.map { it.first }
         if (missing.isNotEmpty()) {
-            throw RegistrationValidationException(missing)
+            throw RegistrationValidationException(missing.associateWith { listOf(CODE_MISSING) })
         }
+        return fields.associate { (name, value) -> name to requireNotNull(value) }
     }
 
     /**

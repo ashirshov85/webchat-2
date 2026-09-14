@@ -1,3 +1,4 @@
+import { apiFetch } from './client'
 import type { components, operations } from './schema'
 
 export type Problem = components['schemas']['Problem']
@@ -14,6 +15,18 @@ export type SetPasswordRequest = components['schemas']['SetPasswordRequest']
 
 export type ConfirmRegistrationResponse =
   operations['confirmRegistration']['responses'][200]['content']['application/json']
+
+export type LoginRequest = components['schemas']['LoginRequest']
+
+export type RefreshRequest = components['schemas']['RefreshRequest']
+
+export type LogoutRequest = components['schemas']['LogoutRequest']
+
+export type TokenPair = components['schemas']['TokenPair']
+
+export type PublicUser = components['schemas']['PublicUser']
+
+export type LoginResponse = operations['login']['responses'][200]['content']['application/json']
 
 const BASE_URL = '/api/v1'
 
@@ -77,4 +90,45 @@ export async function confirmRegistration(
 
 export async function setPassword(body: SetPasswordRequest): Promise<void> {
   await post('/auth/register/password', body)
+}
+
+export async function login(body: LoginRequest): Promise<LoginResponse> {
+  const response = await post('/auth/login', body)
+  return (await response.json()) as LoginResponse
+}
+
+export async function refreshTokens(body: RefreshRequest): Promise<TokenPair> {
+  const response = await post('/auth/refresh', body)
+  return (await response.json()) as TokenPair
+}
+
+async function authedPost(path: string, body: unknown): Promise<Response> {
+  const response = await apiFetch(path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, application/problem+json',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    const problem: unknown = await toApiProblem(response)
+    throw problem
+  }
+  return response
+}
+
+export async function logout(body: LogoutRequest): Promise<void> {
+  await authedPost('/auth/logout', body)
+}
+
+export async function getCurrentUser(): Promise<PublicUser> {
+  const response = await apiFetch('/users/me', {
+    headers: { Accept: 'application/json, application/problem+json' },
+  })
+  if (!response.ok) {
+    const problem: unknown = await toApiProblem(response)
+    throw problem
+  }
+  return (await response.json()) as PublicUser
 }

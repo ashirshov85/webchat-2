@@ -1,8 +1,8 @@
 # Dev-only wiring of backend runtime dependencies (feature 002, T003/T007/T025e):
 # PostgreSQL + Redis deployed by this overlay; credentials come from the
-# postgres-credentials Secret (dev placeholders, postgres.yaml). Auth
-# pepper/JWT values are dev placeholders too — real keys arrive with T028
-# (research.md §4) via K8s Secrets; no real secrets in the repo (SC-005).
+# postgres-credentials Secret (dev placeholders, postgres.yaml). The auth
+# pepper is a dev placeholder; real ES256 keys arrive via the out-of-repo
+# jwt-keys Secret (T028, research.md §4); no real secrets in the repo (SC-005).
 # Read by backend/src/main/resources/application.yml (spring.*, auth.*).
 #
 # Mail (T025e): real SMTP provider (smtp.mail.ru :465 implicit TLS) instead of
@@ -72,7 +72,23 @@ spec:
               value: https://dev.webchat.lkshr.ru
             - name: AUTH_IP_HASH_PEPPER
               value: dev-only-pepper-placeholder
+            # ES256 access-token keys (T028, research.md §4): kid=P-256 PKCS#8
+            # PEM, comma-separated for several kids; each PEM raw (newlines or
+            # \n escapes) or Base64-of-PEM for single-line values. The active
+            # kid signs, the others stay verifiable for rotation. Generated
+            # OUTSIDE the repo (SC-005) and stored in the jwt-keys Secret:
+            #   openssl ecparam -name prime256v1 -genkey -noout |
+            #     openssl pkcs8 -topk8 -nocrypt
+            #   kubectl -n dev create secret generic jwt-keys \
+            #     --from-literal=AUTH_JWT_KEYS='dev-1=<PEM or its Base64>' \
+            #     --from-literal=AUTH_JWT_ACTIVE_KID=dev-1
             - name: AUTH_JWT_KEYS
-              value: dev-1=dev-placeholder-p256-pem
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-keys
+                  key: AUTH_JWT_KEYS
             - name: AUTH_JWT_ACTIVE_KID
-              value: dev-1
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-keys
+                  key: AUTH_JWT_ACTIVE_KID

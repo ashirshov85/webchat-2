@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.http.MediaType
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
@@ -13,9 +14,12 @@ import org.springframework.security.core.AuthenticationException
 import org.springframework.security.crypto.argon2.Argon2PasswordEncoder
 import org.springframework.security.crypto.password.DelegatingPasswordEncoder
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.savedrequest.NullRequestCache
+import webchat.backend.auth.security.AuthJwtDecoder
+import webchat.backend.auth.security.JwtService
 
 @Configuration
 @EnableWebSecurity
@@ -26,12 +30,30 @@ class SecurityConfig {
         return DelegatingPasswordEncoder(ENCODING_ID, mapOf(ENCODING_ID to argon2))
     }
 
+    /**
+     * The resource-server decoder for access tokens (T032, research.md §4–§5):
+     * [AuthJwtDecoder] — `kid`-based key selection, signature/expiry/clock-skew
+     * validation via JwtService plus the Redis sid denylist; every failure mode
+     * becomes the uniform 401 of the security chain.
+     */
     @Bean
-    fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
+    fun jwtDecoder(
+        jwtService: JwtService,
+        redisTemplate: StringRedisTemplate,
+    ): JwtDecoder = AuthJwtDecoder(jwtService, redisTemplate)
+
+    @Bean
+    fun securityFilterChain(
+        http: HttpSecurity,
+        authJwtDecoder: JwtDecoder,
+    ): SecurityFilterChain {
         http {
             csrf { disable() }
             requestCache { requestCache = NullRequestCache() }
             sessionManagement { sessionCreationPolicy = SessionCreationPolicy.STATELESS }
+            oauth2ResourceServer {
+                jwt { jwtDecoder = authJwtDecoder }
+            }
             authorizeHttpRequests {
                 authorize("/api/v1/auth/register", permitAll)
                 authorize("/api/v1/auth/register/resend", permitAll)
