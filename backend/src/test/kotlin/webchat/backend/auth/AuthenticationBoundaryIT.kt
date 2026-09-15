@@ -276,6 +276,10 @@ class AuthenticationBoundaryIT(
             HttpHeaders().apply {
                 contentType = MediaType.APPLICATION_JSON
                 authorization?.let { set(HttpHeaders.AUTHORIZATION, it) }
+                // US5 buckets (T047) key on the source: one fresh documentation-range
+                // address per call keeps every request on the shared static Redis in
+                // its own bucket — no cross-test throttling, same assertions
+                set(X_FORWARDED_FOR_HEADER, uniqueSourceIp())
             }
         return restTemplate.postForEntity(path, HttpEntity(payload, headers), String::class.java)
     }
@@ -442,6 +446,13 @@ class AuthenticationBoundaryIT(
     )
 
     private companion object {
+        // 198.51.100.0/24 (TEST-NET-2) tail: unique per call, plenty for this class
+        const val SOURCE_IP_BASE = 200
+        var sourceIpCounter = 0
+
+        fun uniqueSourceIp(): String = "198.51.100.${SOURCE_IP_BASE + sourceIpCounter++}"
+
+        const val X_FORWARDED_FOR_HEADER = "X-Forwarded-For"
         const val PASSWORD = "Str0ng-Boundary-IT-Pass!"
         const val BEARER_PREFIX = "Bearer "
         const val BEARER_SCHEME = "Bearer"

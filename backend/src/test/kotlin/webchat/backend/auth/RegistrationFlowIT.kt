@@ -542,8 +542,7 @@ class RegistrationFlowIT(
                 username?.let { put("username", it) }
                 email?.let { put("email", it) }
             }
-        val headers = HttpHeaders().apply { contentType = MediaType.APPLICATION_JSON }
-        return restTemplate.postForEntity(REGISTER_PATH, HttpEntity(payload, headers), String::class.java)
+        return postJson(REGISTER_PATH, payload)
     }
 
     private fun errorFields(body: String?): Set<String> {
@@ -659,7 +658,7 @@ class RegistrationFlowIT(
         val headers =
             HttpHeaders().apply {
                 contentType = MediaType.APPLICATION_JSON
-                xForwardedFor?.let { set("X-Forwarded-For", it) }
+                set(X_FORWARDED_FOR_HEADER, xForwardedFor ?: uniqueSourceIp())
             }
         return restTemplate.postForEntity(
             RESEND_PATH,
@@ -686,7 +685,14 @@ class RegistrationFlowIT(
         path: String,
         payload: Map<String, String>,
     ): ResponseEntity<String> {
-        val headers = HttpHeaders().apply { contentType = MediaType.APPLICATION_JSON }
+        val headers =
+            HttpHeaders().apply {
+                contentType = MediaType.APPLICATION_JSON
+                // US5 buckets (T047) key on the source: one fresh documentation-range
+                // address per call keeps every test method its own bucket set on the
+                // shared static Redis — no cross-method throttling, same assertions
+                set(X_FORWARDED_FOR_HEADER, uniqueSourceIp())
+            }
         return restTemplate.postForEntity(path, HttpEntity(payload, headers), String::class.java)
     }
 
@@ -821,6 +827,13 @@ class RegistrationFlowIT(
             .joinToString("") { "%02x".format(it) }
 
     private companion object {
+        // 198.51.100.0/24 (TEST-NET-2) tail: unique per call, plenty for this class
+        const val SOURCE_IP_BASE = 100
+        var sourceIpCounter = 0
+
+        fun uniqueSourceIp(): String = "198.51.100.${SOURCE_IP_BASE + sourceIpCounter++}"
+
+        const val X_FORWARDED_FOR_HEADER = "X-Forwarded-For"
         const val REGISTER_PATH = "/api/v1/auth/register"
         const val RESEND_PATH = "/api/v1/auth/register/resend"
         const val CONFIRM_PATH = "/api/v1/auth/register/confirm"
