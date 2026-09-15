@@ -114,7 +114,7 @@ class PasswordResetIT(
         assertThat(oldPasswordLogin.statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
         assertThat(objectMapper.readTree(oldPasswordLogin.body)["detail"].asText())
             .isEqualTo("Invalid credentials")
-        val renewed = loginOkPair("rosalind", xForwardedFor = "198.51.100.95")
+        val renewed = loginOkPair("rosalind", newPassword, xForwardedFor = "198.51.100.95")
         assertThat(sessionIdOf(renewed.refreshToken)).isNotIn(setOf(sidA, sidB))
 
         // FR-010: EVERY session of the user is revoked with reason password_change
@@ -123,7 +123,12 @@ class PasswordResetIT(
         assertThat(sessionRow(sidB)!!["status"]).isEqualTo("revoked")
         assertThat(sessionRow(sidB)!!["revoked_reason"]).isEqualTo("password_change")
         assertThat(sessionRow(sessionIdOf(renewed.refreshToken)!!)!!["status"]).isEqualTo("active")
-        assertThat(activeRefreshCountForUser(uid)).isZero
+        listOf(sidA, sidB).forEach { sid ->
+            // FR-010: the pre-reset sessions keep no live refresh generation
+            assertThat(activeRefreshCountForSession(sid))
+                .overridingErrorMessage("session <%s> must have no active refresh token left", sid)
+                .isZero
+        }
 
         // both pre-reset tokens are dead: refresh → uniform 401, access → 401 via sid denylist
         assertThat(refresh(deviceA.refreshToken, xForwardedFor = "198.51.100.96").statusCode)
@@ -299,11 +304,13 @@ class PasswordResetIT(
             xForwardedFor,
         )
 
+    /** Successful login pair; [password] defaults to the seeded [PASSWORD] and is overridden after a reset. */
     private fun loginOkPair(
         identifier: String,
+        password: String = PASSWORD,
         xForwardedFor: String? = null,
     ): Tokens {
-        val response = login(identifier, PASSWORD, xForwardedFor)
+        val response = login(identifier, password, xForwardedFor)
         assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
         val body = objectMapper.readTree(response.body)
         return Tokens(body["accessToken"].asText(), body["refreshToken"].asText())
@@ -455,14 +462,11 @@ class PasswordResetIT(
                 sid,
             ).firstOrNull()
 
-    private fun activeRefreshCountForUser(userId: UUID): Int =
+    private fun activeRefreshCountForSession(sessionId: UUID): Int =
         jdbcTemplate.queryForObject(
-            """
-            SELECT COUNT(*) FROM refresh_tokens
-            WHERE user_id = ? AND status = 'active'
-            """.trimIndent(),
+            "SELECT COUNT(*) FROM refresh_tokens WHERE session_id = ? AND status = 'active'",
             Int::class.java,
-            userId,
+            sessionId,
         )
 
     private fun tokenHashes(

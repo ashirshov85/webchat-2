@@ -8,9 +8,9 @@ import webchat.backend.email.EmailType
 /**
  * T020 unit coverage for the letter/link source used by both outbox sides:
  * the enqueue-time payload (T022b) and the poller render (T021). The link
- * shape (`/confirm-registration?token=...`, `/set-password?token=...`) is
- * the GREEN criterion of T013a/T013c; the IT asserts it end-to-end through
- * the stored payload.
+ * shape (`/confirm-registration?token=...`, `/set-password?token=...`,
+ * `/reset-password?token=...`) is the GREEN criterion of T013a/T013c/T039;
+ * the IT asserts it end-to-end through the stored payload.
  */
 class EmailTemplatesTest {
     private val templates = EmailTemplates("http://localhost:5173")
@@ -65,8 +65,14 @@ class EmailTemplatesTest {
     }
 
     @Test
-    fun `password reset template is not defined until T043`() {
-        assertThatThrownBy { templates.payload(EmailType.PASSWORD_RESET, "carol", token) }
-            .isInstanceOf(IllegalStateException::class.java)
+    fun `password reset links to the reset-password SPA route and renders the letter`() {
+        val payload = templates.payload(EmailType.PASSWORD_RESET, "carol", token)
+
+        assertThat(payload["link"]).isEqualTo("http://localhost:5173/reset-password?token=$token")
+
+        val rendered = templates.render(EmailType.PASSWORD_RESET, payload)
+        assertThat(rendered.subject).contains("восстановление пароля")
+        assertThat(rendered.text).contains("carol")
+        assertThat(rendered.text).contains("http://localhost:5173/reset-password?token=$token")
     }
 }
