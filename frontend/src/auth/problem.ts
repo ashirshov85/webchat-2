@@ -8,6 +8,19 @@ interface ProblemLike {
 
 const FALLBACK_MESSAGE = 'Something went wrong. Please try again.'
 
+function formatRetryAfter(seconds: number): string {
+  const total = Math.max(1, Math.ceil(seconds))
+  if (total < 60) {
+    return `${total} s`
+  }
+  const minutes = Math.ceil(total / 60)
+  if (minutes < 60) {
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`
+  }
+  const hours = Math.ceil(minutes / 60)
+  return `${hours} hour${hours === 1 ? '' : 's'}`
+}
+
 function isFieldErrors(value: unknown): value is Record<string, string[]> {
   if (typeof value !== 'object' || value === null) {
     return false
@@ -35,8 +48,8 @@ export function problemMessage(error: unknown): string {
     parts.push(problem.detail)
   }
   let message = parts.length > 0 ? parts.join(' — ') : problem.title
-  if (typeof problem.retryAfterSec === 'number') {
-    message += `. Try again in ${Math.ceil(problem.retryAfterSec)} s`
+  if (typeof problem.retryAfterSec === 'number' && Number.isFinite(problem.retryAfterSec)) {
+    message += `. Try again in ${formatRetryAfter(problem.retryAfterSec)}`
   }
   return message
 }

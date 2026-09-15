@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
+import type { ApiProblem } from '../../../api/auth'
 import { ConfirmRegistrationPage } from '../ConfirmRegistrationPage'
 import { RegisterPage } from '../RegisterPage'
 import { SetPasswordPage } from '../SetPasswordPage'
@@ -85,18 +86,20 @@ describe('RegisterPage', () => {
     expect(alert).toHaveTextContent('already_taken')
   })
 
-  it('shows the rate-limit detail on 429', async () => {
+  it('shows the rate-limit detail with the retry hint on 429', async () => {
     mockRegister.mockRejectedValueOnce({
       title: 'Too Many Requests',
       status: 429,
       detail: 'Rate limit exceeded',
-    } satisfies Problem)
+      retryAfterSec: 42,
+    } satisfies ApiProblem)
     render(<RegisterPage />)
 
     fillRegistrationForm('alice', 'alice@example.com')
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Rate limit exceeded')
+    expect(alert).toHaveTextContent('Try again in 42 s')
   })
 })
 
@@ -134,16 +137,19 @@ describe('ConfirmRegistrationPage', () => {
     expect(screen.queryByLabelText('Password')).not.toBeInTheDocument()
   })
 
-  it('shows the rate-limit detail on 429', async () => {
+  it('shows the rate-limit detail with the retry hint on 429', async () => {
     window.history.pushState({}, '', '/confirm-registration?token=ev-token')
     mockConfirmRegistration.mockRejectedValueOnce({
       title: 'Too Many Requests',
       status: 429,
       detail: 'Rate limit exceeded',
-    } satisfies Problem)
+      retryAfterSec: 42,
+    } satisfies ApiProblem)
     render(<ConfirmRegistrationPage />)
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Rate limit exceeded')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Rate limit exceeded')
+    expect(alert).toHaveTextContent('Try again in 42 s')
   })
 })
 
@@ -227,5 +233,27 @@ describe('SetPasswordPage', () => {
       password: 'correct horse',
       confirmPassword: 'correct horse',
     })
+  })
+
+  it('shows the rate-limit error with the retry hint on 429 and keeps the link usable', async () => {
+    window.history.pushState({}, '', '/set-password?token=link-token')
+    mockSetPassword.mockRejectedValueOnce({
+      title: 'Too Many Requests',
+      status: 429,
+      detail: 'Too many attempts',
+      retryAfterSec: 900,
+    } satisfies ApiProblem)
+    render(<SetPasswordPage />)
+
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'correct horse' } })
+    fireEvent.change(screen.getByLabelText('Confirm password'), {
+      target: { value: 'correct horse' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Set password' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Too many attempts')
+    expect(alert).toHaveTextContent('Try again in 15 minutes')
+    expect(screen.getByRole('button', { name: 'Set password' })).toBeInTheDocument()
   })
 })

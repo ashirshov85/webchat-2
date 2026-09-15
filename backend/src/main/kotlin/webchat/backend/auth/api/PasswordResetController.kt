@@ -11,6 +11,7 @@ import webchat.backend.auth.api.dto.PasswordResetRequest
 import webchat.backend.auth.domain.service.InvalidRegistrationTokenException
 import webchat.backend.auth.domain.service.PasswordResetService
 import webchat.backend.auth.domain.service.RegistrationValidationException
+import webchat.backend.auth.ratelimit.ClientIpResolver
 
 /**
  * US4 password-reset endpoints (api-contract.md №8–9), thin HTTP adapter
@@ -33,6 +34,7 @@ import webchat.backend.auth.domain.service.RegistrationValidationException
 @RequestMapping("/api/v1/auth/password-reset")
 class PasswordResetController(
     private val passwordResetService: PasswordResetService,
+    private val clientIpResolver: ClientIpResolver,
 ) {
     /** Contract №8 (US4-1, US4-4): queues the reset letter for an active account, else a silent no-op. */
     @PostMapping
@@ -43,7 +45,7 @@ class PasswordResetController(
         val fields = requireFields(EMAIL_FIELD to request.email)
         passwordResetService.requestPasswordReset(
             email = fields.getValue(EMAIL_FIELD),
-            clientIp = clientIp(servletRequest),
+            clientIp = clientIpResolver.resolve(servletRequest),
             userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
         )
         return ResponseEntity.accepted().build()
@@ -65,7 +67,7 @@ class PasswordResetController(
             token = token,
             password = fields.getValue(PASSWORD_FIELD),
             confirmPassword = fields.getValue(CONFIRM_PASSWORD_FIELD),
-            clientIp = clientIp(servletRequest),
+            clientIp = clientIpResolver.resolve(servletRequest),
             userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
         )
         return ResponseEntity.noContent().build()
@@ -85,29 +87,11 @@ class PasswordResetController(
         return fields.associate { (name, value) -> name to requireNotNull(value) }
     }
 
-    /**
-     * Interim request-source extraction pending the shared US5 resolver
-     * (T046): XFF leftmost with a remoteAddr fallback — compatible with
-     * `server.forward-headers-strategy=framework`, where Spring rewrites
-     * remoteAddr from XFF and strips the header. Only the SHA-256 peppered
-     * hash of the value is ever persisted (FR-013).
-     */
-    private fun clientIp(request: HttpServletRequest): String {
-        val forwardedFor = request.getHeader(X_FORWARDED_FOR_HEADER)
-        if (forwardedFor != null) {
-            val leftmostHop = forwardedFor.substringBefore(COMMA).trim()
-            if (leftmostHop.isNotEmpty()) return leftmostHop
-        }
-        return request.remoteAddr
-    }
-
     private companion object {
         const val EMAIL_FIELD = "email"
         const val PASSWORD_FIELD = "password"
         const val CONFIRM_PASSWORD_FIELD = "confirmPassword"
         const val CODE_MISSING = "missing"
-        const val X_FORWARDED_FOR_HEADER = "X-Forwarded-For"
         const val USER_AGENT_HEADER = "User-Agent"
-        const val COMMA = ","
     }
 }

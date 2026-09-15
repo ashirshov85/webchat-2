@@ -16,6 +16,7 @@ import webchat.backend.auth.domain.service.InvalidRefreshTokenException
 import webchat.backend.auth.domain.service.IssuedTokenPair
 import webchat.backend.auth.domain.service.LoginService
 import webchat.backend.auth.domain.service.SessionService
+import webchat.backend.auth.ratelimit.ClientIpResolver
 
 /**
  * US2 session endpoints (api-contract.md №5–7), thin HTTP adapters over
@@ -37,6 +38,7 @@ import webchat.backend.auth.domain.service.SessionService
 class SessionController(
     private val loginService: LoginService,
     private val sessionService: SessionService,
+    private val clientIpResolver: ClientIpResolver,
 ) {
     /** Contract №5 (FR-005): password login by username OR email with a fresh session pair. */
     @PostMapping("/login")
@@ -48,7 +50,7 @@ class SessionController(
             loginService.login(
                 identifier = request.identifier.orEmpty(),
                 password = request.password.orEmpty(),
-                clientIp = clientIp(servletRequest),
+                clientIp = clientIpResolver.resolve(servletRequest),
                 userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
             )
         return ResponseEntity.ok(
@@ -76,7 +78,7 @@ class SessionController(
         val pair =
             sessionService.refresh(
                 refreshToken = request.refreshToken ?: throw InvalidRefreshTokenException(),
-                clientIp = clientIp(servletRequest),
+                clientIp = clientIpResolver.resolve(servletRequest),
                 userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
             )
         return ResponseEntity.ok(pair.toResponse())
@@ -90,7 +92,7 @@ class SessionController(
     ): ResponseEntity<Unit> {
         sessionService.logout(
             refreshToken = request.refreshToken ?: throw InvalidRefreshTokenException(),
-            clientIp = clientIp(servletRequest),
+            clientIp = clientIpResolver.resolve(servletRequest),
             userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
         )
         return ResponseEntity.noContent().build()
@@ -104,26 +106,8 @@ class SessionController(
             expiresInSec = expiresInSec,
         )
 
-    /**
-     * Interim request-source extraction pending the shared US5 resolver
-     * (T046): XFF leftmost with a remoteAddr fallback — compatible with
-     * `server.forward-headers-strategy=framework`, where Spring rewrites
-     * remoteAddr from XFF and strips the header. Only the SHA-256 peppered
-     * hash of the value is ever persisted (FR-013).
-     */
-    private fun clientIp(request: HttpServletRequest): String {
-        val forwardedFor = request.getHeader(X_FORWARDED_FOR_HEADER)
-        if (forwardedFor != null) {
-            val leftmostHop = forwardedFor.substringBefore(COMMA).trim()
-            if (leftmostHop.isNotEmpty()) return leftmostHop
-        }
-        return request.remoteAddr
-    }
-
     private companion object {
         const val TOKEN_TYPE_BEARER = "Bearer"
-        const val X_FORWARDED_FOR_HEADER = "X-Forwarded-For"
         const val USER_AGENT_HEADER = "User-Agent"
-        const val COMMA = ","
     }
 }

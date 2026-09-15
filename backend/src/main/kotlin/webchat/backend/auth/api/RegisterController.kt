@@ -14,6 +14,7 @@ import webchat.backend.auth.api.dto.SetPasswordRequest
 import webchat.backend.auth.domain.service.InvalidRegistrationTokenException
 import webchat.backend.auth.domain.service.RegistrationService
 import webchat.backend.auth.domain.service.RegistrationValidationException
+import webchat.backend.auth.ratelimit.ClientIpResolver
 
 /**
  * US1 registration endpoints (api-contract.md №1–4), thin HTTP adapter
@@ -35,6 +36,7 @@ import webchat.backend.auth.domain.service.RegistrationValidationException
 @RequestMapping("/api/v1/auth/register")
 class RegisterController(
     private val registrationService: RegistrationService,
+    private val clientIpResolver: ClientIpResolver,
 ) {
     /** Contract №1 (FR-001, FR-002): account creation or resumption with a queued letter. */
     @PostMapping
@@ -50,7 +52,7 @@ class RegisterController(
         registrationService.register(
             username = fields.getValue(USERNAME_FIELD),
             email = fields.getValue(EMAIL_FIELD),
-            clientIp = clientIp(servletRequest),
+            clientIp = clientIpResolver.resolve(servletRequest),
             userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
         )
         return ResponseEntity.accepted().build()
@@ -65,7 +67,7 @@ class RegisterController(
         val fields = requireFields(EMAIL_FIELD to request.email)
         registrationService.resend(
             email = fields.getValue(EMAIL_FIELD),
-            clientIp = clientIp(servletRequest),
+            clientIp = clientIpResolver.resolve(servletRequest),
             userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
         )
         return ResponseEntity.accepted().build()
@@ -81,7 +83,7 @@ class RegisterController(
         val confirmed =
             registrationService.confirm(
                 token = token,
-                clientIp = clientIp(servletRequest),
+                clientIp = clientIpResolver.resolve(servletRequest),
                 userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
             )
         return ResponseEntity.ok(
@@ -109,7 +111,7 @@ class RegisterController(
             setupToken = setupToken,
             password = fields.getValue(PASSWORD_FIELD),
             confirmPassword = fields.getValue(CONFIRM_PASSWORD_FIELD),
-            clientIp = clientIp(servletRequest),
+            clientIp = clientIpResolver.resolve(servletRequest),
             userAgent = servletRequest.getHeader(USER_AGENT_HEADER),
         )
         return ResponseEntity.noContent().build()
@@ -128,30 +130,12 @@ class RegisterController(
         return fields.associate { (name, value) -> name to requireNotNull(value) }
     }
 
-    /**
-     * Interim request-source extraction pending the shared US5 resolver
-     * (T046): XFF leftmost with a remoteAddr fallback — compatible with
-     * `server.forward-headers-strategy=framework`, where Spring rewrites
-     * remoteAddr from XFF and strips the header. Only the SHA-256 peppered
-     * hash of the value is ever persisted (FR-013).
-     */
-    private fun clientIp(request: HttpServletRequest): String {
-        val forwardedFor = request.getHeader(X_FORWARDED_FOR_HEADER)
-        if (forwardedFor != null) {
-            val leftmostHop = forwardedFor.substringBefore(COMMA).trim()
-            if (leftmostHop.isNotEmpty()) return leftmostHop
-        }
-        return request.remoteAddr
-    }
-
     private companion object {
         const val USERNAME_FIELD = "username"
         const val EMAIL_FIELD = "email"
         const val PASSWORD_FIELD = "password"
         const val CONFIRM_PASSWORD_FIELD = "confirmPassword"
         const val CODE_MISSING = "missing"
-        const val X_FORWARDED_FOR_HEADER = "X-Forwarded-For"
         const val USER_AGENT_HEADER = "User-Agent"
-        const val COMMA = ","
     }
 }
