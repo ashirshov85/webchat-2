@@ -334,13 +334,28 @@ class AuthenticationBoundaryIT(
     private fun kidOf(signingKey: ECPrivateKey): String =
         if (signingKey === serverTestPrivateKey) AbstractIntegrationTest.TEST_JWT_KID else ROGUE_KID
 
-    /** Flips the last signature character — the JWT stays parseable, the signature check fails. */
+    /**
+     * Corrupts the LAST signature character — the JWT stays parseable, the
+     * signature check fails. The flip targets the TOP bit of the character's
+     * 6-bit group: unlike a low-bit flip, it ALWAYS lands in the significant
+     * bits of the final byte for every DER length (mod 3) — low-bit flips
+     * only touch base64 padding bits in ~3 of 4 minted signatures and leave
+     * the DER value bit-identical (the token would still verify).
+     */
     private fun tamperSignature(token: String): String {
         val segments = token.split(".")
         val signature = segments.last()
-        val flipped = if (signature.last() == FLIP_FROM) FLIP_TO else FLIP_FROM
+        val flipped = flipTopBit(signature.last())
         return segments.dropLast(1).joinToString(SEGMENT_SEPARATOR) + SEGMENT_SEPARATOR +
             signature.dropLast(1) + flipped
+    }
+
+    private fun flipTopBit(character: Char): Char {
+        val index = BASE64URL_ALPHABET.indexOf(character)
+        assertThat(index)
+            .overridingErrorMessage("a JWT signature segment must be unpadded base64url")
+            .isNotNegative()
+        return BASE64URL_ALPHABET[index xor TOP_BIT_MASK]
     }
 
     /** The P-256 private key backing the kid the IT context trusts (PKCS#8 PEM, Base64-wrapped). */
@@ -458,8 +473,9 @@ class AuthenticationBoundaryIT(
         const val KEY_VALUE_SEPARATOR = "="
         const val NEWLINE = "\n"
         const val SEGMENT_SEPARATOR = "."
-        const val FLIP_FROM = 'A'
-        const val FLIP_TO = 'B'
+        const val TOP_BIT_MASK = 32
+        const val BASE64URL_ALPHABET =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
         const val TOKEN_PATTERN = """token=([A-Za-z0-9_-]{43})"""
         const val HEALTH_UP = "UP"
         const val PROMETHEUS_JVM_METRIC_MARKER = "jvm_"

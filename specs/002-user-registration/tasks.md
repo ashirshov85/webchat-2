@@ -136,7 +136,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 
 ### Implementation for User Story 3
 
-- [ ] T038 [US3] Реализовать `backend/src/main/kotlin/webchat/backend/users/api/UsersController.kt`: GET `/api/v1/users/me` → 200 `PublicUser {id, username, email, status, createdAt}` / 401 (контракт №10, схема PublicUser); GREEN по T037
+- [X] T038 [US3] Реализовать `backend/src/main/kotlin/webchat/backend/users/api/UsersController.kt`: GET `/api/v1/users/me` → 200 `PublicUser {id, username, email, status, createdAt}` / 401 (контракт №10, схема PublicUser); GREEN по T037
 
 **Checkpoint**: граница аутентификации зафиксирована и проверена; все P1-stories (US1+US2+US3) работают независимо.
 
