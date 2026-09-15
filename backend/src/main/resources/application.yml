@@ -77,6 +77,13 @@ auth:
     login:
       ip: 10/1m
       account: 10/1m
+      # brute-force counter (research.md §8, SC-004): delay = min(base * 2^(n-3), max)
+      # from the 4th accumulated failure; lockout at >= 10 accumulated failures for the window
+      throttle:
+        base-delay: 250ms
+        max-delay: 15s
+        lockout-threshold: 10
+        window: 15m
     password-reset:
       ip: 5/1h
       email: 3/1h
@@ -89,13 +96,6 @@ auth:
       ip: 30/1m
     refresh:
       ip: 30/1m
-  login:
-    throttle:
-      # delay = min(base * 2^(n-3), max) from 4th accumulated failure; lockout at >= 10 for TTL window (research.md §8, SC-004)
-      base-delay: 250ms
-      max-delay: 15s
-      lockout-threshold: 10
-      window: 15m
   mail:
     # transactional sender address; prod value from env / K8s Secret (research.md §6)
     from: ${AUTH_MAIL_FROM:noreply@webchat.local}

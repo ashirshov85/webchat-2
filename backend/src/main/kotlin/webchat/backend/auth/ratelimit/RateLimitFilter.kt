@@ -18,6 +18,9 @@ import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.web.filter.OncePerRequestFilter
+import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.auth.security.AuthEventRecorder
+import webchat.backend.auth.security.AuthEventType
 import webchat.backend.config.AuthRateLimitProperties
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -32,11 +35,15 @@ import java.time.Duration
  * [LettuceBasedProxyManager] so the state is shared by all replicas and
  * survives restarts (SC-004, constitution II: state outside the process).
  *
- * Consumption order (research.md §11): identifier bucket first, then the IP
- * bucket; a drained bucket answers with the uniform 429 problem+json +
- * `Retry-After` and the chain never sees the request, so a throttled flood
- * has no side effects. T048 will slot the `login:fail` counter check of
- * research.md §8 BEFORE these buckets for `/auth/login`.
+ * Consumption order (research.md §11): on `/auth/login` the research.md §8
+ * brute-force counter is consulted FIRST — an identifier with ≥ lockout
+ * threshold accumulated failures receives the uniform 429 + `Retry-After` =
+ * the remaining counter TTL before any bucket consumption and any password
+ * work (the account/IP buckets would otherwise answer with a ≤ 60 s wait
+ * and betray the ~15-min lockout expectation); then the identifier bucket;
+ * then the IP bucket. A drained bucket answers with the uniform 429
+ * problem+json + `Retry-After` and the chain never sees the request, so a
+ * throttled flood has no side effects.
  *
  * The identifier is read from the JSON body only on the routes that carry
  * one; the body is replayed downstream via [CachedBodyRequestWrapper]. A
@@ -46,11 +53,15 @@ import java.time.Duration
  * Redis unavailability fails OPEN (data-model.md §7 invariant): losing the
  * ephemeral store may only reset the limits, never 5xx the public endpoints.
  */
+@Suppress("LargeClass", "LongParameterList", "TooManyFunctions")
 class RateLimitFilter(
     redisClient: RedisClient,
     properties: AuthRateLimitProperties,
     private val clientIpResolver: ClientIpResolver,
     private val objectMapper: ObjectMapper,
+    private val loginThrottle: LoginThrottle,
+    private val authEventRecorder: AuthEventRecorder,
+    private val userRepository: UserRepository,
 ) : OncePerRequestFilter() {
     private val proxyManager: ProxyManager<ByteArray> =
         Bucket4jLettuce
@@ -85,9 +96,11 @@ class RateLimitFilter(
 
     /**
      * Consumes the buckets of the route and returns the request to forward
-     * (the body-replaying wrapper on identifier routes) — `null` when a
-     * drained bucket already answered with the uniform 429.
+     * (the body-replaying wrapper on identifier routes) — `null` when the
+     * login brute-force counter or a drained bucket already answered with
+     * the uniform 429.
      */
+    @Suppress("ReturnCount") // every return IS a rejection leg of the research.md §11 priority chain
     private fun gate(
         route: LimitedRoute,
         request: HttpServletRequest,
@@ -98,6 +111,12 @@ class RateLimitFilter(
             val body = request.inputStream.readBytes()
             forwardedRequest = CachedBodyRequestWrapper(request, body)
             extractIdentifier(body, identifierBucket.field)?.let { identifier ->
+                // research.md §8/§11 route priority: the login:fail counter
+                // verdict comes FIRST — before the account/IP buckets and any
+                // password work
+                if (route.name == LOGIN_ROUTE_NAME && rejectLockedOutIdentifier(identifier, request, response)) {
+                    return null
+                }
                 val key = "$EMAIL_KEY_FAMILY:${route.name}:${sha256Hex(identifier)}"
                 if (!consume(identifierBucket.limit, key, response)) return null
             }
@@ -106,6 +125,47 @@ class RateLimitFilter(
         val clientIp = clientIpResolver.resolve(request)
         val ipKey = "$IP_KEY_FAMILY:${route.name}:$clientIp"
         return if (consume(route.ipLimit, ipKey, response)) forwardedRequest else null
+    }
+
+    /**
+     * The lockout leg for `/auth/login` (research.md §8, SC-004): ≥ lockout
+     * threshold accumulated failures — the uniform 429 with `Retry-After` =
+     * the remaining counter TTL and a `login_throttled` journal record
+     * (FR-013, no secrets: only the resolved user id, the hashed IP and the
+     * advisory wait). Always false when the counter is not armed or Redis is
+     * unavailable (fail open, data-model.md §7).
+     */
+    private fun rejectLockedOutIdentifier(
+        identifier: String,
+        request: HttpServletRequest,
+        response: HttpServletResponse,
+    ): Boolean {
+        val lockoutRemaining = loginThrottle.lockoutRemaining(identifier) ?: return false
+        journalLockout(identifier, request, lockoutRemaining)
+        writeTooManyRequests(response, lockoutRemaining.toNanos())
+        return true
+    }
+
+    /** The lockout journal record — a failure to write must never break the guard itself. */
+    private fun journalLockout(
+        identifier: String,
+        request: HttpServletRequest,
+        lockoutRemaining: Duration,
+    ) {
+        runCatching {
+            val user = userRepository.findByUsername(identifier) ?: userRepository.findByEmail(identifier)
+            authEventRecorder.record(
+                eventType = AuthEventType.LOGIN_THROTTLED,
+                clientIp = clientIpResolver.resolve(request),
+                userAgent = request.getHeader(HttpHeaders.USER_AGENT),
+                userId = user?.id,
+                details =
+                    mapOf(
+                        REASON_DETAIL to LOCKOUT_REASON,
+                        RETRY_AFTER_DETAIL to lockoutRemaining.toSeconds(),
+                    ),
+            )
+        }.onFailure { log.warn("login_throttled journal write for a locked-out identifier failed: {}", it.toString()) }
     }
 
     /** One token per request; a rejection is rendered immediately as the uniform 429. */
@@ -189,6 +249,13 @@ class RateLimitFilter(
                 val field = if (limits.email != null) EMAIL_FIELD else IDENTIFIER_FIELD
                 IdentifierBucket(field, parseRateLimit(it))
             }
+        if (name == LOGIN_ROUTE_NAME) {
+            // the login:fail counter check rides the identifier extraction —
+            // a login route without the account bucket would silently lose it
+            require(identifierBucket != null) {
+                "Route 'login' must define the account bucket (research.md §8, §11)"
+            }
+        }
         return LimitedRoute(name, parseRateLimit(limits.ip), identifierBucket)
     }
 
@@ -224,6 +291,10 @@ class RateLimitFilter(
         const val EMAIL_KEY_FAMILY = "rl:email"
         const val EMAIL_FIELD = "email"
         const val IDENTIFIER_FIELD = "identifier"
+        const val LOGIN_ROUTE_NAME = "login"
+        const val REASON_DETAIL = "reason"
+        const val LOCKOUT_REASON = "lockout"
+        const val RETRY_AFTER_DETAIL = "retryAfterSec"
         const val SHA_256 = "SHA-256"
         const val LIMIT_DELIMITER = "/"
         const val LIMIT_SPEC_PARTS = 2

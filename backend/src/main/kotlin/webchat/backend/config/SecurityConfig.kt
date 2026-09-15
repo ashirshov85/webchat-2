@@ -22,8 +22,11 @@ import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter
 import org.springframework.security.web.savedrequest.NullRequestCache
+import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.auth.ratelimit.ClientIpResolver
+import webchat.backend.auth.ratelimit.LoginThrottle
 import webchat.backend.auth.ratelimit.RateLimitFilter
+import webchat.backend.auth.security.AuthEventRecorder
 import webchat.backend.auth.security.AuthJwtDecoder
 import webchat.backend.auth.security.JwtService
 
@@ -49,16 +52,32 @@ class SecurityConfig {
     ): JwtDecoder = AuthJwtDecoder(jwtService, redisTemplate)
 
     /**
-     * The US5 bucket guard (T047, FR-009): Bucket4j limits per source and
-     * per request identifier on the 8 public auth routes, state in Redis.
+     * The US5 guard of the public auth routes (FR-009): Bucket4j limits per
+     * source and per request identifier (T047, research.md §2/§11) plus the
+     * T048 `login:fail` brute-force lockout of research.md §8 — the counter
+     * verdict runs FIRST on `/auth/login`, before the buckets, and answers
+     * with the uniform 429 + `Retry-After` = the remaining counter TTL.
      */
+    @Suppress("LongParameterList") // the guard's collaborators are the wiring itself (tasks.md T047–T048)
     @Bean
     fun rateLimitFilter(
         rateLimitRedisClient: RedisClient,
         properties: AuthRateLimitProperties,
         clientIpResolver: ClientIpResolver,
         objectMapper: ObjectMapper,
-    ): RateLimitFilter = RateLimitFilter(rateLimitRedisClient, properties, clientIpResolver, objectMapper)
+        loginThrottle: LoginThrottle,
+        authEventRecorder: AuthEventRecorder,
+        userRepository: UserRepository,
+    ): RateLimitFilter =
+        RateLimitFilter(
+            rateLimitRedisClient,
+            properties,
+            clientIpResolver,
+            objectMapper,
+            loginThrottle,
+            authEventRecorder,
+            userRepository,
+        )
 
     /**
      * The filter lives ONLY in the security chain (added before
