@@ -156,7 +156,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 ### Implementation for User Story 4
 
 - [X] T041 [US4] Реализовать `backend/src/main/kotlin/webchat/backend/auth/domain/service/PasswordResetService.kt`: выдача OneTimeToken(password_reset, TTL 1 ч, аннулирование предыдущих) + outbox-письмо (TX); confirm — поглощение токена (FR-012), смена пароля (политика FR-004, Argon2), `SessionService.revokeAllForUser` + denylist; AuthEvents `password_reset_requested`/`password_reset_completed` — FR-010 (зависит от T017, T019, T030); критерий: GREEN в составе T039
-- [ ] T042 [US4] Реализовать `backend/src/main/kotlin/webchat/backend/auth/api/PasswordResetController.kt` (+ DTO): POST `/auth/password-reset` (202 всегда единообразно / 400 / 429), POST `/auth/password-reset/confirm` (204 / 400 / 429) — контракт №8–9; GREEN по T039
+- [X] T042 [US4] Реализовать `backend/src/main/kotlin/webchat/backend/auth/api/PasswordResetController.kt` (+ DTO): POST `/auth/password-reset` (202 всегда единообразно / 400 / 429), POST `/auth/password-reset/confirm` (204 / 400 / 429) — контракт №8–9; GREEN по T039
 - [ ] T043 [P] [US4] Добавить шаблон `password_reset` в `backend/src/main/kotlin/webchat/backend/email/templates/EmailTemplates.kt` (ссылка `{APP_PUBLIC_BASE_URL}/reset-password?token=...`); критерий: GREEN в T039 (ссылка /reset-password)
 - [ ] T044 [US4] Создать `frontend/src/auth/pages/ForgotPasswordPage.tsx`, `frontend/src/auth/pages/ResetPasswordPage.tsx` + маршруты `/forgot-password`, `/reset-password` в `App.tsx` + вызовы endpoints 8–9 в `frontend/src/api/auth.ts` (ОБЩИЕ файлы `auth.ts`/`App.tsx` с T024–T036 — после завершения frontend-интеграции US1/US2); GREEN по T040
 
