@@ -151,7 +151,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 ### Tests for User Story 4 (сначала RED)
 
 - [X] T039 [P] [US4] Написать IT `backend/src/test/kotlin/webchat/backend/auth/PasswordResetIT.kt`: US4-1…US4-5 — 202 единообразно (существующий/несуществующий email); смена по валидной ссылке → старый пароль 401, новый 200; все сессии/refresh отозваны (denylist, событие `session_revoked{reason=password_change}` в auth_events — FR-013); повторное применение → 400 с предложением новой ссылки; отклонение нового пароля по политике FR-004 и несовпадение подтверждения → 400, ссылка восстановления остаётся действительной (повторная попытка корректным паролем по той же ссылке → 204, сессии отозваны) ([api-contract.md №8–9](./contracts/api-contract.md))
-- [ ] T040 [P] [US4] Написать Vitest-тесты `frontend/src/auth/pages/__tests__/ResetPages.test.tsx`: потоки forgot → reset, ошибки 400/429
+- [X] T040 [P] [US4] Написать Vitest-тесты `frontend/src/auth/pages/__tests__/ResetPages.test.tsx`: потоки forgot → reset, ошибки 400/429
 
 ### Implementation for User Story 4
 
