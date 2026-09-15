@@ -22,6 +22,10 @@ export type RefreshRequest = components['schemas']['RefreshRequest']
 
 export type LogoutRequest = components['schemas']['LogoutRequest']
 
+export type PasswordResetRequest = components['schemas']['PasswordResetRequest']
+
+export type PasswordResetConfirmRequest = components['schemas']['PasswordResetConfirmRequest']
+
 export type TokenPair = components['schemas']['TokenPair']
 
 export type PublicUser = components['schemas']['PublicUser']
@@ -100,6 +104,14 @@ export async function login(body: LoginRequest): Promise<LoginResponse> {
 export async function refreshTokens(body: RefreshRequest): Promise<TokenPair> {
   const response = await post('/auth/refresh', body)
   return (await response.json()) as TokenPair
+}
+
+export async function requestPasswordReset(body: PasswordResetRequest): Promise<void> {
+  await post('/auth/password-reset', body)
+}
+
+export async function confirmPasswordReset(body: PasswordResetConfirmRequest): Promise<void> {
+  await post('/auth/password-reset/confirm', body)
 }
 
 async function authedPost(path: string, body: unknown): Promise<Response> {

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ConfirmRegistrationPage } from './auth/pages/ConfirmRegistrationPage'
+import { ForgotPasswordPage } from './auth/pages/ForgotPasswordPage'
 import { LoginPage } from './auth/pages/LoginPage'
 import { RegisterPage } from './auth/pages/RegisterPage'
+import { ResetPasswordPage } from './auth/pages/ResetPasswordPage'
 import { SetPasswordPage } from './auth/pages/SetPasswordPage'
 
 function renderRoute(pathname: string): ReactNode {
@@ -15,6 +17,10 @@ function renderRoute(pathname: string): ReactNode {
       return <SetPasswordPage />
     case '/login':
       return <LoginPage />
+    case '/forgot-password':
+      return <ForgotPasswordPage />
+    case '/reset-password':
+      return <ResetPasswordPage />
     default:
       return (
         <p>
