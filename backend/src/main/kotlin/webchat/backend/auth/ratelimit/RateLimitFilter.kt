@@ -6,7 +6,8 @@ import io.github.bucket4j.Bandwidth
 import io.github.bucket4j.BucketConfiguration
 import io.github.bucket4j.distributed.BucketProxy
 import io.github.bucket4j.distributed.ExpirationAfterWriteStrategy
-import io.github.bucket4j.redis.lettuce.cas.LettuceBasedProxyManager
+import io.github.bucket4j.distributed.proxy.ProxyManager
+import io.github.bucket4j.redis.lettuce.Bucket4jLettuce
 import io.lettuce.core.RedisClient
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
@@ -51,10 +52,10 @@ class RateLimitFilter(
     private val clientIpResolver: ClientIpResolver,
     private val objectMapper: ObjectMapper,
 ) : OncePerRequestFilter() {
-    private val proxyManager: LettuceBasedProxyManager<ByteArray> =
-        LettuceBasedProxyManager
-            .builderFor(redisClient)
-            .withExpirationStrategy(
+    private val proxyManager: ProxyManager<ByteArray> =
+        Bucket4jLettuce
+            .casBasedBuilder(redisClient)
+            .expirationAfterWrite(
                 ExpirationAfterWriteStrategy.basedOnTimeForRefillingBucketUpToMax(
                     Duration.ofSeconds(BUCKET_TTL_MARGIN_SECONDS),
                 ),
@@ -136,7 +137,7 @@ class RateLimitFilter(
                 .refillGreedy(limit.count, limit.window)
                 .build()
         val configuration = BucketConfiguration.builder().addLimit(bandwidth).build()
-        return proxyManager.builder().build(key.toByteArray(StandardCharsets.UTF_8), configuration)
+        return proxyManager.getProxy(key.toByteArray(StandardCharsets.UTF_8)) { configuration }
     }
 
     /** The exact 429 problem+json of api-contract.md §3 with the bucket refill wait as `Retry-After`. */

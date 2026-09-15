@@ -35,11 +35,15 @@ class RateLimitConfig {
                 .withHost(standalone.host)
                 .withPort(standalone.port)
                 .withDatabase(standalone.database)
+        val username = connectionDetails.username
+        val password: CharSequence? = connectionDetails.password
+        if (username != null && password != null) {
+            builder.withAuthentication(username, password)
+        } else if (password != null) {
+            builder.withPassword(password)
+        }
         if (properties.ssl.isEnabled) builder.withSsl(true)
-        val uri = builder.build()
-        connectionDetails.username?.let(uri::setUsername)
-        connectionDetails.password?.let { uri.setPassword(it) }
-        return uri
+        return builder.build()
     }
 
     private companion object {
