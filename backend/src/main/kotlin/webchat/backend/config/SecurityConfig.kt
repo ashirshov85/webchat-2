@@ -47,11 +47,18 @@ class SecurityConfig {
         http: HttpSecurity,
         authJwtDecoder: JwtDecoder,
     ): SecurityFilterChain {
+        // T037: the SAME uniform 401 entry point guards both rejection points —
+        // the authorize rules (ExceptionTranslationFilter) AND the resource-server
+        // bearer pipeline (resolver failures like a malformed `Bearer` header and
+        // decoder failures via BadJwtException), so no path can leak a bodiless
+        // default 401 or a 500 error dispatch (api-contract.md §3, US3-1/2)
+        val unifiedEntryPoint = UnifiedAuthenticationEntryPoint()
         http {
             csrf { disable() }
             requestCache { requestCache = NullRequestCache() }
             sessionManagement { sessionCreationPolicy = SessionCreationPolicy.STATELESS }
             oauth2ResourceServer {
+                authenticationEntryPoint = unifiedEntryPoint
                 jwt { jwtDecoder = authJwtDecoder }
             }
             authorizeHttpRequests {
@@ -66,10 +73,15 @@ class SecurityConfig {
                 authorize("/actuator/health/**", permitAll)
                 authorize("/actuator/prometheus", permitAll)
                 authorize("/actuator/metrics/**", permitAll)
+                // T037: Boot error dispatch — an MVC-layer 404 (e.g. a permitAll
+                // path whose controller lands with a later story) is FORWARDED to
+                // /error; without this rule the chain would hijack that forward and
+                // overwrite the 404 with the boundary 401
+                authorize("/error", permitAll)
                 authorize(anyRequest, authenticated)
             }
             exceptionHandling {
-                authenticationEntryPoint = UnifiedAuthenticationEntryPoint()
+                authenticationEntryPoint = unifiedEntryPoint
             }
         }
         return http.build()

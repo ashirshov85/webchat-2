@@ -132,11 +132,11 @@ description: "Task list for feature 002-user-registration (register, login, sess
 
 ### Tests for User Story 3 (сначала RED)
 
-- [ ] T037 [P] [US3] Написать IT `backend/src/test/kotlin/webchat/backend/auth/AuthenticationBoundaryIT.kt`: US3-1…US3-4 — все комбинации недействительных токенов → единый 401 `Not authenticated`; валидный → 200; аудит публичных путей = ровно контракт №1–6, №8–9 + технические `/actuator/health/**`, `/actuator/prometheus`, `/actuator/metrics/**` вне контракта API (001) (№7 logout и №10 — только с Bearer) — SC-002, [api-contract.md §1–§3](./contracts/api-contract.md)
+- [X] T037 [P] [US3] Написать IT `backend/src/test/kotlin/webchat/backend/auth/AuthenticationBoundaryIT.kt`: US3-1…US3-4 — все комбинации недействительных токенов → единый 401 `Not authenticated`; валидный → 200; аудит публичных путей = ровно контракт №1–6, №8–9 + технические `/actuator/health/**`, `/actuator/prometheus`, `/actuator/metrics/**` вне контракта API (001) (№7 logout и №10 — только с Bearer) — SC-002, [api-contract.md §1–§3](./contracts/api-contract.md)
 
 ### Implementation for User Story 3
 
-- [ ] T038 [US3] Реализовать `backend/src/main/kotlin/webchat/backend/users/api/UsersController.kt`: GET `/api/v1/users/me` → 200 `PublicUser {id, username, email, status, createdAt}` / 401 (контракт №10, схема PublicUser); GREEN по T037
+- [X] T038 [US3] Реализовать `backend/src/main/kotlin/webchat/backend/users/api/UsersController.kt`: GET `/api/v1/users/me` → 200 `PublicUser {id, username, email, status, createdAt}` / 401 (контракт №10, схема PublicUser); GREEN по T037
 
 **Checkpoint**: граница аутентификации зафиксирована и проверена; все P1-stories (US1+US2+US3) работают независимо.
 
@@ -150,15 +150,15 @@ description: "Task list for feature 002-user-registration (register, login, sess
 
 ### Tests for User Story 4 (сначала RED)
 
-- [ ] T039 [P] [US4] Написать IT `backend/src/test/kotlin/webchat/backend/auth/PasswordResetIT.kt`: US4-1…US4-5 — 202 единообразно (существующий/несуществующий email); смена по валидной ссылке → старый пароль 401, новый 200; все сессии/refresh отозваны (denylist, событие `session_revoked{reason=password_change}` в auth_events — FR-013); повторное применение → 400 с предложением новой ссылки; отклонение нового пароля по политике FR-004 и несовпадение подтверждения → 400, ссылка восстановления остаётся действительной (повторная попытка корректным паролем по той же ссылке → 204, сессии отозваны) ([api-contract.md №8–9](./contracts/api-contract.md))
-- [ ] T040 [P] [US4] Написать Vitest-тесты `frontend/src/auth/pages/__tests__/ResetPages.test.tsx`: потоки forgot → reset, ошибки 400/429
+- [X] T039 [P] [US4] Написать IT `backend/src/test/kotlin/webchat/backend/auth/PasswordResetIT.kt`: US4-1…US4-5 — 202 единообразно (существующий/несуществующий email); смена по валидной ссылке → старый пароль 401, новый 200; все сессии/refresh отозваны (denylist, событие `session_revoked{reason=password_change}` в auth_events — FR-013); повторное применение → 400 с предложением новой ссылки; отклонение нового пароля по политике FR-004 и несовпадение подтверждения → 400, ссылка восстановления остаётся действительной (повторная попытка корректным паролем по той же ссылке → 204, сессии отозваны) ([api-contract.md №8–9](./contracts/api-contract.md))
+- [X] T040 [P] [US4] Написать Vitest-тесты `frontend/src/auth/pages/__tests__/ResetPages.test.tsx`: потоки forgot → reset, ошибки 400/429
 
 ### Implementation for User Story 4
 
-- [ ] T041 [US4] Реализовать `backend/src/main/kotlin/webchat/backend/auth/domain/service/PasswordResetService.kt`: выдача OneTimeToken(password_reset, TTL 1 ч, аннулирование предыдущих) + outbox-письмо (TX); confirm — поглощение токена (FR-012), смена пароля (политика FR-004, Argon2), `SessionService.revokeAllForUser` + denylist; AuthEvents `password_reset_requested`/`password_reset_completed` — FR-010 (зависит от T017, T019, T030); критерий: GREEN в составе T039
-- [ ] T042 [US4] Реализовать `backend/src/main/kotlin/webchat/backend/auth/api/PasswordResetController.kt` (+ DTO): POST `/auth/password-reset` (202 всегда единообразно / 400 / 429), POST `/auth/password-reset/confirm` (204 / 400 / 429) — контракт №8–9; GREEN по T039
-- [ ] T043 [P] [US4] Добавить шаблон `password_reset` в `backend/src/main/kotlin/webchat/backend/email/templates/EmailTemplates.kt` (ссылка `{APP_PUBLIC_BASE_URL}/reset-password?token=...`); критерий: GREEN в T039 (ссылка /reset-password)
-- [ ] T044 [US4] Создать `frontend/src/auth/pages/ForgotPasswordPage.tsx`, `frontend/src/auth/pages/ResetPasswordPage.tsx` + маршруты `/forgot-password`, `/reset-password` в `App.tsx` + вызовы endpoints 8–9 в `frontend/src/api/auth.ts` (ОБЩИЕ файлы `auth.ts`/`App.tsx` с T024–T036 — после завершения frontend-интеграции US1/US2); GREEN по T040
+- [X] T041 [US4] Реализовать `backend/src/main/kotlin/webchat/backend/auth/domain/service/PasswordResetService.kt`: выдача OneTimeToken(password_reset, TTL 1 ч, аннулирование предыдущих) + outbox-письмо (TX); confirm — поглощение токена (FR-012), смена пароля (политика FR-004, Argon2), `SessionService.revokeAllForUser` + denylist; AuthEvents `password_reset_requested`/`password_reset_completed` — FR-010 (зависит от T017, T019, T030); критерий: GREEN в составе T039
+- [X] T042 [US4] Реализовать `backend/src/main/kotlin/webchat/backend/auth/api/PasswordResetController.kt` (+ DTO): POST `/auth/password-reset` (202 всегда единообразно / 400 / 429), POST `/auth/password-reset/confirm` (204 / 400 / 429) — контракт №8–9; GREEN по T039
+- [X] T043 [P] [US4] Добавить шаблон `password_reset` в `backend/src/main/kotlin/webchat/backend/email/templates/EmailTemplates.kt` (ссылка `{APP_PUBLIC_BASE_URL}/reset-password?token=...`); критерий: GREEN в T039 (ссылка /reset-password)
+- [X] T044 [US4] Создать `frontend/src/auth/pages/ForgotPasswordPage.tsx`, `frontend/src/auth/pages/ResetPasswordPage.tsx` + маршруты `/forgot-password`, `/reset-password` в `App.tsx` + вызовы endpoints 8–9 в `frontend/src/api/auth.ts` (ОБЩИЕ файлы `auth.ts`/`App.tsx` с T024–T036 — после завершения frontend-интеграции US1/US2); GREEN по T040
 
 **Checkpoint**: US1+US2+US4 работают независимо друг от друга на общем foundation.
 

@@ -3,10 +3,10 @@ package webchat.backend.auth.security
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataAccessException
 import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.security.oauth2.jwt.BadJwtException
 import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.security.oauth2.jwt.JwtClaimNames
 import org.springframework.security.oauth2.jwt.JwtDecoder
-import org.springframework.security.oauth2.jwt.JwtException
 import java.util.UUID
 
 /**
@@ -26,9 +26,14 @@ import java.util.UUID
  *
  * Security contract (US3-1/US3-2): EVERY failure — blank, unparseable,
  * unknown `kid`, tampered signature, wrong type, expired or denylisted —
- * throws the SAME [JwtException] with no distinguishing details; the security
- * chain maps it to the single 401 `Not authenticated` problem+json of the
- * API contract (UnifiedAuthenticationEntryPoint, T009a).
+ * throws the SAME [BadJwtException] with no distinguishing details — the
+ * `BadJwtException` subtype (rather than a plain `JwtException`) is what
+ * `JwtAuthenticationProvider` converts into `InvalidBearerTokenException`,
+ * routing the request to the chain's authentication entry point as the
+ * single 401 `Not authenticated` problem+json of the API contract
+ * (UnifiedAuthenticationEntryPoint, T009a) instead of an
+ * `AuthenticationServiceException` that would escape the filter as a 500
+ * error dispatch.
  *
  * Availability tradeoff (research.md §4 — chat availability must not be tied
  * to Redis): when Redis itself is unreachable the denylist lookup degrades
@@ -43,16 +48,16 @@ class AuthJwtDecoder(
 ) : JwtDecoder {
     override fun decode(token: String?): Jwt {
         if (token.isNullOrBlank()) {
-            throw JwtException(UNIFORM_FAILURE)
+            throw BadJwtException(UNIFORM_FAILURE)
         }
         val verified =
             try {
                 jwtService.verifyAccessToken(token)
             } catch (_: InvalidAccessTokenException) {
-                throw JwtException(UNIFORM_FAILURE)
+                throw BadJwtException(UNIFORM_FAILURE)
             }
         if (isDenylisted(verified.sessionId)) {
-            throw JwtException(UNIFORM_FAILURE)
+            throw BadJwtException(UNIFORM_FAILURE)
         }
         return toJwt(token, verified)
     }

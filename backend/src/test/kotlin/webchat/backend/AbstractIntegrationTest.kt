@@ -34,14 +34,25 @@ abstract class AbstractIntegrationTest {
             registry.add("auth.ip-hash-pepper") { "it-test-pepper" }
             registry.add("auth.jwt.keys") { TEST_JWT_KEYS }
             registry.add("auth.jwt.active-kid") { TEST_JWT_KID }
+            // The IT context never runs an SMTP listener (delivery is asserted
+            // through the outbox table, not a socket), so the MailHealthIndicator
+            // would report DOWN and flip the aggregate /actuator/health to 503 —
+            // on dev machines with a local Mailpit the same IT is UP, i.e. the
+            // T037 boundary-audit health assertions were environment-coupled.
+            // Mail reachability is out of IT scope: disabled for determinism,
+            // db/redis stay covered by the real Testcontainers.
+            registry.add("management.health.mail.enabled") { "false" }
         }
 
         // Since T028 JwtService parses auth.jwt.keys at startup and fails fast
         // on placeholders, tests sign with an ephemeral P-256 key (PKCS#8 PEM,
-        // Base64-wrapped for the single-line kid=PEM form of the env mapping)
-        private const val TEST_JWT_KID = "it-test"
+        // Base64-wrapped for the single-line kid=PEM form of the env mapping).
+        // Internal since T037: AuthenticationBoundaryIT re-uses the SAME key to
+        // mint specially-crafted tokens (expired, wrong `typ`) that must pass
+        // the signature gate and hit the deeper verification branches.
+        internal const val TEST_JWT_KID = "it-test"
 
-        private val TEST_JWT_KEYS: String by lazy {
+        internal val TEST_JWT_KEYS: String by lazy {
             val keyPair =
                 KeyPairGenerator
                     .getInstance("EC")

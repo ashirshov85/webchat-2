@@ -50,6 +50,25 @@ data class User(
         )
     }
 
+    /**
+     * Password replacement by a reset link (FR-010, US4-2): unlike
+     * [setPassword] this keeps the `active` status — the account already has
+     * a password, only the hash is replaced.
+     */
+    fun changePassword(
+        hash: String,
+        at: Instant,
+    ): User {
+        require(status == UserStatus.ACTIVE) {
+            "password replacement is only allowed for an ${UserStatus.ACTIVE} account"
+        }
+        return copy(
+            passwordHash = hash,
+            passwordSetAt = at,
+            updatedAt = at,
+        )
+    }
+
     companion object {
         fun register(
             id: UUID,
