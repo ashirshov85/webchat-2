@@ -86,7 +86,7 @@ describe('ForgotPasswordPage', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Rate limit exceeded')
-    expect(alert).toHaveTextContent('42')
+    expect(alert).toHaveTextContent('Try again in 42 s')
   })
 })
 
@@ -173,17 +173,21 @@ describe('ResetPasswordPage', () => {
     })
   })
 
-  it('shows the rate-limit detail on 429', async () => {
+  it('shows the rate-limit detail with the retry hint on 429', async () => {
     window.history.pushState({}, '', '/reset-password?token=reset-token')
     mockConfirmPasswordReset.mockRejectedValueOnce({
       title: 'Too Many Requests',
       status: 429,
       detail: 'Rate limit exceeded',
-    } satisfies Problem)
+      retryAfterSec: 42,
+    } satisfies ApiProblem)
     render(<ResetPasswordPage />)
 
     fillResetPasswordForm('correct horse', 'correct horse')
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Rate limit exceeded')
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Rate limit exceeded')
+    expect(alert).toHaveTextContent('Try again in 42 s')
+    expect(screen.getByRole('button', { name: 'Reset password' })).toBeInTheDocument()
   })
 })

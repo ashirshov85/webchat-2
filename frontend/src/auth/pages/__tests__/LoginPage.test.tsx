@@ -114,6 +114,22 @@ describe('LoginPage', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Too many attempts')
-    expect(alert).toHaveTextContent('42')
+    expect(alert).toHaveTextContent('Try again in 42 s')
+  })
+
+  it('shows the brute-force lockout retry hint in minutes on 429', async () => {
+    mockLogin.mockRejectedValueOnce({
+      title: 'Too Many Requests',
+      status: 429,
+      detail: 'Too many failed attempts. Try again later.',
+      retryAfterSec: 897,
+    } satisfies ApiProblem)
+    render(<LoginPage />)
+
+    fillLoginForm('alice', 'correct horse')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Too many failed attempts')
+    expect(alert).toHaveTextContent('Try again in 15 minutes')
   })
 })
