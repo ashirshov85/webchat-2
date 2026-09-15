@@ -132,7 +132,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 
 ### Tests for User Story 3 (сначала RED)
 
-- [ ] T037 [P] [US3] Написать IT `backend/src/test/kotlin/webchat/backend/auth/AuthenticationBoundaryIT.kt`: US3-1…US3-4 — все комбинации недействительных токенов → единый 401 `Not authenticated`; валидный → 200; аудит публичных путей = ровно контракт №1–6, №8–9 + технические `/actuator/health/**`, `/actuator/prometheus`, `/actuator/metrics/**` вне контракта API (001) (№7 logout и №10 — только с Bearer) — SC-002, [api-contract.md §1–§3](./contracts/api-contract.md)
+- [X] T037 [P] [US3] Написать IT `backend/src/test/kotlin/webchat/backend/auth/AuthenticationBoundaryIT.kt`: US3-1…US3-4 — все комбинации недействительных токенов → единый 401 `Not authenticated`; валидный → 200; аудит публичных путей = ровно контракт №1–6, №8–9 + технические `/actuator/health/**`, `/actuator/prometheus`, `/actuator/metrics/**` вне контракта API (001) (№7 logout и №10 — только с Bearer) — SC-002, [api-contract.md §1–§3](./contracts/api-contract.md)
 
 ### Implementation for User Story 3
 
