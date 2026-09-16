@@ -214,7 +214,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 - [X] T055 Аудит секретов (SC-005): gitleaks по репозиторию; в логах/БД/выгрузках нет открытых паролей и токенов (только Argon2-хеши и SHA-256); креды только env/K8s Secrets
 - [X] T056 Контрактный конвейер и CI зелёные: `vacuum lint -e contracts/openapi.yaml`, drift-check TS-типов (regen + `git diff --exit-code`), `oasdiff breaking` — только additive 0.2.0; полный прогон `./gradlew test` и `pnpm --dir frontend test`
 - [X] T057a [P] Создать нагрузочный smoke-сценарий `load/k6/auth.smoke.js`: burst `login` ≈280 rps (вращающиеся identifier'ы) + burst `register` 50 rps с одного источника — профиль [research.md §13](./research.md); k6 thresholds: 0×5xx, `http_req_duration` p(95)<500 мс для валидных логинов под лимитом (coarse-guard: прогон ко-локален, сеть ≈ loopback), `/actuator/health` 200 весь прогон, 429 с `Retry-After` при превышении лимитов, валидный трафик под лимитом обслуживается (SC-008, конституция VI)
-- [ ] T057b Прогнать сценарий по [quickstart.md §4.7](./quickstart.md) локально против docker-compose + финальная проверка после прогона — `GET /actuator/metrics/http.server.requests?tag=uri:/api/v1/auth/login` → percentile 0.95 ≤ 0.5 s (точное соответствие SC-003: серверная задержка без сети клиента) (зависит от T057a)
+- [X] T057b Прогнать сценарий по [quickstart.md §4.7](./quickstart.md) локально против docker-compose + финальная проверка после прогона — `GET /actuator/metrics/http.server.requests?tag=uri:/api/v1/auth/login` → percentile 0.95 ≤ 0.5 s (точное соответствие SC-003: серверная задержка без сети клиента) (зависит от T057a)
 
 ---
 

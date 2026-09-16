@@ -24,8 +24,9 @@ const VALID_SOURCE_IP = '198.18.0.1'
 const VERIFICATION_LINK_PATTERN = /confirm-registration\?token=([A-Za-z0-9_-]{43})/
 const MAILPIT_WAIT_MS = 90000
 
+// k6 re-evaluates module scope per VU: Date.now()-derived values differ between
+// setup() and scenario executors, so the seed password must travel via setup data
 const runId = Date.now().toString(36)
-const seedPassword = `K6smoke-${runId}-Valid1`
 
 http.setResponseCallback(http.expectedStatuses(200, 202, 204, 401, 429))
 
@@ -117,6 +118,7 @@ function mailpitMessageSummaries() {
 }
 
 export function setup() {
+  const seedPassword = `K6smoke-${runId}-Valid1`
   const seedBase = Date.now()
   const thirdOctet = ((seedBase >>> 8) & 0xff) || 1
   const fourthOctet = seedBase & 0xff
@@ -165,12 +167,12 @@ export function setup() {
     )
     if (passwordSet.status !== 204) fail(`seed password ${user.email} -> ${passwordSet.status} ${passwordSet.body}`)
   }
-  return { users }
+  return { users, seedPassword }
 }
 
 export function validLogin(data) {
   const user = data.users[__ITER % data.users.length]
-  const response = postJson(LOGIN_ENDPOINT, { identifier: user.username, password: seedPassword }, VALID_SOURCE_IP)
+  const response = postJson(LOGIN_ENDPOINT, { identifier: user.username, password: data.seedPassword }, VALID_SOURCE_IP)
   check(response, { 'valid login under the limit is served (200)': r => r.status === 200 })
 }
 
