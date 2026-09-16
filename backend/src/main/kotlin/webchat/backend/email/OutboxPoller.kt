@@ -27,11 +27,15 @@ import java.util.concurrent.TimeUnit
  * public endpoints: a failed send only bumps `attempts` and pushes
  * `next_attempt_at` further out.
  *
- * US1 retry policy (research.md §11 unified schedule): attempts 2–4 run
- * `RETRY_INTERVAL_SECONDS` apart (initial attempt + 3 retries). A row that
- * exhausted them stays `pending`, parked at `next_attempt_at = infinity` so
- * it neither spins nor leaves the queue; T052 continues the unified schedule
- * from attempt 5 up to the 10-attempt cap and `failed_permanent`.
+ * Retry policy (research.md §11 unified schedule; base in T021, completed in
+ * T052): the delay before each attempt depends only on its ordinal — attempts
+ * 2–4 run 60 s apart (initial attempt + 3 retries), attempts 5–10 back off
+ * 5→15→30→60→60→60 min (1 h cap). The attempt counter is continuous across
+ * both stages: a `pending` row that already spent its US1-era retries (≤3
+ * extra attempts under the old parking) keeps counting toward the same
+ * 10-attempt cap on this very schedule. A row whose 10th attempt fails is
+ * marked `failed_permanent` with a secret-free `last_error` — it leaves the
+ * `pending` queue and is never claimed again.
  *
  * Delivery observability (T051, FR-008, SC-001, research.md §6): every
  * attempt bumps `email_delivery_total{type,outcome}` (sent | failed), a
@@ -84,7 +88,7 @@ class OutboxPoller(
             )
             markSent(row)
         } catch (e: Exception) {
-            scheduleRetryOrPark(row, e)
+            scheduleRetryOrFailPermanently(row, e)
         }
         return true
     }
@@ -134,7 +138,7 @@ class OutboxPoller(
         )
     }
 
-    private fun scheduleRetryOrPark(
+    private fun scheduleRetryOrFailPermanently(
         row: PendingRow,
         error: Exception,
     ) {
@@ -148,10 +152,12 @@ class OutboxPoller(
             row.attempts + 1,
             providerError,
         )
-        if (row.attempts + 1 >= MAX_ATTEMPTS) {
-            jdbcTemplate.update(PARK_SQL, providerError, row.id)
+        val failedAttemptNumber = row.attempts + 1
+        if (failedAttemptNumber >= MAX_ATTEMPTS) {
+            jdbcTemplate.update(FAIL_PERMANENT_SQL, providerError, row.id)
         } else {
-            jdbcTemplate.update(SCHEDULE_RETRY_SQL, RETRY_INTERVAL_SECONDS, providerError, row.id)
+            val delaySeconds = retryDelaySeconds(nextAttempt = failedAttemptNumber + 1)
+            jdbcTemplate.update(SCHEDULE_RETRY_SQL, delaySeconds, providerError, row.id)
         }
     }
 
@@ -209,10 +215,10 @@ class OutboxPoller(
             WHERE id = ?
             """.trimIndent()
 
-        val PARK_SQL =
+        val FAIL_PERMANENT_SQL =
             """
             UPDATE email_outbox
-            SET attempts = attempts + 1, next_attempt_at = 'infinity', last_error = ?
+            SET status = 'failed_permanent', attempts = attempts + 1, next_attempt_at = 'infinity', last_error = ?
             WHERE id = ?
             """.trimIndent()
 
@@ -228,8 +234,29 @@ class OutboxPoller(
         const val SHA_256 = "SHA-256"
 
         const val MAX_ROWS_PER_TICK = 100
-        const val MAX_ATTEMPTS = 4
-        const val RETRY_INTERVAL_SECONDS = 60
+        const val MAX_ATTEMPTS = 10
+
+        // research.md §11 unified retry schedule: seconds to wait before the
+        // given attempt number (1 h cap). Attempts 2–4 are the T021 base,
+        // 5–10 the T052 backoff; the ordinal is continuous across stages.
+        val RETRY_SCHEDULE_SECONDS: Map<Int, Int> =
+            mapOf(
+                2 to 60,
+                3 to 60,
+                4 to 60,
+                5 to 5 * 60,
+                6 to 15 * 60,
+                7 to 30 * 60,
+                8 to 60 * 60,
+                9 to 60 * 60,
+                10 to 60 * 60,
+            )
+
+        fun retryDelaySeconds(nextAttempt: Int): Int =
+            requireNotNull(RETRY_SCHEDULE_SECONDS[nextAttempt]) {
+                "no retry slot for attempt $nextAttempt beyond the $MAX_ATTEMPTS-attempt cap"
+            }
+
         const val ERROR_MAX_LENGTH = 1000
     }
 }

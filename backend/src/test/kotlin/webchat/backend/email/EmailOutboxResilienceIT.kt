@@ -75,8 +75,8 @@ class FakeEmailGateway : EmailGateway {
  * — `sent` + `sent_at`, error cleared, letter carries the original
  * /confirm-registration?token=... link (US6-2); a row that exhausts 10 failed
  * attempts is parked as `failed_permanent` and never claimed again (US6-3 —
- * the full unified schedule lands with T052, so this method is the RED part
- * of the TDD cycle until then); captured logs and stored errors contain no
+ * the unified T052 retry schedule: research.md §11 backoff, continuous
+ * attempt counter); captured logs and stored errors contain no
  * passwords, open one-time token values or raw recipient PII (SC-007).
  *
  * Delivery observability (T051, FR-008, SC-001): the fail-then-recover cycle

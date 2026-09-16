@@ -199,7 +199,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 ### Implementation for User Story 6
 
 - [X] T051 [US6] Добавить observability доставки в `backend/src/main/kotlin/webchat/backend/email/OutboxPoller.kt`: счётчик Micrometer `email_delivery_total{type,outcome}`, gauge `email_outbox_pending`, таймер `email_delivery_duration{type,outcome}` = `sent_at − created_at` при пометке `sent` (проверяемость SC-001), структурные логи (`outbox_id`, `email_type`, `recipient_hash`, `attempt`, `provider_error`) — FR-008, SC-001, [research.md §6](./research.md); критерий: GREEN в T050 (метрики/таймер доставки)
-- [ ] T052 [US6] Достроить retry-политику (расширяет базовый retry из T021) в `backend/src/main/kotlin/webchat/backend/email/OutboxPoller.kt`: backoff для попыток 5–10: 5→15→30→60→60→60 мин (потолок 1 ч, единое расписание — research §11), суммарно 10 попыток → `failed_permanent`, `last_error` без секретов; номер попытки непрерывен с базовой политикой T021: строки `pending`, уже сделавшие ≤3 попытки этапа US1, дообрабатываются по единому расписанию до суммарных 10; GREEN по T050
+- [X] T052 [US6] Достроить retry-политику (расширяет базовый retry из T021) в `backend/src/main/kotlin/webchat/backend/email/OutboxPoller.kt`: backoff для попыток 5–10: 5→15→30→60→60→60 мин (потолок 1 ч, единое расписание — research §11), суммарно 10 попыток → `failed_permanent`, `last_error` без секретов; номер попытки непрерывен с базовой политикой T021: строки `pending`, уже сделавшие ≤3 попытки этапа US1, дообрабатываются по единому расписанию до суммарных 10; GREEN по T050
 
 **Checkpoint**: доставка писем устойчива к отказам внешнего сервиса и полностью наблюдаема.
 
