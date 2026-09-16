@@ -1,0 +1,273 @@
+# Tasks: SSO — вход через внешние identity-провайдеры (OIDC/OAuth2)
+
+**Input**: Design documents from `/specs/003-sso-identity-providers/`
+
+**Prerequisites**: plan.md ✅, spec.md ✅, research.md ✅, data-model.md ✅, contracts/sso-api.md ✅, quickstart.md ✅
+
+**Tests**: Включены — конституция VI (Test-First) делает интеграционные тесты SSO обязательными; IT пишутся первыми в каждой фазе истории (MockIdP, research §12).
+
+**Organization**: Задачи сгруппированы по user stories (US1–US5 из spec.md) для независимой реализации и проверки каждой истории.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Можно выполнять параллельно (разные файлы, нет зависимостей от незавершённых задач)
+- **[Story]**: Принадлежность к user story (US1–US5)
+- Все пути указаны от корня монорепо (`backend/`, `frontend/`, `contracts/`, `deploy/`)
+
+---
+
+## Phase 1: Setup (Shared Infrastructure)
+
+**Purpose**: Зависимости, конфигурация, контракт — базис для всех историй
+
+- [ ] T001 Добавить `spring-boot-starter-oauth2-client` в `backend/gradle/libs.versions.toml` и `backend/build.gradle.kts`; убедиться, что проект собирается `./gradlew compileKotlin` (workdir `backend/`)
+- [ ] T002 [P] Добавить секцию `sso.*` в `backend/src/main/resources/application.yml`: схема провайдеров (id/display-name/enabled/trusted-for-email-linking/client-id/issuer-uri|endpoints/scopes), `flow-ttl: 10m`, `handshake-ttl: 2m`, `callback-url`; client-secret — ТОЛЬКО плейсхолдеры `${SSO_<ID>_CLIENT_SECRET}` (data-model §4, SC-004)
+- [ ] T003 Обновить `contracts/openapi.yaml` 0.2.0 → 0.3.0 аддитивно по `specs/003-sso-identity-providers/contracts/sso-api.md`: 7 новых endpoints, схемы `SsoProvider`, `SsoProvidersResponse`, `SsoAuthorizeRequest`, `SsoLinkAuthorizeRequest`, `SsoAuthorizeResponse`, `SsoTokenRequest`, `Identity`, `IdentitiesResponse`, коды `sso_error`; проверить `vacuum lint -e contracts/openapi.yaml` и `oasdiff breaking origin/main:contracts/openapi.yaml contracts/openapi.yaml` (без breaking)
+- [ ] T004 Регенерировать `frontend/src/api/schema.d.ts` из контракта (`pnpm --dir frontend generate:api`); drift-check: `git diff --exit-code -- frontend/src/api/schema.d.ts` (после T003)
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: Миграции, домен/порты/адаптеры, OIDC-инфраструктура — MUST быть готово до любой истории
+
+**⚠️ CRITICAL**: Ни одна user story не может начаться до завершения фазы
+
+- [ ] T005 Создать миграцию `backend/src/main/resources/db/migration/V8__sso_enums.sql`: `ALTER TYPE auth_event_type ADD VALUE` × 6 (`sso_login_success`, `sso_login_failed`, `sso_identity_linked`, `sso_identity_unlinked`, `sso_account_created`, `sso_flow_error`) — отдельной миграцией до использования (data-model §6)
+- [ ] T006 [P] Создать миграцию `backend/src/main/resources/db/migration/V9__sso_identities.sql`: таблица `external_identities` (UNIQUE `(provider_id, subject)`, индекс по `user_id`), `sessions.auth_method varchar(16)` + `sessions.identity_id → external_identities ON DELETE SET NULL`, замена CHECK `ck_users_active_implies_credentials` → `ck_users_active_implies_email`, функция+триггер `keep_at_least_one_login_method` BEFORE DELETE (data-model §6)
+- [ ] T007 [P] Создать `backend/src/main/kotlin/webchat/backend/config/SsoProperties.kt` — `@ConfigurationProperties("sso")` со списком провайдеров и общими настройками; fail-fast валидация на старте: формат id `^[a-z0-9][a-z0-9-]{0,63}$`, наличие clientId/secret/endpoints у включённых (research §4)
+- [ ] T008 [P] Расширить `AuthEventType` шестью SSO-значениями в `backend/src/main/kotlin/webchat/backend/auth/security/AuthEvents.kt`; запись через существующий `AuthEventRecorder`, `details` — только несекретные маркеры (research §10)
+- [ ] T009 [P] Создать сущность `backend/src/main/kotlin/webchat/backend/sso/domain/model/ExternalIdentity.kt` (id/userId/providerId/subject/providerEmail/providerEmailVerified/linkedAt, правила валидации — data-model §1)
+- [ ] T010 [P] Создать порт `backend/src/main/kotlin/webchat/backend/sso/domain/port/ExternalIdentityRepository.kt`: findByProviderAndSubject, findByUserId, insert, delete, updateProviderEmail
+- [ ] T011 Реализовать адаптер `backend/src/main/kotlin/webchat/backend/sso/repository/JdbcExternalIdentityRepository.kt` на JdbcTemplate (зависит от T006, T009, T010)
+- [ ] T012 [P] Создать порт `backend/src/main/kotlin/webchat/backend/sso/domain/port/SsoFlowStore.kt`: контекст флоу `sso:flow:<state>` (single-use, TTL 10m) и handshake `sso:handshake:<sha256(code)>` (single-use, TTL 2m) — data-model §5
+- [ ] T013 Реализовать Redis-адаптер `backend/src/main/kotlin/webchat/backend/sso/repository/RedisSsoFlowStore.kt`: атомарное изъятие `GETDEL`, сериализация JSON (зависит от T012)
+- [ ] T014 Создать `backend/src/main/kotlin/webchat/backend/sso/oidc/SsoProviderRegistry.kt`: построение `ClientRegistration` из `SsoProperties` программно, lookup по id c учётом `enabled` (зависит от T007)
+- [ ] T015 Создать `backend/src/main/kotlin/webchat/backend/sso/oidc/OidcClient.kt`: построение authorization URL с PKCE S256 + state/nonce (компоненты spring-security-oauth2-client, БЕЗ servlet-фильтров), обмен code→token, верификация ID-токена (Nimbus: подпись JWKS, `iss`/`aud`/`exp`/`nonce`), lazy discovery-кэш по issuer-uri, таймауты connect/read 5s (research §1, §5)
+- [ ] T016 Расширить `backend/src/main/kotlin/webchat/backend/auth/domain/service/SessionService.kt` перегрузкой `startSession(userId, authMethod, identityId?)` (обратная совместима) и `backend/src/main/kotlin/webchat/backend/auth/repository/JdbcSessionRepository.kt` записью `auth_method`/`identity_id`; формат JWT и ротация refresh — без изменений (research §11)
+- [ ] T017 Добавить permitAll для `/api/v1/auth/sso/providers`, `/api/v1/auth/sso/authorize`, `/api/v1/auth/sso/callback`, `/api/v1/auth/sso/token` в `backend/src/main/kotlin/webchat/backend/config/SecurityConfig.kt`
+- [ ] T018 Создать MockIdP в `backend/src/test/kotlin/webchat/backend/sso/MockIdP.kt` — test-scope `@RestController`: authorization endpoint (302 с code), token endpoint (подписанный RSA ID-токен с управляемыми клеймами sub/email/email_verified/nonce), JWKS endpoint; управляемые сбои: HTTP 500, задержка > таймаута, неверный secret, подменённый код (research §12)
+
+**Checkpoint**: Фундамент готов — реализации исторей могут идти параллельно
+
+---
+
+## Phase 3: User Story 1 — Вход через внешнего провайдера с единой сессией (Priority: P1) 🎯 MVP
+
+**Goal**: Пользователь с привязанной внешней идентичностью входит через провайдера и получает пару токенов, полностью идентичную парольной (refresh-ротация, logout, доступ к API)
+
+**Independent Test**: SsoFlowIT с MockIdP: полный флоу → TokenPair; `POST /auth/refresh` ротирует refresh; `POST /auth/logout` отзывает оба; защищённое API доступно по токену сессии (quickstart S1)
+
+### Tests for User Story 1 (Test-First) ⚠️
+
+- [ ] T019 [P] [US1] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoFlowIT.kt` (на базе `AbstractIntegrationTest` + MockIdP): полный флоу входа, идентичность свойств TokenPair с парольным входом, ротация refresh, отзыв logout, доступ к защищённому API; убедиться, что тесты FAIL до реализации
+
+### Implementation for User Story 1
+
+- [ ] T020 [P] [US1] Создать DTO в `backend/src/main/kotlin/webchat/backend/sso/api/dto/SsoDtos.kt`: `SsoProvidersResponse`, `SsoAuthorizeRequest/Response`, `SsoTokenRequest` по contracts/sso-api.md §1–2, §4
+- [ ] T021 [US1] Реализовать `backend/src/main/kotlin/webchat/backend/sso/domain/service/IdentityResolutionService.kt` — ветка существующей идентичности (data-model §7 строки 1–2): вход в active-аккаунт, обновление `provider_email*`, событие `sso_login_success {resolution: existing_identity}` (зависит от T011, T016)
+- [ ] T022 [US1] Реализовать login-флоу в `backend/src/main/kotlin/webchat/backend/sso/api/SsoController.kt`: `GET /auth/sso/providers` (только включённые, порядок конфигурации), `POST /auth/sso/authorize` (создание флоу-контекста в Redis, возврат authorizationUrl; 404 для неизвестных/выключенных), `GET /auth/sso/callback` (GETDEL state, обмен code, верификация ID-токена, резолвинг, handshake-код, 302 на SPA `/sso/callback`), `POST /auth/sso/token` (GETDEL handshake → `SessionService.startSession` → LoginResponse; 400 `invalid_code`) (зависит от T013–T021)
+- [ ] T023 [P] [US1] Добавить типизированные клиенты в `frontend/src/api/sso.ts` (providers/authorize/token из schema.d.ts) и кнопки включённых провайдеров в `frontend/src/auth/pages/LoginPage.tsx` (переход `window.location.assign(authorizationUrl)`)
+- [ ] T024 [US1] Создать `frontend/src/auth/pages/SsoCallbackPage.tsx` + маршрут `/sso/callback`: обмен handshake-code через `POST /auth/sso/token`, редирект в чат, отображение `sso_error` (зависит от T023)
+- [ ] T025 [P] [US1] Добавить Vitest + Testing Library тесты в `frontend/src/auth/pages/__tests__/` для LoginPage (список провайдеров, клик → redirect) и SsoCallbackPage (обмен кода, ошибка)
+- [ ] T026 [US1] Довести `SsoFlowIT` до зелёного; проверить сценарии US1-1..US1-5 (отмена согласия у провайдера → понятная ошибка, состояние аккаунта не меняется)
+
+**Checkpoint**: User Story 1 полностью функционален и проверяем независимо — MVP
+
+---
+
+## Phase 4: User Story 2 — Первый вход: автосвязывание или JIT-создание аккаунта (Priority: P1)
+
+**Goal**: Первый вход через IdP с verified email: JIT-аккаунт при отсутствии аккаунта, автосвязывание с активным аккаунтом для trusted-провайдеров, отказы без side-effects в остальных случаях
+
+**Independent Test**: SsoIdentityResolutionIT с MockIdP: verified email без аккаунта → активный аккаунт с привязкой; verified email активного аккаунта + trusted → вход в него; unverified email → ничего не создаётся (quickstart S2–S3)
+
+### Tests for User Story 2 (Test-First) ⚠️
+
+- [ ] T027 [P] [US2] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoIdentityResolutionIT.kt`: JIT (US2-1), автосвязывание trusted (US2-2), отказы unverified/email_conflict (US2-3), pending-аккаунт → `registration_incomplete` (US2-4), парольный вход JIT → 401 (US2-5), конфликт username (US2-6); FAIL до реализации
+
+### Implementation for User Story 2
+
+- [ ] T028 [P] [US2] Создать `backend/src/main/kotlin/webchat/backend/sso/domain/service/UsernameGenerator.kt`: local-part email → lowercase → `[a-z0-9._-]` → ≤32 → паттерн 002 (префикс `user` при невыполнении); коллизии: `-2..-99`, затем `-<4 random>`; вставка с ретраем при unique violation ≤5 попыток (research §7)
+- [ ] T029 [US2] Расширить `backend/src/main/kotlin/webchat/backend/sso/domain/service/IdentityResolutionService.kt` полной матрицей первого входа (data-model §7 строки 3–8): `email_not_verified` / auto_linked (trusted + verified, lower()-канонизация email) / `email_conflict` (не trusted) / `registration_incomplete` (pending) / JIT (active-аккаунт без пароля, `email_confirmed_at=now()`, письмо не отправляется); события `sso_account_created`, `sso_login_failed`; идемпотентность FR-012 (зависит от T028)
+- [ ] T030 [US2] Добавить guard в `backend/src/main/kotlin/webchat/backend/auth/domain/service/LoginService.kt`: `password_hash IS NULL` → fictitious hash → uniform 401 (FR-013, без различения JIT-аккаунтов)
+- [ ] T031 [US2] Доработать сообщения об ошибках первого входа в `frontend/src/auth/pages/SsoCallbackPage.tsx`: `email_not_verified`/`email_conflict`/`registration_incomplete` → понятное сообщение + CTA «войти по паролю и привязать провайдера в настройках»
+- [ ] T032 [US2] Довести `SsoIdentityResolutionIT` до зелёного; проверить отсутствие дублей аккаунтов/привязок при повторных callback (FR-012)
+
+**Checkpoint**: US1 и US2 работают независимо — полный P1-сценарий бесшовного входа
+
+---
+
+## Phase 5: User Story 3 — Ручное управление привязками внешних IdP (Priority: P2)
+
+**Goal**: Аутентифицированный пользователь привязывает/отвязывает провайдеров через полный флоу у IdP; запрет удаления последнего способа входа; сессии при отвязке не отзываются
+
+**Independent Test**: SsoLinkingIT: привязка → идентичность в списке и вход работает; отвязка → вход отклоняется; отвязка последнего способа → 409 `last_login_method` (quickstart S4)
+
+### Tests for User Story 3 (Test-First) ⚠️
+
+- [ ] T033 [P] [US3] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoLinkingIT.kt`: link-флоу (US3-1), `identity_taken` без деталей владельца (US3-2), отвязка при наличии пароля (US3-3), 409 на последнюю привязку JIT-аккаунта (US3-4), email провайдера ≠ email аккаунта (US3-5), сессии живут после отвязки (US3-6); FAIL до реализации
+
+### Implementation for User Story 3
+
+- [ ] T034 [US3] Реализовать `backend/src/main/kotlin/webchat/backend/sso/domain/service/IdentityLinkService.kt`: link (purpose=link, идентичность свободна → привязка; своя → no-op success; чужая → `identity_taken`), unlink (владелец = текущий пользователь иначе 404; app-проверка «не последний способ входа» + маппинг DB-триггера → 409 `last_login_method`), события `sso_identity_linked`/`sso_identity_unlinked`, email аккаунта не меняется (data-model §7 Link/Unlink; зависит от T011)
+- [ ] T035 [US3] Реализовать `backend/src/main/kotlin/webchat/backend/sso/api/SsoIdentitiesController.kt`: `POST /auth/sso/link/authorize` (Bearer, purpose=link), `GET /users/me/identities` (порядок по linkedAt, `providerDisplayName` из конфига), `DELETE /users/me/identities/{identityId}` (204/404/409); link-ветка callback → 302 `/settings/security?linked=<providerId>` (зависит от T022, T034)
+- [ ] T036 [P] [US3] Добавить клиенты link/list/delete в `frontend/src/api/sso.ts`
+- [ ] T037 [US3] Реализовать `frontend/src/settings/pages/SecurityPage.tsx`: список привязок (провайдер, email, дата), кнопки «Привязать провайдера» и «Отвязать» с обработкой 409 (предложение задать пароль) (зависит от T036)
+- [ ] T038 [P] [US3] Добавить Vitest-тесты в `frontend/src/settings/pages/__tests__/` для SecurityPage (список, привязка, отвязка, last-method ошибка)
+- [ ] T039 [US3] Довести `SsoLinkingIT` до зелёного
+
+**Checkpoint**: US1–US3 независимо функциональны
+
+---
+
+## Phase 6: User Story 4 — Конфигурация нескольких провайдеров, секреты в secret manager (Priority: P2)
+
+**Goal**: Одновременная работа ≥2 провайдеров; выключение скрывает провайдера без влияния на привязки и другие способы входа; сбой конфигурации одного не влияет на остальных; секреты только в env/secret manager
+
+**Independent Test**: SsoResilienceIT: при ≥2 провайдерах оба в перечне и работают; недоступность одного → понятная ошибка ≤5s, остальные и пароль работают; аудит секретов (quickstart S5)
+
+### Tests for User Story 4 (Test-First) ⚠️
+
+- [ ] T040 [P] [US4] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoResilienceIT.kt` с двумя провайдерами на MockIdP: оба включены и работают (US4-1), выключенный → скрыт + 404 authorize + `provider_disabled` callback (US4-3), сбой/таймаут/500/неверный secret одного → `provider_error` ≤5s при работающих остальных и парольном входе (US4-4, SC-005); FAIL до реализации
+
+### Implementation for User Story 4
+
+- [ ] T041 [US4] Доработать обработку состояний провайдеров в `backend/src/main/kotlin/webchat/backend/config/SsoProperties.kt` и `backend/src/main/kotlin/webchat/backend/sso/oidc/SsoProviderRegistry.kt`: выключенный/неизвестный → единый 404 на authorize; `provider_disabled` на callback при выключении между authorize и callback; изоляция ошибок по провайдерам
+- [ ] T042 [P] [US4] Создать локальный dex IdP в `deploy/local/dex/` (docker-compose профиль `sso`, порт 5556): конфиг со статическим пользователем `alice@example.com`, redirect-uri `http://localhost:8080/api/v1/auth/sso/callback` (quickstart «Предусловия»)
+- [ ] T043 [P] [US4] Проверить гигиену секретов (SC-004): `rg -i "client.?secret" --hidden -g '!node_modules'` → только плейсхолдеры `${SSO_*_CLIENT_SECRET}`; прогнать gitleaks; убедиться, что секреты отсутствуют в логах backend и `auth_events.details`
+- [ ] T044 [US4] Довести `SsoResilienceIT` до зелёного; проверить фиксацию сбоев провайдера в observability (лог с trace_id, `sso_flow_error`)
+
+**Checkpoint**: US1–US4 независимо функциональны
+
+---
+
+## Phase 7: User Story 5 — Защита SSO-флоу и устойчивость при сбоях провайдера (Priority: P2)
+
+**Goal**: Rate limiting на всех публичных SSO-endpoints (консистентный при масштабировании); защита от CSRF/replay; graceful-обработка сбоев; аудит всех SSO-событий без секретов
+
+**Independent Test**: SsoSecurityIT + SsoRateLimitIT: сверхлимитные запросы → 429 + Retry-After; повторённый/подделанный callback отклоняется без создания сессии (quickstart S6)
+
+### Tests for User Story 5 (Test-First) ⚠️
+
+- [ ] T045 [P] [US5] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoSecurityIT.kt`: повторное использование state (US5-2), подменённый state/nonce, чужая вкладка, повторный callback → отказ до любых эффектов, сессии/привязки не создаются (SC-006); FAIL до реализации
+- [ ] T046 [P] [US5] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoRateLimitIT.kt`: лимиты на 5 публичных SSO-маршрутов (providers 30/1m, authorize 10/1m, link/authorize 10/1m, callback 30/1m, token 30/1m) → 429 + `Retry-After ≥ 1` (US5-1, SC-007); FAIL до реализации
+
+### Implementation for User Story 5
+
+- [ ] T047 [US5] Расширить `backend/src/main/kotlin/webchat/backend/auth/ratelimit/RateLimitFilter.kt` и `AuthRateLimitProperties` таблицей SSO-маршрутов, включая поддержку GET-маршрутов (сейчас только POST); те же 429 + Retry-After problem+json, Redis ProxyManager, fail-open (research §9)
+- [ ] T048 [P] [US5] Добавить метрики Micrometer `sso_flow_total{provider, outcome}` и `sso_idp_call_duration{provider, kind}` в `backend/src/main/kotlin/webchat/backend/sso/` (research §14); `/actuator/prometheus` отражает sso-события
+- [ ] T049 [US5] Довести `SsoSecurityIT` и `SsoRateLimitIT` до зелёного
+
+**Checkpoint**: Все user stories независимо функциональны
+
+---
+
+## Phase 8: Polish & Cross-Cutting Concerns
+
+**Purpose**: Сквозные улучшения и финальная валидация
+
+- [ ] T050 [P] Расширить `load/k6/auth.smoke.js` SSO-сценариями: providers → authorize → token-error (полный флоу в smoke невозможен без реального IdP — задокументировано в скрипте) (research §12)
+- [ ] T051 [P] Финальный аудит безопасности: отсутствие секретов в коде/логах/контракте, state+nonce+PKCE, single-use семантика Redis-ключей — сверка с checklist конституции V
+- [ ] T052 Полный прогон валидации (quickstart «Автоматизированные проверки»): `./gradlew check` (workdir `backend/`), `pnpm --dir frontend test && pnpm --dir frontend lint`, `pnpm --dir frontend generate:api` + drift-check, `vacuum lint`, `oasdiff breaking` — все зелёные
+- [ ] T053 Ручная проверка по `specs/003-sso-identity-providers/quickstart.md` сценарии S1–S6 с локальным dex (docker compose `--profile sso`): единая сессия, JIT, автосвязывание, привязки, несколько провайдеров, защита флоу
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: без зависимостей — старт немедленно
+- **Foundational (Phase 2)**: зависит от Phase 1 — БЛОКИРУЕТ все истории
+- **User Stories (Phases 3–7)**: все зависят от Phase 2
+  - Могут идти параллельно (при наличии ресурсов) или последовательно по приоритету (US1 → US2 → US3 → US4 → US5)
+- **Polish (Phase 8)**: зависит от завершения всех историй
+
+### User Story Dependencies
+
+- **US1 (P1)**: после Phase 2; старт immediately — вход через существующую идентичность
+- **US2 (P1)**: после Phase 2; расширяет `IdentityResolutionService` из US1 (T029 поверх T021) — рекомендуется после US1, независимо тестируема
+- **US3 (P2)**: после Phase 2; использует callback/login-механику US1 (T035 поверх T022), независимо тестируема
+- **US4 (P2)**: после Phase 2; независима (конфигурация/изоляция), тестируется с MockIdP
+- **US5 (P2)**: после Phase 2; rate limiting поверх конечного набора SSO-маршрутов (US1/US3 endpoints), тесты независимы
+
+### Within Each User Story
+
+- Тесты пишутся ПЕРВЫМИ и FAIL до реализации (конституция VI)
+- Модели/порты → сервисы → контроллеры → фронтенд
+- История завершена checkpoint-проверкой перед следующей
+
+### Parallel Opportunities
+
+- T002, T003 параллельны после T001
+- T005–T010, T012 (разные файлы) параллельны внутри Phase 2
+- T019 / T027+T028 / T033 / T040 / T045+T046 — тесты разных исторей параллельны после Phase 2
+- Внутри истории: модели/DTO/фронтенд-клиенты [P] параллельны
+- Разные истории — разные разработчики после Phase 2
+
+---
+
+## Parallel Example: User Story 1
+
+```bash
+# Тесты и независимые файлы US1 параллельно:
+Task: "T019 [US1] SsoFlowIT в backend/src/test/kotlin/webchat/backend/sso/SsoFlowIT.kt"
+Task: "T020 [US1] DTO в backend/src/main/kotlin/webchat/backend/sso/api/dto/SsoDtos.kt"
+Task: "T023 [US1] frontend/src/api/sso.ts + LoginPage.tsx"
+
+# Затем последовательно: T021 (IdentityResolutionService) → T022 (SsoController) → T024 (SsoCallbackPage) → T026 (зелёный IT)
+```
+
+## Parallel Example: User Story 5
+
+```bash
+Task: "T045 [US5] SsoSecurityIT"
+Task: "T046 [US5] SsoRateLimitIT"
+Task: "T048 [US5] Метрики Micrometer"
+
+# Затем: T047 (RateLimitFilter) → T049 (зелёные IT)
+```
+
+---
+
+## Implementation Strategy
+
+### MVP First (User Story 1)
+
+1. Complete Phase 1: Setup (зависимости + контракт 0.3.0)
+2. Complete Phase 2: Foundational (миграции, порты, OidcClient, MockIdP)
+3. Complete Phase 3: User Story 1 — вход через провайдера с единой сессией
+4. **STOP and VALIDATE**: SsoFlowIT зелёный, quickstart S1 вручную
+5. Deploy/demo при готовности
+
+### Incremental Delivery
+
+1. Setup + Foundational → фундамент
+2. US1 → MVP: равноправный вход через IdP
+3. US2 → бесшовный первый вход (JIT/автосвязывание) — завершает P1-ценность
+4. US3 → ручные привязки в настройках
+5. US4 → мульти-провайдерность + секреты
+6. US5 → защита и устойчивость
+7. Polish → k6, аудит, полный прогон, quickstart
+
+### Parallel Team Strategy
+
+1. Команда вместе завершает Phase 1–2
+2. После Phase 2:
+   - Developer A: US1 → US2 (домен резолвинга)
+   - Developer B: US3 → US5 (привязки, защита)
+   - Developer C: US4 + фронтенд-интеграция
+3. Polish — совместно
+
+---
+
+## Notes
+
+- [P] = разные файлы, нет зависимостей от незавершённых задач
+- [Story] метки связывают задачи с US1–US5 из spec.md
+- Тесты каждой истории писать первыми, проверять FAIL перед реализацией
+- Коммит после каждой задачи или логической группы
+- Останавливаться на checkpoint историй для независимой валидации
+- Секреты — только `${SSO_*}` плейсхолдеры (SC-004, gitleaks в CI)
+- Формат access-JWT и модель ротации refresh из 002 не меняются (FR-002, конституция IV)
