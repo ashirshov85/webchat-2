@@ -285,11 +285,11 @@ token-обменом: Redis-ключи TTL-сятся сами, «осироте
 **Decision**: метрики Micrometer: `sso_flow_total{provider, outcome}`
 (started/completed/login_failed/flow_rejected/provider_error),
 `sso_idp_call_duration{provider, kind=token|userinfo|jwks}` (тайминги внешних
-вызовов, timeout 5 s connect+read); structured-логи с trace_id (существующий
+вызовов, timeout: общий deadline 5 s на callback — SC-005, connect 1 s / read 2 s на вызов); structured-логи с trace_id (существующий
 стек OTel→LGTM); сбой провайдера = `sso_flow_error` в `auth_events` + метрика —
 US4-4/US5-3/SC-005.
 
-**Rationale**: переиспользование стека 001/002; таймаут 5 s прямо из SC-005;
+**Rationale**: переиспользование стека 001/002; общий deadline 5 s на callback прямо из SC-005 (per-call connect 1 s / read 2 s);
 изоляция провайдеров = отсутствие общего состояния (метрики per-provider).
 
 ## 15. Версия контракта и публичный перечень

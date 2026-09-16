@@ -91,7 +91,7 @@ denylist, причины отзыва — **без изменений** (FR-002:
 
 Общие настройки: `sso.flow-ttl` (10m), `sso.handshake-ttl` (2m),
 `sso.callback-url` (по умолчанию `${app.public-base-url}/api/v1/auth/sso/callback`),
-IdP-таймауты connect/read 5s (SC-005).
+IdP-таймауты: общий deadline 5 с на callback (SC-005); connect 1 с / read 2 с на вызов.
 
 ## 5. Эфемерные структуры Redis (stateless, конституция II)
 
