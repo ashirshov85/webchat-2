@@ -139,7 +139,7 @@ backend/
 ├── src/main/resources/
 │   ├── application.yml             # + секция sso.* (секреты — только ${SSO_*_CLIENT_SECRET})
 │   └── db/migration/
-│       ├── V8__sso_enums.sql       # + ALTER TYPE auth_event_type/one_time_token_purpose
+│       ├── V8__sso_enums.sql       # + ALTER TYPE auth_event_type (+6 SSO-значений; one_time_token_purpose не расширяется — data-model §6)
 │       └── V9__sso_identities.sql  # + external_identities, sessions.auth_method, CHECK users, триггер
 └── src/test/kotlin/webchat/backend/
     ├── sso/MockIdP.kt              # + эмулируемый OIDC-провайдер (test-scope controller)

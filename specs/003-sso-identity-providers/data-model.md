@@ -100,6 +100,10 @@ IdP-таймауты: общий deadline 5 с на callback (SC-005); connect 1
 | `sso:flow:<state>` | JSON `{providerId, purpose: login\|link, userId?, returnTo?, nonce, codeVerifier, createdAt}` | 10m (`sso.flow-ttl`) | single-use: запись на authorize, атомарное изъятие `GETDEL` на callback; повтор/подмена/чужая вкладка → отказ до эффектов |
 | `sso:handshake:<sha256(code)>` | JSON `{userId, identityId, providerId}` | 2m (`sso.handshake-ttl`) | single-use (`GETDEL`) на `POST /auth/sso/token`; сессия и токены создаются только здесь |
 
+`returnTo` хранится во флоу-контексте для аудита/отладки; к SPA возвращается через
+`sessionStorage` (клиент сохраняет до перехода на IdP), не через handshake
+(contracts/sso-api.md §2).
+
 Существующие структуры 002 (`rl:ip:*`, `rl:email:*`, `login:fail:*`,
 `auth:denylist:sid:*`) — без изменений; `rl:ip:sso:*` добавляется таблицей
 маршрутов (research §9). Инвариант 002 сохранён: потеря Redis никогда не ломает

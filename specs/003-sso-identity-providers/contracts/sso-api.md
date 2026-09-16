@@ -58,6 +58,10 @@ properties:
 `redirect_uri = {public-base-url}/api/v1/auth/sso/callback`; verifier клиенту не
 виден (server-side confidential client).
 
+`returnTo` сохраняется SPA в `sessionStorage` перед переходом на IdP и
+применяется после успешного обмена (§4) — серверных изменений схемы не требуется;
+сервер валидирует только относительный формат пути на `authorize`.
+
 Errors: **404** problem `Provider not found` (неизвестен или выключен — единый
 ответ, раскрытия перечня нет, он и так публичен); **400** `errors: {returnTo:
 ["invalid_format"]}` для не-относительного пути; **429**.
