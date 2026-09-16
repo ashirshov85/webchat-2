@@ -1,0 +1,126 @@
+# Quickstart: SSO — вход через внешние identity-провайдеры (OIDC/OAuth2)
+
+**Feature**: `003-sso-identity-providers` | **Date**: 2026-09-16
+
+Руководство по ручной end-to-end проверке фичи. Контракты — [contracts/sso-api.md](contracts/sso-api.md),
+модель данных — [data-model.md](data-model.md). Интеграционные автотесты (MockIdP)
+покрывают те же сценарии автоматически — ручная проверка вторична, но обязательна
+для UI-флоу (экран входа, настройки безопасности).
+
+## Предусловия
+
+- Docker + docker compose; pnpm ≥12, Node ≥24, JDK 21 (как в фиче 002).
+- Локальная инфраструктура 002: `deploy/local/docker-compose.yml`
+  (postgres:17 `:5432`, redis:7 `:6379`, mailpit `:8025`).
+- **Локальный IdP**: dex-контейнер (`deploy/local/dex/`, добавляется реализацией;
+  конфиг с одним статическим пользователем `alice@example.com` / пароль и
+  redirect-uri `http://localhost:8080/api/v1/auth/sso/callback`).
+
+## Настройка и запуск
+
+```bash
+# 1. Инфраструктура (включая локальный dex IdP на :5556)
+docker compose -f deploy/local/docker-compose.yml --profile sso up -d
+
+# 2. Backend: провайдер dex с явными endpoints, секрет из env
+export SSO_DEX_CLIENT_SECRET=dev-secret
+./gradlew bootRun   # workdir backend/; application.yml: sso.providers.dex.*
+
+# 3. Frontend
+pnpm --dir frontend dev
+```
+
+Схема конфигурации провайдера и TTL — [data-model.md §4](data-model.md);
+client secret передаётся только env (K8s Secrets в dev-кластере), в репозитории
+секретов нет — gitleaks в CI это проверяет (SC-004).
+
+## Сценарии проверки
+
+### S1. Вход через провайдера с единой сессией (US1, P1)
+
+1. Открыть SPA `/login` → видна кнопка `dex`.
+2. Нажать → редирект на IdP → аутентификация `alice@example.com`.
+3. Возврат в SPA вошедшим (`/sso/callback` → чат).
+4. **Ожидаемо**: пара токенов того же формата, что при парольном входе;
+   `GET /api/v1/users/me` по токену сессии → 200; продление
+   `POST /api/v1/auth/refresh` ротирует refresh; `POST /api/v1/auth/logout`
+   отзывает оба (повторное использование → 401).
+
+### S2. Первый вход: JIT-аккаунт (US2, P1)
+
+1. На IdP войти новым пользователем `bob@example.com` (verified email).
+2. **Ожидаемо**: автоматический вход; создан active-аккаунт с email
+   `bob@example.com`, системным username, без пароля; письма в mailpit нет.
+3. `GET /api/v1/users/me/identities` → одна привязка dex.
+4. Парольный вход `bob@example.com` → 401 (FR-013); после password-reset из
+   письма (mailpit) парольный вход работает.
+
+### S3. Первый вход: автосвязывание по allowlist (US2, P1)
+
+1. Зарегистрироваться паролем (фича 002) с `alice@example.com`… — использовать
+   другой email, например `carol@example.com`, провайдер dex с
+   `trusted-for-email-linking: true`.
+2. Войти через IdP пользователем с verified `carol@example.com`.
+3. **Ожидаемо**: вход в существующий аккаунт (новый не создан), привязка
+   добавлена; пароль не запрашивался.
+4. Повторить с `trusted-for-email-linking: false` (новый email): вход
+   завершается `sso_error=email_conflict`, предложение войти по паролю.
+
+### S4. Ручные привязки (US3, P2)
+
+1. Войти паролем → `/settings/security` → список привязок (после S3 — с dex).
+2. Привязать ещё одного провайдера (второй dex-клиент или повторный вход другим
+   пользователем IdP) → появляется в списке, вход через него работает.
+3. Отвязать провайдера при наличии пароля → 204; вход через него → отклонение;
+   активные сессии живут до logout.
+4. JIT-аккаунт без пароля: попытка отвязать единственную привязку → 409
+   `last_login_method` с предложением задать пароль.
+
+### S5. Несколько провайдеров и секреты (US4, P2)
+
+1. Настроить ≥2 провайдеров → экран входа перечисляет обоих; вход работает
+   через каждого.
+2. Выключить одного (`enabled: false`, рестарт) → исчез с экрана; прямой
+   `POST /api/v1/auth/sso/authorize {providerId}` → 404; привязки и остальные
+   способы входа не затронуты.
+3. `rg -i "client.?secret" --hidden -g '!node_modules'` по репозиторию → только
+   плейсхолдеры `${SSO_*_CLIENT_SECRET}`; в логах backend секретов нет.
+
+### S6. Защита флоу (US5, P2)
+
+1. Повторно открыть URL callback (скопированный из истории) → `sso_error=invalid_state`,
+   сессия не создаётся.
+2. `for i in $(seq 1 40); do curl -s -o /dev/null -w "%{http_code}\n" \
+   http://localhost:8080/api/v1/auth/sso/providers; done` → после 30 запросов в
+   минуту — 429 с `Retry-After`.
+3. Остановить dex-контейнер → вход через dex завершается `sso_error=provider_error`
+   ≤5 c; парольный вход и `/login` работают; в `auth_events` — `sso_flow_error`,
+   метрика `sso_flow_total{outcome="provider_error"}` растёт (`/actuator/prometheus`).
+
+## Автоматизированные проверки
+
+```bash
+# workdir backend/ — интеграционные тесты SSO (Testcontainers: PG17, Redis7, MockIdP)
+./gradlew test --tests 'webchat.backend.sso.*'
+
+# Полный прогон с линтами
+./gradlew check && pnpm --dir frontend test && pnpm --dir frontend lint
+
+# Контракт
+pnpm --dir frontend generate:api && git diff --exit-code -- frontend/src/api/schema.d.ts
+vacuum lint -e contracts/openapi.yaml
+oasdiff breaking origin/main:contracts/openapi.yaml contracts/openapi.yaml
+
+# Нагрузочный smoke (вкл. SSO-сценарии: providers/authorize/token-error)
+docker run --rm --network host -v "$PWD/load/k6:/k6" grafana/k6 run /k6/auth.smoke.js
+```
+
+**Ожидаемые итоги**: все suite'ы зелёные; oasdiff без breaking-изменений;
+в smoke — 0×5xx, SSO-лимиты отвечают 429 + `Retry-After ≥ 1`.
+
+## Ссылки
+
+- Контракты: [contracts/sso-api.md](contracts/sso-api.md) (после реализации —
+  `contracts/openapi.yaml` 0.3.0).
+- Решения проектирования: [research.md](research.md); модель данных:
+  [data-model.md](data-model.md).
