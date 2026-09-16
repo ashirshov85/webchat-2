@@ -134,7 +134,11 @@ MockIdP и полезны для провайдеров с нестандарт�
 ## 6. JIT-аккаунты: релаксация CHECK `users` + DB-триггер последнего способа входа
 
 **Decision**: миграция V9: (а) CHECK `ck_users_active_implies_credentials` заменяется
-на `ck_users_active_implies_email`: `(status='active') = (email_confirmed_at IS NOT NULL)`;
+на `ck_users_active_implies_email` — **импликацией, не равенством**:
+`CHECK (status <> 'active' OR email_confirmed_at IS NOT NULL)`;
+равенство `(status='active') = (email_confirmed_at IS NOT NULL)` нарушило бы
+существующие `awaiting_password`-аккаунты 002 (status ≠ 'active' при
+подтверждённом email; см. data-model §2);
 (б) инвариант «у активного аккаунта ≥1 способ входа» обеспечивается приложением
 (все пути создания/отвязки идут через сервисы) **и** страхуется BEFORE DELETE-триггером
 на `external_identities` (запрещает удаление последней привязки, если
@@ -294,9 +298,10 @@ US4-4/US5-3/SC-005.
 
 ## 15. Версия контракта и публичный перечень
 
-**Decision**: `contracts/openapi.yaml` 0.2.0 → **0.3.0**, только аддитивно:
-`GET /auth/sso/providers`, `POST /auth/sso/authorize`, `GET /auth/sso/callback`
-(браузерный 302 — документируется с семантикой редиректов), `POST /auth/sso/token`,
+**Decision**: `contracts/openapi.yaml` 0.2.0 → **0.3.0**, только аддитивно —
+7 endpoints: `GET /auth/sso/providers`, `POST /auth/sso/authorize`,
+`GET /auth/sso/callback` (браузерный 302 — документируется с семантикой
+редиректов), `POST /auth/sso/token`, `POST /auth/sso/link/authorize`,
 `GET /users/me/identities`, `DELETE /users/me/identities/{identityId}`.
 oasdiff breaking gate проходит без `BREAKING.md`; TS-типы регенерируются
 (drift-check CI). Полный публичный перечень (без аутентификации) = 8 маршрутов 002

@@ -13,8 +13,10 @@
 - Локальная инфраструктура 002: `deploy/local/docker-compose.yml`
   (postgres:17 `:5432`, redis:7 `:6379`, mailpit `:8025`).
 - **Локальный IdP**: dex-контейнер (`deploy/local/dex/`, добавляется реализацией;
-  конфиг с одним статическим пользователем `alice@example.com` / пароль и
-  redirect-uri `http://localhost:8080/api/v1/auth/sso/callback`).
+  конфиг со статическими пользователями `alice@example.com` (S1), `bob@example.com`
+  (S2 — JIT), `carol@example.com` (S3 — автосвязывание), `dave@example.com`
+  (S3 шаг 4 — email_conflict) и redirect-uri
+  `http://localhost:8080/api/v1/auth/sso/callback`).
 
 ## Настройка и запуск
 
@@ -32,7 +34,8 @@ pnpm --dir frontend dev
 
 Схема конфигурации провайдера и TTL — [data-model.md §4](data-model.md);
 client secret передаётся только env (K8s Secrets в dev-кластере), в репозитории
-секретов нет — gitleaks в CI это проверяет (SC-004).
+секретов нет — gitleaks в CI это проверяет (SC-004; единственное исключение —
+dev-only dummy-секрет staticClient dex в `deploy/local/dex/`, см. Assumptions spec.md).
 
 ## Сценарии проверки
 
@@ -45,6 +48,8 @@ client secret передаётся только env (K8s Secrets в dev-клас
    `GET /api/v1/users/me` по токену сессии → 200; продление
    `POST /api/v1/auth/refresh` ротирует refresh; `POST /api/v1/auth/logout`
    отзывает оба (повторное использование → 401).
+5. **Ожидаемо**: флоу уложился в 3 взаимодействия (SC-001): выбор провайдера →
+   аутентификация → возврат.
 
 ### S2. Первый вход: JIT-аккаунт (US2, P1)
 
@@ -63,28 +68,37 @@ client secret передаётся только env (K8s Secrets в dev-клас
 2. Войти через IdP пользователем с verified `carol@example.com`.
 3. **Ожидаемо**: вход в существующий аккаунт (новый не создан), привязка
    добавлена; пароль не запрашивался.
-4. Повторить с `trusted-for-email-linking: false` (новый email): вход
-   завершается `sso_error=email_conflict`, предложение войти по паролю.
+4. Зарегистрировать паролем аккаунт `dave@example.com` (фича 002), переключить
+   dex на `trusted-for-email-linking: false` (рестарт backend) и войти через IdP
+   пользователем `dave@example.com`: вход завершается `sso_error=email_conflict`,
+   предложение войти по паролю.
 
 ### S4. Ручные привязки (US3, P2)
 
 1. Войти паролем → `/settings/security` → список привязок (после S3 — с dex).
 2. Привязать ещё одного провайдера (второй dex-клиент или повторный вход другим
    пользователем IdP) → появляется в списке, вход через него работает.
-3. Отвязать провайдера при наличии пароля → 204; вход через него → отклонение;
-   активные сессии живут до logout.
+3. Отвязать провайдера при наличии пароля → 204; повторный вход через него — по
+   правилам первого входа: `trusted-for-email-linking: false` →
+   `sso_error=email_conflict`, `: true` с совпадающим verified email → повторная
+   автопривязка и вход; активные сессии живут до logout.
 4. JIT-аккаунт без пароля: попытка отвязать единственную привязку → 409
    `last_login_method` с предложением задать пароль.
 
 ### S5. Несколько провайдеров и секреты (US4, P2)
 
-1. Настроить ≥2 провайдеров → экран входа перечисляет обоих; вход работает
-   через каждого.
+1. Добавить второго провайдера: в `deploy/local/dex/` — второй staticClient
+   (`webchat2`, тот же dummy-секрет), в `backend/src/main/resources/application.yml` —
+   блок `sso.providers.dex2.*` (тот же issuer/endpoints dex, другой `client-id`,
+   секрет — плейсхолдер `${SSO_DEX2_CLIENT_SECRET}`); рестарт backend → экран входа
+   перечисляет обоих (`dex`, `dex2`), вход работает через каждого.
 2. Выключить одного (`enabled: false`, рестарт) → исчез с экрана; прямой
    `POST /api/v1/auth/sso/authorize {providerId}` → 404; привязки и остальные
    способы входа не затронуты.
-3. `rg -i "client.?secret" --hidden -g '!node_modules'` по репозиторию → только
-   плейсхолдеры `${SSO_*_CLIENT_SECRET}`; в логах backend секретов нет.
+3. `rg -i "client.?secret" --hidden -g '!node_modules' -g '!deploy/local/dex/**'`
+   по репозиторию → только плейсхолдеры `${SSO_*_CLIENT_SECRET}` (и dummy
+   `dev-secret` в `deploy/local/dex/` — исключение из Assumptions); в логах
+   backend секретов нет.
 
 ### S6. Защита флоу (US5, P2)
 

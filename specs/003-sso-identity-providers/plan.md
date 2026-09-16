@@ -26,9 +26,11 @@ opaque refresh без изменений; `sessions` расширяется пр
   финального POST, на сервере хранится лишь SHA-256, как в 002.
 - Конфигурация провайдеров — `@ConfigurationProperties` (YAML), client secret — только
   плейсхолдеры `${SSO_*}` из K8s Secrets; в БД и репозитории секретов нет.
-- Новая таблица `external_identities` (UNIQUE `(provider_id, subject)`), релаксация
-  CHECK `users` для JIT-аккаунтов без пароля + DB-триггер «последнего способа входа»,
-  расширение enum `auth_event_type` (+6 SSO-событий).
+- Новая таблица `external_identities` (UNIQUE `(provider_id, subject)`), релаксация CHECK
+  `users` для JIT-аккаунтов без пароля — импликация `active → email_confirmed_at`,
+  состояния регистрации 002 не затрагиваются, + DB-триггер «последнего способа входа»
+  (подсчёт привязок за вычетом удаляемой строки), расширение enum `auth_event_type`
+  (+6 SSO-событий).
 
 ## Technical Context
 
@@ -36,7 +38,7 @@ opaque refresh без изменений; `sessions` расширяется пр
 
 **Primary Dependencies**: Spring Boot 3.5.16 (web, security, actuator, jdbc, data-redis, oauth2-resource-server — уже в `gradle/libs.versions.toml`) + **новый** `spring-boot-starter-oauth2-client` (компоненты OIDC: PKCE, token exchange, верификация ID-токена; Nimbus уже транзитивно); Flyway (SQL-миграции), JdbcTemplate (без JPA — по конвенции 002), Bucket4j 8.19 + Redis/Lettuce (rate limiting), Nimbus JOSE JWT (уже в classpath через oauth2-resource-server)
 
-**Storage**: PostgreSQL 17 — расширение существующей схемы: новая `external_identities`, колонки `sessions.auth_method/identity_id`, релаксация CHECK `users` (миграции V8–V9); Redis 7 — ephemeral: `sso:flow:<state>` (контекст флоу, single-use), `sso:handshake:<sha256(code)>` (контекст выдачи токенов, single-use), существующие `rl:*`, `auth:denylist:sid:*`
+**Storage**: PostgreSQL 17 — расширение существующей схемы: новая `external_identities`, колонки `sessions.auth_method/identity_id`, релаксация CHECK `users` (миграции V8–V9); Redis 7 — ephemeral: `sso:flow:<state>` (контекст флоу, single-use, TTL 10 мин), `sso:handshake:<sha256(code)>` (контекст выдачи токенов, single-use, TTL 2 мин), существующие `rl:*`, `auth:denylist:sid:*`
 
 **Testing**: JUnit 5 + Testcontainers (PostgreSQL 17, Redis 7 — база `AbstractIntegrationTest`) + **MockIdP** — эмулируемый OIDC-провайдер как test-scope `@RestController` (authorization endpoint, token endpoint, JWKS, управляемые сбои); фронтенд — Vitest + Testing Library; контракт — vacuum + oasdiff breaking; нагрузочный smoke — k6 (расширение `load/k6/auth.smoke.js`)
 
@@ -46,7 +48,7 @@ opaque refresh без изменений; `sessions` расширяется пр
 
 **Performance Goals**: бюджеты конституции II (1M CCU); SSO-вход добавляет 2 HTTP-редиректа и ≤2 вызова IdP (внешняя задержка вне нашего бюджета); таймауты к IdP: общий deadline 5 с на callback (SC-005: понятная ошибка ≤5 с), connect 1 с / read 2 с на вызов; деградация одного провайдера не влияет на парольный вход и остальных провайдеров (изоляция по построению — нет общего состояния)
 
-**Constraints**: stateless (никакого флоу-состояния в памяти процесса — только Redis); секреты только в K8s Secrets/env (SC-004, gitleaks); обратная совместимость публичного API: только аддитивные изменения `contracts/openapi.yaml` (0.2.0 → 0.3.0, oasdiff breaking gate); модель сессий/токенов 002 не меняется — только расширяется; нормализация email — та же `lower()`-канонизация, что в 002
+**Constraints**: stateless (никакого флоу-состояния в памяти процесса — только Redis); секреты только в K8s Secrets/env — K8s Secrets есть конкретизация «secret manager» из spec/принципа V (SC-004, gitleaks; dev-only исключение — dummy-секрет dex, см. Assumptions spec); обратная совместимость публичного API: только аддитивные изменения `contracts/openapi.yaml` (0.2.0 → 0.3.0, oasdiff breaking gate); модель сессий/токенов 002 не меняется — только расширяется; нормализация email — та же `lower()`-канонизация, что в 002
 
 **Scale/Scope**: несколько одновременно включённых провайдеров (FR-007); флоу-ключи в Redis — короткоживущие (TTL 10 мин), не создают долговременной нагрузки
 
@@ -127,13 +129,14 @@ backend/
 │   │   ├── api/dto/SsoDtos.kt                # + запросы/ответы
 │   │   ├── domain/model/ExternalIdentity.kt  # + сущность
 │   │   ├── domain/port/ExternalIdentityRepository.kt # + порт
-│   │   ├── domain/port/SsoFlowStore.kt       # + порт (Redis-адаптер рядом)
+│   │   ├── domain/port/SsoFlowStore.kt       # + порт (адаптер — repository/RedisSsoFlowStore.kt)
 │   │   ├── domain/service/IdentityResolutionService.kt # + ядро: вход/JIT/автосвязывание
 │   │   ├── domain/service/IdentityLinkService.kt      # + ручная привязка/отвязка + guard последнего способа
 │   │   ├── domain/service/UsernameGenerator.kt        # + JIT-username из email, уникальность
 │   │   ├── oidc/OidcClient.kt                # + authorization URL+PKCE, code→token, верификация ID-токена, JWKS-кэш
 │   │   ├── oidc/SsoProviderRegistry.kt       # + конфигурация провайдеров → ClientRegistration
-│   │   └── repository/JdbcExternalIdentityRepository.kt # + адаптер
+│   │   ├── repository/JdbcExternalIdentityRepository.kt # + JDBC-адаптер
+│   │   └── repository/RedisSsoFlowStore.kt   # + Redis-адаптер флоу/handshake (GETDEL, single-use)
 │   ├── config/SecurityConfig.kt    # + permitAll: /api/v1/auth/sso/{providers,authorize,callback,token}
 │   └── config/SsoProperties.kt     # + @ConfigurationProperties("sso"): провайдеры, TTL, trusted-флаги
 ├── src/main/resources/
@@ -154,7 +157,7 @@ frontend/
 └── src/
     ├── api/sso.ts                  # + типизированные клиенты новых endpoints
     ├── auth/pages/LoginPage.tsx    # + кнопки включённых провайдеров
-    ├── auth/pages/SsoCallbackPage.kt → .tsx # + обмен handshake-code, редирект в чат
+    ├── auth/pages/SsoCallbackPage.tsx        # + обмен handshake-code, редирект в чат
     ├── settings/pages/SecurityPage.tsx     # + список привязок, привязка/отвязка
     └── api/schema.d.ts             # регенерация из контракта (committed, drift-check)
 

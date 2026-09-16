@@ -45,8 +45,9 @@
 
 - **Было (V1)**: `ck_users_active_implies_credentials`:
   `(status='active') = (email_confirmed_at IS NOT NULL AND password_hash IS NOT NULL)`.
-- **Стало (V9)**: `ck_users_active_implies_email`:
-  `(status='active') = (email_confirmed_at IS NOT NULL)`.
+- **Стало (V9)**: `ck_users_active_implies_email` (импликация, не равенство:
+  `awaiting_password` фичи 002 имеет подтверждённый email при status ≠ 'active'):
+  `status='active' → email_confirmed_at IS NOT NULL`.
 - Новый инвариант (app + DB-триггер, §6): **у аккаунта с `password_hash IS NULL`
   всегда ≥1 внешняя привязка** (нельзя удалить последнюю — US3-4, edge
   «не осталось ни пароля, ни привязок»).
@@ -88,6 +89,11 @@ denylist, причины отзыва — **без изменений** (FR-002:
 | `issuer-uri` | URI \| null | null | OIDC discovery (lazy-кэш) — альтернатива явным endpoints |
 | `authorization-uri`, `token-uri`, `userinfo-uri`, `jwks-uri` | URI \| null | null | явные endpoints (обязательны, если нет `issuer-uri`) |
 | `scopes` | list | `openid, email` | — |
+
+Порядок провайдеров в `GET /auth/sso/providers` (contracts/sso-api.md §1) = порядок
+объявления в YAML: байндинг `@ConfigurationProperties` выполняется в упорядоченный
+`Map` (LinkedHashMap, insertion-order), а не в алфавитный; механизм зафиксирован
+тестом в T007.
 
 Общие настройки: `sso.flow-ttl` (10m), `sso.handshake-ttl` (2m),
 `sso.callback-url` (по умолчанию `${app.public-base-url}/api/v1/auth/sso/callback`),
@@ -143,12 +149,13 @@ ALTER TABLE sessions
 
 ALTER TABLE users DROP CONSTRAINT ck_users_active_implies_credentials;
 ALTER TABLE users ADD CONSTRAINT ck_users_active_implies_email
-  CHECK ((status = 'active') = (email_confirmed_at IS NOT NULL));
+  CHECK (status <> 'active' OR email_confirmed_at IS NOT NULL);
 
 CREATE FUNCTION keep_at_least_one_login_method() RETURNS trigger AS $$
 BEGIN
   IF (SELECT u.password_hash FROM users u WHERE u.id = OLD.user_id) IS NULL
-     AND (SELECT count(*) FROM external_identities e WHERE e.user_id = OLD.user_id) = 0 THEN
+     AND (SELECT count(*) FROM external_identities e
+          WHERE e.user_id = OLD.user_id AND e.id <> OLD.id) = 0 THEN
     RAISE EXCEPTION 'last login method cannot be removed';
   END IF;
   RETURN OLD;
@@ -193,7 +200,8 @@ no-op success (идемпотентность, research §13); чужая → `i
 - `(provider_id, subject)` глобально уникален → идентичность ≤1 владельца (FR-006).
 - `lower(email)` уникален у users (002) → дубль JIT невозможен (FR-012).
 - У аккаунта без пароля ≥1 привязка — app + BEFORE DELETE-триггер (US3-4).
-- Активный аккаунт ⟺ подтверждённый email (CHECK V9); способ входа не влияет на
+- Активный аккаунт ⟹ подтверждённый email (CHECK V9, импликация — состояния
+  регистрации 002 не нарушаются); способ входа не влияет на
   права (FR-002: одна модель сессий).
 - Все мутирующие шаги флоу — за single-use ключами Redis (`GETDEL`) и DB-уникальностями:
   повтор любого запроса (callback, token, link) не создаёт дублей аккаунтов,

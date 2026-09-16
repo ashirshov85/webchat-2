@@ -92,7 +92,7 @@ JWKS, `iss`, `aud`, `exp`, `nonce`), применить резолвинг ид�
 | `provider_error` | сбой обмена/верификации (вкл. недоступность, SC-005) |
 | `email_not_verified` | провайдер не подтвердил email (US2-3) |
 | `email_conflict` | активный аккаунт с этим email, провайдер вне allowlist (US2-3) |
-| `registration_incomplete` | pending-аккаунт с этим email (US2-4) |
+| `registration_incomplete` | pending/awaiting_password-аккаунт с этим email (US2-4) |
 | `identity_taken` | идентичность уже принадлежит другому аккаунту (US3-2) |
 | `rejected` | прочие отклонения флоу |
 
