@@ -210,7 +210,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 **Purpose**: сквозные проверки качества, безопасности и конвейера.
 
 - [X] T053 Прогнать полную ручную валидацию по [quickstart.md §4.1–4.6](./quickstart.md) (docker-compose + Mailpit) и автопроверку §5 (backend/frontend тесты, lint, vacuum, oasdiff)
-- [ ] T054 [P] Линт и форматирование: `./gradlew ktlintCheck detekt` (workdir `backend/`), `pnpm --dir frontend lint`; критерий: обе команды exit 0
+- [X] T054 [P] Линт и форматирование: `./gradlew ktlintCheck detekt` (workdir `backend/`), `pnpm --dir frontend lint`; критерий: обе команды exit 0
 - [ ] T055 Аудит секретов (SC-005): gitleaks по репозиторию; в логах/БД/выгрузках нет открытых паролей и токенов (только Argon2-хеши и SHA-256); креды только env/K8s Secrets
 - [ ] T056 Контрактный конвейер и CI зелёные: `vacuum lint -e contracts/openapi.yaml`, drift-check TS-типов (regen + `git diff --exit-code`), `oasdiff breaking` — только additive 0.2.0; полный прогон `./gradlew test` и `pnpm --dir frontend test`
 - [ ] T057a [P] Создать нагрузочный smoke-сценарий `load/k6/auth.smoke.js`: burst `login` ≈280 rps (вращающиеся identifier'ы) + burst `register` 50 rps с одного источника — профиль [research.md §13](./research.md); k6 thresholds: 0×5xx, `http_req_duration` p(95)<500 мс для валидных логинов под лимитом (coarse-guard: прогон ко-локален, сеть ≈ loopback), `/actuator/health` 200 весь прогон, 429 с `Retry-After` при превышении лимитов, валидный трафик под лимитом обслуживается (SC-008, конституция VI)
