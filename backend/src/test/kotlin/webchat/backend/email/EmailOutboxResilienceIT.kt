@@ -1,5 +1,6 @@
 package webchat.backend.email
 
+import io.micrometer.core.instrument.MeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
@@ -19,7 +20,11 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import webchat.backend.AbstractIntegrationTest
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 
 /**
  * Controllable in-process double of [EmailGateway] (T050; research.md §6
@@ -74,6 +79,14 @@ class FakeEmailGateway : EmailGateway {
  * of the TDD cycle until then); captured logs and stored errors contain no
  * passwords, open one-time token values or raw recipient PII (SC-007).
  *
+ * Delivery observability (T051, FR-008, SC-001): the fail-then-recover cycle
+ * is fully visible in metrics and structured logs — every attempt bumps
+ * `email_delivery_total{type,outcome}`, marking sent records the end-to-end
+ * `email_delivery_duration{type,outcome=sent}` = sent_at − created_at, the
+ * `email_outbox_pending` gauge tracks the queue depth, and the logs carry
+ * outbox_id/email_type/recipient_hash/attempt/provider_error with the
+ * recipient only as a SHA-256 hash (never the raw address).
+ *
  * Determinism: the 5 s scheduler tick is disabled for this context
  * (`auth.outbox.poll-fixed-delay=1h`; the unavoidable immediate startup tick
  * sees only foreign rows, and the fake starts failing), leftover `pending`
@@ -88,6 +101,7 @@ class EmailOutboxResilienceIT(
     @Autowired private val jdbcTemplate: JdbcTemplate,
     @Autowired private val outboxPoller: OutboxPoller,
     @Autowired private val fakeEmailGateway: FakeEmailGateway,
+    @Autowired private val meterRegistry: MeterRegistry,
 ) : AbstractIntegrationTest() {
     @TestConfiguration
     class FakeGatewayConfig {
@@ -216,6 +230,63 @@ class EmailOutboxResilienceIT(
             .doesNotContain("token=")
     }
 
+    @Test
+    fun `delivery observability exposes outcomes, latency and secret-free logs`(capturedOutput: CapturedOutput) {
+        fakeEmailGateway.reset(failing = true)
+        parkForeignPendingRows()
+
+        // meters accumulate across the fail-then-recover methods of this class
+        // (shared context) — every assertion below is a delta against a local
+        // baseline taken after foreign rows were parked
+        val pendingBefore = pendingGaugeValue()
+        val failedBefore = deliveryCount("failed")
+        val sentBefore = deliveryCount("sent")
+        val sentTimersBefore = sentTimerCount()
+
+        assertThat(register("metricmia", "metric-mia@example.com").statusCode)
+            .isEqualTo(HttpStatus.ACCEPTED)
+
+        // the queued letter is visible in the queue-depth gauge while waiting
+        assertThat(pendingGaugeValue()).isEqualTo(pendingBefore + 1.0)
+
+        runDispatchCycle("metric-mia@example.com") // attempt 1: provider down
+
+        assertThat(deliveryCount("failed")).isEqualTo(failedBefore + 1.0)
+        assertThat(deliveryCount("sent")).isEqualTo(sentBefore)
+
+        fakeEmailGateway.failing = false
+        runDispatchCycle("metric-mia@example.com") // attempt 2: delivered
+
+        assertThat(deliveryCount("sent")).isEqualTo(sentBefore + 1.0)
+        assertThat(deliveryCount("failed")).isEqualTo(failedBefore + 1.0)
+
+        // the letter left the queue…
+        assertThat(pendingGaugeValue()).isEqualTo(pendingBefore)
+
+        // …and its end-to-end latency (sent_at − created_at, SC-001) was timed
+        assertThat(sentTimerCount()).isEqualTo(sentTimersBefore + 1L)
+        val deliveryTimer =
+            meterRegistry
+                .find(DELIVERY_DURATION_METRIC)
+                .tag("type", "email_verification")
+                .tag("outcome", "sent")
+                .timer()
+        requireNotNull(deliveryTimer) { "email_delivery_duration timer must be registered once a letter is sent" }
+        assertThat(deliveryTimer.max(TimeUnit.NANOSECONDS)).isPositive
+
+        // structured trail: contract fields, recipient only as a SHA-256 hash
+        val rowId = outboxRowId("metric-mia@example.com")
+        requireNotNull(rowId)
+        val expectedHash = sha256Hex("metric-mia@example.com")
+        assertThat(capturedOutput.all)
+            .contains("outbox_id=$rowId")
+            .contains("email_type=email_verification")
+            .contains("recipient_hash=$expectedHash")
+            .contains("provider_error=")
+            .doesNotContain("metric-mia@example.com")
+            .doesNotContain("metricmia")
+    }
+
     private fun register(
         username: String,
         email: String,
@@ -282,6 +353,43 @@ class EmailOutboxResilienceIT(
         return isFuture == true
     }
 
+    private fun outboxRowId(recipientEmail: String): UUID? =
+        jdbcTemplate.queryForObject(
+            """
+            SELECT id FROM email_outbox WHERE lower(recipient_email) = ?
+            """.trimIndent(),
+            UUID::class.java,
+            recipientEmail.lowercase(),
+        )
+
+    private fun deliveryCount(outcome: String): Double =
+        meterRegistry
+            .find(DELIVERY_TOTAL_METRIC)
+            .tag("type", "email_verification")
+            .tag("outcome", outcome)
+            .counter()
+            ?.count() ?: 0.0
+
+    private fun sentTimerCount(): Long =
+        meterRegistry
+            .find(DELIVERY_DURATION_METRIC)
+            .tag("type", "email_verification")
+            .tag("outcome", "sent")
+            .timer()
+            ?.count() ?: 0L
+
+    private fun pendingGaugeValue(): Double =
+        meterRegistry
+            .find(PENDING_GAUGE_METRIC)
+            .gauge()
+            ?.value() ?: 0.0
+
+    private fun sha256Hex(value: String): String =
+        MessageDigest
+            .getInstance("SHA-256")
+            .digest(value.toByteArray(StandardCharsets.UTF_8))
+            .toHexString()
+
     private fun extractOpenToken(recipientEmail: String): String {
         val payload = outboxRow(recipientEmail)?.get("payload") as String?
         val match = Regex("""token=([A-Za-z0-9_-]{43})""").find(payload ?: "")
@@ -303,6 +411,11 @@ class EmailOutboxResilienceIT(
         }
 
         private const val REGISTER_PATH = "/api/v1/auth/register"
+
+        // T051 observability contract names (research.md §6, FR-008, SC-001)
+        private const val DELIVERY_TOTAL_METRIC = "email_delivery_total"
+        private const val DELIVERY_DURATION_METRIC = "email_delivery_duration"
+        private const val PENDING_GAUGE_METRIC = "email_outbox_pending"
 
         // 203.0.113.0/24 (TEST-NET-3): fresh address per call keeps every
         // register its own rate-limit bucket on the shared static Redis
