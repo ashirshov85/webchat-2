@@ -209,7 +209,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 
 **Purpose**: сквозные проверки качества, безопасности и конвейера.
 
-- [ ] T053 Прогнать полную ручную валидацию по [quickstart.md §4.1–4.6](./quickstart.md) (docker-compose + Mailpit) и автопроверку §5 (backend/frontend тесты, lint, vacuum, oasdiff)
+- [X] T053 Прогнать полную ручную валидацию по [quickstart.md §4.1–4.6](./quickstart.md) (docker-compose + Mailpit) и автопроверку §5 (backend/frontend тесты, lint, vacuum, oasdiff)
 - [ ] T054 [P] Линт и форматирование: `./gradlew ktlintCheck detekt` (workdir `backend/`), `pnpm --dir frontend lint`; критерий: обе команды exit 0
 - [ ] T055 Аудит секретов (SC-005): gitleaks по репозиторию; в логах/БД/выгрузках нет открытых паролей и токенов (только Argon2-хеши и SHA-256); креды только env/K8s Secrets
 - [ ] T056 Контрактный конвейер и CI зелёные: `vacuum lint -e contracts/openapi.yaml`, drift-check TS-типов (regen + `git diff --exit-code`), `oasdiff breaking` — только additive 0.2.0; полный прогон `./gradlew test` и `pnpm --dir frontend test`
