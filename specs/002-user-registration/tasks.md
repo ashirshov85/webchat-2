@@ -194,7 +194,7 @@ description: "Task list for feature 002-user-registration (register, login, sess
 
 ### Tests for User Story 6 (сначала RED)
 
-- [ ] T050 [P] [US6] Написать IT `backend/src/test/kotlin/webchat/backend/email/EmailOutboxResilienceIT.kt` с подменяемым fake `EmailGateway`: сбой шлюза → 202 без 5xx; восстановление → письмо доставлено (backoff); 10 неудачных попыток → `failed_permanent`; логи без паролей/открытых токенов/сырого PII — SC-007, US6-1…US6-3
+- [X] T050 [P] [US6] Написать IT `backend/src/test/kotlin/webchat/backend/email/EmailOutboxResilienceIT.kt` с подменяемым fake `EmailGateway`: сбой шлюза → 202 без 5xx; восстановление → письмо доставлено (backoff); 10 неудачных попыток → `failed_permanent`; логи без паролей/открытых токенов/сырого PII — SC-007, US6-1…US6-3
 
 ### Implementation for User Story 6
 
