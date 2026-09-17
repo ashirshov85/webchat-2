@@ -204,6 +204,146 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/sso/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Перечень включённых SSO-провайдеров (SSO §1)
+         * @description Публичный перечень провайдеров для кнопок входа. Порядок — порядок объявления в конфигурации. Выключенные (enabled: false) и неизвестные провайдеры не видны. Пустой список валиден (SSO не настроен).
+         */
+        get: operations["listSsoProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sso/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Начало флоу входа через провайдера (SSO §2)
+         * @description Создаёт флоу-контекст (state/PKCE S256/nonce, single-use, TTL 10 мин) и возвращает authorizationUrl для браузерного перехода на IdP — клиент обязан выполнить window.location.assign(authorizationUrl). Опциональный returnTo (только относительный путь) SPA сохраняет в sessionStorage до перехода и применяет после успешного обмена (SSO §4).
+         */
+        post: operations["ssoAuthorize"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sso/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Завершение флоу — браузерный редирект с IdP (SSO §3)
+         * @description Не JSON-API: вызывается браузером редиректом с IdP; тело ответа пустое. Изымает флоу-контекст sso:flow:&lt;state&gt; (GETDEL; отсутствующий или повторный state → отказ до любых эффектов), обменивает code у провайдера (общий deadline 5 с на callback), верифицирует ID-токен (подпись JWKS, iss/aud/exp/nonce, непустой уникальный sub) и применяет резолвинг идентичности. Все исходы логируются в auth_events.
+         */
+        get: operations["ssoCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sso/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Обмен handshake-кода на сессию (SSO §4)
+         * @description Поглощает одноразовый handshake-код из callback (GETDEL, TTL 2 мин) и создаёт сессию, полностью идентичную парольной (№5 из 002): тот же формат TokenPair, та же ротация refresh, тот же logout и доступ к API.
+         */
+        post: operations["ssoToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/sso/link/authorize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Начало флоу привязки провайдера (SSO §5, Bearer)
+         * @description Аналогично SSO §2, но purpose=link: флоу-контекст связывается с текущим пользователем; результат — link-ветка callback (SSO §3, редирект на /settings/security). Повторная привязка уже своей идентичности — no-op success без дубля привязки.
+         */
+        post: operations["ssoLinkAuthorize"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Список привязанных внешних идентичностей (SSO §6, Bearer)
+         * @description Привязки текущего пользователя; порядок — по linkedAt (возрастание). providerDisplayName берётся из конфигурации; null, если провайдер удалён из конфига (привязка сохраняется).
+         */
+        get: operations["listIdentities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/identities/{identityId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Отвязка внешней идентичности (SSO §7, Bearer)
+         * @description Удаляет привязку; существующие сессии не отзываются — блокируются только новые входы через этого провайдера. Отвязка последнего способа входа запрещена (US3-4): сначала задайте пароль.
+         */
+        delete: operations["unlinkIdentity"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -290,6 +430,52 @@ export interface components {
             errors?: {
                 [key: string]: string[];
             };
+        };
+        SsoProvider: {
+            /** @description Стабильный код провайдера из конфигурации */
+            id: string;
+            /** @description Отображаемое имя для кнопки входа */
+            displayName: string;
+        };
+        SsoProvidersResponse: {
+            /** @description Включённые провайдеры в порядке конфигурации; пуст при ненастроенном SSO */
+            providers: components["schemas"]["SsoProvider"][];
+        };
+        SsoAuthorizeRequest: {
+            /** @description Код провайдера из GET /auth/sso/providers */
+            providerId: string;
+            /** @description Опциональный путь возврата внутри SPA (например /chat); только относительный путь — не-относительный или длиннее 512 символов → 400 invalid_format */
+            returnTo?: string;
+        };
+        SsoLinkAuthorizeRequest: {
+            /** @description Код провайдера для привязки к текущему пользователю */
+            providerId: string;
+        };
+        SsoAuthorizeResponse: {
+            /**
+             * Format: uri
+             * @description URL авторизации IdP: содержит state, nonce, PKCE code_challenge (S256); redirect_uri = {public-base-url}/api/v1/auth/sso/callback. Verifier клиенту не виден (server-side confidential client); клиент обязан выполнить браузерный переход
+             */
+            authorizationUrl: string;
+        };
+        SsoTokenRequest: {
+            /** @description Одноразовый handshake-код из callback (TTL 2 мин) */
+            code: string;
+        };
+        Identity: {
+            /** Format: uuid */
+            id: string;
+            providerId: string;
+            /** @description Отображаемое имя провайдера из конфигурации; null, если провайдер удалён из конфига */
+            providerDisplayName?: string | null;
+            /** @description Email от провайдера (последний известный) */
+            email: string | null;
+            /** Format: date-time */
+            linkedAt: string;
+        };
+        IdentitiesResponse: {
+            /** @description Привязки пользователя, упорядоченные по linkedAt */
+            identities: components["schemas"]["Identity"][];
         };
     };
     responses: never;
@@ -726,6 +912,310 @@ export interface operations {
             };
             /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listSsoProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Включённые провайдеры в порядке конфигурации */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoProvidersResponse"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP 30/1м) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ssoAuthorize: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description URL авторизации IdP (содержит state, nonce, PKCE code_challenge S256) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoAuthorizeResponse"];
+                };
+            };
+            /** @description Невалидный returnTo: не-относительный путь или длина > 512 символов (errors: {returnTo: [invalid_format]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Провайдер неизвестен или выключен (единый ответ, без раскрытия перечня) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP 10/1м) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ssoCallback: {
+        parameters: {
+            query: {
+                /** @description state из флоу-контекста (single-use) */
+                state: string;
+                /** @description Код авторизации IdP (присутствует при согласии пользователя) */
+                code?: string;
+                /** @description Ошибка от IdP (например access_denied) — маппится в sso_error=provider_error */
+                error?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Редирект браузера на SPA-маршрут. Варианты Location: /sso/callback?code=&lt;handshake&gt;&amp;state=&lt;state&gt; — успешный вход (handshake — одноразовый код, ^[A-Za-z0-9_-]{43}$, TTL 2 мин, для обмена в SSO §4); /settings/security?linked=&lt;providerId&gt; — успешная привязка (link-флоу); /sso/callback?sso_error=&lt;code&gt; — отказ входа; /settings/security?sso_error=&lt;code&gt; — отказ привязки. Публичные коды sso_error: invalid_state, provider_disabled, provider_error, email_not_verified, email_conflict, registration_incomplete, identity_taken, rejected — без секретов и деталей владельцев. */
+            302: {
+                headers: {
+                    /** @description Целевой маршрут SPA с code/linked или sso_error */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Превышен лимит запросов (IP 30/1м) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ssoToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description Пара токенов выдана; SSO-сессия создана */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenPair"] & {
+                        user: {
+                            /** Format: uuid */
+                            id: string;
+                            username: string;
+                            /** Format: email */
+                            email: string;
+                        };
+                    };
+                };
+            };
+            /** @description Код неизвестен, использован или истёк — единый ответ без различения причин (errors: {code: [invalid_code]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP 30/1м) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ssoLinkAuthorize: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SsoLinkAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description URL авторизации IdP (содержит state, nonce, PKCE code_challenge S256) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SsoAuthorizeResponse"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Провайдер неизвестен или выключен (единый ответ, без раскрытия перечня) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP 10/1м) */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listIdentities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Список привязок пользователя */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentitiesResponse"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    unlinkIdentity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор привязки */
+                identityId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Привязка удалена; сессии не отозваны */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Идентичность не найдена или принадлежит другому пользователю (единый ответ, без раскрытия деталей) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Отвязка последнего способа входа запрещена (errors: {identity: [last_login_method]}; сначала задайте пароль) */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
