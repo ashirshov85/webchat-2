@@ -24,6 +24,17 @@ enum class AuthEventType(
     PASSWORD_RESET_REQUESTED("password_reset_requested"),
     PASSWORD_RESET_COMPLETED("password_reset_completed"),
     SESSION_REVOKED("session_revoked"),
+
+    // SSO events (feature 003, data-model §6 — must match V8__sso_enums.sql).
+    // Written via the existing AuthEventRecorder; `details` carries only
+    // non-secret markers (provider id, resolution/outcome code) — never
+    // tokens, codes or secrets (research §10, FR-011).
+    SSO_LOGIN_SUCCESS("sso_login_success"),
+    SSO_LOGIN_FAILED("sso_login_failed"),
+    SSO_IDENTITY_LINKED("sso_identity_linked"),
+    SSO_IDENTITY_UNLINKED("sso_identity_unlinked"),
+    SSO_ACCOUNT_CREATED("sso_account_created"),
+    SSO_FLOW_ERROR("sso_flow_error"),
 }
 
 /**
