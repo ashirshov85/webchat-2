@@ -19,8 +19,9 @@ opaque refresh без изменений; `sessions` расширяется пр
   (построение authorization request с PKCE, обмен code→token, верификация ID-токена
   через Nimbus) **без** servlet-фильтров oauth2-login — вместо них тонкие
   JSON-контроллеры, совместимые со stateless-архитектурой.
-- Флоу-контекст (state, nonce, code_verifier, purpose) — в Redis, single-use (`GETDEL`),
-  TTL 10 мин; браузер никогда не видит verifier/secret.
+- Флоу-контекст (state, nonce, code_verifier, purpose, userId?, returnTo? — состав
+  по data-model §5) — в Redis, single-use (`GETDEL`), TTL 10 мин; браузер никогда
+  не видит verifier/secret.
 - Токены SPA передаются через одноразовый handshake-code (302 на маршрут SPA →
   `POST /auth/sso/token` → TokenPair): refresh-токен существует только в ответе
   финального POST, на сервере хранится лишь SHA-256, как в 002.
@@ -117,7 +118,7 @@ backend/
 ├── src/main/kotlin/webchat/backend/
 │   ├── auth/                        # фича 002 — расширяется, не переписывается
 │   │   ├── api/SessionController.kt          # без изменений (контракт стабилен)
-│   │   ├── domain/service/LoginService.kt    # + guard: password_hash NULL → fictitious hash → 401 (FR-013)
+│   │   ├── domain/service/LoginService.kt    # + guard: password_hash NULL → fictitious hash → 401 (FR-013); password-ветка пишет auth_method='password' (T016)
 │   │   ├── domain/service/SessionService.kt  # + startSession(userId, authMethod, identityId?) — перегрузка, обратная совместима
 │   │   ├── domain/service/TokenService.kt    # без изменений (handshake — Redis, см. research #2)
 │   │   ├── ratelimit/RateLimitFilter.kt      # + SSO-маршруты в таблицу (в т.ч. GET callback/providers)
@@ -149,8 +150,8 @@ backend/
     ├── sso/SsoFlowIT.kt            # + US1/US2: полный флоу, refresh-ротация, logout
     ├── sso/SsoIdentityResolutionIT.kt # + JIT, автосвязывание trusted/untrusted, unverified, pending
     ├── sso/SsoLinkingIT.kt         # + US3: привязка/отвязка, последний способ входа
-    ├── sso/SsoSecurityIT.kt        # + US5: replay state, подделка, отключённый провайдер
-    ├── sso/SsoResilienceIT.kt      # + US4/US5: сбой/таймаут провайдера, изоляция
+    ├── sso/SsoSecurityIT.kt        # + US5: replay state/nonce, подделка, повторный token-обмен
+    ├── sso/SsoResilienceIT.kt      # + US4/US5: сбой/таймаут провайдера, изоляция, provider_disabled
     └── sso/SsoRateLimitIT.kt       # + лимиты на публичных SSO-endpoints
 
 frontend/

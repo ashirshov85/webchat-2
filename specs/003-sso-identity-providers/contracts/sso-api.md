@@ -13,6 +13,9 @@ tokenType:"Bearer", expiresInSec}`.
 = 8 маршрутов 002 + `GET /auth/sso/providers`, `POST /auth/sso/authorize`,
 `GET /auth/sso/callback`, `POST /auth/sso/token`.
 
+Значения rate limit у endpoint'ов ниже — справочные; нормативный источник —
+`research.md` §9 (при изменении значения синхронизируются во всех упоминаниях).
+
 ---
 
 ## 1. `GET /auth/sso/providers` — перечень включённых провайдеров
@@ -64,7 +67,7 @@ properties:
 
 Errors: **404** problem `Provider not found` (неизвестен или выключен — единый
 ответ, раскрытия перечня нет, он и так публичен); **400** `errors: {returnTo:
-["invalid_format"]}` для не-относительного пути; **429**.
+["invalid_format"]}` для не-относительного пути или длины > 512 символов; **429**.
 
 ## 3. `GET /auth/sso/callback?state&code|error` — завершение флоу (браузерный)
 
@@ -72,7 +75,7 @@ Public (rate limit: IP 30/1m). Не JSON-API: вызывается браузе�
 документируется в OpenAPI с семантикой 302.
 
 Поведение: изъять `sso:flow:<state>` (`GETDEL`; отсутствующий/повторный → отказ),
-обменять `code` у провайдера (общий таймаут-бюджет 5 s на вызовы провайдера), верифицировать ID-токен (подпись
+обменять `code` у провайдера (общий deadline 5 с на callback — сумма вызовов провайдера), верифицировать ID-токен (подпись
 JWKS, `iss`, `aud`, `exp`, `nonce`), применить резолвинг идентичности
 (data-model §7):
 

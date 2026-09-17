@@ -24,7 +24,8 @@
 # 1. Инфраструктура (включая локальный dex IdP на :5556)
 docker compose -f deploy/local/docker-compose.yml --profile sso up -d
 
-# 2. Backend: провайдер dex с явными endpoints, секрет из env
+# 2. Backend: провайдер dex с явными endpoints, opt-in через env, секрет из env
+export SSO_DEX_ENABLED=true
 export SSO_DEX_CLIENT_SECRET=dev-secret
 ./gradlew bootRun   # workdir backend/; application.yml: sso.providers.dex.*
 
@@ -62,9 +63,8 @@ dev-only dummy-секрет staticClient dex в `deploy/local/dex/`, см. Assum
 
 ### S3. Первый вход: автосвязывание по allowlist (US2, P1)
 
-1. Зарегистрироваться паролем (фича 002) с `alice@example.com`… — использовать
-   другой email, например `carol@example.com`, провайдер dex с
-   `trusted-for-email-linking: true`.
+1. Зарегистрировать паролем (фича 002) аккаунт `carol@example.com`; провайдер
+   dex сконфигурирован с `trusted-for-email-linking: true`.
 2. Войти через IdP пользователем с verified `carol@example.com`.
 3. **Ожидаемо**: вход в существующий аккаунт (новый не создан), привязка
    добавлена; пароль не запрашивался.
@@ -90,8 +90,9 @@ dev-only dummy-секрет staticClient dex в `deploy/local/dex/`, см. Assum
 1. Добавить второго провайдера: в `deploy/local/dex/` — второй staticClient
    (`webchat2`, тот же dummy-секрет), в `backend/src/main/resources/application.yml` —
    блок `sso.providers.dex2.*` (тот же issuer/endpoints dex, другой `client-id`,
-   секрет — плейсхолдер `${SSO_DEX2_CLIENT_SECRET}`); рестарт backend → экран входа
-   перечисляет обоих (`dex`, `dex2`), вход работает через каждого.
+   `enabled: ${SSO_DEX2_ENABLED:false}`, секрет — плейсхолдер `${SSO_DEX2_CLIENT_SECRET:}`);
+   `export SSO_DEX2_ENABLED=true SSO_DEX2_CLIENT_SECRET=dev-secret`, рестарт backend →
+   экран входа перечисляет обоих (`dex`, `dex2`), вход работает через каждого.
 2. Выключить одного (`enabled: false`, рестарт) → исчез с экрана; прямой
    `POST /api/v1/auth/sso/authorize {providerId}` → 404; привязки и остальные
    способы входа не затронуты.
@@ -106,7 +107,7 @@ dev-only dummy-секрет staticClient dex в `deploy/local/dex/`, см. Assum
    сессия не создаётся.
 2. `for i in $(seq 1 40); do curl -s -o /dev/null -w "%{http_code}\n" \
    http://localhost:8080/api/v1/auth/sso/providers; done` → после 30 запросов в
-   минуту — 429 с `Retry-After`.
+   минуту — 429 с `Retry-After` (значения лимитов — research §9).
 3. Остановить dex-контейнер → вход через dex завершается `sso_error=provider_error`
    ≤5 c; парольный вход и `/login` работают; в `auth_events` — `sso_flow_error`,
    метрика `sso_flow_total{outcome="provider_error"}` растёт (`/actuator/prometheus`).
