@@ -86,7 +86,7 @@ class SecurityConfig {
      */
     @Bean
     fun rateLimitFilterRegistration(rateLimitFilter: RateLimitFilter): FilterRegistrationBean<RateLimitFilter> =
-        FilterRegistrationBean<RateLimitFilter>(rateLimitFilter).apply { isEnabled = false }
+        FilterRegistrationBean(rateLimitFilter).apply { isEnabled = false }
 
     @Bean
     fun securityFilterChain(
@@ -119,6 +119,14 @@ class SecurityConfig {
                 authorize("/api/v1/auth/refresh", permitAll)
                 authorize("/api/v1/auth/password-reset", permitAll)
                 authorize("/api/v1/auth/password-reset/confirm", permitAll)
+                // T017: the four public SSO routes of contract 0.3.0 (exact paths,
+                // no wildcards) — like the №8–9 precedent above, their controllers
+                // land with T022, so until then they surface as MVC 404s, never
+                // the boundary 401
+                authorize("/api/v1/auth/sso/providers", permitAll)
+                authorize("/api/v1/auth/sso/authorize", permitAll)
+                authorize("/api/v1/auth/sso/callback", permitAll)
+                authorize("/api/v1/auth/sso/token", permitAll)
                 authorize("/actuator/health/**", permitAll)
                 authorize("/actuator/prometheus", permitAll)
                 authorize("/actuator/metrics/**", permitAll)
