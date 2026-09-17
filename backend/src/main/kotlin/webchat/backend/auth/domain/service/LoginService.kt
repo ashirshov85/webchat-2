@@ -2,6 +2,7 @@ package webchat.backend.auth.domain.service
 
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
+import webchat.backend.auth.domain.model.SessionAuthMethod
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.auth.ratelimit.LoginThrottle
@@ -99,7 +100,7 @@ class LoginService(
             // research.md §7: same code path, same Argon2 work, same message —
             // the discarded outcome keeps the timing indistinguishable
             passwordEncoder.matches(password, fictitiousPasswordHash)
-            return failLogin(identifier, userId = null, clientIp = clientIp, userAgent = userAgent)
+            failLogin(identifier, userId = null, clientIp = clientIp, userAgent = userAgent)
         }
         if (user.registrationIncomplete) {
             throw RegistrationIncompleteException()
@@ -107,10 +108,10 @@ class LoginService(
 
         val passwordHash = user.passwordHash ?: fictitiousPasswordHash
         if (!passwordEncoder.matches(password, passwordHash)) {
-            return failLogin(identifier, userId = user.id, clientIp = clientIp, userAgent = userAgent)
+            failLogin(identifier, userId = user.id, clientIp = clientIp, userAgent = userAgent)
         }
 
-        val tokenPair = sessionService.startSession(user.id)
+        val tokenPair = sessionService.startSession(user.id, SessionAuthMethod.PASSWORD)
         authEventRecorder.record(
             eventType = AuthEventType.LOGIN_SUCCESS,
             clientIp = clientIp,
@@ -167,7 +168,7 @@ class LoginService(
         )
         try {
             Thread.sleep(delay.toMillis())
-        } catch (interrupted: InterruptedException) {
+        } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
         }
     }

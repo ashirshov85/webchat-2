@@ -18,6 +18,7 @@ import webchat.backend.auth.domain.model.RefreshToken
 import webchat.backend.auth.domain.model.RefreshTokenStatus
 import webchat.backend.auth.domain.model.RevokedReason
 import webchat.backend.auth.domain.model.Session
+import webchat.backend.auth.domain.model.SessionAuthMethod
 import webchat.backend.auth.domain.model.SessionStatus
 import webchat.backend.auth.domain.port.Clock
 import webchat.backend.auth.domain.port.RefreshTokenRepository
@@ -102,6 +103,22 @@ class SessionServiceTest {
         assertThat(generation.tokenHash).hasSize(SHA_256_HEX_LENGTH).matches(HEX_PATTERN_STRING)
 
         verify(jwtService).createAccessToken(USER_ID, session.id)
+    }
+
+    @Test
+    fun `startSession overload persists the auth method and identity of the login`() {
+        whenever(jwtService.createAccessToken(eqSafe(USER_ID), anyUuid())).thenReturn(ACCESS_TOKEN)
+
+        service.startSession(USER_ID, SessionAuthMethod.SSO, IDENTITY_ID)
+        service.startSession(USER_ID) // legacy 002 entry point: every 002 login is password
+
+        val sessionCaptor = ArgumentCaptor.forClass(Session::class.java)
+        verify(sessionRepository, Mockito.times(2)).insert(sessionCaptor.capture() ?: activeSession())
+        val (ssoSession, legacySession) = sessionCaptor.allValues
+        assertThat(ssoSession.authMethod).isEqualTo(SessionAuthMethod.SSO)
+        assertThat(ssoSession.identityId).isEqualTo(IDENTITY_ID)
+        assertThat(legacySession.authMethod).isEqualTo(SessionAuthMethod.PASSWORD)
+        assertThat(legacySession.identityId).isNull()
     }
 
     @Test
@@ -325,6 +342,7 @@ class SessionServiceTest {
 
         val USER_ID: UUID = UUID.randomUUID()
         val GENERATION_ID: UUID = UUID(0, 1)
+        val IDENTITY_ID: UUID = UUID(0, 2)
         const val ACCESS_TOKEN = "stubbed.es256.access.token"
         const val CLIENT_IP = "192.0.2.10"
         const val USER_AGENT = "session-service-test/1.0"
