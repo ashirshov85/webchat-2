@@ -1,5 +1,6 @@
 package webchat.backend.auth.security
 
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataAccessException
 import org.springframework.data.redis.core.StringRedisTemplate
@@ -96,7 +97,7 @@ class AuthJwtDecoder(
             .build()
 
     private companion object {
-        val log = LoggerFactory.getLogger(AuthJwtDecoder::class.java)
+        val log: Logger = LoggerFactory.getLogger(AuthJwtDecoder::class.java)
 
         /** One message for every rejection mode — no detail leakage (US3-1/2). */
         const val UNIFORM_FAILURE = "Not authenticated"

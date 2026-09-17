@@ -1,8 +1,10 @@
 package webchat.backend.sso.oidc
 
 import org.springframework.http.client.SimpleClientHttpRequestFactory
+import org.springframework.http.converter.FormHttpMessageConverter
 import org.springframework.security.oauth2.client.endpoint.OAuth2AuthorizationCodeGrantRequest
 import org.springframework.security.oauth2.client.endpoint.RestClientAuthorizationCodeTokenResponseClient
+import org.springframework.security.oauth2.client.http.OAuth2ErrorResponseErrorHandler
 import org.springframework.security.oauth2.client.oidc.authentication.OidcIdTokenValidator
 import org.springframework.security.oauth2.client.registration.ClientRegistration
 import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestCustomizers
@@ -13,6 +15,7 @@ import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationExch
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationResponse
 import org.springframework.security.oauth2.core.endpoint.PkceParameterNames
+import org.springframework.security.oauth2.core.http.converter.OAuth2AccessTokenResponseHttpMessageConverter
 import org.springframework.security.oauth2.core.oidc.IdTokenClaimNames
 import org.springframework.security.oauth2.core.oidc.StandardClaimNames
 import org.springframework.security.oauth2.core.oidc.endpoint.OidcParameterNames
@@ -169,7 +172,23 @@ class OidcClient(
             )
         val tokenResponseClient =
             RestClientAuthorizationCodeTokenResponseClient().apply {
-                setRestClient(RestClient.builder().requestFactory(requestFactory(remaining)).build())
+                // Same converter/error-handler wiring as the framework's own
+                // builder (AbstractRestClientOAuth2AccessTokenResponseClient):
+                // a bare RestClient would let Jackson guess-deserialize
+                // OAuth2AccessTokenResponse (additionalParameters == null) and
+                // would surface provider errors as generic RestClientExceptions
+                // instead of OAuth2AuthorizationException.
+                setRestClient(
+                    RestClient
+                        .builder()
+                        .requestFactory(requestFactory(remaining))
+                        .messageConverters { converters ->
+                            converters.clear()
+                            converters.add(FormHttpMessageConverter())
+                            converters.add(OAuth2AccessTokenResponseHttpMessageConverter())
+                        }.defaultStatusHandler(OAuth2ErrorResponseErrorHandler())
+                        .build(),
+                )
             }
         val tokenResponse =
             try {

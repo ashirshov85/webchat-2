@@ -523,7 +523,7 @@ class SsoFlowIT(
             .fromUriString(url)
             .build()
             .queryParams
-            .map { (name, values) -> name to values.first() }
+            .map { (name, values) -> name to URLDecoder.decode(values.first(), StandardCharsets.UTF_8) }
             .toMap()
 
     private fun flowKeyCount(): Int = redisTemplate.keys("$FLOW_KEY_PREFIX*").orEmpty().size
