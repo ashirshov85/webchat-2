@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WebChat Public API
-  version: 0.2.0
+  version: 0.3.0
   description: >
     Публичный API веб-чата. Единственный источник истины публичного API;
     TypeScript-типы фронтенда генерируются из этого файла автоматически.
@@ -11,11 +11,20 @@ info:
     Публичны ровно endpoints №1–6, №8–9 (8 путей); №7 logout и №10 /users/me
     требуют Bearer. Все ответы об ошибках — RFC 9457 application/problem+json
     (схема Problem). Ссылки в письмах указывают на маршруты SPA, а не на API.
+
+    Фича 003 (sso): endpoints SSO §1–7 — вход через внешних
+    identity-провайдеров (OIDC/OAuth2): перечень провайдеров,
+    authorize/callback/token, привязка и отвязка идентичностей. Дополнительно
+    публичны 4 маршрута (providers, authorize, callback, token);
+    link/authorize, GET /users/me/identities и DELETE идентичности
+    требуют Bearer. Endpoint'ы 002 не изменились (аддитивно, minor-бамп).
 tags:
   - name: auth
     description: Регистрация, вход, сессии, восстановление пароля
   - name: users
     description: Данные пользователя
+  - name: sso
+    description: Вход через внешних identity-провайдеров (OIDC/OAuth2) и управление привязками
 security:
   - bearerAuth: []
 paths:
@@ -427,6 +436,318 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /api/v1/auth/sso/providers:
+    get:
+      operationId: listSsoProviders
+      tags: [sso]
+      summary: Перечень включённых SSO-провайдеров (SSO §1)
+      description: >
+        Публичный перечень провайдеров для кнопок входа. Порядок — порядок
+        объявления в конфигурации. Выключенные (enabled: false) и неизвестные
+        провайдеры не видны. Пустой список валиден (SSO не настроен).
+      security: []
+      responses:
+        '200':
+          description: Включённые провайдеры в порядке конфигурации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SsoProvidersResponse'
+        '429':
+          description: Превышен лимит запросов (IP 30/1м)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/sso/authorize:
+    post:
+      operationId: ssoAuthorize
+      tags: [sso]
+      summary: Начало флоу входа через провайдера (SSO §2)
+      description: >
+        Создаёт флоу-контекст (state/PKCE S256/nonce, single-use, TTL 10 мин)
+        и возвращает authorizationUrl для браузерного перехода на IdP —
+        клиент обязан выполнить window.location.assign(authorizationUrl).
+        Опциональный returnTo (только относительный путь) SPA сохраняет в
+        sessionStorage до перехода и применяет после успешного обмена (SSO §4).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SsoAuthorizeRequest'
+      responses:
+        '200':
+          description: URL авторизации IdP (содержит state, nonce, PKCE code_challenge S256)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SsoAuthorizeResponse'
+        '400':
+          description: 'Невалидный returnTo: не-относительный путь или длина > 512 символов (errors: {returnTo: [invalid_format]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Провайдер неизвестен или выключен (единый ответ, без раскрытия перечня)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит запросов (IP 10/1м)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/sso/callback:
+    get:
+      operationId: ssoCallback
+      tags: [sso]
+      summary: Завершение флоу — браузерный редирект с IdP (SSO §3)
+      description: >
+        Не JSON-API: вызывается браузером редиректом с IdP; тело ответа пустое.
+        Изымает флоу-контекст sso:flow:&lt;state&gt; (GETDEL; отсутствующий или
+        повторный state → отказ до любых эффектов), обменивает code у
+        провайдера (общий deadline 5 с на callback), верифицирует ID-токен
+        (подпись JWKS, iss/aud/exp/nonce, непустой уникальный sub) и применяет
+        резолвинг идентичности. Все исходы логируются в auth_events.
+      security: []
+      parameters:
+        - name: state
+          in: query
+          required: true
+          description: state из флоу-контекста (single-use)
+          schema:
+            type: string
+        - name: code
+          in: query
+          required: false
+          description: Код авторизации IdP (присутствует при согласии пользователя)
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          description: Ошибка от IdP (например access_denied) — маппится в sso_error=provider_error
+          schema:
+            type: string
+      responses:
+        '302':
+          description: >
+            Редирект браузера на SPA-маршрут. Варианты Location:
+            /sso/callback?code=&lt;handshake&gt;&amp;state=&lt;state&gt; — успешный вход
+            (handshake — одноразовый код, ^[A-Za-z0-9_-]{43}$, TTL 2 мин, для
+            обмена в SSO §4); /settings/security?linked=&lt;providerId&gt; — успешная
+            привязка (link-флоу); /sso/callback?sso_error=&lt;code&gt; — отказ входа;
+            /settings/security?sso_error=&lt;code&gt; — отказ привязки. Публичные коды
+            sso_error: invalid_state, provider_disabled, provider_error,
+            email_not_verified, email_conflict, registration_incomplete,
+            identity_taken, rejected — без секретов и деталей владельцев.
+          headers:
+            Location:
+              description: Целевой маршрут SPA с code/linked или sso_error
+              schema:
+                type: string
+                format: uri-reference
+        '429':
+          description: Превышен лимит запросов (IP 30/1м)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/sso/token:
+    post:
+      operationId: ssoToken
+      tags: [sso]
+      summary: Обмен handshake-кода на сессию (SSO §4)
+      description: >
+        Поглощает одноразовый handshake-код из callback (GETDEL, TTL 2 мин) и
+        создаёт сессию, полностью идентичную парольной (№5 из 002): тот же
+        формат TokenPair, та же ротация refresh, тот же logout и доступ к API.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SsoTokenRequest'
+      responses:
+        '200':
+          description: Пара токенов выдана; SSO-сессия создана
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/TokenPair'
+                  - type: object
+                    additionalProperties: false
+                    required: [user]
+                    properties:
+                      user:
+                        type: object
+                        additionalProperties: false
+                        required: [id, username, email]
+                        properties:
+                          id:
+                            type: string
+                            format: uuid
+                          username:
+                            type: string
+                          email:
+                            type: string
+                            format: email
+        '400':
+          description: 'Код неизвестен, использован или истёк — единый ответ без различения причин (errors: {code: [invalid_code]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит запросов (IP 30/1м)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/auth/sso/link/authorize:
+    post:
+      operationId: ssoLinkAuthorize
+      tags: [sso]
+      summary: Начало флоу привязки провайдера (SSO §5, Bearer)
+      description: >
+        Аналогично SSO §2, но purpose=link: флоу-контекст связывается с текущим
+        пользователем; результат — link-ветка callback (SSO §3, редирект на
+        /settings/security). Повторная привязка уже своей идентичности —
+        no-op success без дубля привязки.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SsoLinkAuthorizeRequest'
+      responses:
+        '200':
+          description: URL авторизации IdP (содержит state, nonce, PKCE code_challenge S256)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SsoAuthorizeResponse'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Провайдер неизвестен или выключен (единый ответ, без раскрытия перечня)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: Превышен лимит запросов (IP 10/1м)
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/identities:
+    get:
+      operationId: listIdentities
+      tags: [sso]
+      summary: Список привязанных внешних идентичностей (SSO §6, Bearer)
+      description: >
+        Привязки текущего пользователя; порядок — по linkedAt (возрастание).
+        providerDisplayName берётся из конфигурации; null, если провайдер
+        удалён из конфига (привязка сохраняется).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список привязок пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentitiesResponse'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/identities/{identityId}:
+    delete:
+      operationId: unlinkIdentity
+      tags: [sso]
+      summary: Отвязка внешней идентичности (SSO §7, Bearer)
+      description: >
+        Удаляет привязку; существующие сессии не отзываются — блокируются
+        только новые входы через этого провайдера. Отвязка последнего способа
+        входа запрещена (US3-4): сначала задайте пароль.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: identityId
+          in: path
+          required: true
+          description: Идентификатор привязки
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Привязка удалена; сессии не отозваны
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Идентичность не найдена или принадлежит другому пользователю (единый ответ, без раскрытия деталей)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: 'Отвязка последнего способа входа запрещена (errors: {identity: [last_login_method]}; сначала задайте пароль)'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   securitySchemes:
     bearerAuth:
@@ -612,3 +933,92 @@ components:
             items:
               type: string
               description: Код ошибки, например invalid_format
+    SsoProvider:
+      type: object
+      additionalProperties: false
+      required: [id, displayName]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,63}$'
+          description: Стабильный код провайдера из конфигурации
+        displayName:
+          type: string
+          description: Отображаемое имя для кнопки входа
+    SsoProvidersResponse:
+      type: object
+      additionalProperties: false
+      required: [providers]
+      properties:
+        providers:
+          type: array
+          description: Включённые провайдеры в порядке конфигурации; пуст при ненастроенном SSO
+          items:
+            $ref: '#/components/schemas/SsoProvider'
+    SsoAuthorizeRequest:
+      type: object
+      additionalProperties: false
+      required: [providerId]
+      properties:
+        providerId:
+          type: string
+          description: Код провайдера из GET /auth/sso/providers
+        returnTo:
+          type: string
+          maxLength: 512
+          description: 'Опциональный путь возврата внутри SPA (например /chat); только относительный путь — не-относительный или длиннее 512 символов → 400 invalid_format'
+    SsoLinkAuthorizeRequest:
+      type: object
+      additionalProperties: false
+      required: [providerId]
+      properties:
+        providerId:
+          type: string
+          description: Код провайдера для привязки к текущему пользователю
+    SsoAuthorizeResponse:
+      type: object
+      additionalProperties: false
+      required: [authorizationUrl]
+      properties:
+        authorizationUrl:
+          type: string
+          format: uri
+          description: 'URL авторизации IdP: содержит state, nonce, PKCE code_challenge (S256); redirect_uri = {public-base-url}/api/v1/auth/sso/callback. Verifier клиенту не виден (server-side confidential client); клиент обязан выполнить браузерный переход'
+    SsoTokenRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: Одноразовый handshake-код из callback (TTL 2 мин)
+    Identity:
+      type: object
+      additionalProperties: false
+      required: [id, providerId, email, linkedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        providerId:
+          type: string
+        providerDisplayName:
+          type: [string, 'null']
+          description: Отображаемое имя провайдера из конфигурации; null, если провайдер удалён из конфига
+        email:
+          type: [string, 'null']
+          description: Email от провайдера (последний известный)
+        linkedAt:
+          type: string
+          format: date-time
+    IdentitiesResponse:
+      type: object
+      additionalProperties: false
+      required: [identities]
+      properties:
+        identities:
+          type: array
+          description: Привязки пользователя, упорядоченные по linkedAt
+          items:
+            $ref: '#/components/schemas/Identity'
