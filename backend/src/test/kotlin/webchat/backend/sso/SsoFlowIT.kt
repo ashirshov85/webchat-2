@@ -1,0 +1,940 @@
+package webchat.backend.sso
+
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.sun.net.httpserver.HttpExchange
+import com.sun.net.httpserver.HttpServer
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.MethodSource
+import org.junit.jupiter.params.provider.ValueSource
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.web.client.TestRestTemplate
+import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.http.HttpEntity
+import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpMethod
+import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
+import org.springframework.http.ResponseEntity
+import org.springframework.http.client.SimpleClientHttpRequestFactory
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.mock.web.MockHttpServletRequest
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
+import org.springframework.web.client.RestTemplate
+import org.springframework.web.util.UriComponentsBuilder
+import webchat.backend.AbstractIntegrationTest
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.URI
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
+import java.time.OffsetDateTime
+import java.util.Base64
+import java.util.UUID
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * T019 [US1] (tasks.md Phase 3, Test-First): the full SSO login flow over the
+ * real HTTP port of the `AbstractIntegrationTest` context through the MockIdP
+ * (T018, research.md §12) — written BEFORE the implementation (T020–T022) and
+ * RED until T026 brings it green (constitution VI).
+ *
+ * Covered acceptance of US1:
+ * - the whole browser+SPA choreography: `GET /auth/sso/providers` →
+ *   `POST /auth/sso/authorize` (flow context in Redis, data-model.md §5) →
+ *   IdP authorize redirect → `GET /auth/sso/callback` (302 to the SPA with a
+ *   single-use handshake code) → `POST /auth/sso/token` → `LoginResponse`;
+ * - TokenPair property identity with the password login (FR-002, SC-002):
+ *   same ES256 JWT shape (`kid` header; `sub`/`sid`/`jti`/`typ` claims), same
+ *   opaque 43-char refresh token, same `tokenType`/`expiresInSec`/`user`
+ *   block; the session row is marked `auth_method='sso'` + `identity_id`
+ *   (T016 anchor);
+ * - refresh rotation and logout revocation of the SSO session — the very
+ *   same endpoints and semantics as for password sessions;
+ * - `returnTo` validation on authorize (US1-6): a relative path is accepted
+ *   and kept in the flow context, a non-relative value or one longer than
+ *   512 chars answers 400 `errors: {returnTo: ["invalid_format"]}` with NO
+ *   flow context created;
+ * - parameterized reachability of EVERY Bearer-protected endpoint that
+ *   existed before 0.3.0 — the list is derived from `contracts/openapi.yaml`
+ *   of `origin/main` (0.2.0): `GET /api/v1/users/me` and
+ *   `POST /api/v1/auth/logout` are its only `bearerAuth` operations —
+ *   SSO sessions are on par with password sessions (SC-002);
+ * - audit: `auth_events` carries `sso_login_success` with non-secret details
+ *   `{resolution: existing_identity}` (FR-011).
+ *
+ * The IdP half of the flow runs on [MockIdPLoopbackServer] — the same
+ * [MockIdP] controller class mounted on its own loopback listener — because
+ * the provider endpoints must be absolute URIs known while
+ * `@DynamicPropertySource` binds `sso.providers.*`, long before the random
+ * application port becomes observable (see its KDoc).
+ *
+ * Test data follows the SessionIT conventions: an active user is grown
+ * through the real 002 registration API (register → confirm via the outbox
+ * token → set password) and the pre-linked external identity is seeded
+ * directly into `external_identities` (US1 is the existing-identity branch;
+ * JIT/linking arrive with US2/US3). Distinct `X-Forwarded-For` documentation
+ * IPs keep the 002 IP rate-limit buckets out of the picture.
+ */
+@Suppress("LargeClass") // tasks.md T019 mandates the whole US1 acceptance in this single IT file (SessionIT precedent)
+class SsoFlowIT(
+    @Autowired private val restTemplate: TestRestTemplate,
+    @Autowired private val jdbcTemplate: JdbcTemplate,
+    @Autowired private val objectMapper: ObjectMapper,
+    @Autowired private val redisTemplate: StringRedisTemplate,
+) : AbstractIntegrationTest() {
+    @BeforeEach
+    fun resetIdp() {
+        mockIdP.reset()
+    }
+
+    @Test
+    fun `providers lists only enabled providers in configuration order`() {
+        val response = restTemplate.getForEntity(PROVIDERS_PATH, String::class.java)
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
+        val providers = objectMapper.readTree(response.body)["providers"]
+        assertThat(providers).hasSize(1)
+        assertThat(providers[0]["id"].asText()).isEqualTo(PROVIDER_ID)
+        assertThat(providers[0]["displayName"].asText()).isEqualTo(PROVIDER_DISPLAY_NAME)
+        assertThat(providers[0].has("clientSecret")).isFalse()
+        assertThat(providers[0].has("clientId")).isFalse()
+    }
+
+    @Test
+    fun `authorize returns a pkce authorization url and keeps the flow context with returnTo`() {
+        val response = authorize(PROVIDER_ID, returnTo = RELATIVE_RETURN_TO)
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
+        val authorizationUrl = objectMapper.readTree(response.body)["authorizationUrl"].asText()
+        assertThat(URI.create(authorizationUrl).path).isEqualTo("/mock-idp/authorize")
+
+        val parameters = queryParametersOf(authorizationUrl)
+        assertThat(parameters.getValue(CLIENT_ID)).isEqualTo(MockIdP.DEFAULT_CLIENT_ID)
+        assertThat(parameters.getValue(REDIRECT_URI)).isEqualTo(BACKEND_CALLBACK_URL)
+        assertThat(parameters.getValue(RESPONSE_TYPE)).isEqualTo("code")
+        assertThat(parameters.getValue(SCOPE)).isEqualTo("openid email")
+        assertThat(parameters.getValue(STATE)).matches(TOKEN_43)
+        assertThat(parameters.getValue(NONCE_CLAIM)).matches(TOKEN_43)
+        assertThat(parameters.getValue(CODE_CHALLENGE)).matches(TOKEN_43)
+        assertThat(parameters.getValue(CODE_CHALLENGE_METHOD)).isEqualTo(S256_METHOD)
+        // server-side confidential client: the verifier never travels to the browser (research.md §3)
+        assertThat(authorizationUrl).doesNotContain(CODE_VERIFIER)
+
+        // data-model.md §5: the flow context lands in Redis under sso:flow:<state> and keeps returnTo for audit
+        val flowKey = "$FLOW_KEY_PREFIX${parameters.getValue(STATE)}"
+        val flowJson = redisTemplate.opsForValue().get(flowKey)
+        assertThat(flowJson)
+            .contains("\"providerId\":\"$PROVIDER_ID\"")
+            .contains("\"purpose\":\"LOGIN\"")
+            .contains("\"returnTo\":\"$RELATIVE_RETURN_TO\"")
+        val flowTtl = redisTemplate.getExpire(flowKey, TimeUnit.SECONDS)
+        assertThat(flowTtl ?: -1L).isGreaterThan(0).isLessThanOrEqualTo(FLOW_TTL_SECONDS)
+    }
+
+    @Test
+    fun `authorize answers the single 404 for unknown and disabled providers`() {
+        val unknown = authorize("no-such-provider")
+
+        assertThat(unknown.statusCode).isEqualTo(HttpStatus.NOT_FOUND)
+        assertThat(unknown.headers.contentType.toString()).contains("application/problem+json")
+        assertThat(objectMapper.readTree(unknown.body)["detail"].asText()).isEqualTo("Provider not found")
+
+        val disabled = authorize(DISABLED_PROVIDER_ID)
+
+        // contracts/sso-api.md §2: unknown and disabled are indistinguishable, no disclosure
+        assertThat(disabled.statusCode).isEqualTo(HttpStatus.NOT_FOUND)
+        assertThat(objectMapper.readTree(disabled.body)["detail"].asText()).isEqualTo("Provider not found")
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+        strings = ["https://evil.example.com/chat", "//evil.example.com/chat", "http://localhost:5173/chat", "chat"],
+    )
+    fun `authorize rejects non-relative returnTo with 400 invalid_format and no flow context`(returnTo: String) {
+        val flowsBefore = flowKeyCount()
+
+        val response = authorize(PROVIDER_ID, returnTo = returnTo)
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.BAD_REQUEST)
+        assertThat(response.headers.contentType.toString()).contains("application/problem+json")
+        val problem = objectMapper.readTree(response.body)
+        assertThat(problem["errors"]["returnTo"][0].asText()).isEqualTo("invalid_format")
+        // US1-6: a rejected returnTo must not leave a flow context behind
+        assertThat(flowKeyCount()).isEqualTo(flowsBefore)
+    }
+
+    @Test
+    fun `authorize rejects returnTo longer than 512 characters with 400 invalid_format`() {
+        val tooLong = "/chat?" + "a".repeat(TOO_LONG_RETURN_TO_LENGTH)
+
+        val response = authorize(PROVIDER_ID, returnTo = tooLong)
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.BAD_REQUEST)
+        assertThat(objectMapper.readTree(response.body)["errors"]["returnTo"][0].asText()).isEqualTo("invalid_format")
+    }
+
+    @Test
+    fun `full sso login returns a token pair identical to the password login`() {
+        val seeded = seedActiveUserWithIdentity("selena", "selena@example.com", SUBJECT_SELENA)
+        mockIdP.setClaims(idpClaims(SUBJECT_SELENA, EMAIL_SELENA))
+
+        val sso = performSsoLogin()
+        val passwordLogin = loginOk(seeded.username)
+
+        // FR-002/US1-2: the pair is property-identical to a password login of the same user
+        assertThat(sso.body["tokenType"].asText()).isEqualTo("Bearer")
+        assertThat(sso.body["expiresInSec"].asInt()).isEqualTo(ACCESS_TTL_SECONDS)
+        assertThat(sso.body["refreshToken"].asText()).matches(TOKEN_43)
+        assertThat(sso.body["tokenType"].asText()).isEqualTo(passwordLogin.body["tokenType"].asText())
+        assertThat(sso.body["expiresInSec"].asInt()).isEqualTo(passwordLogin.body["expiresInSec"].asInt())
+        assertThat(sso.body["user"]).isEqualTo(passwordLogin.body["user"])
+        assertThat(sso.body["user"]["id"].asText()).isEqualTo(seeded.userId.toString())
+        assertThat(sso.body["user"]["username"].asText()).isEqualTo(seeded.username)
+        assertThat(sso.body["user"]["email"].asText()).isEqualTo(seeded.email)
+
+        // same JWT shape as 002: kid header, access typ, user/sid binding
+        val ssoClaims = claimsOf(sso.accessToken)
+        assertThat(objectMapper.readTree(base64UrlDecode(sso.accessToken.split(".")[0])).has("kid")).isTrue()
+        assertThat(ssoClaims["typ"].asText()).isEqualTo("access")
+        assertThat(ssoClaims["sub"].asText()).isEqualTo(seeded.userId.toString())
+        assertThat(ssoClaims["sid"].asText()).isEqualTo(sessionIdOf(sso.refreshToken).toString())
+        assertThat(ssoClaims["jti"].asText()).isNotEmpty()
+        assertThat(claimNamesOf(sso.accessToken)).isEqualTo(claimNamesOf(passwordLogin.accessToken))
+
+        // T016 anchor: the SSO session records HOW it was opened
+        val session = sessionRow(sessionIdOf(sso.refreshToken)!!)!!
+        assertThat(session["status"]).isEqualTo("active")
+        assertThat(session["auth_method"]).isEqualTo("sso")
+        assertThat(session["identity_id"]).isEqualTo(seeded.identityId)
+
+        // data-model.md §7 row 1: provider_email* is refreshed on every successful login
+        val identity = identityRow(seeded.identityId)!!
+        assertThat(identity["provider_email"]).isEqualTo(EMAIL_SELENA)
+        assertThat(identity["provider_email_verified"]).isEqualTo(true)
+
+        // FR-011: sso_login_success with non-secret details {resolution: existing_identity}
+        val event = authEvent("sso_login_success", seeded.username)!!
+        assertThat(event["user_id"]).isEqualTo(seeded.userId)
+        assertThat(event["details"] as String)
+            .contains("existing_identity")
+            .contains(PROVIDER_ID)
+            .doesNotContain(sso.accessToken)
+            .doesNotContain(sso.refreshToken)
+            .doesNotContain(sso.handshakeCode)
+            .doesNotContain(MockIdP.DEFAULT_CLIENT_SECRET)
+    }
+
+    @Test
+    fun `sso refresh token rotates through the same refresh endpoint`() {
+        seedActiveUserWithIdentity("rhonda", "rhonda@example.com", SUBJECT_RHONDA)
+        mockIdP.setClaims(idpClaims(SUBJECT_RHONDA, EMAIL_RHONDA))
+        val sso = performSsoLogin()
+
+        val response = refresh(sso.refreshToken)
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
+        val rotated = objectMapper.readTree(response.body)
+        assertThat(rotated["refreshToken"].asText()).matches(TOKEN_43).isNotEqualTo(sso.refreshToken)
+        assertThat(rotated["tokenType"].asText()).isEqualTo("Bearer")
+        assertThat(rotated["expiresInSec"].asInt()).isEqualTo(ACCESS_TTL_SECONDS)
+
+        // data-model.md §4 (002): CAS rotation links the old generation to its replacement
+        val oldGeneration = refreshGeneration(sso.refreshToken)!!
+        val newGeneration = refreshGeneration(rotated["refreshToken"].asText())!!
+        assertThat(oldGeneration["status"]).isEqualTo("rotated")
+        assertThat(oldGeneration["replaced_by"]).isEqualTo(newGeneration["id"])
+        assertThat(sessionRow(sessionIdOf(sso.refreshToken)!!)!!["status"]).isEqualTo("active")
+        assertThat(authEventCount("refresh_rotated", "rhonda")).isEqualTo(1)
+    }
+
+    @Test
+    fun `logout revokes both tokens of the sso session`() {
+        seedActiveUserWithIdentity("lorna", "lorna@example.com", SUBJECT_LORNA)
+        mockIdP.setClaims(idpClaims(SUBJECT_LORNA, EMAIL_LORNA))
+        val sso = performSsoLogin()
+        val sid = sessionIdOf(sso.refreshToken)!!
+
+        val response = logout(sso.accessToken, sso.refreshToken)
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.NO_CONTENT)
+        assertThat(refresh(sso.refreshToken).statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
+        assertThat(usersMe(sso.accessToken).statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
+        assertThat(logout(sso.accessToken, sso.refreshToken).statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
+        assertThat(sessionRow(sid)!!["status"]).isEqualTo("revoked")
+        assertThat(sessionRow(sid)!!["revoked_reason"]).isEqualTo("logout")
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("preZeroThreeBearerEndpoints")
+    fun `sso session reaches every pre-0_3_0 bearer-protected endpoint`(endpoint: ProtectedEndpoint) {
+        val username =
+            endpoint.name
+                .filter(Char::isLetterOrDigit)
+                .lowercase()
+                .take(USERNAME_MAX_LENGTH)
+        seedActiveUserWithIdentity(username, "$username@example.com", "subject-$username")
+        mockIdP.setClaims(idpClaims("subject-$username", "$username@example.com"))
+        val sso = performSsoLogin()
+
+        val response =
+            when (endpoint.method) {
+                HttpMethod.GET ->
+                    restTemplate.exchange(
+                        endpoint.path,
+                        HttpMethod.GET,
+                        HttpEntity(null, authHeaders(sso.accessToken)),
+                        String::class.java,
+                    )
+                else ->
+                    restTemplate.exchange(
+                        endpoint.path,
+                        HttpMethod.POST,
+                        HttpEntity(mapOf("refreshToken" to sso.refreshToken), authHeaders(sso.accessToken)),
+                        String::class.java,
+                    )
+            }
+
+        // SC-002: whatever a password session can reach, an SSO session reaches too
+        assertThat(response.statusCode).isEqualTo(endpoint.expectedStatus)
+    }
+
+    @Test
+    fun `token exchange with an unknown code answers 400 invalid_code`() {
+        val response = postJson(TOKEN_PATH, mapOf(CODE to "A".repeat(43)), nextClientIp())
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.BAD_REQUEST)
+        val problem = objectMapper.readTree(response.body)
+        // contracts/sso-api.md §4: one uniform answer for unknown/used/expired codes
+        assertThat(problem["errors"]["code"][0].asText()).isEqualTo("invalid_code")
+        assertThat(problem["detail"].asText()).isNotEmpty()
+    }
+
+    // --- SSO flow driving -------------------------------------------------
+
+    /** Runs the whole US1 choreography and returns the parsed `LoginResponse` exchange result. */
+    private fun performSsoLogin(): SsoLoginResult {
+        val authorizeResponse = authorize(PROVIDER_ID)
+        assertThat(authorizeResponse.statusCode).isEqualTo(HttpStatus.OK)
+        val authorizationUrl = objectMapper.readTree(authorizeResponse.body)["authorizationUrl"].asText()
+
+        val idpRedirect = noRedirectClient.getForEntity(URI.create(authorizationUrl), String::class.java)
+        assertThat(idpRedirect.statusCode).isEqualTo(HttpStatus.FOUND)
+        val idpParameters = queryParametersOf(idpRedirect.headers.location.toString())
+        assertThat(idpParameters).doesNotContainKey("error")
+
+        val callbackUrl =
+            UriComponentsBuilder
+                .fromHttpUrl(rootUri() + CALLBACK_PATH)
+                .queryParam(STATE, idpParameters.getValue(STATE))
+                .queryParam(CODE, idpParameters.getValue(CODE))
+                .build()
+                .toUriString()
+        val callbackResponse = noRedirectClient.getForEntity(URI.create(callbackUrl), String::class.java)
+        assertThat(callbackResponse.statusCode).isEqualTo(HttpStatus.FOUND)
+        val spaLocation = callbackResponse.headers.location
+        assertThat(spaLocation.toString()).startsWith(SPA_CALLBACK_PREFIX)
+        val spaParameters = queryParametersOf(spaLocation.toString())
+        assertThat(spaParameters.getValue(STATE)).isEqualTo(idpParameters.getValue(STATE))
+        val handshakeCode = spaParameters.getValue(CODE)
+        assertThat(handshakeCode).matches(TOKEN_43)
+
+        val tokenResponse = postJson(TOKEN_PATH, mapOf(CODE to handshakeCode), nextClientIp())
+        assertThat(tokenResponse.statusCode).isEqualTo(HttpStatus.OK)
+        val body = objectMapper.readTree(tokenResponse.body)
+        return SsoLoginResult(
+            accessToken = body["accessToken"].asText(),
+            refreshToken = body["refreshToken"].asText(),
+            handshakeCode = handshakeCode,
+            body = body,
+        )
+    }
+
+    private fun authorize(
+        providerId: String,
+        returnTo: String? = null,
+    ): ResponseEntity<String> {
+        val payload =
+            buildMap {
+                put("providerId", providerId)
+                returnTo?.let { put(RETURN_TO, it) }
+            }
+        return postJson(AUTHORIZE_PATH, payload, nextClientIp())
+    }
+
+    // --- 002 password-side helpers (SessionIT conventions) -----------------
+
+    private fun register(
+        username: String,
+        email: String,
+        xForwardedFor: String,
+    ): ResponseEntity<String> = postJson(REGISTER_PATH, mapOf("username" to username, "email" to email), xForwardedFor)
+
+    private fun confirm(
+        token: String,
+        xForwardedFor: String,
+    ): ResponseEntity<String> = postJson(CONFIRM_PATH, mapOf("token" to token), xForwardedFor)
+
+    private fun setPassword(
+        setupToken: String,
+        password: String,
+        xForwardedFor: String,
+    ): ResponseEntity<String> =
+        postJson(
+            SET_PASSWORD_PATH,
+            mapOf("password" to password, "confirmPassword" to password, "setupToken" to setupToken),
+            xForwardedFor,
+        )
+
+    /** Grows an active password user through the real 002 API and links the IdP identity to it. */
+    private fun seedActiveUserWithIdentity(
+        username: String,
+        email: String,
+        subject: String,
+    ): SeededUser {
+        val clientIp = nextClientIp()
+        register(username, email, clientIp)
+        val confirmResponse = confirm(extractVerificationToken(email), clientIp)
+        assertThat(confirmResponse.statusCode).isEqualTo(HttpStatus.OK)
+        val setupToken = objectMapper.readTree(confirmResponse.body)["setupToken"].asText()
+        assertThat(setPassword(setupToken, PASSWORD, clientIp).statusCode).isEqualTo(HttpStatus.NO_CONTENT)
+
+        val identityId = UUID.randomUUID()
+        jdbcTemplate.update(
+            """
+            INSERT INTO external_identities
+                (id, user_id, provider_id, subject, provider_email, provider_email_verified, linked_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent(),
+            identityId,
+            userId(username),
+            PROVIDER_ID,
+            subject,
+            "stale-$email",
+            false,
+            OffsetDateTime.now(),
+        )
+        return SeededUser(username = username, email = email, userId = userId(username)!!, identityId = identityId)
+    }
+
+    private fun loginOk(username: String): LoginResult {
+        val response =
+            postJson(LOGIN_PATH, mapOf("identifier" to username, "password" to PASSWORD), nextClientIp())
+        assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
+        val body = objectMapper.readTree(response.body)
+        return LoginResult(accessToken = body["accessToken"].asText(), body = body)
+    }
+
+    private fun refresh(refreshToken: String): ResponseEntity<String> =
+        postJson(REFRESH_PATH, mapOf("refreshToken" to refreshToken), nextClientIp())
+
+    private fun logout(
+        accessToken: String,
+        refreshToken: String,
+    ): ResponseEntity<String> =
+        restTemplate.postForEntity(
+            LOGOUT_PATH,
+            HttpEntity(mapOf("refreshToken" to refreshToken), authHeaders(accessToken)),
+            String::class.java,
+        )
+
+    private fun usersMe(accessToken: String): ResponseEntity<String> =
+        restTemplate.exchange(
+            "/api/v1/users/me",
+            HttpMethod.GET,
+            HttpEntity(null, authHeaders(accessToken)),
+            String::class.java,
+        )
+
+    private fun postJson(
+        path: String,
+        payload: Map<String, String>,
+        xForwardedFor: String,
+    ): ResponseEntity<String> =
+        restTemplate.postForEntity(
+            path,
+            HttpEntity(payload, authHeaders(xForwardedFor = xForwardedFor)),
+            String::class.java,
+        )
+
+    private fun authHeaders(
+        accessToken: String? = null,
+        xForwardedFor: String? = null,
+    ): HttpHeaders =
+        HttpHeaders().apply {
+            contentType = MediaType.APPLICATION_JSON
+            accessToken?.let { set(HttpHeaders.AUTHORIZATION, "Bearer $it") }
+            xForwardedFor?.let { set("X-Forwarded-For", it) }
+        }
+
+    /**
+     * TestRestTemplate's JDK client follows redirects, which would chase the
+     * 302 Locations straight into unreachable redirect targets; the authorize
+     * and callback assertions need the raw FOUND responses (MockIdpIT
+     * precedent).
+     */
+    private val noRedirectClient: RestTemplate =
+        RestTemplate(
+            object : SimpleClientHttpRequestFactory() {
+                override fun prepareConnection(
+                    connection: HttpURLConnection,
+                    httpMethod: String,
+                ) {
+                    super.prepareConnection(connection, httpMethod)
+                    connection.instanceFollowRedirects = false
+                }
+            },
+        )
+
+    private fun rootUri(): String = restTemplate.rootUri.removeSuffix("/")
+
+    private fun extractVerificationToken(email: String): String {
+        val payloads =
+            jdbcTemplate.queryForList(
+                """
+                SELECT payload::text FROM email_outbox
+                WHERE lower(recipient_email) = ? AND email_type = 'email_verification'
+                ORDER BY created_at DESC
+                """.trimIndent(),
+                String::class.java,
+                email.lowercase(),
+            )
+        val match = Regex("""token=([A-Za-z0-9_-]{43})""").find(payloads.firstOrNull().orEmpty())
+        assertThat(match)
+            .overridingErrorMessage(
+                "verification email to <%s> must contain a /confirm-registration?token=... link",
+                email,
+            ).isNotNull()
+        return match!!.groupValues[1]
+    }
+
+    // --- inspection helpers (SessionIT conventions) -------------------------
+
+    private fun queryParametersOf(url: String): Map<String, String> =
+        UriComponentsBuilder
+            .fromUriString(url)
+            .build()
+            .queryParams
+            .map { (name, values) -> name to values.first() }
+            .toMap()
+
+    private fun flowKeyCount(): Int = redisTemplate.keys("$FLOW_KEY_PREFIX*").orEmpty().size
+
+    private fun claimsOf(accessToken: String): JsonNode = decodeSegment(accessToken, segmentIndex = 1)
+
+    private fun decodeSegment(
+        accessToken: String,
+        segmentIndex: Int,
+    ): JsonNode = objectMapper.readTree(base64UrlDecode(accessToken.split(".")[segmentIndex]))
+
+    private fun idpClaims(
+        subject: String,
+        email: String,
+    ): MockIdP.ControlledClaims = MockIdP.ControlledClaims(subject = subject, email = email, emailVerified = true)
+
+    private fun claimNamesOf(accessToken: String): Set<String> =
+        claimsOf(accessToken)
+            .fieldNames()
+            .asSequence()
+            .toSet()
+
+    private fun base64UrlDecode(value: String): ByteArray = Base64.getUrlDecoder().decode(value)
+
+    private fun userId(username: String): UUID? =
+        jdbcTemplate
+            .queryForList(
+                "SELECT id FROM users WHERE lower(username) = ?",
+                UUID::class.java,
+                username.lowercase(),
+            ).firstOrNull()
+
+    private fun sessionRow(sid: UUID): Map<String, Any>? =
+        jdbcTemplate
+            .queryForList(
+                """
+                SELECT id, user_id, status::text AS status, revoked_reason::text AS revoked_reason, revoked_at,
+                       auth_method, identity_id
+                FROM sessions WHERE id = ?
+                """.trimIndent(),
+                sid,
+            ).firstOrNull()
+
+    private fun sessionIdOf(refreshToken: String): UUID? =
+        jdbcTemplate
+            .queryForList(
+                "SELECT session_id FROM refresh_tokens WHERE token_hash = ?",
+                UUID::class.java,
+                sha256Hex(refreshToken),
+            ).firstOrNull()
+
+    private fun refreshGeneration(refreshToken: String): Map<String, Any>? =
+        jdbcTemplate
+            .queryForList(
+                """
+                SELECT id, session_id, status::text AS status, replaced_by
+                FROM refresh_tokens WHERE token_hash = ?
+                """.trimIndent(),
+                sha256Hex(refreshToken),
+            ).firstOrNull()
+
+    private fun identityRow(identityId: UUID): Map<String, Any>? =
+        jdbcTemplate
+            .queryForList(
+                """
+                SELECT provider_email, provider_email_verified
+                FROM external_identities WHERE id = ?
+                """.trimIndent(),
+                identityId,
+            ).firstOrNull()
+
+    private fun authEventCount(
+        eventType: String,
+        username: String,
+    ): Int =
+        jdbcTemplate.queryForObject(
+            """
+            SELECT COUNT(*) FROM auth_events
+            WHERE event_type = ?::auth_event_type
+              AND user_id = (SELECT id FROM users WHERE lower(username) = ?)
+            """.trimIndent(),
+            Int::class.java,
+            eventType,
+            username.lowercase(),
+        )
+
+    private fun authEvent(
+        eventType: String,
+        username: String,
+    ): Map<String, Any>? =
+        jdbcTemplate
+            .queryForList(
+                """
+                SELECT user_id, ip_hash, details::text AS details
+                FROM auth_events
+                WHERE event_type = ?::auth_event_type
+                  AND user_id = (SELECT id FROM users WHERE lower(username) = ?)
+                """.trimIndent(),
+                eventType,
+                username.lowercase(),
+            ).firstOrNull()
+
+    private fun sha256Hex(value: String): String =
+        java.security.MessageDigest
+            .getInstance("SHA-256")
+            .digest(value.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+
+    private fun nextClientIp(): String = "$CLIENT_IP_PREFIX${ipCounter.incrementAndGet()}"
+
+    private data class SeededUser(
+        val username: String,
+        val email: String,
+        val userId: UUID,
+        val identityId: UUID,
+    )
+
+    private data class LoginResult(
+        val accessToken: String,
+        val body: JsonNode,
+    )
+
+    private data class SsoLoginResult(
+        val accessToken: String,
+        val refreshToken: String,
+        val handshakeCode: String,
+        val body: JsonNode,
+    )
+
+    /**
+     * One Bearer-protected operation of the pre-0.3.0 contract: the list is
+     * the `bearerAuth` operations of `contracts/openapi.yaml` at
+     * `origin/main` (0.2.0) — `GET /api/v1/users/me` and
+     * `POST /api/v1/auth/logout` — the SSO/password parity surface (SC-002).
+     */
+    data class ProtectedEndpoint(
+        val name: String,
+        val method: HttpMethod,
+        val path: String,
+        val expectedStatus: HttpStatus,
+    ) {
+        override fun toString(): String = name
+    }
+
+    companion object {
+        /** The same MockIdP controller class as the context bean (T018), driven directly by this suite. */
+        val mockIdP = MockIdP(ObjectMapper())
+
+        /**
+         * Loopback mount of the MockIdP whose base URI is known BEFORE the
+         * Spring context starts — the precondition for binding
+         * `sso.providers.*` to absolute IdP endpoints (see class KDoc).
+         */
+        private val idpServer = MockIdPLoopbackServer(mockIdP)
+
+        @JvmStatic
+        fun preZeroThreeBearerEndpoints(): List<ProtectedEndpoint> =
+            listOf(
+                ProtectedEndpoint("GET /api/v1/users/me", HttpMethod.GET, "/api/v1/users/me", HttpStatus.OK),
+                ProtectedEndpoint(
+                    "POST /api/v1/auth/logout",
+                    HttpMethod.POST,
+                    "/api/v1/auth/logout",
+                    HttpStatus.NO_CONTENT,
+                ),
+            )
+
+        @DynamicPropertySource
+        @JvmStatic
+        fun ssoProviderProperties(registry: DynamicPropertyRegistry) {
+            registry.add("sso.providers.$PROVIDER_ID.display-name") { PROVIDER_DISPLAY_NAME }
+            registry.add("sso.providers.$PROVIDER_ID.client-id") { MockIdP.DEFAULT_CLIENT_ID }
+            registry.add("sso.providers.$PROVIDER_ID.client-secret") { MockIdP.DEFAULT_CLIENT_SECRET }
+            registry.add("sso.providers.$PROVIDER_ID.authorization-uri") { "${idpServer.baseUri}/mock-idp/authorize" }
+            registry.add("sso.providers.$PROVIDER_ID.token-uri") { "${idpServer.baseUri}/mock-idp/token" }
+            registry.add("sso.providers.$PROVIDER_ID.jwks-uri") { "${idpServer.baseUri}/mock-idp/jwks" }
+            registry.add("sso.providers.$DISABLED_PROVIDER_ID.display-name") { "Disabled IdP" }
+            registry.add("sso.providers.$DISABLED_PROVIDER_ID.enabled") { "false" }
+        }
+
+        @AfterAll
+        @JvmStatic
+        fun stopIdpServer() {
+            idpServer.stop()
+        }
+
+        private val ipCounter = AtomicInteger()
+
+        private const val PROVIDER_ID = "mock-idp"
+
+        private const val DISABLED_PROVIDER_ID = "mock-idp-off"
+
+        private const val PROVIDER_DISPLAY_NAME = "Mock IdP"
+
+        private const val PASSWORD = "Str0ng-Sso-Flow-IT-Pass!"
+
+        private const val ACCESS_TTL_SECONDS = 300
+
+        private const val FLOW_TTL_SECONDS = 600L
+
+        private const val FLOW_KEY_PREFIX = "sso:flow:"
+
+        private const val TOO_LONG_RETURN_TO_LENGTH = 513
+
+        private const val USERNAME_MAX_LENGTH = 32
+
+        private const val CLIENT_IP_PREFIX = "203.0.113."
+
+        private const val RELATIVE_RETURN_TO = "/chat"
+
+        private const val BACKEND_CALLBACK_URL = "http://localhost:5173/api/v1/auth/sso/callback"
+
+        private const val SPA_CALLBACK_PREFIX = "http://localhost:5173/sso/callback"
+
+        private const val SUBJECT_SELENA = "subject-selena-7f3k"
+
+        private const val SUBJECT_RHONDA = "subject-rhonda-9q1m"
+
+        private const val SUBJECT_LORNA = "subject-lorna-4d8v"
+
+        private const val EMAIL_SELENA = "selena.idp@example.com"
+
+        private const val EMAIL_RHONDA = "rhonda.idp@example.com"
+
+        private const val EMAIL_LORNA = "lorna.idp@example.com"
+
+        private const val TOKEN_43 = "[A-Za-z0-9_-]{43}"
+
+        private const val PROVIDERS_PATH = "/api/v1/auth/sso/providers"
+
+        private const val AUTHORIZE_PATH = "/api/v1/auth/sso/authorize"
+
+        private const val CALLBACK_PATH = "/api/v1/auth/sso/callback"
+
+        private const val TOKEN_PATH = "/api/v1/auth/sso/token"
+
+        private const val REGISTER_PATH = "/api/v1/auth/register"
+
+        private const val CONFIRM_PATH = "/api/v1/auth/register/confirm"
+
+        private const val SET_PASSWORD_PATH = "/api/v1/auth/register/password"
+
+        private const val LOGIN_PATH = "/api/v1/auth/login"
+
+        private const val REFRESH_PATH = "/api/v1/auth/refresh"
+
+        private const val LOGOUT_PATH = "/api/v1/auth/logout"
+
+        private const val CLIENT_ID = "client_id"
+
+        private const val REDIRECT_URI = "redirect_uri"
+
+        private const val RESPONSE_TYPE = "response_type"
+
+        private const val SCOPE = "scope"
+
+        private const val STATE = "state"
+
+        private const val NONCE_CLAIM = "nonce"
+
+        private const val CODE_CHALLENGE = "code_challenge"
+
+        private const val CODE_CHALLENGE_METHOD = "code_challenge_method"
+
+        private const val CODE_VERIFIER = "code_verifier"
+
+        private const val S256_METHOD = "S256"
+
+        private const val CODE = "code"
+
+        private const val RETURN_TO = "returnTo"
+    }
+}
+
+/**
+ * Loopback HTTP mount of the very same [MockIdP] controller class that also
+ * runs as the context bean (T018). The production `OidcClient` (T015) and the
+ * test's browser leg need the IdP at absolute URLs — but
+ * `AbstractIntegrationTest` boots the application on a RANDOM port which only
+ * becomes observable after the context is fully built, far too late for the
+ * `@DynamicPropertySource` binding of `sso.providers.*`. An eagerly-started
+ * standalone listener solves the ordering: its base URI is fixed BEFORE the
+ * Spring context starts (research.md §12 — providers in tests register
+ * explicit endpoints on the MockIdP).
+ *
+ * Requests are translated into [MockHttpServletRequest] and dispatched to the
+ * controller methods, responses are translated back — byte-for-byte the same
+ * authorize/token/jwks behavior as the in-context bean, without a second
+ * Spring context. The pool keeps a slow token endpoint (the DELAY scenario of
+ * later suites) from blocking parallel IdP calls.
+ */
+private class MockIdPLoopbackServer(
+    private val idp: MockIdP,
+) {
+    private val executor: ExecutorService =
+        Executors.newFixedThreadPool(POOL_SIZE) { runnable ->
+            Thread(runnable, THREAD_NAME).apply { isDaemon = true }
+        }
+
+    private val server: HttpServer = HttpServer.create(InetSocketAddress(LOOPBACK_HOST, 0), BACKLOG)
+
+    /** Absolute base URI (e.g. `http://127.0.0.1:39291`) known before the Spring context starts. */
+    val baseUri: String
+
+    init {
+        server.createContext(ROOT_PATH) { exchange -> handle(exchange) }
+        server.executor = executor
+        server.start()
+        baseUri = "http://$LOOPBACK_HOST:${server.address.port}"
+    }
+
+    fun stop() {
+        server.stop(STOP_DELAY_SECONDS)
+        executor.shutdownNow()
+    }
+
+    private fun handle(exchange: HttpExchange) {
+        val response =
+            try {
+                route(exchange)
+            } catch (cause: Exception) {
+                ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(cause.toString())
+            }
+        respond(exchange, response)
+        exchange.close()
+    }
+
+    @Suppress("ReturnCount") // each branch is one routed IdP endpoint
+    private fun route(exchange: HttpExchange): ResponseEntity<String> {
+        val path = exchange.requestURI.path
+        return when {
+            exchange.requestMethod == GET_METHOD && path == AUTHORIZE_PATH -> idp.authorize(toServletRequest(exchange))
+            exchange.requestMethod == POST_METHOD && path == TOKEN_PATH -> idp.token(toServletRequest(exchange))
+            exchange.requestMethod == GET_METHOD && path == JWKS_PATH -> jwksResponse()
+            else -> ResponseEntity.notFound().build()
+        }
+    }
+
+    private fun jwksResponse(): ResponseEntity<String> =
+        ResponseEntity
+            .ok()
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(idp.jwks())
+
+    private fun toServletRequest(exchange: HttpExchange): MockHttpServletRequest {
+        val request = MockHttpServletRequest(exchange.requestMethod, exchange.requestURI.toString())
+        exchange.requestHeaders.forEach { (name, values) -> values.forEach { request.addHeader(name, it) } }
+        addParametersFrom(request, exchange.requestURI.rawQuery)
+        addParametersFrom(request, exchange.requestBody.readBytes().toString(StandardCharsets.UTF_8))
+        return request
+    }
+
+    /** Splits a raw query/form string into decoded parameters — the IdP reads every input via getParameter. */
+    private fun addParametersFrom(
+        request: MockHttpServletRequest,
+        raw: String?,
+    ) {
+        if (raw.isNullOrEmpty()) return
+        raw.split(AMPERSAND).forEach { pair ->
+            val separator = pair.indexOf(EQUALS_SIGN)
+            if (separator <= 0) return@forEach
+            val name = URLDecoder.decode(pair.substring(0, separator), StandardCharsets.UTF_8)
+            val value = URLDecoder.decode(pair.substring(separator + 1), StandardCharsets.UTF_8)
+            request.addParameter(name, value)
+        }
+    }
+
+    private fun respond(
+        exchange: HttpExchange,
+        response: ResponseEntity<String>,
+    ) {
+        response.headers.location?.let { exchange.responseHeaders.set(HttpHeaders.LOCATION, it.toString()) }
+        val body = response.body?.toByteArray(StandardCharsets.UTF_8) ?: ByteArray(0)
+        exchange.responseHeaders.set(
+            HttpHeaders.CONTENT_TYPE,
+            response.headers.contentType?.toString() ?: MediaType.APPLICATION_JSON_VALUE,
+        )
+        exchange.sendResponseHeaders(
+            response.statusCode.value(),
+            if (body.isEmpty()) NO_BODY else body.size.toLong(),
+        )
+        if (body.isNotEmpty()) exchange.responseBody.use { stream -> stream.write(body) }
+    }
+
+    private companion object {
+        const val LOOPBACK_HOST = "127.0.0.1"
+
+        const val ROOT_PATH = "/"
+
+        const val AUTHORIZE_PATH = "/mock-idp/authorize"
+
+        const val TOKEN_PATH = "/mock-idp/token"
+
+        const val JWKS_PATH = "/mock-idp/jwks"
+
+        const val THREAD_NAME = "mock-idp-loopback"
+
+        const val POOL_SIZE = 4
+
+        const val BACKLOG = 0
+
+        const val STOP_DELAY_SECONDS = 0
+
+        const val NO_BODY = -1L
+
+        const val GET_METHOD = "GET"
+
+        const val POST_METHOD = "POST"
+
+        const val AMPERSAND = "&"
+
+        const val EQUALS_SIGN = '='
+    }
+}
