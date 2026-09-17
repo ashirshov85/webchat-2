@@ -107,6 +107,35 @@ auth:
     keys: ${AUTH_JWT_KEYS}
     active-kid: ${AUTH_JWT_ACTIVE_KID}
 
+sso:
+  # External identity providers (003-sso-identity-providers, data-model.md §4);
+  # bound to SsoProperties (T007) with fail-fast validation on startup.
+  # providers map is keyed by provider id (^[a-z0-9][a-z0-9-]{0,63}$);
+  # declaration order = order in GET /auth/sso/providers (LinkedHashMap binding).
+  # Provider schema (research.md §4):
+  #   <id>:
+  #     display-name: ...                  # shown on the login screen
+  #     enabled: true                      # default true; disabled = hidden, its flows rejected, links kept (US4-3)
+  #     trusted-for-email-linking: false   # default false; opt-in allowlist for auto-linking by verified email
+  #     client-id: ...
+  #     client-secret: ${SSO_<ID>_CLIENT_SECRET}
+  #                                        # env / K8s Secret only, never in repo (SC-004);
+  #                                        # providers disabled by default may use an empty default: ${SSO_<ID>_CLIENT_SECRET:}
+  #     issuer-uri: https://...            # OIDC discovery (lazy cache, research §5) OR explicit endpoints:
+  #     # authorization-uri: https://...
+  #     # token-uri: https://...
+  #     # userinfo-uri: https://...
+  #     # jwks-uri: https://...
+  #     scopes: [openid, email]            # default
+  # No providers configured by default; dex for local runs is added in T042.
+  providers: {}
+  # SSO flow context sso:flow:<state> — single-use, data-model.md §5
+  flow-ttl: 10m
+  # Handshake code sso:handshake:<sha256(code)> — single-use exchange for SPA (research §2)
+  handshake-ttl: 2m
+  # OIDC redirect_uri; defaults to the public base URL of the SPA deployment
+  callback-url: ${app.public-base-url}/api/v1/auth/sso/callback
+
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)
   observations:
