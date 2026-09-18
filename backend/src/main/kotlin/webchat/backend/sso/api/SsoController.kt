@@ -1,6 +1,7 @@
 package webchat.backend.sso.api
 
 import jakarta.servlet.http.HttpServletRequest
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -104,6 +105,8 @@ class SsoController(
     private val clock: Clock,
     @param:Value("\${app.public-base-url}") private val publicBaseUrl: String,
 ) {
+    private val log = LoggerFactory.getLogger(SsoController::class.java)
+
     /** Contract §1: enabled providers only, YAML declaration order (LinkedHashMap binding, T007). */
     @GetMapping("/providers")
     fun providers(): SsoProvidersResponse =
@@ -346,6 +349,11 @@ class SsoController(
         userAgent: String?,
         spaPath: String = SPA_CALLBACK_PATH,
     ): ResponseEntity<Unit> {
+        // research.md §14: the provider failure is also fixed in the
+        // structured logs — one WARN record carrying the request traceId from
+        // MDC, tying the log stream to the `sso_flow_error` journal row below
+        // (T044). Non-secret markers only, mirroring the `details` payload.
+        log.warn("sso_flow_error: provider={} reason={}", providerId ?: UNKNOWN_PROVIDER_MARKER, errorCode)
         authEventRecorder.record(
             eventType = AuthEventType.SSO_FLOW_ERROR,
             clientIp = clientIp,
@@ -415,6 +423,9 @@ class SsoController(
 
         /** sso_error vocabulary of contracts/sso-api.md §3. */
         const val ERROR_INVALID_STATE = "invalid_state"
+
+        /** Log marker of flows rejected before their provider is known (journal `details` omits the provider too). */
+        const val UNKNOWN_PROVIDER_MARKER = "unknown"
 
         const val ERROR_PROVIDER_DISABLED = "provider_disabled"
 

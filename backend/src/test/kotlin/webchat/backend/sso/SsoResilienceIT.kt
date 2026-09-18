@@ -8,9 +8,13 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability
+import org.springframework.boot.test.system.CapturedOutput
+import org.springframework.boot.test.system.OutputCaptureExtension
 import org.springframework.boot.test.web.client.TestRestTemplate
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.http.HttpEntity
@@ -82,6 +86,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * the picture.
  */
 @Suppress("LargeClass") // tasks.md T040 mandates the whole US4 acceptance in this single IT file (SessionIT precedent)
+@AutoConfigureObservability // deterministic in-test tracing so T044 can drive the callback traceId via traceparent
+@ExtendWith(OutputCaptureExtension::class)
 class SsoResilienceIT(
     @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val jdbcTemplate: JdbcTemplate,
@@ -176,7 +182,8 @@ class SsoResilienceIT(
                 .build()
                 .toUriString()
 
-        val callbackResponse = callback(callbackUrl)
+        val trace = nextTraceContext()
+        val callbackResponse = callback(callbackUrl, trace.traceparent)
 
         assertThat(callbackResponse.statusCode).isEqualTo(HttpStatus.FOUND)
         val spaParameters = queryParametersOf(callbackResponse.headers.location.toString())
@@ -188,10 +195,10 @@ class SsoResilienceIT(
         assertThat(identitiesCount()).isEqualTo(identitiesBefore)
         assertThat(handshakeKeyCount()).isEqualTo(handshakesBefore)
 
-        // FR-011: the outcome is journaled with non-secret markers
-        assertThat(latestFlowErrorDetails(OFF_PROVIDER_ID, PROVIDER_DISABLED_CODE))
-            .contains(OFF_PROVIDER_ID)
-            .contains(PROVIDER_DISABLED_CODE)
+        // FR-011 + T044: the outcome is journaled with non-secret markers and
+        // tied to the request traceId (the WARN log assert runs in the
+        // provider-failure tests below)
+        assertFlowErrorJournaled(trace, OFF_PROVIDER_ID, PROVIDER_DISABLED_CODE)
 
         // US4-3: the remaining login methods are untouched — the password
         // account still logs in, and so does a healthy provider
@@ -210,7 +217,7 @@ class SsoResilienceIT(
      * no side effects and healthy providers plus password login untouched.
      */
     @Test
-    fun `unreachable issuer discovery is isolated to its provider`() {
+    fun `unreachable issuer discovery is isolated to its provider`(capturedOutput: CapturedOutput) {
         val usersBefore = usersCount()
         val identitiesBefore = identitiesCount()
         val handshakesBefore = handshakeKeyCount()
@@ -245,7 +252,8 @@ class SsoResilienceIT(
                 .build()
                 .toUriString()
 
-        val (callbackResponse, elapsed) = timed { callback(callbackUrl) }
+        val trace = nextTraceContext()
+        val (callbackResponse, elapsed) = timed { callback(callbackUrl, trace.traceparent) }
 
         assertThat(callbackResponse.statusCode).isEqualTo(HttpStatus.FOUND)
         val spaParameters = queryParametersOf(callbackResponse.headers.location.toString())
@@ -253,10 +261,9 @@ class SsoResilienceIT(
         assertThat(spaParameters.getValue(SSO_ERROR_PARAMETER)).isEqualTo(PROVIDER_ERROR_CODE)
         assertThat(elapsed).isLessThan(CALLBACK_DEADLINE)
 
-        // FR-011: journaled with non-secret markers; no side effects anywhere
-        assertThat(latestFlowErrorDetails(LOST_DISCOVERY_PROVIDER_ID, PROVIDER_ERROR_CODE))
-            .contains(LOST_DISCOVERY_PROVIDER_ID)
-            .contains(PROVIDER_ERROR_CODE)
+        // FR-011 + T044: journaled with non-secret markers and fixed in the
+        // logs under the request traceId; no side effects anywhere
+        assertFlowErrorObservability(trace, LOST_DISCOVERY_PROVIDER_ID, PROVIDER_ERROR_CODE, capturedOutput)
         assertThat(usersCount()).isEqualTo(usersBefore)
         assertThat(identitiesCount()).isEqualTo(identitiesBefore)
         assertThat(handshakeKeyCount()).isEqualTo(handshakesBefore)
@@ -274,7 +281,10 @@ class SsoResilienceIT(
      */
     @ParameterizedTest(name = "{0}")
     @MethodSource("providerFailures")
-    fun `a failing provider answers provider_error while the rest keep working`(scenario: ProviderFailureScenario) {
+    fun `a failing provider answers provider_error while the rest keep working`(
+        scenario: ProviderFailureScenario,
+        capturedOutput: CapturedOutput,
+    ) {
         scenario.arm()
         val tag = scenarioTag(scenario)
         val passwordEmail = "$tag@example.com"
@@ -284,7 +294,8 @@ class SsoResilienceIT(
         val handshakesBefore = handshakeKeyCount()
 
         val callbackUrl = driveToCallbackUrl(scenario.providerId)
-        val (callbackResponse, elapsed) = timed { callback(callbackUrl) }
+        val trace = nextTraceContext()
+        val (callbackResponse, elapsed) = timed { callback(callbackUrl, trace.traceparent) }
 
         assertThat(callbackResponse.statusCode).isEqualTo(HttpStatus.FOUND)
         val spaParameters = queryParametersOf(callbackResponse.headers.location.toString())
@@ -294,10 +305,10 @@ class SsoResilienceIT(
         // SC-005: a degraded provider never holds the user longer than the 5 s callback deadline
         assertThat(elapsed).isLessThan(CALLBACK_DEADLINE)
 
-        // FR-010/FR-011: the failure is fixed in observability with non-secret markers
-        assertThat(latestFlowErrorDetails(scenario.providerId, PROVIDER_ERROR_CODE))
-            .contains(scenario.providerId)
-            .contains(PROVIDER_ERROR_CODE)
+        // FR-010/FR-011 + T044: the failure is fixed in observability with
+        // non-secret markers — journal row and WARN log share the traceId
+        assertFlowErrorObservability(trace, scenario.providerId, PROVIDER_ERROR_CODE, capturedOutput)
+        assertThat(latestFlowError(scenario.providerId, PROVIDER_ERROR_CODE)!!["details"].toString())
             .doesNotContain(scenario.clientSecret)
 
         // the failed flow leaves nothing behind — no JIT account, no binding, no handshake
@@ -337,11 +348,19 @@ class SsoResilienceIT(
     }
 
     /** The browser callback leg over the real port — never follows the SPA 302. */
-    private fun callback(url: String): ResponseEntity<String> =
+    private fun callback(
+        url: String,
+        traceparent: String? = null,
+    ): ResponseEntity<String> =
         noRedirectClient.exchange(
             URI.create(url),
             HttpMethod.GET,
-            HttpEntity<String>(HttpHeaders().apply { set(X_FORWARDED_FOR_HEADER, nextClientIp()) }),
+            HttpEntity<String>(
+                HttpHeaders().apply {
+                    set(X_FORWARDED_FOR_HEADER, nextClientIp())
+                    traceparent?.let { set(TRACEPARENT_HEADER, it) }
+                },
+            ),
             String::class.java,
         )
 
@@ -537,24 +556,72 @@ class SsoResilienceIT(
 
     private fun flowKeyCount(): Int = redisTemplate.keys("$FLOW_KEY_PREFIX*").orEmpty().size
 
-    /** Details of the last `sso_flow_error` of the provider carrying the public reason marker (FR-011). */
-    private fun latestFlowErrorDetails(
+    /** The last `sso_flow_error` of the provider: `details` + `trace_id` (FR-011 + research.md §14). */
+    private fun latestFlowError(
         providerId: String,
         reason: String,
-    ): String? =
+    ): Map<String, Any>? =
         jdbcTemplate
             .queryForList(
                 """
-                SELECT details::text AS details FROM auth_events
+                SELECT details::text AS details, trace_id FROM auth_events
                 WHERE event_type = 'sso_flow_error'
                   AND details->>'provider' = ?
                   AND details->>'reason' = ?
                 ORDER BY occurred_at DESC
                 """.trimIndent(),
-                String::class.java,
                 providerId,
                 reason,
             ).firstOrNull()
+
+    /**
+     * T044: the provider failure is fixed in observability — the
+     * `sso_flow_error` journal row AND one structured WARN log record both
+     * carry the callback request's traceId, so the log stream and
+     * `auth_events` are correlated (research.md §14; the driven traceparent
+     * makes the traceId deterministic). Non-secret markers only (FR-011).
+     */
+    private fun assertFlowErrorObservability(
+        trace: TraceContext,
+        providerId: String,
+        reason: String,
+        capturedOutput: CapturedOutput,
+    ) {
+        assertFlowErrorJournaled(trace, providerId, reason)
+
+        val record =
+            capturedOutput.all
+                .lineSequence()
+                .firstOrNull { it.contains("\"traceId\":\"${trace.traceId}\"") && it.contains("sso_flow_error") }
+        assertThat(record).isNotNull
+        assertThat(record).contains("\"level\":\"WARN\"")
+        assertThat(record).contains(providerId)
+        assertThat(record).contains(reason)
+    }
+
+    /** The journal half of [assertFlowErrorObservability]: `details` markers + the request traceId in `trace_id`. */
+    private fun assertFlowErrorJournaled(
+        trace: TraceContext,
+        providerId: String,
+        reason: String,
+    ) {
+        val row = latestFlowError(providerId, reason)
+        assertThat(row).isNotNull
+        assertThat(row!!["trace_id"]).isEqualTo(trace.traceId)
+        assertThat(row["details"].toString()).contains(providerId).contains(reason)
+    }
+
+    /** A deterministic W3C trace context for one callback request (RequestLoggingTests pattern). */
+    private data class TraceContext(
+        val traceId: String,
+        val traceparent: String,
+    )
+
+    private fun nextTraceContext(): TraceContext {
+        val traceId = TRACE_ID_HEX_FORMAT.format(traceCounter.incrementAndGet())
+        val spanId = SPAN_ID_HEX_FORMAT.format(traceCounter.incrementAndGet())
+        return TraceContext(traceId, "00-$traceId-$spanId-01")
+    }
 
     private fun sha256Hex(value: String): String =
         java.security.MessageDigest
@@ -738,6 +805,9 @@ class SsoResilienceIT(
 
         private val ipCounter = AtomicInteger()
 
+        /** Unique sequential trace/span numbers for [nextTraceContext] (T044). */
+        private val traceCounter = AtomicInteger()
+
         private const val ALPHA_PROVIDER_ID = "alpha"
 
         private const val BETA_PROVIDER_ID = "beta"
@@ -850,6 +920,14 @@ class SsoResilienceIT(
         private const val PROVIDER_ERROR_CODE = "provider_error"
 
         private const val X_FORWARDED_FOR_HEADER = "X-Forwarded-For"
+
+        /** T044: W3C header driving the callback traceId so journal and log rows are correlatable. */
+        private const val TRACEPARENT_HEADER = "traceparent"
+
+        /** W3C ids: 32 hex chars traceId / 16 hex chars spanId. */
+        private const val TRACE_ID_HEX_FORMAT = "%032x"
+
+        private const val SPAN_ID_HEX_FORMAT = "%016x"
     }
 }
 
