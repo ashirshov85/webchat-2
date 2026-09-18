@@ -22,6 +22,7 @@ import webchat.backend.auth.domain.service.SessionService
 import webchat.backend.auth.ratelimit.ClientIpResolver
 import webchat.backend.auth.security.AuthEventRecorder
 import webchat.backend.auth.security.AuthEventType
+import webchat.backend.sso.SsoMetrics
 import webchat.backend.sso.api.dto.SsoAuthorizeRequest
 import webchat.backend.sso.api.dto.SsoAuthorizeResponse
 import webchat.backend.sso.api.dto.SsoProviderResponse
@@ -103,6 +104,7 @@ class SsoController(
     private val authEventRecorder: AuthEventRecorder,
     private val clientIpResolver: ClientIpResolver,
     private val clock: Clock,
+    private val ssoMetrics: SsoMetrics,
     @param:Value("\${app.public-base-url}") private val publicBaseUrl: String,
 ) {
     private val log = LoggerFactory.getLogger(SsoController::class.java)
@@ -135,6 +137,7 @@ class SsoController(
                 createdAt = clock.now(),
             ),
         )
+        ssoMetrics.countFlow(providerId, SsoMetrics.FlowOutcome.STARTED)
         return SsoAuthorizeResponse(authorizationUrl = authorization.authorizationUrl)
     }
 
@@ -239,9 +242,14 @@ class SsoController(
         when (linkService.linkIdentity(flow.userId!!, flow.providerId, claims, clientIp, userAgent)) {
             is IdentityLinkOutcome.Linked,
             is IdentityLinkOutcome.AlreadyLinked,
-            -> redirectToSpa(spaPath, LINKED_PARAMETER to flow.providerId)
-            is IdentityLinkOutcome.IdentityTaken ->
+            -> {
+                ssoMetrics.countFlow(flow.providerId, SsoMetrics.FlowOutcome.COMPLETED)
+                redirectToSpa(spaPath, LINKED_PARAMETER to flow.providerId)
+            }
+            is IdentityLinkOutcome.IdentityTaken -> {
+                ssoMetrics.countFlow(flow.providerId, SsoMetrics.FlowOutcome.FLOW_REJECTED)
                 redirectToSpa(spaPath, SSO_ERROR_PARAMETER to ERROR_IDENTITY_TAKEN)
+            }
         }
 
     /**
@@ -278,10 +286,13 @@ class SsoController(
                         providerId = resolution.providerId,
                     ),
                 )
+                ssoMetrics.countFlow(flow.providerId, SsoMetrics.FlowOutcome.COMPLETED)
                 redirectToSpa(spaPath, HANDSHAKE_CODE_PARAMETER to handshakeCode, STATE_PARAMETER to state)
             }
-            is IdentityResolution.LoginRejected ->
+            is IdentityResolution.LoginRejected -> {
+                ssoMetrics.countFlow(flow.providerId, SsoMetrics.FlowOutcome.LOGIN_FAILED)
                 redirectToSpa(spaPath, SSO_ERROR_PARAMETER to resolution.rejection.errorCode)
+            }
         }
     }
 
@@ -354,6 +365,14 @@ class SsoController(
         // MDC, tying the log stream to the `sso_flow_error` journal row below
         // (T044). Non-secret markers only, mirroring the `details` payload.
         log.warn("sso_flow_error: provider={} reason={}", providerId ?: UNKNOWN_PROVIDER_MARKER, errorCode)
+        ssoMetrics.countFlow(
+            providerId,
+            if (errorCode == ERROR_PROVIDER_ERROR) {
+                SsoMetrics.FlowOutcome.PROVIDER_ERROR
+            } else {
+                SsoMetrics.FlowOutcome.FLOW_REJECTED
+            },
+        )
         authEventRecorder.record(
             eventType = AuthEventType.SSO_FLOW_ERROR,
             clientIp = clientIp,

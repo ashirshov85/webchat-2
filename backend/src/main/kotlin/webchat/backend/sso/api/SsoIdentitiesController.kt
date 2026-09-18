@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
 import webchat.backend.auth.domain.port.Clock
 import webchat.backend.auth.ratelimit.ClientIpResolver
+import webchat.backend.sso.SsoMetrics
 import webchat.backend.sso.api.dto.SsoAuthorizeResponse
 import webchat.backend.sso.api.dto.SsoIdentitiesResponse
 import webchat.backend.sso.api.dto.SsoIdentityResponse
@@ -66,6 +67,7 @@ class SsoIdentitiesController(
     private val externalIdentityRepository: ExternalIdentityRepository,
     private val clientIpResolver: ClientIpResolver,
     private val clock: Clock,
+    private val ssoMetrics: SsoMetrics,
 ) {
     /** Contract §5: a purpose=link flow context bound to the current user, then the IdP URL. */
     @PostMapping("/api/v1/auth/sso/link/authorize")
@@ -88,6 +90,7 @@ class SsoIdentitiesController(
                 createdAt = clock.now(),
             ),
         )
+        ssoMetrics.countFlow(providerId, SsoMetrics.FlowOutcome.STARTED)
         return SsoAuthorizeResponse(authorizationUrl = authorization.authorizationUrl)
     }
 
