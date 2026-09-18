@@ -3,7 +3,13 @@ title = "webchat gitleaks configuration"
 [extend]
 useDefault = true
 
+# 003-sso T043 (SC-004, FR-007, spec.md Assumptions): the single documented
+# repo exception — the dev-only dummy secret of the local dex IdP. The path
+# allowlist below is deliberately narrow: exactly `deploy/local/dex/.*`,
+# nothing else (values there are public by design and never used outside the
+# local docker-compose `--profile sso` setup).
 [allowlist]
-description = "Known false positives: Kotlin invariant tokenHash.length == SHA_256_HEX_LENGTH is a length check against a named constant, not a credential (generic-api-key, commit 2d456d8); JwtService PKCS8_BEGIN is the PEM header marker constant used to parse keys, not a key itself (private-key, commit 4446baf)"
+description = "(1) Local dex IdP (deploy/local/dex/) carries only documented dev-only dummy values — staticClient secret `dev-secret` and bcrypt hashes of the public `password` accounts (spec Assumptions, SC-004 exception); (2) known false positives: Kotlin invariant tokenHash.length == SHA_256_HEX_LENGTH is a length check against a named constant, not a credential (generic-api-key, commit 2d456d8); JwtService PKCS8_BEGIN is the PEM header marker constant used to parse keys, not a key itself (private-key, commit 4446baf)"
 regexTarget = "line"
 regexes = ['''SHA_256_HEX_LENGTH''', '''const val PKCS8_BEGIN''']
+paths = ['''deploy/local/dex/.*''']
