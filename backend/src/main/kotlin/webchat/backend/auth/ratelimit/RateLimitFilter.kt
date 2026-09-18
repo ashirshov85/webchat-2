@@ -252,7 +252,7 @@ class RateLimitFilter(
         if (name == LOGIN_ROUTE_NAME) {
             // the login:fail counter check rides the identifier extraction —
             // a login route without the account bucket would silently lose it
-            require(identifierBucket != null) {
+            requireNotNull(identifierBucket) {
                 "Route 'login' must define the account bucket (research.md §8, §11)"
             }
         }

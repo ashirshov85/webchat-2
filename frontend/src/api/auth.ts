@@ -45,7 +45,7 @@ function isProblem(value: unknown): value is Problem {
   )
 }
 
-async function toApiProblem(response: Response): Promise<ApiProblem> {
+export async function toApiProblem(response: Response): Promise<ApiProblem> {
   const parsed: unknown = await response.json().catch(() => null)
   const problem: ApiProblem = isProblem(parsed)
     ? parsed

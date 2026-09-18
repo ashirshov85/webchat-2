@@ -23,6 +23,7 @@ dependencies {
     implementation(libs.spring.boot.starter.security)
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.spring.boot.starter.oauth2.resource.server)
+    implementation(libs.spring.boot.starter.oauth2.client)
     implementation(libs.spring.boot.starter.jdbc)
     implementation(libs.spring.boot.starter.data.redis)
     implementation(libs.spring.boot.starter.mail)

@@ -9,6 +9,7 @@ import org.springframework.transaction.support.TransactionTemplate
 import webchat.backend.auth.domain.model.RefreshToken
 import webchat.backend.auth.domain.model.RevokedReason
 import webchat.backend.auth.domain.model.Session
+import webchat.backend.auth.domain.model.SessionAuthMethod
 import webchat.backend.auth.domain.port.Clock
 import webchat.backend.auth.domain.port.RefreshTokenRepository
 import webchat.backend.auth.domain.port.SessionRepository
@@ -63,7 +64,9 @@ class InvalidRefreshTokenException : RuntimeException("refresh token is invalid 
  * and a secrets-free reason marker only — never passwords or token values.
  */
 @Service
-@Suppress("LongParameterList") // one cohesive domain service over the session ports (tasks.md T030)
+// one cohesive domain service over the session ports (tasks.md T030); the 003
+// startSession overloads (research 003 §11) push it past the function threshold
+@Suppress("LongParameterList", "TooManyFunctions")
 class SessionService(
     private val sessionRepository: SessionRepository,
     private val refreshTokenRepository: RefreshTokenRepository,
@@ -90,11 +93,27 @@ class SessionService(
      * Opens a fresh session at login (FR-006): session row + first refresh
      * generation + access token, atomically. The login_success event itself
      * belongs to the login use case (T031), not to the session lifecycle.
+     *
+     * Legacy single-argument entry point of 002: every login of 002 is a
+     * password login, so it delegates with [SessionAuthMethod.PASSWORD]
+     * (research 003 §11 — NULL auth_method stays reserved to legacy rows).
      */
     @Transactional
-    fun startSession(userId: UUID): IssuedTokenPair {
+    fun startSession(userId: UUID): IssuedTokenPair = startSession(userId, SessionAuthMethod.PASSWORD)
+
+    /**
+     * Opens a fresh session marking HOW it was opened (research 003 §11):
+     * password login or an SSO flow; [identityId] points at the external
+     * identity the SSO session was created through (NULL for password).
+     */
+    @Transactional
+    fun startSession(
+        userId: UUID,
+        authMethod: SessionAuthMethod,
+        identityId: UUID? = null,
+    ): IssuedTokenPair {
         val sessionId = UUID.randomUUID()
-        sessionRepository.insert(Session.start(sessionId, userId, clock.now()))
+        sessionRepository.insert(Session.start(sessionId, userId, clock.now(), authMethod, identityId))
         return issueGeneration(sessionId, userId)
     }
 

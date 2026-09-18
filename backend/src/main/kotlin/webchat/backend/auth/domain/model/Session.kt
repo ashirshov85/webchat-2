@@ -22,6 +22,8 @@ data class Session(
     val lastRefreshedAt: Instant,
     val revokedAt: Instant?,
     val revokedReason: RevokedReason?,
+    val authMethod: SessionAuthMethod? = null,
+    val identityId: UUID? = null,
 ) {
     val isActive: Boolean
         get() = status == SessionStatus.ACTIVE
@@ -49,11 +51,17 @@ data class Session(
     }
 
     companion object {
-        /** Opens a fresh session at login: the `sid` root of the refresh chain. */
+        /**
+         * Opens a fresh session at login: the `sid` root of the refresh chain.
+         * [authMethod]/[identityId] mark how the session was opened (003 §3);
+         * the defaults keep the 002 construction sites source-compatible.
+         */
         fun start(
             id: UUID,
             userId: UUID,
             at: Instant,
+            authMethod: SessionAuthMethod? = null,
+            identityId: UUID? = null,
         ): Session =
             Session(
                 id = id,
@@ -63,6 +71,8 @@ data class Session(
                 lastRefreshedAt = at,
                 revokedAt = null,
                 revokedReason = null,
+                authMethod = authMethod,
+                identityId = identityId,
             )
     }
 }

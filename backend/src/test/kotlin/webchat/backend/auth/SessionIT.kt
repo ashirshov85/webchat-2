@@ -76,6 +76,9 @@ class SessionIT(
         assertThat(user["email"].asText()).isEqualTo("ursula@example.com")
 
         assertThat(sessionRow(sid)!!["status"]).isEqualTo("active")
+        // T016 (research 003 §11): password login marks auth_method='password', identity_id stays NULL
+        assertThat(sessionRow(sid)!!["auth_method"]).isEqualTo("password")
+        assertThat(sessionRow(sid)!!["identity_id"]).isNull()
         assertThat(refreshGeneration(refreshToken)!!["status"]).isEqualTo("active")
 
         val event = authEvent("login_success", "ursula")!!
@@ -464,7 +467,8 @@ class SessionIT(
         jdbcTemplate
             .queryForList(
                 """
-                SELECT id, user_id, status::text AS status, revoked_reason::text AS revoked_reason, revoked_at
+                SELECT id, user_id, status::text AS status, revoked_reason::text AS revoked_reason, revoked_at,
+                       auth_method, identity_id
                 FROM sessions WHERE id = ?
                 """.trimIndent(),
                 sid,

@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
 import webchat.backend.auth.domain.model.RevokedReason
 import webchat.backend.auth.domain.model.Session
+import webchat.backend.auth.domain.model.SessionAuthMethod
 import webchat.backend.auth.domain.model.SessionStatus
 import webchat.backend.auth.domain.port.SessionRepository
 import java.sql.ResultSet
@@ -33,6 +34,8 @@ class JdbcSessionRepository(
             Timestamp.from(session.lastRefreshedAt),
             toDb(session.revokedAt),
             session.revokedReason?.name?.lowercase(),
+            session.authMethod?.name?.lowercase(),
+            session.identityId,
         )
     }
 
@@ -73,18 +76,22 @@ class JdbcSessionRepository(
                     lastRefreshedAt = rs.getTimestamp("last_refreshed_at").toInstant(),
                     revokedAt = rs.getTimestamp("revoked_at")?.toInstant(),
                     revokedReason = rs.getString("revoked_reason")?.let { RevokedReason.valueOf(it.uppercase()) },
+                    authMethod = rs.getString("auth_method")?.let { SessionAuthMethod.valueOf(it.uppercase()) },
+                    identityId = rs.getObject("identity_id", UUID::class.java),
                 )
             }
 
         val INSERT_SQL =
             """
-            INSERT INTO sessions (id, user_id, status, created_at, last_refreshed_at, revoked_at, revoked_reason)
-            VALUES (?, ?, ?::session_status, ?, ?, ?, ?::session_revoked_reason)
+            INSERT INTO sessions (id, user_id, status, created_at, last_refreshed_at, revoked_at, revoked_reason,
+                                  auth_method, identity_id)
+            VALUES (?, ?, ?::session_status, ?, ?, ?, ?::session_revoked_reason, ?, ?)
             """.trimIndent()
 
         val FIND_BY_ID_SQL =
             """
-            SELECT id, user_id, status, created_at, last_refreshed_at, revoked_at, revoked_reason
+            SELECT id, user_id, status, created_at, last_refreshed_at, revoked_at, revoked_reason,
+                   auth_method, identity_id
             FROM sessions
             WHERE id = ?
             """.trimIndent()
