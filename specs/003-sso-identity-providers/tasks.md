@@ -144,7 +144,7 @@ Phase 3 (T006, T011, T013, T014) ставятся post-factum после зел�
 
 ### Tests for User Story 4 (Test-First) ⚠️
 
-- [ ] T040 [P] [US4/US5] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoResilienceIT.kt` с двумя провайдерами на MockIdP: оба включены и работают (US4-1), выключенный → скрыт + 404 authorize + `provider_disabled` callback (US4-3), сбой/таймаут/500/неверный secret одного → `provider_error` ≤5s при работающих остальных и парольном входе (US4-4, SC-005), провайдер с недоступным endpoint (token-uri на закрытый порт) → `provider_error` ≤5 с (US4-4 «недоступные endpoints»); FAIL до реализации
+- [x] T040 [P] [US4/US5] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoResilienceIT.kt` с двумя провайдерами на MockIdP: оба включены и работают (US4-1), выключенный → скрыт + 404 authorize + `provider_disabled` callback (US4-3), сбой/таймаут/500/неверный secret одного → `provider_error` ≤5s при работающих остальных и парольном входе (US4-4, SC-005), провайдер с недоступным endpoint (token-uri на закрытый порт) → `provider_error` ≤5 с (US4-4 «недоступные endpoints»); FAIL до реализации
 
 ### Implementation for User Story 4
 
