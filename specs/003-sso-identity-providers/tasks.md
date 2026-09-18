@@ -170,7 +170,7 @@ Phase 3 (T006, T011, T013, T014) ставятся post-factum после зел�
 
 ### Implementation for User Story 5
 
-- [ ] T047 [US5] Расширить `backend/src/main/kotlin/webchat/backend/auth/ratelimit/RateLimitFilter.kt` и `AuthRateLimitProperties` таблицей SSO-маршрутов, включая поддержку GET-маршрутов (сейчас только POST); те же 429 + Retry-After problem+json, Redis ProxyManager, fail-open (research §9) — Приёмка: 429 + Retry-After на 5 маршрутах со значениями = research §9, GET поддержан (тест: T046/T049)
+- [x] T047 [US5] Расширить `backend/src/main/kotlin/webchat/backend/auth/ratelimit/RateLimitFilter.kt` и `AuthRateLimitProperties` таблицей SSO-маршрутов, включая поддержку GET-маршрутов (сейчас только POST); те же 429 + Retry-After problem+json, Redis ProxyManager, fail-open (research §9) — Приёмка: 429 + Retry-After на 5 маршрутах со значениями = research §9, GET поддержан (тест: T046/T049)
 - [ ] T048 [P] [US5] Добавить метрики Micrometer `sso_flow_total{provider, outcome}` и `sso_idp_call_duration{provider, kind}` в `backend/src/main/kotlin/webchat/backend/sso/` (research §14); `/actuator/prometheus` отражает sso-события — Приёмка: `/actuator/prometheus` содержит `sso_flow_total` (тест: quickstart S6; сквозная проверка в T049/T052)
 - [ ] T049 [US5] Довести `SsoSecurityIT` и `SsoRateLimitIT` до зелёного
 

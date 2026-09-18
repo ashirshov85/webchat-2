@@ -96,6 +96,22 @@ auth:
       ip: 30/1m
     refresh:
       ip: 30/1m
+    # 003 research.md §9 (FR-009): the five SSO routes, per source IP;
+    # authorize/link-authorize are stricter (10/1m) — they create flow
+    # contexts in Redis; the GET routes (providers/callback) ride the same
+    # table since T047; values are the normative source mirrored by
+    # contracts/sso-api.md §1–5 and quickstart S6.2
+    sso:
+      providers:
+        ip: 30/1m
+      authorize:
+        ip: 10/1m
+      callback:
+        ip: 30/1m
+      token:
+        ip: 30/1m
+      link-authorize:
+        ip: 10/1m
   mail:
     # transactional sender address; prod value from env / K8s Secret (research.md §6)
     from: ${AUTH_MAIL_FROM:noreply@webchat.local}

@@ -12,8 +12,10 @@ import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.http.client.ClientHttpResponse
 import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.web.client.ResponseErrorHandler
 import org.springframework.web.client.RestTemplate
 import org.springframework.web.util.UriComponentsBuilder
 import webchat.backend.AbstractIntegrationTest
@@ -219,7 +221,11 @@ class SsoRateLimitIT(
     /**
      * TestRestTemplate's JDK client follows redirects, which would chase the
      * callback 302 Location straight into the SPA; the FOUND assertions need
-     * the raw response (SsoSecurityIT/SsoFlowIT precedent).
+     * the raw response (SsoSecurityIT/SsoFlowIT precedent). Unlike
+     * TestRestTemplate, a vanilla RestTemplate rethrows non-2xx as exceptions
+     * — the FLOODED callback leg must arrive as a ResponseEntity(429) for
+     * [assertTooManyRequests] instead, so the client wears TestRestTemplate's
+     * pass-through error behavior.
      */
     private val noRedirectClient =
         RestTemplate(
@@ -232,7 +238,13 @@ class SsoRateLimitIT(
                     connection.instanceFollowRedirects = false
                 }
             },
-        )
+        ).apply { errorHandler = PassThroughErrorHandler }
+
+    private object PassThroughErrorHandler : ResponseErrorHandler {
+        override fun hasError(response: ClientHttpResponse) = false
+
+        override fun handleError(response: ClientHttpResponse) = Unit
+    }
 
     private fun rootUri(): String = restTemplate.rootUri.removeSuffix("/")
 
