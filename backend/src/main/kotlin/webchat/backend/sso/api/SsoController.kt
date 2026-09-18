@@ -37,6 +37,7 @@ import webchat.backend.sso.domain.service.IdentityResolutionService
 import webchat.backend.sso.oidc.OidcClient
 import webchat.backend.sso.oidc.OidcClientException
 import webchat.backend.sso.oidc.OidcIdentityClaims
+import webchat.backend.sso.oidc.SsoProviderRegistrationException
 import webchat.backend.sso.oidc.SsoProviderRegistry
 import java.security.SecureRandom
 import java.time.Duration
@@ -181,8 +182,9 @@ class SsoController(
         }
 
         // both provider calls share the overall 5 s callback deadline (SC-005);
-        // any failure — transport, non-2xx, bad signature/iss/aud/exp/nonce —
-        // is the single provider_error outcome (research.md §5)
+        // any failure — transport, non-2xx, bad signature/iss/aud/exp/nonce,
+        // or an unbuildable registration (discovery down, T041) — is the single
+        // provider_error outcome (research.md §5)
         val claims =
             exchangeAndVerify(flow, code)
                 ?: return flowRejected(ERROR_PROVIDER_ERROR, flow.providerId, clientIp, userAgent, spaPath)
@@ -198,6 +200,9 @@ class SsoController(
      * The two IdP legs shared by both purposes (sso-api.md §3): the
      * code→token exchange and the ID-token verification, both inside the
      * overall callback deadline; `null` maps to the single `provider_error`.
+     * A registration that cannot be built (discovery outage of an
+     * issuer-based provider, T041) maps there too — the browser leg answers
+     * with the 302 redirect, never a 500 (US4-4 isolation).
      */
     private fun exchangeAndVerify(
         flow: SsoFlowContext,
@@ -208,6 +213,8 @@ class SsoController(
             val idToken = oidcClient.exchangeCodeForIdToken(flow.providerId, flow.codeVerifier, code, deadline)
             oidcClient.verifyIdToken(flow.providerId, idToken, flow.nonce, deadline)
         } catch (_: OidcClientException) {
+            null
+        } catch (_: SsoProviderRegistrationException) {
             null
         }
     }

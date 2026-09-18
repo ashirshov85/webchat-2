@@ -202,6 +202,71 @@ class SsoResilienceIT(
     }
 
     /**
+     * T041, US4-4: an issuer-based (discovery) provider whose metadata
+     * endpoint is unreachable. Authorize answers the typed 502 problem+json —
+     * never a bare 500 — and writes no flow context; a flow started before the
+     * outage (context seeded, the T040 `off`-provider pattern) ends on the
+     * callback with the single `provider_error` inside the 5 s deadline, with
+     * no side effects and healthy providers plus password login untouched.
+     */
+    @Test
+    fun `unreachable issuer discovery is isolated to its provider`() {
+        val usersBefore = usersCount()
+        val identitiesBefore = identitiesCount()
+        val handshakesBefore = handshakeKeyCount()
+        val flowsBefore = flowKeyCount()
+
+        // authorize cannot even start: the metadata endpoint is down — the
+        // typed 502 of T041, and no flow context survives the failure
+        val authorizeResponse = authorize(LOST_DISCOVERY_PROVIDER_ID)
+        assertThat(authorizeResponse.statusCode).isEqualTo(HttpStatus.BAD_GATEWAY)
+        assertThat(objectMapper.readTree(authorizeResponse.body)["detail"].asText())
+            .isEqualTo(PROVIDER_UNAVAILABLE_DETAIL)
+        assertThat(flowKeyCount()).isEqualTo(flowsBefore)
+
+        // the callback of a flow started before the outage: the registration
+        // build fails inside the flow — the single provider_error (T041)
+        val state = flowToken("resilience-lost-state")
+        flowStore.saveFlow(
+            state,
+            SsoFlowContext(
+                providerId = LOST_DISCOVERY_PROVIDER_ID,
+                purpose = SsoFlowPurpose.LOGIN,
+                nonce = flowToken("resilience-lost-nonce"),
+                codeVerifier = flowToken("resilience-lost-verifier"),
+                createdAt = Instant.now(),
+            ),
+        )
+        val callbackUrl =
+            UriComponentsBuilder
+                .fromUriString(rootUri() + CALLBACK_PATH)
+                .queryParam(STATE, state)
+                .queryParam(CODE, flowToken("resilience-lost-code"))
+                .build()
+                .toUriString()
+
+        val (callbackResponse, elapsed) = timed { callback(callbackUrl) }
+
+        assertThat(callbackResponse.statusCode).isEqualTo(HttpStatus.FOUND)
+        val spaParameters = queryParametersOf(callbackResponse.headers.location.toString())
+        assertThat(spaParameters).doesNotContainKey(CODE)
+        assertThat(spaParameters.getValue(SSO_ERROR_PARAMETER)).isEqualTo(PROVIDER_ERROR_CODE)
+        assertThat(elapsed).isLessThan(CALLBACK_DEADLINE)
+
+        // FR-011: journaled with non-secret markers; no side effects anywhere
+        assertThat(latestFlowErrorDetails(LOST_DISCOVERY_PROVIDER_ID, PROVIDER_ERROR_CODE))
+            .contains(LOST_DISCOVERY_PROVIDER_ID)
+            .contains(PROVIDER_ERROR_CODE)
+        assertThat(usersCount()).isEqualTo(usersBefore)
+        assertThat(identitiesCount()).isEqualTo(identitiesBefore)
+        assertThat(handshakeKeyCount()).isEqualTo(handshakesBefore)
+
+        // US4-4 isolation: the healthy providers and the password login work on
+        healthyIdP.setClaims(idpClaims(SUBJECT_LOST, EMAIL_LOST))
+        assertThat(performSsoLogin(ALPHA_PROVIDER_ID).body["user"]["email"].asText()).isEqualTo(EMAIL_LOST)
+    }
+
+    /**
      * US4-4 / SC-005 / FR-010: one provider fails — its own flow ends with
      * `provider_error` inside the 5 s callback deadline, while EVERY other
      * login method (the second healthy provider and the password login)
@@ -470,6 +535,8 @@ class SsoResilienceIT(
 
     private fun handshakeKeyCount(): Int = redisTemplate.keys("$HANDSHAKE_KEY_PREFIX*").orEmpty().size
 
+    private fun flowKeyCount(): Int = redisTemplate.keys("$FLOW_KEY_PREFIX*").orEmpty().size
+
     /** Details of the last `sso_flow_error` of the provider carrying the public reason marker (FR-011). */
     private fun latestFlowErrorDetails(
         providerId: String,
@@ -629,6 +696,15 @@ class SsoResilienceIT(
                 "http://$LOOPBACK_HOST:$closedPort/mock-idp/token"
             }
             registry.add("sso.providers.$DARK_PROVIDER_ID.jwks-uri") { "${degradedServer.baseUri}/mock-idp/jwks" }
+
+            // T041: issuer-uri only (discovery branch) pointing at the dead
+            // port — the registration can never be built
+            registry.add("sso.providers.$LOST_DISCOVERY_PROVIDER_ID.display-name") { "Lost Discovery IdP" }
+            registry.add("sso.providers.$LOST_DISCOVERY_PROVIDER_ID.client-id") { LOST_CLIENT_ID }
+            registry.add("sso.providers.$LOST_DISCOVERY_PROVIDER_ID.client-secret") { LOST_CLIENT_SECRET }
+            registry.add("sso.providers.$LOST_DISCOVERY_PROVIDER_ID.issuer-uri") {
+                "http://$LOOPBACK_HOST:$closedPort"
+            }
         }
 
         /** Explicit MockIdP endpoints of the healthy instance (research.md §12: tests never use discovery). */
@@ -674,6 +750,9 @@ class SsoResilienceIT(
 
         private const val DARK_PROVIDER_ID = "dark"
 
+        /** T041: the discovery-based provider whose issuer is unreachable. */
+        private const val LOST_DISCOVERY_PROVIDER_ID = "lost-discovery"
+
         private const val ALPHA_DISPLAY_NAME = "Alpha IdP"
 
         private const val ALPHA_CLIENT_ID = "webchat-alpha"
@@ -694,6 +773,10 @@ class SsoResilienceIT(
 
         private const val DARK_CLIENT_SECRET = "dark-resilience-secret"
 
+        private const val LOST_CLIENT_ID = "webchat-lost"
+
+        private const val LOST_CLIENT_SECRET = "lost-resilience-secret"
+
         private const val PASSWORD = "Str0ng-Resilience-IT-Pass!"
 
         private const val USERNAME_XANDER = "xander"
@@ -712,6 +795,13 @@ class SsoResilienceIT(
 
         private const val EMAIL_WREN = "wren.resil@example.com"
 
+        private const val SUBJECT_LOST = "subject-lost-4q6"
+
+        private const val EMAIL_LOST = "lost.resil@example.com"
+
+        /** T041: the static detail of the typed 502 authorize answer. */
+        private const val PROVIDER_UNAVAILABLE_DETAIL = "Identity provider is temporarily unavailable"
+
         /** research.md §1/§5, SC-005: the overall callback budget of all provider calls. */
         private val CALLBACK_DEADLINE: Duration = Duration.ofSeconds(5)
 
@@ -724,6 +814,8 @@ class SsoResilienceIT(
         private const val TOKEN_43 = "[A-Za-z0-9_-]{43}"
 
         private const val HANDSHAKE_KEY_PREFIX = "sso:handshake:"
+
+        private const val FLOW_KEY_PREFIX = "sso:flow:"
 
         private const val LOOPBACK_HOST = "127.0.0.1"
 
