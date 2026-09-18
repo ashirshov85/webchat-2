@@ -86,8 +86,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * `@DynamicPropertySource` binds `sso.providers.*`, before the random
  * application port becomes observable. Test data follows the SessionIT
  * conventions (accounts grown through the real 002 registration API); the
- * 198.51.100.x documentation IPs keep the 002 IP rate-limit buckets out of
- * the picture.
+ * documentation IPs keep every rate-limit bucket out of the picture — this
+ * suite owns the 203.0.113.100+ block of TEST-NET-3 (SsoFlowIT starts at
+ * 203.0.113.1) so the shared static Redis of the full `gradlew check` run
+ * never mixes its per-IP SSO buckets with the 198.51.100.10–16 flood IPs
+ * of SsoRateLimitIT or the 002 suites' fixed/tail addresses of TEST-NET-2.
  */
 @Suppress("LargeClass") // tasks.md T033 mandates the whole US3 acceptance in this single IT file (SessionIT precedent)
 class SsoLinkingIT(
@@ -866,7 +869,7 @@ class SsoLinkingIT(
             unlinkPool.shutdownNow()
         }
 
-        private val ipCounter = AtomicInteger()
+        private val ipCounter = AtomicInteger(CLIENT_IP_BASE)
 
         private const val TRUSTED_PROVIDER_ID = "idp-trusted"
 
@@ -882,7 +885,10 @@ class SsoLinkingIT(
 
         private const val PASSWORD = "Str0ng-Linking-IT-Pass!"
 
-        private const val CLIENT_IP_PREFIX = "198.51.100."
+        private const val CLIENT_IP_PREFIX = "203.0.113."
+
+        /** First host of this suite's 203.0.113.0/24 block (SsoFlowIT owns .1+). */
+        private const val CLIENT_IP_BASE = 100
 
         private const val USERNAME_MAX_LENGTH = 32
 

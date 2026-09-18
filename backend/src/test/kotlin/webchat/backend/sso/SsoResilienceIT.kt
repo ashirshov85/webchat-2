@@ -82,8 +82,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * `@DynamicPropertySource` binds `sso.providers.*`, before the random
  * application port becomes observable. Test data follows the SessionIT
  * conventions (accounts grown through the real 002 registration API); the
- * 198.51.100.x documentation IPs keep the 002 IP rate-limit buckets out of
- * the picture.
+ * documentation IPs keep every rate-limit bucket out of the picture — this
+ * suite owns the 203.0.113.180+ block of TEST-NET-3 (SsoFlowIT starts at
+ * 203.0.113.1, SsoLinkingIT at 203.0.113.100) so the shared static Redis of
+ * the full `gradlew check` run never mixes its per-IP SSO buckets with the
+ * 198.51.100.10–16 flood IPs of SsoRateLimitIT or the 002 suites'
+ * fixed/tail addresses of TEST-NET-2.
  */
 @Suppress("LargeClass") // tasks.md T040 mandates the whole US4 acceptance in this single IT file (SessionIT precedent)
 @AutoConfigureObservability // deterministic in-test tracing so T044 can drive the callback traceId via traceparent
@@ -803,7 +807,7 @@ class SsoResilienceIT(
             degradedServer.stop()
         }
 
-        private val ipCounter = AtomicInteger()
+        private val ipCounter = AtomicInteger(CLIENT_IP_BASE)
 
         /** Unique sequential trace/span numbers for [nextTraceContext] (T044). */
         private val traceCounter = AtomicInteger()
@@ -875,7 +879,10 @@ class SsoResilienceIT(
         /** research.md §1/§5, SC-005: the overall callback budget of all provider calls. */
         private val CALLBACK_DEADLINE: Duration = Duration.ofSeconds(5)
 
-        private const val CLIENT_IP_PREFIX = "198.51.100."
+        private const val CLIENT_IP_PREFIX = "203.0.113."
+
+        /** First host of this suite's 203.0.113.0/24 block (SsoFlowIT owns .1+). */
+        private const val CLIENT_IP_BASE = 180
 
         private const val USERNAME_MAX_LENGTH = 24
 
