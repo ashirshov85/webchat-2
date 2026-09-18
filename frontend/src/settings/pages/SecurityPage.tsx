@@ -125,7 +125,7 @@ export function SecurityPage() {
       <h2>Account security</h2>
       {ssoErrorCode !== null && <p role="alert">{messageFor(ssoErrorCode)}</p>}
       {linkedProviderId !== null && (
-        <p role="status">Provider {linkedProviderName()} was linked to your account.</p>
+        <output>Provider {linkedProviderName()} was linked to your account.</output>
       )}
       {loadState === 'loading' && <output>Loading your sign-in methods…</output>}
       {loadState === 'error' && (
