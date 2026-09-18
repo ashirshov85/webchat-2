@@ -80,8 +80,10 @@ import java.util.concurrent.atomic.AtomicInteger
  * verified email, no pre-existing account), so every test grows its own
  * account through the real flow; the 192.0.2.x documentation IPs keep the
  * 002 IP rate-limit buckets out of the picture.
+ *
+ * tasks.md T045 mandates the whole US5-2 acceptance in this single IT
+ * file (SessionIT precedent).
  */
-// tasks.md T045 mandates the whole US5-2 acceptance in this single IT file (SessionIT precedent)
 @Suppress("LargeClass")
 class SsoSecurityIT(
     @Autowired private val restTemplate: TestRestTemplate,
@@ -421,7 +423,8 @@ class SsoSecurityIT(
     private fun usersCount(): Int = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM users", Int::class.java)!!
 
     private fun identitiesCount(): Int =
-        jdbcTemplate.queryForObject("SELECT COUNT(*) FROM external_identities", Int::class.java)!!
+        jdbcTemplate
+            .queryForObject("SELECT COUNT(*) FROM external_identities", Int::class.java)!!
 
     private fun sessionsCount(): Int = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sessions", Int::class.java)!!
 

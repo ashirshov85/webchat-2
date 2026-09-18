@@ -92,7 +92,8 @@ class RateLimitFilter(
             "/api/v1/auth/password-reset" to limitedRoute(POST_METHOD, "password-reset", properties.passwordReset),
             "/api/v1/auth/register/confirm" to limitedRoute(POST_METHOD, "confirm", properties.confirm),
             "/api/v1/auth/register/password" to limitedRoute(POST_METHOD, "password", properties.password),
-            "/api/v1/auth/password-reset/confirm" to limitedRoute(POST_METHOD, "reset-confirm", properties.resetConfirm),
+            "/api/v1/auth/password-reset/confirm" to
+                limitedRoute(POST_METHOD, "reset-confirm", properties.resetConfirm),
             "/api/v1/auth/refresh" to limitedRoute(POST_METHOD, "refresh", properties.refresh),
             "/api/v1/auth/sso/providers" to ssoRoute("sso-providers", properties.sso.providers),
             "/api/v1/auth/sso/authorize" to ssoRoute("sso-authorize", properties.sso.authorize),
@@ -272,10 +273,16 @@ class RateLimitFilter(
         limits: AuthRateLimitProperties.RouteLimits,
     ): LimitedRoute {
         require(limits.email == null && limits.account == null) {
-            "SSO route '$name' is IP-only (research §9 of 003: state is a single-use flow secret, not a source identifier)"
+            "SSO route '$name' is IP-only (research §9 of 003: " +
+                "state is a single-use flow secret, not a source identifier)"
         }
         return LimitedRoute(
-            method = if (name == SSO_PROVIDERS_ROUTE_NAME || name == SSO_CALLBACK_ROUTE_NAME) GET_METHOD else POST_METHOD,
+            method =
+                if (name == SSO_PROVIDERS_ROUTE_NAME || name == SSO_CALLBACK_ROUTE_NAME) {
+                    GET_METHOD
+                } else {
+                    POST_METHOD
+                },
             name = name,
             ipLimit = parseRateLimit(limits.ip, intervallyRefill = true),
             identifierBucket = null,
