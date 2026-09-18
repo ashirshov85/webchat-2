@@ -63,6 +63,11 @@ import java.util.concurrent.atomic.AtomicInteger
  *   and kept in the flow context, a non-relative value or one longer than
  *   512 chars answers 400 `errors: {returnTo: ["invalid_format"]}` with NO
  *   flow context created;
+ * - consent denial at the provider (US1-5, the T026 acceptance leg): the IdP
+ *   `error=access_denied` redirect ends the flow with the public
+ *   `sso_error=provider_error` on the SPA callback and zero side effects —
+ *   no handshake, no session, no account change, a `sso_flow_error` journal
+ *   entry with non-secret markers (FR-011);
  * - parameterized reachability of EVERY Bearer-protected endpoint that
  *   existed before 0.3.0 — the list is derived from `contracts/openapi.yaml`
  *   of `origin/main` (0.2.0): `GET /api/v1/users/me` and
@@ -271,6 +276,57 @@ class SsoFlowIT(
         assertThat(logout(sso.accessToken, sso.refreshToken).statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
         assertThat(sessionRow(sid)!!["status"]).isEqualTo("revoked")
         assertThat(sessionRow(sid)!!["revoked_reason"]).isEqualTo("logout")
+    }
+
+    @Test
+    fun `consent denial at the provider ends with a clear sso_error and no side effects`() {
+        val seeded = seedActiveUserWithIdentity("colin", "colin@example.com", SUBJECT_COLIN)
+        mockIdP.setClaims(idpClaims(SUBJECT_COLIN, EMAIL_COLIN))
+        mockIdP.consentDenied = true // US1-5: the user withdraws consent at the IdP
+        val usersBefore = usersCount()
+        val sessionsBefore = sessionsCount()
+
+        val authorizeResponse = authorize(PROVIDER_ID)
+        assertThat(authorizeResponse.statusCode).isEqualTo(HttpStatus.OK)
+        val authorizationUrl = objectMapper.readTree(authorizeResponse.body)["authorizationUrl"].asText()
+
+        // the IdP redirects straight back with error=access_denied — no code exists
+        val idpRedirect = noRedirectClient.getForEntity(URI.create(authorizationUrl), String::class.java)
+        assertThat(idpRedirect.statusCode).isEqualTo(HttpStatus.FOUND)
+        val idpParameters = queryParametersOf(idpRedirect.headers.location.toString())
+        assertThat(idpParameters.getValue(ERROR_PARAMETER)).isEqualTo(ACCESS_DENIED)
+        assertThat(idpParameters).doesNotContainKey(CODE)
+
+        val callbackUrl =
+            UriComponentsBuilder
+                .fromHttpUrl(rootUri() + CALLBACK_PATH)
+                .queryParam(STATE, idpParameters.getValue(STATE))
+                .queryParam(ERROR_PARAMETER, ACCESS_DENIED)
+                .build()
+                .toUriString()
+        val callbackResponse = noRedirectClient.getForEntity(URI.create(callbackUrl), String::class.java)
+
+        // contracts/sso-api.md §3: IdP error parameters map to the single public provider_error code
+        assertThat(callbackResponse.statusCode).isEqualTo(HttpStatus.FOUND)
+        assertThat(callbackResponse.headers.location.toString()).startsWith(SPA_CALLBACK_PREFIX)
+        val spaParameters = queryParametersOf(callbackResponse.headers.location.toString())
+        assertThat(spaParameters.getValue(SSO_ERROR_PARAMETER)).isEqualTo(PROVIDER_ERROR)
+        assertThat(spaParameters).doesNotContainKey(CODE)
+
+        // US1-5: no login happened — no handshake to exchange, no session, no account change
+        assertThat(handshakeKeyCount()).isZero()
+        assertThat(usersCount()).isEqualTo(usersBefore)
+        assertThat(sessionsCount()).isEqualTo(sessionsBefore)
+        val identity = identityRow(seeded.identityId)!!
+        assertThat(identity["provider_email"]).isEqualTo("stale-colin@example.com")
+        assertThat(identity["provider_email_verified"]).isEqualTo(false)
+
+        // FR-011: the failure is journaled as sso_flow_error with non-secret markers only
+        val details = latestFlowErrorDetails(PROVIDER_ERROR)
+        assertThat(details)
+            .contains(PROVIDER_ID)
+            .contains(PROVIDER_ERROR)
+            .doesNotContain(MockIdP.DEFAULT_CLIENT_SECRET)
     }
 
     @ParameterizedTest(name = "{0}")
@@ -528,6 +584,25 @@ class SsoFlowIT(
 
     private fun flowKeyCount(): Int = redisTemplate.keys("$FLOW_KEY_PREFIX*").orEmpty().size
 
+    private fun handshakeKeyCount(): Int = redisTemplate.keys("$HANDSHAKE_KEY_PREFIX*").orEmpty().size
+
+    private fun usersCount(): Int = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM users", Int::class.java)!!
+
+    private fun sessionsCount(): Int = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM sessions", Int::class.java)!!
+
+    /** Details of the last `sso_flow_error` carrying the given public reason marker (FR-011). */
+    private fun latestFlowErrorDetails(reason: String): String? =
+        jdbcTemplate
+            .queryForList(
+                """
+                SELECT details::text AS details FROM auth_events
+                WHERE event_type = 'sso_flow_error' AND details->>'reason' = ?
+                ORDER BY occurred_at DESC
+                """.trimIndent(),
+                String::class.java,
+                reason,
+            ).firstOrNull()
+
     private fun claimsOf(accessToken: String): JsonNode = decodeSegment(accessToken, segmentIndex = 1)
 
     private fun decodeSegment(
@@ -726,6 +801,8 @@ class SsoFlowIT(
 
         private const val FLOW_KEY_PREFIX = "sso:flow:"
 
+        private const val HANDSHAKE_KEY_PREFIX = "sso:handshake:"
+
         private const val TOO_LONG_RETURN_TO_LENGTH = 513
 
         private const val USERNAME_MAX_LENGTH = 32
@@ -744,11 +821,15 @@ class SsoFlowIT(
 
         private const val SUBJECT_LORNA = "subject-lorna-4d8v"
 
+        private const val SUBJECT_COLIN = "subject-colin-2k6p"
+
         private const val EMAIL_SELENA = "selena.idp@example.com"
 
         private const val EMAIL_RHONDA = "rhonda.idp@example.com"
 
         private const val EMAIL_LORNA = "lorna.idp@example.com"
+
+        private const val EMAIL_COLIN = "colin.idp@example.com"
 
         private const val TOKEN_43 = "[A-Za-z0-9_-]{43}"
 
@@ -793,6 +874,14 @@ class SsoFlowIT(
         private const val S256_METHOD = "S256"
 
         private const val CODE = "code"
+
+        private const val ERROR_PARAMETER = "error"
+
+        private const val ACCESS_DENIED = "access_denied"
+
+        private const val SSO_ERROR_PARAMETER = "sso_error"
+
+        private const val PROVIDER_ERROR = "provider_error"
 
         private const val RETURN_TO = "returnTo"
     }
