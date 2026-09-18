@@ -110,19 +110,17 @@ class SsoLinkingIT(
         mockIdP.setClaims(idpClaims(SUBJECT_HANA, EMAIL_HANA))
         val identitiesBefore = identitiesCount()
 
-        val link = driveLinkFlow(accessToken, TRUSTED_PROVIDER_ID)
-
-        // US3-1 / contracts §3 link branch: 302 to the settings screen with linked=<providerId>
-        assertThat(link.spaParameters.getValue(LINKED_PARAMETER)).isEqualTo(TRUSTED_PROVIDER_ID)
-        assertThat(link.spaParameters).doesNotContainKey(SSO_ERROR_PARAMETER)
+        // authorize leg only: the flow context must still be in Redis here —
+        // the callback consumes it atomically (GETDEL, data-model.md §5)
+        val authorizationUrl = linkAuthorize(accessToken, TRUSTED_PROVIDER_ID)
 
         // the authorization URL of the link flow is a full PKCE/OIDC URL (contract §5 = §2)
-        val authorizationParameters = queryParametersOf(link.authorizationUrl)
+        val authorizationParameters = queryParametersOf(authorizationUrl)
         assertThat(authorizationParameters.getValue(STATE)).matches(TOKEN_43)
         assertThat(authorizationParameters.getValue(NONCE_CLAIM)).matches(TOKEN_43)
         assertThat(authorizationParameters.getValue(CODE_CHALLENGE)).matches(TOKEN_43)
         assertThat(authorizationParameters.getValue(CODE_CHALLENGE_METHOD)).isEqualTo(S256_METHOD)
-        assertThat(link.authorizationUrl).doesNotContain(CODE_VERIFIER)
+        assertThat(authorizationUrl).doesNotContain(CODE_VERIFIER)
 
         // data-model.md §5: purpose=link flow context carries the authenticated user
         val flowJson = redisTemplate.opsForValue().get("$FLOW_KEY_PREFIX${authorizationParameters.getValue(STATE)}")
@@ -130,6 +128,12 @@ class SsoLinkingIT(
             .contains("\"providerId\":\"$TRUSTED_PROVIDER_ID\"")
             .contains("\"purpose\":\"LINK\"")
             .contains("\"userId\":\"$userId\"")
+
+        val link = finishLinkFlow(authorizationUrl)
+
+        // US3-1 / contracts §3 link branch: 302 to the settings screen with linked=<providerId>
+        assertThat(link.spaParameters.getValue(LINKED_PARAMETER)).isEqualTo(TRUSTED_PROVIDER_ID)
+        assertThat(link.spaParameters).doesNotContainKey(SSO_ERROR_PARAMETER)
 
         // US3-1: the binding appears in the list with the config display name and the provider email
         val identities = listIdentitiesOk(accessToken)
@@ -389,7 +393,13 @@ class SsoLinkingIT(
     private fun driveLinkFlow(
         accessToken: String,
         providerId: String,
-    ): LinkFlowResult {
+    ): LinkFlowResult = finishLinkFlow(linkAuthorize(accessToken, providerId))
+
+    /** Contract §5 leg: the Bearer-authenticated link authorize → IdP authorization URL. */
+    private fun linkAuthorize(
+        accessToken: String,
+        providerId: String,
+    ): String {
         val authorizeResponse =
             restTemplate.postForEntity(
                 LINK_AUTHORIZE_PATH,
@@ -397,8 +407,11 @@ class SsoLinkingIT(
                 String::class.java,
             )
         assertThat(authorizeResponse.statusCode).isEqualTo(HttpStatus.OK)
-        val authorizationUrl = objectMapper.readTree(authorizeResponse.body)["authorizationUrl"].asText()
+        return objectMapper.readTree(authorizeResponse.body)["authorizationUrl"].asText()
+    }
 
+    /** IdP + callback legs of the link flow; the caller may inspect the flow context before this. */
+    private fun finishLinkFlow(authorizationUrl: String): LinkFlowResult {
         val idpRedirect = noRedirectClient.getForEntity(URI.create(authorizationUrl), String::class.java)
         assertThat(idpRedirect.statusCode).isEqualTo(HttpStatus.FOUND)
         val idpParameters = queryParametersOf(idpRedirect.headers.location.toString())

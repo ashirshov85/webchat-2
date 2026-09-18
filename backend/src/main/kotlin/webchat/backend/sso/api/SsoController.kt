@@ -30,10 +30,13 @@ import webchat.backend.sso.domain.port.SsoFlowContext
 import webchat.backend.sso.domain.port.SsoFlowPurpose
 import webchat.backend.sso.domain.port.SsoFlowStore
 import webchat.backend.sso.domain.port.SsoHandshake
+import webchat.backend.sso.domain.service.IdentityLinkOutcome
+import webchat.backend.sso.domain.service.IdentityLinkService
 import webchat.backend.sso.domain.service.IdentityResolution
 import webchat.backend.sso.domain.service.IdentityResolutionService
 import webchat.backend.sso.oidc.OidcClient
 import webchat.backend.sso.oidc.OidcClientException
+import webchat.backend.sso.oidc.OidcIdentityClaims
 import webchat.backend.sso.oidc.SsoProviderRegistry
 import java.security.SecureRandom
 import java.time.Duration
@@ -68,10 +71,14 @@ class SsoHandshakeCodeInvalidException : RuntimeException("Token is invalid or e
  * `GET /api/v1/auth/sso/callback` — the browser leg (never JSON): the flow
  * state is consumed atomically (`GETDEL` — a replay is rejected before any
  * side effect, SC-006), the code is exchanged and the ID token verified
- * within the overall 5 s callback deadline (SC-005), identity resolution
- * runs, and the outcome leaves as a 302: a single-use handshake code on
- * success, `?sso_error=<code>` otherwise. The session itself is NOT opened
- * here — tokens exist only in the `POST /token` response (research.md §2).
+ * within the overall 5 s callback deadline (SC-005), then either identity
+ * resolution (login flows) or [IdentityLinkService] (link flows started by
+ * `POST /auth/sso/link/authorize`, T035) runs, and the outcome leaves as a
+ * 302: a single-use handshake code on login success, `?linked=<providerId>`
+ * on link success, `?sso_error=<code>` otherwise. Login outcomes land on
+ * `/sso/callback`, link outcomes on `/settings/security` (sso-api.md §3).
+ * The session itself is NOT opened here — tokens exist only in the
+ * `POST /token` response (research.md §2).
  *
  * `POST /api/v1/auth/sso/token` — the SPA exchanges the handshake code
  * (`GETDEL`) for a `LoginResponse` through [SessionService.startSession]
@@ -80,12 +87,15 @@ class SsoHandshakeCodeInvalidException : RuntimeException("Token is invalid or e
  */
 @RestController
 @RequestMapping("/api/v1/auth/sso")
-@Suppress("LongParameterList") // the endpoints' collaborators are the wiring itself (SessionController precedent)
+// the endpoints' collaborators are the wiring itself; the shared callback legs
+// of BOTH purposes (login T022 + link T035) live here by design (sso-api.md §3)
+@Suppress("LongParameterList", "TooManyFunctions")
 class SsoController(
     private val registry: SsoProviderRegistry,
     private val oidcClient: OidcClient,
     private val flowStore: SsoFlowStore,
     private val resolutionService: IdentityResolutionService,
+    private val linkService: IdentityLinkService,
     private val sessionService: SessionService,
     private val userRepository: UserRepository,
     private val authEventRecorder: AuthEventRecorder,
@@ -126,10 +136,12 @@ class SsoController(
 
     /**
      * Contract §3: consumes the flow state (`GETDEL`), exchanges the code and
-     * verifies the ID token within the 5 s deadline, applies identity
-     * resolution and answers 302 — handshake code on success,
-     * `?sso_error=<code>` otherwise. Errors never render JSON: the browser
-     * follows the redirect; all outcomes are journaled (FR-011).
+     * verifies the ID token within the 5 s deadline, then applies the flow's
+     * purpose — [loginOutcome] for a login, [linkOutcome] for a link flow —
+     * and answers 302: handshake code on login success,
+     * `?linked=<providerId>` on link success, `?sso_error=<code>` otherwise.
+     * Errors never render JSON: the browser follows the redirect; all
+     * outcomes are journaled (FR-011).
      */
     @Suppress("ReturnCount") // each return is one terminal outcome of the browser-leg state machine (sso-api.md §3)
     @GetMapping("/callback")
@@ -149,40 +161,94 @@ class SsoController(
             flowStore.consumeFlow(state)
                 ?: return flowRejected(ERROR_INVALID_STATE, providerId = null, clientIp, userAgent)
 
-        // the link branch of the callback arrives with T035; a link context
-        // reaching this login implementation is a protective rejection
-        if (flow.purpose != SsoFlowPurpose.LOGIN) {
-            return flowRejected(ERROR_REJECTED, flow.providerId, clientIp, userAgent)
-        }
+        // every later outcome of this flow lands on ITS SPA screen: a login
+        // on /sso/callback, a link flow on the settings screen (sso-api.md §3)
+        val spaPath =
+            if (flow.purpose == SsoFlowPurpose.LINK) SPA_SETTINGS_PATH else SPA_CALLBACK_PATH
 
         val provider = registry.find(flow.providerId)
         if (provider == null || !provider.enabled) {
-            return flowRejected(ERROR_PROVIDER_DISABLED, flow.providerId, clientIp, userAgent)
+            return flowRejected(ERROR_PROVIDER_DISABLED, flow.providerId, clientIp, userAgent, spaPath)
         }
 
         // the IdP redirected back with an OAuth error (e.g. access_denied,
         // US1-5) — mapped to the single provider_error code (sso-api.md §3)
         if (!error.isNullOrBlank()) {
-            return flowRejected(ERROR_PROVIDER_ERROR, flow.providerId, clientIp, userAgent)
+            return flowRejected(ERROR_PROVIDER_ERROR, flow.providerId, clientIp, userAgent, spaPath)
         }
         if (code.isNullOrBlank()) {
-            return flowRejected(ERROR_REJECTED, flow.providerId, clientIp, userAgent)
+            return flowRejected(ERROR_REJECTED, flow.providerId, clientIp, userAgent, spaPath)
         }
 
-        val deadline = Instant.now().plus(CALLBACK_DEADLINE)
-        val idToken =
-            try {
-                oidcClient.exchangeCodeForIdToken(flow.providerId, flow.codeVerifier, code, deadline)
-            } catch (_: OidcClientException) {
-                return flowRejected(ERROR_PROVIDER_ERROR, flow.providerId, clientIp, userAgent)
-            }
+        // both provider calls share the overall 5 s callback deadline (SC-005);
+        // any failure — transport, non-2xx, bad signature/iss/aud/exp/nonce —
+        // is the single provider_error outcome (research.md §5)
         val claims =
-            try {
-                oidcClient.verifyIdToken(flow.providerId, idToken, flow.nonce, deadline)
-            } catch (_: OidcClientException) {
-                return flowRejected(ERROR_PROVIDER_ERROR, flow.providerId, clientIp, userAgent)
-            }
+            exchangeAndVerify(flow, code)
+                ?: return flowRejected(ERROR_PROVIDER_ERROR, flow.providerId, clientIp, userAgent, spaPath)
 
+        return if (flow.purpose == SsoFlowPurpose.LINK) {
+            linkOutcome(flow, claims, clientIp, userAgent, spaPath)
+        } else {
+            loginOutcome(flow, provider, claims, state, clientIp, userAgent, spaPath)
+        }
+    }
+
+    /**
+     * The two IdP legs shared by both purposes (sso-api.md §3): the
+     * code→token exchange and the ID-token verification, both inside the
+     * overall callback deadline; `null` maps to the single `provider_error`.
+     */
+    private fun exchangeAndVerify(
+        flow: SsoFlowContext,
+        code: String,
+    ): OidcIdentityClaims? {
+        val deadline = Instant.now().plus(CALLBACK_DEADLINE)
+        return try {
+            val idToken = oidcClient.exchangeCodeForIdToken(flow.providerId, flow.codeVerifier, code, deadline)
+            oidcClient.verifyIdToken(flow.providerId, idToken, flow.nonce, deadline)
+        } catch (_: OidcClientException) {
+            null
+        }
+    }
+
+    /**
+     * The link branch of §3 (T035): userId comes from the flow context,
+     * never from the IdP; the service owns the outcomes and their journal
+     * entries (`identity_taken` is already journaled there — no second
+     * entry here). Both success shapes redirect to the settings screen with
+     * `?linked=<providerId>` (FR-012 no-op included).
+     */
+    private fun linkOutcome(
+        flow: SsoFlowContext,
+        claims: OidcIdentityClaims,
+        clientIp: String,
+        userAgent: String?,
+        spaPath: String,
+    ): ResponseEntity<Unit> =
+        when (linkService.linkIdentity(flow.userId!!, flow.providerId, claims, clientIp, userAgent)) {
+            is IdentityLinkOutcome.Linked,
+            is IdentityLinkOutcome.AlreadyLinked,
+            -> redirectToSpa(spaPath, LINKED_PARAMETER to flow.providerId)
+            is IdentityLinkOutcome.IdentityTaken ->
+                redirectToSpa(spaPath, SSO_ERROR_PARAMETER to ERROR_IDENTITY_TAKEN)
+        }
+
+    /**
+     * The login branch of §3 (T022): identity resolution decides between the
+     * single-use handshake code (its session opens only in `POST /token`)
+     * and the public `sso_error` redirect — every rejection code of
+     * data-model.md §7 rows 3–6, 8.
+     */
+    private fun loginOutcome(
+        flow: SsoFlowContext,
+        provider: SsoProviderRegistry.SsoProvider,
+        claims: OidcIdentityClaims,
+        state: String,
+        clientIp: String,
+        userAgent: String?,
+        spaPath: String,
+    ): ResponseEntity<Unit> {
         val resolution =
             resolutionService.resolveLogin(
                 flow.providerId,
@@ -202,9 +268,10 @@ class SsoController(
                         providerId = resolution.providerId,
                     ),
                 )
-                redirectToSpa(HANDSHAKE_CODE_PARAMETER to handshakeCode, STATE_PARAMETER to state)
+                redirectToSpa(spaPath, HANDSHAKE_CODE_PARAMETER to handshakeCode, STATE_PARAMETER to state)
             }
-            is IdentityResolution.LoginRejected -> redirectToSpa(SSO_ERROR_PARAMETER to resolution.rejection.errorCode)
+            is IdentityResolution.LoginRejected ->
+                redirectToSpa(spaPath, SSO_ERROR_PARAMETER to resolution.rejection.errorCode)
         }
     }
 
@@ -262,14 +329,15 @@ class SsoController(
     /**
      * Row 8 of the resolution table for flow-level failures (data-model.md
      * §7): journals `sso_flow_error` with non-secret markers and answers the
-     * 302 `?sso_error=<code>` redirect — no accounts, bindings or sessions
-     * are created (research.md §10, FR-011).
+     * 302 `?sso_error=<code>` redirect on the flow's SPA screen — no
+     * accounts, bindings or sessions are created (research.md §10, FR-011).
      */
     private fun flowRejected(
         errorCode: String,
         providerId: String?,
         clientIp: String,
         userAgent: String?,
+        spaPath: String = SPA_CALLBACK_PATH,
     ): ResponseEntity<Unit> {
         authEventRecorder.record(
             eventType = AuthEventType.SSO_FLOW_ERROR,
@@ -281,15 +349,18 @@ class SsoController(
                     put(DETAIL_REASON, errorCode)
                 },
         )
-        return redirectToSpa(SSO_ERROR_PARAMETER to errorCode)
+        return redirectToSpa(spaPath, SSO_ERROR_PARAMETER to errorCode)
     }
 
-    private fun redirectToSpa(vararg parameters: Pair<String, String>): ResponseEntity<Unit> =
+    private fun redirectToSpa(
+        spaPath: String,
+        vararg parameters: Pair<String, String>,
+    ): ResponseEntity<Unit> =
         ResponseEntity
             .status(HttpStatus.FOUND)
             .location(
                 UriComponentsBuilder
-                    .fromUriString(publicBaseUrl.removeSuffix(SLASH) + SPA_CALLBACK_PATH)
+                    .fromUriString(publicBaseUrl.removeSuffix(SLASH) + spaPath)
                     .apply { parameters.forEach { (name, value) -> queryParam(name, value) } }
                     .encode()
                     .build()
@@ -323,7 +394,13 @@ class SsoController(
 
         const val SPA_CALLBACK_PATH = "/sso/callback"
 
+        /** The link-flow outcome screen of contracts/sso-api.md §3/§5 (T037 renders it). */
+        const val SPA_SETTINGS_PATH = "/settings/security"
+
         const val SSO_ERROR_PARAMETER = "sso_error"
+
+        /** The `?linked=<providerId>` success marker of the link branch (sso-api.md §3). */
+        const val LINKED_PARAMETER = "linked"
 
         const val HANDSHAKE_CODE_PARAMETER = "code"
 
@@ -337,6 +414,9 @@ class SsoController(
         const val ERROR_PROVIDER_ERROR = "provider_error"
 
         const val ERROR_REJECTED = "rejected"
+
+        /** US3-2 / FR-006: the identity belongs to another account — no owner details. */
+        const val ERROR_IDENTITY_TAKEN = "identity_taken"
 
         /** research.md §10 detail vocabulary — non-secret markers only. */
         const val DETAIL_PROVIDER = "provider"
