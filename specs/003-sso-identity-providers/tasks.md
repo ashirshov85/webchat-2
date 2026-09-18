@@ -130,7 +130,7 @@ Phase 3 (T006, T011, T013, T014) ставятся post-factum после зел�
 - [x] T036 [P] [US3] Добавить клиенты link/list/delete в `frontend/src/api/sso.ts` — Приёмка: `tsc` strict OK; используются в T037 (тест: T038)
 - [x] T037 [US3] Создать `frontend/src/settings/pages/SecurityPage.tsx` + маршрут `/settings/security` в `frontend/src/App.tsx` (`renderRoute`, вручную разбирает query: `?linked=<providerId>` → сообщение об успехе, `?sso_error=<code>` → экран ошибки — contracts/sso-api.md §3): список привязок (провайдер, email, дата), кнопки «Привязать провайдера» и «Отвязать» с обработкой 409 (предложение задать пароль) (зависит от T036) — Приёмка: маршрут `/settings/security` открывает страницу (в т.ч. с `?linked=`/`?sso_error=`); сценарии списка/привязки/отвязки/409 (тест: T038)
 - [x] T038 [P] [US3] Добавить Vitest-тесты в `frontend/src/settings/pages/__tests__/` для SecurityPage (список, привязка, отвязка, last-method ошибка; кейсы `?linked=` и `?sso_error=`)
-- [ ] T039 [US3] Довести `SsoLinkingIT` до зелёного
+- [x] T039 [US3] Довести `SsoLinkingIT` до зелёного
 
 **Checkpoint**: US1–US3 независимо функциональны
 
