@@ -7,8 +7,11 @@ import java.util.UUID
  * Account identity (data-model.md §1; FR-001, FR-003).
  *
  * Lifecycle: pending_email_confirmation → awaiting_password → active, enforced via
- * [UserStatus.canTransitionTo]. `active` implies both a confirmed email and a set
- * password (DB constraint ck_users_active_implies_credentials).
+ * [UserStatus.canTransitionTo]. Since feature 003 (V9) `active` only implies a
+ * confirmed email (ck_users_active_implies_email): a JIT account provisioned
+ * via SSO is `active` with a NULL [passwordHash] until a password is set via
+ * the 002 reset flow (FR-013) — password logins for it stay the uniform 401
+ * (LoginService, T030).
  */
 data class User(
     val id: UUID,
