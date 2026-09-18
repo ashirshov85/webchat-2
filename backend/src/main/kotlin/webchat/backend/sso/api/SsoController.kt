@@ -183,7 +183,15 @@ class SsoController(
                 return flowRejected(ERROR_PROVIDER_ERROR, flow.providerId, clientIp, userAgent)
             }
 
-        return when (val resolution = resolutionService.resolveLogin(flow.providerId, claims, clientIp, userAgent)) {
+        val resolution =
+            resolutionService.resolveLogin(
+                flow.providerId,
+                claims,
+                provider.trustedForEmailLinking,
+                clientIp,
+                userAgent,
+            )
+        return when (resolution) {
             is IdentityResolution.LoginGranted -> {
                 val handshakeCode = randomHandshakeCode()
                 flowStore.saveHandshake(
