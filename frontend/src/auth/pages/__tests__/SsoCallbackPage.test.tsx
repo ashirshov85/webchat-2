@@ -85,13 +85,69 @@ describe('SsoCallbackPage', () => {
   })
 
   it('shows the provider error screen without exchanging the code', async () => {
+    window.history.pushState({}, '', '/sso/callback?sso_error=invalid_state')
+    assignSpy = stubLocationAssign()
+    render(<SsoCallbackPage />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('The sign-in session is invalid or has expired.')
+    expect(screen.getByRole('link', { name: 'login page' })).toHaveAttribute('href', '/login')
+    expect(mockExchangeSsoToken).not.toHaveBeenCalled()
+    expect(assignSpy).not.toHaveBeenCalled()
+    expect(mockSetTokenPair).not.toHaveBeenCalled()
+  })
+
+  it('shows first-login advice for email_not_verified: sign in with password and link the provider', async () => {
     window.history.pushState({}, '', '/sso/callback?sso_error=email_not_verified')
     assignSpy = stubLocationAssign()
     render(<SsoCallbackPage />)
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('The provider did not confirm your email address.')
-    expect(screen.getByRole('link', { name: 'login page' })).toHaveAttribute('href', '/login')
+    expect(screen.getByRole('link', { name: 'Sign in with your password' })).toHaveAttribute(
+      'href',
+      '/login',
+    )
+    expect(screen.getByRole('link', { name: 'create an account' })).toHaveAttribute(
+      'href',
+      '/register',
+    )
+    expect(screen.getByText(/link this provider in your account settings/i)).toBeInTheDocument()
+    expect(mockExchangeSsoToken).not.toHaveBeenCalled()
+    expect(assignSpy).not.toHaveBeenCalled()
+    expect(mockSetTokenPair).not.toHaveBeenCalled()
+  })
+
+  it('shows first-login advice for email_conflict: sign in with password and link the provider', async () => {
+    window.history.pushState({}, '', '/sso/callback?sso_error=email_conflict')
+    assignSpy = stubLocationAssign()
+    render(<SsoCallbackPage />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('An account with this email already exists.')
+    expect(screen.getByRole('link', { name: 'Sign in with your password' })).toHaveAttribute(
+      'href',
+      '/login',
+    )
+    expect(screen.getByRole('link', { name: 'create an account' })).toHaveAttribute(
+      'href',
+      '/register',
+    )
+    expect(screen.getByText(/link this provider in your account settings/i)).toBeInTheDocument()
+    expect(mockExchangeSsoToken).not.toHaveBeenCalled()
+    expect(assignSpy).not.toHaveBeenCalled()
+    expect(mockSetTokenPair).not.toHaveBeenCalled()
+  })
+
+  it('shows registration advice for registration_incomplete: complete registration via the email link', async () => {
+    window.history.pushState({}, '', '/sso/callback?sso_error=registration_incomplete')
+    assignSpy = stubLocationAssign()
+    render(<SsoCallbackPage />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Your registration is not finished yet.')
+    expect(screen.getByText(/follow the link from the confirmation email/i)).toBeInTheDocument()
+    expect(screen.queryByRole('link')).toBeNull()
     expect(mockExchangeSsoToken).not.toHaveBeenCalled()
     expect(assignSpy).not.toHaveBeenCalled()
     expect(mockSetTokenPair).not.toHaveBeenCalled()

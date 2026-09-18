@@ -3,7 +3,10 @@ import { clearReturnTo, exchangeSsoToken, readReturnTo } from '../../api/sso'
 import { setTokenPair } from '../session'
 import { problemMessage } from '../problem'
 
-type CallbackState = { phase: 'exchanging' } | { phase: 'error'; message: string }
+type RecoveryAdvice = 'password-login' | 'complete-registration' | 'retry'
+
+type CallbackState =
+  { phase: 'exchanging' } | { phase: 'error'; message: string; recovery: RecoveryAdvice }
 
 const CHAT_PATH = '/chat'
 
@@ -20,8 +23,23 @@ const SSO_ERROR_MESSAGES: Record<string, string> = {
   rejected: 'Sign-in was rejected.',
 }
 
+const FIRST_LOGIN_ERROR_CODES: ReadonlySet<string> = new Set([
+  'email_not_verified',
+  'email_conflict',
+])
+
 function messageFor(code: string): string {
   return SSO_ERROR_MESSAGES[code] ?? 'Sign-in failed. Please try again.'
+}
+
+function recoveryAdviceFor(code: string | null): RecoveryAdvice {
+  if (code !== null && FIRST_LOGIN_ERROR_CODES.has(code)) {
+    return 'password-login'
+  }
+  if (code === 'registration_incomplete') {
+    return 'complete-registration'
+  }
+  return 'retry'
 }
 
 function isSafeReturnPath(value: string): boolean {
@@ -49,12 +67,20 @@ export function SsoCallbackPage() {
     const params = new URLSearchParams(window.location.search)
     const ssoError = params.get('sso_error')
     if (ssoError !== null && ssoError !== '') {
-      setState({ phase: 'error', message: messageFor(ssoError) })
+      setState({
+        phase: 'error',
+        message: messageFor(ssoError),
+        recovery: recoveryAdviceFor(ssoError),
+      })
       return
     }
     const code = params.get('code')
     if (code === null || code === '') {
-      setState({ phase: 'error', message: 'The sign-in link is invalid: code is missing.' })
+      setState({
+        phase: 'error',
+        message: 'The sign-in link is invalid: code is missing.',
+        recovery: 'retry',
+      })
       return
     }
     exchangeSsoToken({ code })
@@ -62,7 +88,9 @@ export function SsoCallbackPage() {
         setTokenPair(pair)
         window.location.assign(redirectTarget())
       })
-      .catch((err: unknown) => setState({ phase: 'error', message: problemMessage(err) }))
+      .catch((err: unknown) =>
+        setState({ phase: 'error', message: problemMessage(err), recovery: 'retry' }),
+      )
   }, [])
 
   return (
@@ -72,9 +100,24 @@ export function SsoCallbackPage() {
       {state.phase === 'error' && (
         <div>
           <p role="alert">{state.message}</p>
-          <p>
-            Return to the <a href="/login">login page</a> to try again.
-          </p>
+          {state.recovery === 'password-login' && (
+            <p>
+              <a href="/login">Sign in with your password</a> or{' '}
+              <a href="/register">create an account</a>, then link this provider in your account
+              settings to use it for sign-in.
+            </p>
+          )}
+          {state.recovery === 'complete-registration' && (
+            <p>
+              Check your inbox and follow the link from the confirmation email we sent you, then try
+              signing in again.
+            </p>
+          )}
+          {state.recovery === 'retry' && (
+            <p>
+              Return to the <a href="/login">login page</a> to try again.
+            </p>
+          )}
         </div>
       )}
     </section>
