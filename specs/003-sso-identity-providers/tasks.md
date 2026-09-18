@@ -166,7 +166,7 @@ Phase 3 (T006, T011, T013, T014) ставятся post-factum после зел�
 ### Tests for User Story 5 (Test-First) ⚠️
 
 - [ ] T045 [P] [US5] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoSecurityIT.kt`: повторное использование state (US5-2), подменённый state/nonce, чужая вкладка, повторный callback → отказ до любых эффектов, сессии/привязки не создаются (SC-006), повторный `POST /auth/sso/token` с тем же handshake-кодом → 400 `invalid_code` без дубля сессии (FR-012, single-use GETDEL), ID-токен без `sub` (пустой клейм через MockIdP) → отклонение + `sso_flow_error`, ротация client secret провайдера между authorize и callback (смена тестовой конфигурации) → callback отклоняется, сессия не создаётся (spec Edge Cases «секрет скомпрометирован/ротирован»); FAIL до реализации
-- [ ] T046 [P] [US5] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoRateLimitIT.kt`: лимиты на 5 SSO-маршрутов — 4 публичных (providers 30/1m, authorize 10/1m, callback 30/1m, token 30/1m) + аутентифицированный Bearer-маршрут link/authorize 10/1m → 429 + `Retry-After ≥ 1` (US5-1, SC-007; сверх минимума FR-009; значения = research §9 — нормативный источник, при рассинхронизации правится research и синхронно contracts §1–5 и quickstart S6.2); FAIL до реализации
+- [x] T046 [P] [US5] Написать `backend/src/test/kotlin/webchat/backend/sso/SsoRateLimitIT.kt`: лимиты на 5 SSO-маршрутов — 4 публичных (providers 30/1m, authorize 10/1m, callback 30/1m, token 30/1m) + аутентифицированный Bearer-маршрут link/authorize 10/1m → 429 + `Retry-After ≥ 1` (US5-1, SC-007; сверх минимума FR-009; значения = research §9 — нормативный источник, при рассинхронизации правится research и синхронно contracts §1–5 и quickstart S6.2); FAIL до реализации
 
 ### Implementation for User Story 5
 
