@@ -6,6 +6,7 @@ import { LoginPage } from './auth/pages/LoginPage'
 import { RegisterPage } from './auth/pages/RegisterPage'
 import { ResetPasswordPage } from './auth/pages/ResetPasswordPage'
 import { SetPasswordPage } from './auth/pages/SetPasswordPage'
+import { SsoCallbackPage } from './auth/pages/SsoCallbackPage'
 
 function renderRoute(pathname: string): ReactNode {
   switch (pathname) {
@@ -21,6 +22,8 @@ function renderRoute(pathname: string): ReactNode {
       return <ForgotPasswordPage />
     case '/reset-password':
       return <ResetPasswordPage />
+    case '/sso/callback':
+      return <SsoCallbackPage />
     default:
       return (
         <p>
