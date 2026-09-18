@@ -29,9 +29,21 @@ class SsoPropertiesTest {
 
                 assertThat(properties.flowTtl).isEqualTo(Duration.ofMinutes(10))
                 assertThat(properties.handshakeTtl).isEqualTo(Duration.ofMinutes(2))
+                // T042: local-dev default — the backend answers on :8080 directly
+                // (no ingress), matching the dex redirect-uri of quickstart «Предусловия»
                 assertThat(properties.callbackUrl)
-                    .isEqualTo("http://localhost:5173/api/v1/auth/sso/callback")
-                assertThat(properties.providers).isEmpty()
+                    .isEqualTo("http://localhost:8080/api/v1/auth/sso/callback")
+                // T042: the only predefined provider is the opt-in local dex IdP —
+                // disabled without SSO_DEX_ENABLED, empty-secret default allowed by
+                // the fail-fast validation (T007)
+                assertThat(properties.providers.keys).containsExactly("dex")
+                val dex = properties.providers.getValue("dex")
+                assertThat(dex.enabled).isFalse()
+                assertThat(dex.clientId).isEqualTo("webchat")
+                assertThat(dex.clientSecret).isEmpty()
+                assertThat(dex.trustedForEmailLinking).isTrue()
+                assertThat(dex.authorizationUri).isEqualTo("http://localhost:5556/auth")
+                assertThat(dex.tokenUri).isEqualTo("http://localhost:5556/token")
             }
     }
 
