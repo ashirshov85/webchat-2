@@ -34,10 +34,10 @@ class SsoPropertiesTest {
                 assertThat(properties.callbackUrl)
                     .isEqualTo("http://localhost:8080/api/v1/auth/sso/callback")
                 // T042: the predefined providers are opt-in — the local dex IdP
-                // and the dev-stand Google/Yandex/VK IdPs — all disabled without
-                // their SSO_*_ENABLED env, empty-secret defaults allowed by
-                // the fail-fast validation (T007)
-                assertThat(properties.providers.keys).containsExactly("dex", "google", "yandex", "vk")
+                // and the dev-stand Google/Yandex/VK/GitHub IdPs — all disabled
+                // without their SSO_*_ENABLED env, empty-secret defaults
+                // allowed by the fail-fast validation (T007)
+                assertThat(properties.providers.keys).containsExactly("dex", "google", "yandex", "vk", "github")
                 val dex = properties.providers.getValue("dex")
                 assertThat(dex.enabled).isFalse()
                 assertThat(dex.clientId).isEqualTo("webchat")
@@ -324,6 +324,8 @@ class SsoPropertiesTest {
                 assertThat(provider.clientAuth).isEqualTo(SsoProperties.ClientAuth.BASIC)
                 assertThat(provider.emailVerifiedClaim).isNull()
                 assertThat(provider.tokenDeviceId).isFalse()
+                // GitHub-attribute default: no emails-list endpoint
+                assertThat(provider.emailEndpoint).isNull()
             }
     }
 
@@ -360,6 +362,47 @@ class SsoPropertiesTest {
                 assertThat(vk.tokenUri).isEqualTo("https://id.vk.com/oauth/token")
                 assertThat(vk.userinfoUri).isEqualTo("https://id.vk.com/oauth/user_info")
                 assertThat(vk.scopes).containsExactly("email")
+            }
+    }
+
+    @Test
+    fun bindsGithubProviderFromApplicationYml() {
+        // GitHub: oauth2-userinfo with the GitHub email shape — the /user
+        // profile carries no verified email fact, so `email-endpoint` points
+        // the flow at GET api.github.com/user/emails whose primary+verified
+        // entry overrides `email`/`email_verified`; numeric `id` subject,
+        // credentials in the token POST body, PKCE off (OAuth Apps do not
+        // support RFC 7636); opt-in via SSO_GITHUB_ENABLED + credentials env
+        ApplicationContextRunner()
+            .withInitializer(ConfigDataApplicationContextInitializer())
+            .withUserConfiguration(SsoPropertiesConfiguration::class.java)
+            .run { context ->
+                assertThat(context).hasNotFailed()
+                val github = context.getBean(SsoProperties::class.java).providers.getValue("github")
+
+                assertThat(github.enabled).isFalse()
+                assertThat(github.clientId).isEmpty()
+                assertThat(github.clientSecret).isEmpty()
+                assertThat(github.trustedForEmailLinking).isTrue()
+                assertThat(github.issuerUri).isNull()
+                assertThat(github.protocol)
+                    .isEqualTo(SsoProperties.Protocol.OAUTH2_USERINFO)
+                assertThat(github.subjectClaim).isEqualTo("id")
+                assertThat(github.emailClaim).isEqualTo("email")
+                assertThat(github.emailVerifiedMode)
+                    .isEqualTo(SsoProperties.EmailVerifiedMode.CLAIM)
+                assertThat(github.emailVerifiedClaim).isNull()
+                assertThat(github.emailEndpoint)
+                    .isEqualTo("https://api.github.com/user/emails")
+                assertThat(github.pkce).isFalse()
+                assertThat(github.clientAuth).isEqualTo(SsoProperties.ClientAuth.POST)
+                assertThat(github.tokenDeviceId).isFalse()
+                assertThat(github.authorizationUri)
+                    .isEqualTo("https://github.com/login/oauth/authorize")
+                assertThat(github.tokenUri)
+                    .isEqualTo("https://github.com/login/oauth/access_token")
+                assertThat(github.userinfoUri).isEqualTo("https://api.github.com/user")
+                assertThat(github.scopes).containsExactly("read:user", "user:email")
             }
     }
 
@@ -549,6 +592,44 @@ class SsoPropertiesTest {
             ).run { context ->
                 assertThat(context).hasFailed()
                 assertThat(failureMessages(context)).contains("protocol")
+            }
+    }
+
+    @Test
+    fun emailEndpointOnOidcProviderFailsStartup() {
+        // the emails list is part of the oauth2 profile leg — an OIDC
+        // provider (the ID token carries the email) must not declare it
+        contextRunner
+            .withPropertyValues(
+                "sso.callback-url=http://localhost:8080/api/v1/auth/sso/callback",
+                "sso.providers.gh.display-name=GitHub",
+                "sso.providers.gh.client-id=gh-client",
+                "sso.providers.gh.client-secret=gh-secret",
+                "sso.providers.gh.issuer-uri=https://github.com",
+                "sso.providers.gh.email-endpoint=https://api.github.com/user/emails",
+            ).run { context ->
+                assertThat(context).hasFailed()
+                assertThat(failureMessages(context))
+                    .contains("email-endpoint is only supported by oauth2-userinfo providers")
+            }
+    }
+
+    @Test
+    fun invalidEmailEndpointUriFailsStartup() {
+        contextRunner
+            .withPropertyValues(
+                "sso.callback-url=http://localhost:8080/api/v1/auth/sso/callback",
+                "sso.providers.gh.display-name=GitHub",
+                "sso.providers.gh.protocol=oauth2-userinfo",
+                "sso.providers.gh.client-id=gh-client",
+                "sso.providers.gh.client-secret=gh-secret",
+                "sso.providers.gh.authorization-uri=https://github.com/login/oauth/authorize",
+                "sso.providers.gh.token-uri=https://github.com/login/oauth/access_token",
+                "sso.providers.gh.userinfo-uri=https://api.github.com/user",
+                "sso.providers.gh.email-endpoint=not-a-uri",
+            ).run { context ->
+                assertThat(context).hasFailed()
+                assertThat(failureMessages(context)).contains("email-endpoint must be an absolute http(s) URI")
             }
     }
 

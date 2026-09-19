@@ -80,7 +80,11 @@ import java.util.concurrent.ConcurrentHashMap
  *   providers; managed failures: [userinfoFailure] unavailable (a delay longer
  *   than any caller read timeout) / non-2xx, and claim omission — a `null`
  *   subject or email leaves the field out of the JSON («нет subject-клейма» /
- *   «нет email-клейма»).
+ *   «нет email-клейма»);
+ * - `GET /mock-idp/oauth2/emails` — the GitHub `/user/emails` shape: a
+ *   Bearer-gated JSON array `[{email, primary, verified}]` armed via
+ *   [setEmails] (empty by default), with its own [emailsFailure] scenarios —
+ *   the `email-endpoint` leg of GitHub-style providers.
  *
  * Scenario state is mutable by design (test double): ITs share the cached
  * application context and drive this bean from the same JVM, resetting the
@@ -124,6 +128,23 @@ class MockIdP(
         NOT_2XX,
     }
 
+    /** Emails-endpoint failure scenario (the GitHub `/user/emails` leg). */
+    enum class EmailsFailure {
+        NONE,
+        UNAVAILABLE,
+        NOT_2XX,
+    }
+
+    /**
+     * One entry of the GitHub-style emails list (`GET /user/emails`):
+     * `[{email, primary, verified, ...}]`.
+     */
+    data class EmailEntry(
+        val email: String,
+        val primary: Boolean = false,
+        val verified: Boolean = false,
+    )
+
     /**
      * Profile JSON minted by the oauth2-mode userinfo endpoint (research.md
      * §21): the field NAMES are part of the controlled state so claim-mapping
@@ -157,6 +178,18 @@ class MockIdP(
     /** Managed userinfo-endpoint failure scenario (oauth2 mode). */
     @Volatile
     var userinfoFailure = UserinfoFailure.NONE
+
+    /** Managed emails-endpoint failure scenario (oauth2 mode, the GitHub leg). */
+    @Volatile
+    var emailsFailure = EmailsFailure.NONE
+
+    /**
+     * Entries of the emails list served by the oauth2-mode emails endpoint —
+     * empty by default, so providers without an `email-endpoint` never see
+     * the leg at all (GitHub-style ITs arm their list explicitly).
+     */
+    @Volatile
+    private var emailEntries: List<EmailEntry> = emptyList()
 
     /**
      * VK-style device binding (oauth2 mode): when armed, the authorize
@@ -205,6 +238,11 @@ class MockIdP(
         userinfoClaims = controlledUserinfoClaims
     }
 
+    /** Arms the entries of the following emails answers (the GitHub `/user/emails` shape). */
+    fun setEmails(entries: List<EmailEntry>) {
+        emailEntries = entries
+    }
+
     /** Restores the default scenario state: claims, failure flags, issuer, issued codes. */
     fun reset() {
         claims = ControlledClaims()
@@ -212,6 +250,8 @@ class MockIdP(
         consentDenied = false
         tokenEndpointFailure = TokenEndpointFailure.NONE
         userinfoFailure = UserinfoFailure.NONE
+        emailsFailure = EmailsFailure.NONE
+        emailEntries = emptyList()
         issueDeviceId = false
         issuer = DEFAULT_ISSUER
         issuedCodes.clear()
@@ -361,6 +401,40 @@ class MockIdP(
 
     @GetMapping("/jwks", produces = [MediaType.APPLICATION_JSON_VALUE])
     fun jwks(): String = JWKS_JSON
+
+    /**
+     * OAuth2-mode emails list (the GitHub `/user/emails` shape): the same
+     * Bearer gate as userinfo, but the body is the JSON ARRAY
+     * `[{email, primary, verified}]` — the `email-endpoint` leg of a
+     * GitHub-style provider picks its `primary && verified` entry.
+     */
+    @GetMapping("/oauth2/emails")
+    @Suppress("ReturnCount") // each return is a protocol answer of the emails endpoint
+    fun emails(
+        @RequestHeader(AUTHORIZATION_HEADER) authorization: String?,
+    ): ResponseEntity<String> {
+        when (emailsFailure) {
+            EmailsFailure.UNAVAILABLE -> Thread.sleep(DELAY_MILLIS)
+            EmailsFailure.NOT_2XX -> return oauthError(HttpStatus.INTERNAL_SERVER_ERROR, SERVER_ERROR)
+            EmailsFailure.NONE -> Unit
+        }
+        val accessToken = authorization?.takeIf { it.startsWith(BEARER_PREFIX) }?.removePrefix(BEARER_PREFIX)
+        if (accessToken.isNullOrEmpty() || accessToken !in issuedAccessTokens) {
+            return oauthError(HttpStatus.UNAUTHORIZED, INVALID_TOKEN)
+        }
+        val body =
+            emailEntries.map { entry ->
+                linkedMapOf(
+                    EMAILS_EMAIL_FIELD to entry.email,
+                    EMAILS_PRIMARY_FIELD to entry.primary,
+                    EMAILS_VERIFIED_FIELD to entry.verified,
+                )
+            }
+        return ResponseEntity
+            .status(HttpStatus.OK)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(objectMapper.writeValueAsString(body))
+    }
 
     @Suppress("ReturnCount") // guard legs: malformed Basic header, missing form credentials
     private fun clientCredentialsOf(request: HttpServletRequest): Pair<String, String>? {
@@ -549,6 +623,13 @@ class MockIdP(
         private const val CODE = "code"
 
         const val DEVICE_ID = "device_id"
+
+        /** Field names of the GitHub-style emails-list entries. */
+        const val EMAILS_EMAIL_FIELD = "email"
+
+        const val EMAILS_PRIMARY_FIELD = "primary"
+
+        const val EMAILS_VERIFIED_FIELD = "verified"
 
         private const val STATE = "state"
 

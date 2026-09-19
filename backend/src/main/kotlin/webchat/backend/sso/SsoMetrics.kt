@@ -19,8 +19,9 @@ import org.springframework.stereotype.Component
  *
  * IdP call kinds: `token` (code exchange), `jwks` (ID-token verification
  * incl. the lazily fetched key set) and `userinfo` — the profile leg of the
- * `oauth2-userinfo` branch (T057, research.md §19); the access token behind
- * it is consumed on the spot and never stored (FR-016).
+ * `oauth2-userinfo` branch (T057, research.md §19) — plus `emails`, the
+ * GitHub-style verified-emails list behind the profile; the access token
+ * behind both legs is consumed on the spot and never stored (FR-016).
  *
  * Tag values carry the provider id or the `unknown` marker of flows
  * rejected before their provider is known — never tokens, codes or
@@ -91,6 +92,9 @@ class SsoMetrics(
         TOKEN("token"),
         USERINFO("userinfo"),
         JWKS("jwks"),
+
+        /** GitHub: the verified-emails list leg behind the profile (same Bearer token, FR-016). */
+        EMAILS("emails"),
     }
 
     private companion object {

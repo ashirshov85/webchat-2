@@ -258,6 +258,9 @@ class SsoProviderRegistry(
         /** VK ID: forward the callback `device_id` into the token exchange (SsoController → OidcClient). */
         val tokenDeviceId: Boolean = provider.tokenDeviceId
 
+        /** GitHub: Bearer GET of the verified-emails list behind the profile leg. */
+        val emailEndpoint: String? = provider.emailEndpoint
+
         override fun toString(): String = "SsoProvider(id=$id, displayName=$displayName, enabled=$enabled)"
     }
 

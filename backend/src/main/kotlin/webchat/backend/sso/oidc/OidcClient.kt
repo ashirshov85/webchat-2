@@ -373,6 +373,15 @@ class OidcClient(
      * a usable subject claim is the [Reason.ID_TOKEN_INVALID]-equivalent
      * verdict of [userinfoIdentityClaims]. Messages never contain the access
      * token or any claim values (SC-004).
+     *
+     * GitHub-style providers (spec.md "Расширение на GitHub") declare an
+     * `email-endpoint`: the userinfo profile of GitHub carries no verified
+     * email fact, so a second Bearer GET fetches the emails list and its
+     * `primary && verified` entry overrides the `email`/`email_verified`
+     * facts of the profile (timed as `kind=emails`, same caps and deadline
+     * budget). A list without a verified entry leaves the profile untouched —
+     * the flow then proceeds email-less (no JIT, no auto-linking), never
+     * trusting an unverified address.
      */
     private fun fetchUserinfoClaims(
         providerId: String,
@@ -389,8 +398,19 @@ class OidcClient(
                     "provider '$providerId' has no userinfo endpoint configured",
                 )
         val body = userinfoBodyOf(providerId, userinfoUri, accessToken, remaining)
+        val effectiveBody =
+            provider.emailEndpoint?.let { endpoint ->
+                val emails = emailsBodyOf(providerId, endpoint, accessToken, remainingUntil(deadline))
+                primaryVerifiedEmailOf(emails)?.let { email ->
+                    (body ?: LinkedHashMap()) +
+                        mapOf(
+                            StandardClaimNames.EMAIL to email,
+                            StandardClaimNames.EMAIL_VERIFIED to true,
+                        )
+                }
+            } ?: body
         return userinfoIdentityClaims(
-            body,
+            effectiveBody,
             provider.subjectClaim,
             provider.emailClaim,
             provider.emailVerifiedMode,
@@ -432,6 +452,50 @@ class OidcClient(
             )
         } finally {
             userinfoSample.stop()
+        }
+    }
+
+    /**
+     * The timed `GET <email-endpoint>` of the GitHub shape: the same Bearer
+     * credential and transport budget as the userinfo leg, timed as
+     * `sso_idp_call_duration{provider, kind=emails}` (research.md §14); every
+     * transport/decoding failure is the same [Reason.USERINFO_ENDPOINT]
+     * answer — it IS the profile leg of such providers. The token never
+     * leaves this frame (FR-016), the message never carries values (SC-004).
+     */
+    private fun emailsBodyOf(
+        providerId: String,
+        emailEndpoint: String,
+        accessToken: String,
+        remaining: Duration,
+    ): List<Any?>? {
+        val emailsClient =
+            RestClient
+                .builder()
+                .requestFactory(requestFactory(remaining))
+                .build()
+        val emailsSample = ssoMetrics.startIdpCall(providerId, SsoMetrics.IdpCallKind.EMAILS)
+        return try {
+            emailsClient
+                .get()
+                .uri(emailEndpoint)
+                .header(HttpHeaders.AUTHORIZATION, "$BEARER_PREFIX$accessToken")
+                .retrieve()
+                .body(EMAILS_TYPE)
+        } catch (e: RestClientException) {
+            throw OidcClientException(
+                Reason.USERINFO_ENDPOINT,
+                "email endpoint of provider '$providerId' failed",
+                e,
+            )
+        } catch (e: HttpMessageConversionException) {
+            throw OidcClientException(
+                Reason.USERINFO_ENDPOINT,
+                "email response of provider '$providerId' is unreadable",
+                e,
+            )
+        } finally {
+            emailsSample.stop()
         }
     }
 
@@ -512,6 +576,9 @@ class OidcClient(
 
         val USERINFO_TYPE = object : ParameterizedTypeReference<Map<String, Any>>() {}
 
+        /** The GitHub `/user/emails` list: `[{email, primary, verified, ...}]`. */
+        val EMAILS_TYPE = object : ParameterizedTypeReference<List<Any?>>() {}
+
         val SECURE_RANDOM = SecureRandom()
 
         const val RANDOM_TOKEN_BYTES = 32
@@ -522,6 +589,13 @@ class OidcClient(
 
         /** VK ID token-exchange body parameter carrying the authorize-issued device binding. */
         const val DEVICE_ID_PARAMETER = "device_id"
+
+        /** Field names of the GitHub `/user/emails` entries (GET /user/emails contract). */
+        const val EMAILS_EMAIL_FIELD = "email"
+
+        const val EMAILS_PRIMARY_FIELD = "primary"
+
+        const val EMAILS_VERIFIED_FIELD = "verified"
 
         const val DOT = "."
 
@@ -585,6 +659,22 @@ class OidcClient(
             }
             return current
         }
+
+        /**
+         * The GitHub emails-list verdict (spec.md «Расширение на GitHub»):
+         * the one `primary && verified` entry is THE usable address — GitHub
+         * itself verifies every listed mailbox; anything else (no list, a
+         * non-array body, no verified entry) answers `null` so the flow
+         * never trusts an unverified address. Only scalar shape is read —
+         * a malformed entry is skipped, not guessed around.
+         */
+        fun primaryVerifiedEmailOf(emails: List<Any?>?): String? =
+            emails
+                ?.asSequence()
+                ?.filterIsInstance<Map<*, *>>()
+                ?.firstOrNull { entry ->
+                    entry[EMAILS_PRIMARY_FIELD] == true && entry[EMAILS_VERIFIED_FIELD] == true
+                }?.get(EMAILS_EMAIL_FIELD) as? String
 
         private fun emailVerifiedOf(raw: Any?): Boolean =
             when (raw) {

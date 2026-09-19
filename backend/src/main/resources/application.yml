@@ -234,6 +234,34 @@ sso:
       authorization-uri: https://id.vk.com/authorize
       token-uri: https://id.vk.com/oauth/token
       userinfo-uri: https://id.vk.com/oauth/user_info
+    # Fourth real IdP (GitHub) — oauth2-userinfo with the GitHub email shape
+    # (spec «Расширение на GitHub»): the /user profile carries no verified
+    # email fact, so the emails list behind `email-endpoint`
+    # (GET api.github.com/user/emails, scope `user:email`) supplies the
+    # primary+verified address that overrides the profile's `email`/
+    # `email_verified`. `id` is the stable numeric subject; the token
+    # endpoint takes client credentials in the POST body (the documented
+    # GitHub form); PKCE off — classic OAuth Apps do not support RFC 7636
+    # (mitigated by the confidential exchange with client-secret over TLS,
+    # FR-015, research §18). Secrets only via env / K8s Secret (SC-004).
+    github:
+      display-name: GitHub
+      enabled: ${SSO_GITHUB_ENABLED:false}
+      # the emails-list `verified` fact gates the auto-linking allowlist (US2-7)
+      trusted-for-email-linking: true
+      protocol: oauth2-userinfo
+      subject-claim: id
+      email-claim: email
+      email-verified-mode: claim
+      email-endpoint: https://api.github.com/user/emails
+      client-auth: post
+      pkce: false
+      scopes: [read:user, user:email]
+      client-id: ${SSO_GITHUB_CLIENT_ID:}
+      client-secret: ${SSO_GITHUB_CLIENT_SECRET:}
+      authorization-uri: https://github.com/login/oauth/authorize
+      token-uri: https://github.com/login/oauth/access_token
+      userinfo-uri: https://api.github.com/user
   # SSO flow context sso:flow:<state> — single-use, data-model.md §5
   flow-ttl: 10m
   # Handshake code sso:handshake:<sha256(code)> — single-use exchange for SPA (research §2)

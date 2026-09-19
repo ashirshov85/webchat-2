@@ -19,7 +19,7 @@
 # + clearing the auth flags restores the quickstart scenario, no image rebuild);
 # local docker-compose keeps Mailpit too (quickstart.md §2).
 #
-# SSO (003): Google + Yandex + VK IdPs on the stand — declared in
+# SSO (003): Google + Yandex + VK + GitHub IdPs on the stand — declared in
 # application.yml, disabled by default; this overlay opts in. The
 # sso-credentials Secret is created OUTSIDE the repo on the cluster (SC-004)
 # with the OAuth client credentials of the providers:
@@ -29,17 +29,23 @@
 #     --from-literal=SSO_YANDEX_CLIENT_ID='<ClientID>' \
 #     --from-literal=SSO_YANDEX_CLIENT_SECRET='<ClientSecret>' \
 #     --from-literal=SSO_VK_CLIENT_ID='<ClientID>' \
-#     --from-literal=SSO_VK_CLIENT_SECRET='<SecureKey>'
+#     --from-literal=SSO_VK_CLIENT_SECRET='<SecureKey>' \
+#     --from-literal=SSO_GITHUB_CLIENT_ID='<Client ID>' \
+#     --from-literal=SSO_GITHUB_CLIENT_SECRET='<Client Secret>'
 # SSO_CALLBACK_URL must equal the Authorized redirect URI registered at each
 # provider (console.cloud.google.com / oauth.yandex.ru / id.vk.com — dev.vk.com
-# app, «Веб-сайт» type). Endpoints: Google — issuer discovery; Yandex/VK —
-# explicit (protocol oauth2-userinfo, application.yml sso.providers). ВАЖНО
+# app, «Веб-сайт» type / github.com — Settings → Developer settings → OAuth
+# Apps). Endpoints: Google — issuer discovery; Yandex/VK/GitHub — explicit
+# (protocol oauth2-userinfo, application.yml sso.providers). ВАЖНО
 # (Yandex): доступ «Адрес электронной почты» обязателен в приложении
 # oauth.yandex.ru — без него login.yandex.ru/info не возвращает default_email
 # и вход завершится email_not_verified / provider_error (research §20, T060).
 # ВАЖНО (VK): «Доступ к e-mail» должен быть включён в настройках приложения
 # id.vk.com — без него user_info не вернёт user.email и вход завершится без
-# адреса (no JIT / no auto-link).
+# адреса (no JIT / no auto-link); VK-ссылки в Deployment optional — ключи
+# можно не заводить, пока приложение на ревью. ВАЖНО (GitHub): ключи
+# SSO_GITHUB_* в Secret обязательны ДО деплоя — провайдер включён, без ключей
+# backend упадёт на старте (fail-fast T007).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -164,6 +170,24 @@ spec:
                   name: sso-credentials
                   key: SSO_VK_CLIENT_SECRET
                   optional: true
+            # SSO GitHub IdP: oauth2-userinfo + /user/emails — same Secret;
+            # enabled: the verified primary email of the GitHub account
+            # drives JIT/auto-linking (quickstart S9). The secretKeyRefs are
+            # NOT optional: an enabled provider fails fast at startup without
+            # client-id/secret (T007) — add the SSO_GITHUB_* keys to the
+            # sso-credentials Secret before deploying this overlay.
+            - name: SSO_GITHUB_ENABLED
+              value: "true"
+            - name: SSO_GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: sso-credentials
+                  key: SSO_GITHUB_CLIENT_ID
+            - name: SSO_GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sso-credentials
+                  key: SSO_GITHUB_CLIENT_SECRET
             # OIDC redirect_uri for every provider (sso.callback-url) — the
             # browser-facing stand URL, registered in Google Cloud Console
             - name: SSO_CALLBACK_URL
