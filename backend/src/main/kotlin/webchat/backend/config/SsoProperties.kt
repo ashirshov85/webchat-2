@@ -95,6 +95,10 @@ data class SsoProperties(
         val emailVerifiedClaim: String? = null,
         // VK ID: forward the callback `device_id` parameter into the token exchange body
         val tokenDeviceId: Boolean = false,
+        // GitHub: Bearer GET of the verified-emails list (e.g. /user/emails) —
+        // when set, its primary+verified entry overrides the email/verified
+        // facts of the userinfo profile; oauth2-userinfo providers only
+        val emailEndpoint: String? = null,
     ) {
         fun validate(id: String) {
             require(providerIdRegex.matches(id)) {
@@ -106,6 +110,7 @@ data class SsoProperties(
             requireHttpUri(id, "token-uri", tokenUri)
             requireHttpUri(id, "userinfo-uri", userinfoUri)
             requireHttpUri(id, "jwks-uri", jwksUri)
+            requireHttpUri(id, "email-endpoint", emailEndpoint)
             if (!enabled) return
             require(!clientId.isNullOrBlank()) { "sso.providers[$id]: enabled provider must have client-id" }
             require(!clientSecret.isNullOrBlank()) { "sso.providers[$id]: enabled provider must have client-secret" }
@@ -142,6 +147,13 @@ data class SsoProperties(
                             }
                         }
                     }
+            }
+            // the emails list is part of the oauth2 profile leg — an OIDC
+            // provider has no use for it (the ID token carries the email)
+            if (emailEndpoint != null) {
+                require(protocol == Protocol.OAUTH2_USERINFO) {
+                    "sso.providers[$id]: email-endpoint is only supported by oauth2-userinfo providers"
+                }
             }
         }
 

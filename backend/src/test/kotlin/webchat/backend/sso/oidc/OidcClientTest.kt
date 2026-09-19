@@ -32,6 +32,8 @@ class OidcClientTest {
 
     private val userinfoScenario = AtomicReference<UserinfoScenario>(UserinfoScenario.Ok)
 
+    private val emailsScenario = AtomicReference<EmailsScenario>(EmailsScenario.Ok)
+
     private var server: HttpServer? = null
 
     @AfterEach
@@ -360,6 +362,115 @@ class OidcClientTest {
         assertThat(tokenRequest.body).contains("device_id=vk-device-42")
     }
 
+    // the GitHub emails-list selection — the pure unit leg (GET /user/emails)
+
+    @Test
+    fun primaryVerifiedEmailOfPicksThePrimaryVerifiedEntry() {
+        val emails =
+            listOf(
+                mapOf("email" to "secondary@gh.example", "primary" to false, "verified" to true),
+                mapOf("email" to "public@gh.example", "primary" to true, "verified" to false),
+                mapOf("email" to "main@gh.example", "primary" to true, "verified" to true),
+            )
+
+        assertThat(OidcClient.primaryVerifiedEmailOf(emails)).isEqualTo("main@gh.example")
+    }
+
+    @Test
+    fun primaryVerifiedEmailOfAnswersNullWithoutAVerifiedEntry() {
+        listOf(
+            null,
+            emptyList<Any?>(),
+            // primary but unverified — never trusted
+            listOf(mapOf("email" to "public@gh.example", "primary" to true, "verified" to false)),
+            // verified but not primary — not THE address
+            listOf(mapOf("email" to "secondary@gh.example", "primary" to false, "verified" to true)),
+            // malformed entries are skipped, not guessed around
+            listOf("not-an-object", mapOf("email" to 42, "primary" to true, "verified" to true)),
+        ).forEach { emails ->
+            assertThat(OidcClient.primaryVerifiedEmailOf(emails)).isNull()
+        }
+    }
+
+    // the GitHub shape: profile without an email fact + the /user/emails leg
+
+    @Test
+    fun githubStyleFlowOverridesTheProfileEmailFromTheEmailsEndpoint() {
+        val server = startLocalIdp()
+        userinfoScenario.set(UserinfoScenario.Github)
+        emailsScenario.set(EmailsScenario.Ok)
+        val client = clientOf(githubProperties(server.address.port))
+
+        val claims =
+            client.completeAuthorizationCodeFlow(
+                providerId = PROVIDER_ID,
+                codeVerifier = "flow-context-verifier-placeholder",
+                authorizationCode = "issued-code",
+                nonce = "flow-context-nonce-placeholder",
+                deadline = Instant.now().plusSeconds(5),
+            )
+
+        // numeric `id` subject + the primary+verified address from the list
+        assertThat(claims.subject).isEqualTo("9876543")
+        assertThat(claims.email).isEqualTo("main@gh.example")
+        assertThat(claims.emailVerified).isTrue()
+        val tokenRequest = recordedRequests.single { it.path == "/token" }
+        // GitHub contract: credentials in the body, no code_verifier (pkce off)
+        assertThat(tokenRequest.authorization).isNull()
+        assertThat(tokenRequest.body)
+            .contains("client_id=webchat-it")
+            .contains("client_secret=mock-secret")
+            .doesNotContain("code_verifier")
+        // the emails leg rode the SAME Bearer credential (FR-016 — on the spot)
+        val emailsRequest = recordedRequests.single { it.path == "/emails" }
+        assertThat(emailsRequest.authorization).isEqualTo("Bearer local-access-token")
+    }
+
+    @Test
+    fun githubStyleEmailsEndpointFailureIsTheTypedUserinfoEndpointFailure() {
+        val server = startLocalIdp()
+        userinfoScenario.set(UserinfoScenario.Github)
+        emailsScenario.set(EmailsScenario.Not2xx)
+        val client = clientOf(githubProperties(server.address.port))
+
+        assertThatThrownBy {
+            client.completeAuthorizationCodeFlow(
+                providerId = PROVIDER_ID,
+                codeVerifier = "flow-context-verifier-placeholder",
+                authorizationCode = "issued-code",
+                nonce = "flow-context-nonce-placeholder",
+                deadline = Instant.now().plusSeconds(5),
+            )
+        }.isInstanceOfSatisfying(OidcClientException::class.java) { e ->
+            assertThat(e.reason).isEqualTo(OidcClientException.Reason.USERINFO_ENDPOINT)
+            // SC-004: the access token never appears in the failure message
+            assertThat(e.message).doesNotContain("local-access-token")
+        }
+    }
+
+    @Test
+    fun githubStyleProfileWithoutAVerifiedEmailStaysEmailLess() {
+        val server = startLocalIdp()
+        userinfoScenario.set(UserinfoScenario.Github)
+        emailsScenario.set(EmailsScenario.NoVerifiedEntry)
+        val client = clientOf(githubProperties(server.address.port))
+
+        val claims =
+            client.completeAuthorizationCodeFlow(
+                providerId = PROVIDER_ID,
+                codeVerifier = "flow-context-verifier-placeholder",
+                authorizationCode = "issued-code",
+                nonce = "flow-context-nonce-placeholder",
+                deadline = Instant.now().plusSeconds(5),
+            )
+
+        // no verified list entry → the profile keeps its own (absent) email:
+        // unverified addresses are never trusted (FR-004 posture)
+        assertThat(claims.subject).isEqualTo("9876543")
+        assertThat(claims.email).isNull()
+        assertThat(claims.emailVerified).isFalse()
+    }
+
     private fun clientOf(properties: SsoProperties): OidcClient =
         OidcClient(SsoProviderRegistry(properties), SsoMetrics(SimpleMeterRegistry()))
 
@@ -423,6 +534,30 @@ class OidcClientTest {
         )
     }
 
+    /** The GitHub shape: numeric `id` subject, claim mode, the /user/emails leg, pkce off. */
+    private fun githubProperties(serverPort: Int): SsoProperties {
+        val base = "http://127.0.0.1:$serverPort"
+        return propertiesOf(
+            provider =
+                SsoProperties.Provider(
+                    displayName = "GitHub",
+                    protocol = SsoProperties.Protocol.OAUTH2_USERINFO,
+                    pkce = false,
+                    subjectClaim = "id",
+                    emailClaim = "email",
+                    emailVerifiedMode = SsoProperties.EmailVerifiedMode.CLAIM,
+                    clientAuth = SsoProperties.ClientAuth.POST,
+                    emailEndpoint = "$base/emails",
+                    scopes = listOf("read:user", "user:email"),
+                    clientId = "webchat-it",
+                    clientSecret = "mock-secret",
+                    authorizationUri = "$base/authorize",
+                    tokenUri = "$base/token",
+                    userinfoUri = "$base/userinfo",
+                ),
+        )
+    }
+
     private fun propertiesOf(provider: SsoProperties.Provider): SsoProperties =
         SsoProperties(
             callbackUrl = CALLBACK_URL,
@@ -447,8 +582,18 @@ class OidcClientTest {
                     when (userinfoScenario.get()) {
                         UserinfoScenario.Ok -> respond(exchange, USERINFO_RESPONSE_JSON)
                         UserinfoScenario.Vk -> respond(exchange, VK_USERINFO_RESPONSE_JSON)
+                        UserinfoScenario.Github -> respond(exchange, GITHUB_USERINFO_RESPONSE_JSON)
                         UserinfoScenario.Not2xx -> respond(exchange, ERROR_RESPONSE_JSON, 500)
                         UserinfoScenario.NoSubjectClaim -> respond(exchange, NO_SUBJECT_RESPONSE_JSON)
+                    }
+                }
+                createContext("/emails") { exchange ->
+                    val authorization = exchange.requestHeaders.getFirst("Authorization")
+                    recordedRequests += RecordedRequest("/emails", "", authorization)
+                    when (emailsScenario.get()) {
+                        EmailsScenario.Ok -> respond(exchange, EMAILS_RESPONSE_JSON)
+                        EmailsScenario.Not2xx -> respond(exchange, ERROR_RESPONSE_JSON, 500)
+                        EmailsScenario.NoVerifiedEntry -> respond(exchange, NO_VERIFIED_EMAILS_RESPONSE_JSON)
                     }
                 }
                 start()
@@ -485,8 +630,15 @@ class OidcClientTest {
     private enum class UserinfoScenario {
         Ok,
         Vk,
+        Github,
         Not2xx,
         NoSubjectClaim,
+    }
+
+    private enum class EmailsScenario {
+        Ok,
+        Not2xx,
+        NoVerifiedEntry,
     }
 
     private companion object {
@@ -506,6 +658,19 @@ class OidcClientTest {
         /** The VK ID profile shape: nested under `user`, numeric subject. */
         const val VK_USERINFO_RESPONSE_JSON =
             """{"user":{"user_id":4242424,"email":"user@vk.example","email_verified":true}}"""
+
+        /** The GitHub /user shape: numeric `id`, login — no email fact. */
+        const val GITHUB_USERINFO_RESPONSE_JSON =
+            """{"id":9876543,"login":"gh-user","email":null}"""
+
+        /** The GitHub /user/emails shape: the primary+verified entry wins. */
+        const val EMAILS_RESPONSE_JSON =
+            """[{"email":"secondary@gh.example","primary":false,"verified":true,"visibility":"private"},""" +
+                """{"email":"main@gh.example","primary":true,"verified":true,"visibility":null}]"""
+
+        /** No verified entry — an unverified public address is never trusted. */
+        const val NO_VERIFIED_EMAILS_RESPONSE_JSON =
+            """[{"email":"public@gh.example","primary":true,"verified":false}]"""
 
         const val NO_SUBJECT_RESPONSE_JSON = """{"default_email":"user@ya.example"}"""
 

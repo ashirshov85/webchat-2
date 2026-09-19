@@ -64,7 +64,11 @@ import java.util.concurrent.atomic.AtomicInteger
  *   (`invalid_client`), the secret-rotation leg of US6;
  * - `vkish` — the VK shape: nested dot-path claims (`user.user_id`),
  *   `client-auth: post`, `token-device-id: true` (the authorize-issued
- *   `device_id` must return at the exchange), claim-mode verified fact.
+ *   `device_id` must return at the exchange), claim-mode verified fact;
+ * - `githubish` — the GitHub shape: numeric `id` subject, claim mode with
+ *   default names, `email-endpoint` on the IdP emails list (the
+ *   `primary && verified` entry overrides the profile's email facts),
+ *   `client-auth: post`, PKCE off.
  *
  * Covered acceptance (research.md §21, tasks.md T058):
  * - the full oauth2 login — authorize → IdP redirect → callback →
@@ -124,6 +128,7 @@ class SsoOauth2FlowIT(
             OIDC_PROVIDER_ID,
             BAD_SECRET_PROVIDER_ID,
             VK_PROVIDER_ID,
+            GH_PROVIDER_ID,
         )
         providers.forEach { provider ->
             assertThat(provider.has("clientId")).isFalse()
@@ -291,6 +296,58 @@ class SsoOauth2FlowIT(
         assertThat(spaParameters.getValue(SSO_ERROR_PARAMETER)).isEqualTo(PROVIDER_ERROR_CODE)
         assertThat(usersCount()).isEqualTo(usersBefore)
         assertThat(handshakeKeyCount()).isZero()
+    }
+
+    @Test
+    fun `github style login with the emails endpoint lands in the unified session and jits by the verified email`() {
+        val usersBefore = usersCount()
+        // the GitHub shape: the /user profile carries NO email fact — the
+        // address comes from the emails list, whose primary+verified entry
+        // becomes the (provider-confirmed) email of the flow
+        mockIdP.setUserinfoClaims(githubProfile(SUBJECT_GH))
+        mockIdP.setEmails(
+            listOf(
+                MockIdP.EmailEntry(EMAIL_SECONDARY_GH, primary = false, verified = true),
+                MockIdP.EmailEntry(EMAIL_GH, primary = true, verified = true),
+            ),
+        )
+
+        val sso = performSsoLogin(GH_PROVIDER_ID)
+
+        // US6: same LoginResponse contract; the JIT landed on the verified
+        // address of the list, not on a profile field
+        assertThat(sso.body["user"]["email"].asText()).isEqualTo(EMAIL_GH)
+        assertThat(usersCount()).isEqualTo(usersBefore + 1)
+        val user = userRowByEmail(EMAIL_GH)!!
+        assertThat(user["password_hash"]).isNull()
+        val identity = identityRow(GH_PROVIDER_ID, SUBJECT_GH)!!
+        assertThat(identity["user_id"]).isEqualTo(user["id"])
+        assertThat(identity["provider_email"]).isEqualTo(EMAIL_GH)
+        assertThat(identity["provider_email_verified"]).isEqualTo(true)
+        val session = sessionRow(sessionIdOf(sso.refreshToken)!!)!!
+        assertThat(session["auth_method"]).isEqualTo("sso")
+        val accountId = user["id"] as UUID
+        assertThat(outboxCount(EMAIL_GH)).isZero()
+        assertThat(authEventDetails(accountId, "sso_account_created")).hasSize(1)
+    }
+
+    @Test
+    fun `github style without a verified emails entry answers email not verified`() {
+        val usersBefore = usersCount()
+        val identitiesBefore = identitiesCount()
+        // a distinct subject: THIS ladder leg is a first login (row 3), while
+        // the suite's other github identity already exists
+        mockIdP.setUserinfoClaims(githubProfile(SUBJECT_GH_UNVERIFIED))
+        // a public-but-unverified primary address — never trusted (FR-004)
+        mockIdP.setEmails(listOf(MockIdP.EmailEntry(EMAIL_GH_UNVERIFIED, primary = true, verified = false)))
+
+        assertThat(rejectedSsoError(GH_PROVIDER_ID)).isEqualTo(EMAIL_NOT_VERIFIED_CODE)
+
+        // zero side effects: no user, no binding, no handshake
+        assertThat(usersCount()).isEqualTo(usersBefore)
+        assertThat(identitiesCount()).isEqualTo(identitiesBefore)
+        assertThat(handshakeKeyCount()).isZero()
+        assertThat(authEventReasons("sso_login_failed", EMAIL_NOT_VERIFIED_CODE)).isNotEmpty
     }
 
     /**
@@ -816,6 +873,16 @@ class SsoOauth2FlowIT(
             nestUnder = VK_PROFILE_NEST,
         )
 
+    /** The GitHub-shaped profile: numeric `id` subject, NO email field — the /user shape. */
+    private fun githubProfile(subject: String): MockIdP.UserinfoClaims =
+        MockIdP.UserinfoClaims(
+            subjectClaim = GH_SUBJECT_CLAIM,
+            emailClaim = GH_EMAIL_CLAIM,
+            subject = subject,
+            email = null,
+            emailVerified = null,
+        )
+
     private fun oidcClaims(
         subject: String,
         email: String,
@@ -858,6 +925,7 @@ class SsoOauth2FlowIT(
                 registerClient(CLAIM_CLIENT_ID, CLAIM_CLIENT_SECRET)
                 registerClient(OIDC_CLIENT_ID, OIDC_CLIENT_SECRET)
                 registerClient(VK_CLIENT_ID, VK_CLIENT_SECRET)
+                registerClient(GH_CLIENT_ID, GH_CLIENT_SECRET)
             }
 
         /**
@@ -894,6 +962,12 @@ class SsoOauth2FlowIT(
                     providerId = BAD_SECRET_PROVIDER_ID,
                     clientSecret = BAD_CLIENT_SECRET,
                     arm = {},
+                ),
+                ProviderFailureScenario(
+                    name = "emails endpoint answers non-2xx",
+                    providerId = GH_PROVIDER_ID,
+                    clientSecret = GH_CLIENT_SECRET,
+                    arm = { mockIdP.emailsFailure = MockIdP.EmailsFailure.NOT_2XX },
                 ),
             )
 
@@ -970,6 +1044,25 @@ class SsoOauth2FlowIT(
             registry.add("sso.providers.$VK_PROVIDER_ID.client-id") { VK_CLIENT_ID }
             registry.add("sso.providers.$VK_PROVIDER_ID.client-secret") { VK_CLIENT_SECRET }
             registerOauth2Endpoints(registry, VK_PROVIDER_ID)
+
+            // the GitHub-shaped provider: numeric `id` subject, claim mode
+            // with default names, credentials in the token POST body, PKCE
+            // off, and `email-endpoint` on the IdP emails list — its
+            // primary+verified entry supplies the verified email
+            registry.add("sso.providers.$GH_PROVIDER_ID.display-name") { "GitHub-ish" }
+            registry.add("sso.providers.$GH_PROVIDER_ID.trusted-for-email-linking") { "true" }
+            registry.add("sso.providers.$GH_PROVIDER_ID.protocol") { "oauth2-userinfo" }
+            registry.add("sso.providers.$GH_PROVIDER_ID.pkce") { "false" }
+            registry.add("sso.providers.$GH_PROVIDER_ID.subject-claim") { GH_SUBJECT_CLAIM }
+            registry.add("sso.providers.$GH_PROVIDER_ID.email-claim") { GH_EMAIL_CLAIM }
+            registry.add("sso.providers.$GH_PROVIDER_ID.email-verified-mode") { "claim" }
+            registry.add("sso.providers.$GH_PROVIDER_ID.client-auth") { "post" }
+            registry.add("sso.providers.$GH_PROVIDER_ID.client-id") { GH_CLIENT_ID }
+            registry.add("sso.providers.$GH_PROVIDER_ID.client-secret") { GH_CLIENT_SECRET }
+            registerOauth2Endpoints(registry, GH_PROVIDER_ID)
+            registry.add("sso.providers.$GH_PROVIDER_ID.email-endpoint") {
+                "${idpServer.baseUri}$OAUTH2_EMAILS_PATH"
+            }
         }
 
         /** Explicit oauth2-mode MockIdP endpoints of one provider (research.md §21). */
@@ -1000,6 +1093,8 @@ class SsoOauth2FlowIT(
 
         private const val VK_PROVIDER_ID = "vkish"
 
+        private const val GH_PROVIDER_ID = "githubish"
+
         private const val YAX_CLIENT_ID = "webchat-ya"
 
         private const val YAX_CLIENT_SECRET = "ya-oauth2-secret"
@@ -1017,6 +1112,15 @@ class SsoOauth2FlowIT(
         private const val VK_CLIENT_ID = "webchat-vk"
 
         private const val VK_CLIENT_SECRET = "vk-oauth2-secret"
+
+        private const val GH_CLIENT_ID = "webchat-gh"
+
+        private const val GH_CLIENT_SECRET = "gh-oauth2-secret"
+
+        /** The GitHub-shaped userinfo field names. */
+        private const val GH_SUBJECT_CLAIM = "id"
+
+        private const val GH_EMAIL_CLAIM = "email"
 
         /** The VK-shaped userinfo field names and profile nest. */
         private const val VK_SUBJECT_CLAIM = "user_id"
@@ -1086,6 +1190,18 @@ class SsoOauth2FlowIT(
 
         private const val EMAIL_VK = "vera.vk@example.com"
 
+        /** The GitHub subject: the stable numeric `id` of api.github.com. */
+        private const val SUBJECT_GH = "9876543"
+
+        private const val EMAIL_GH = "greg.gh@example.com"
+
+        private const val EMAIL_SECONDARY_GH = "greg.backup.gh@example.com"
+
+        /** A second github subject whose list carries no verified entry. */
+        private const val SUBJECT_GH_UNVERIFIED = "8642133"
+
+        private const val EMAIL_GH_UNVERIFIED = "hank.gh@example.com"
+
         private const val USERNAME_TESS = "tesla"
 
         private const val EMAIL_TESS = "tess.oauth2@example.com"
@@ -1107,6 +1223,8 @@ class SsoOauth2FlowIT(
         private const val OAUTH2_TOKEN_PATH = "/mock-idp/oauth2/token"
 
         private const val OAUTH2_USERINFO_PATH = "/mock-idp/oauth2/userinfo"
+
+        private const val OAUTH2_EMAILS_PATH = "/mock-idp/oauth2/emails"
 
         private const val OIDC_AUTHORIZE_PATH = "/mock-idp/authorize"
 
@@ -1216,17 +1334,35 @@ private class SsoOauth2IdpLoopbackServer(
     }
 
     @Suppress("ReturnCount") // each branch is one routed IdP endpoint
-    private fun route(exchange: HttpExchange): ResponseEntity<String> {
+    private fun route(exchange: HttpExchange): ResponseEntity<String> =
+        when (val routed = routeOauth2(exchange)) {
+            null -> routeOidc(exchange) ?: ResponseEntity.notFound().build()
+            else -> routed
+        }
+
+    /** The oauth2-mode endpoint family of the MockIdP (authorize/token/userinfo/emails). */
+    @Suppress("ReturnCount") // each branch is one routed IdP endpoint
+    private fun routeOauth2(exchange: HttpExchange): ResponseEntity<String>? {
+        val path = exchange.requestURI.path
+        val method = exchange.requestMethod
+        return when {
+            method == GET_METHOD && path == OAUTH2_AUTHORIZE_PATH -> idp.oauth2Authorize(toServletRequest(exchange))
+            method == POST_METHOD && path == OAUTH2_TOKEN_PATH -> idp.oauth2Token(toServletRequest(exchange))
+            method == GET_METHOD && path == OAUTH2_USERINFO_PATH -> userinfoResponse(exchange)
+            method == GET_METHOD && path == OAUTH2_EMAILS_PATH -> emailsResponse(exchange)
+            else -> null
+        }
+    }
+
+    /** The OIDC-mode endpoint family of the MockIdP (authorize/token/jwks). */
+    private fun routeOidc(exchange: HttpExchange): ResponseEntity<String>? {
         val path = exchange.requestURI.path
         val method = exchange.requestMethod
         return when {
             method == GET_METHOD && path == OIDC_AUTHORIZE_PATH -> idp.authorize(toServletRequest(exchange))
             method == POST_METHOD && path == OIDC_TOKEN_PATH -> idp.token(toServletRequest(exchange))
             method == GET_METHOD && path == OIDC_JWKS_PATH -> jwksResponse()
-            method == GET_METHOD && path == OAUTH2_AUTHORIZE_PATH -> idp.oauth2Authorize(toServletRequest(exchange))
-            method == POST_METHOD && path == OAUTH2_TOKEN_PATH -> idp.oauth2Token(toServletRequest(exchange))
-            method == GET_METHOD && path == OAUTH2_USERINFO_PATH -> userinfoResponse(exchange)
-            else -> ResponseEntity.notFound().build()
+            else -> null
         }
     }
 
@@ -1239,6 +1375,10 @@ private class SsoOauth2IdpLoopbackServer(
     /** The userinfo endpoint answers by the raw Bearer header of the exchange (T055). */
     private fun userinfoResponse(exchange: HttpExchange): ResponseEntity<String> =
         idp.userinfo(exchange.requestHeaders.getFirst(HttpHeaders.AUTHORIZATION))
+
+    /** The emails endpoint answers by the raw Bearer header of the exchange (the GitHub leg). */
+    private fun emailsResponse(exchange: HttpExchange): ResponseEntity<String> =
+        idp.emails(exchange.requestHeaders.getFirst(HttpHeaders.AUTHORIZATION))
 
     private fun toServletRequest(exchange: HttpExchange): MockHttpServletRequest {
         val request = MockHttpServletRequest(exchange.requestMethod, exchange.requestURI.toString())
@@ -1296,6 +1436,8 @@ private class SsoOauth2IdpLoopbackServer(
         const val OAUTH2_TOKEN_PATH = "/mock-idp/oauth2/token"
 
         const val OAUTH2_USERINFO_PATH = "/mock-idp/oauth2/userinfo"
+
+        const val OAUTH2_EMAILS_PATH = "/mock-idp/oauth2/emails"
 
         const val THREAD_NAME = "mock-idp-loopback"
 
