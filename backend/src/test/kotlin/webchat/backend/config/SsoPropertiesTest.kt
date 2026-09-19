@@ -33,11 +33,11 @@ class SsoPropertiesTest {
                 // (no ingress), matching the dex redirect-uri of quickstart «Предусловия»
                 assertThat(properties.callbackUrl)
                     .isEqualTo("http://localhost:8080/api/v1/auth/sso/callback")
-                // T042: the predefined providers are opt-in — the local dex IdP and
-                // the dev-stand Google IdP — both disabled without their
-                // SSO_*_ENABLED env, empty-secret defaults allowed by the
-                // fail-fast validation (T007)
-                assertThat(properties.providers.keys).containsExactly("dex", "google")
+                // T042: the predefined providers are opt-in — the local dex IdP
+                // and the dev-stand Google/Yandex IdPs — all disabled without
+                // their SSO_*_ENABLED env, empty-secret defaults allowed by
+                // the fail-fast validation (T007)
+                assertThat(properties.providers.keys).containsExactly("dex", "google", "yandex")
                 val dex = properties.providers.getValue("dex")
                 assertThat(dex.enabled).isFalse()
                 assertThat(dex.clientId).isEqualTo("webchat")
@@ -54,6 +54,15 @@ class SsoPropertiesTest {
                 assertThat(google.trustedForEmailLinking).isTrue()
                 assertThat(google.issuerUri).isEqualTo("https://accounts.google.com")
                 assertThat(google.scopes).containsExactly("openid", "email")
+                // Yandex: same issuer-only shape as google — lazy discovery,
+                // enabled via SSO_YANDEX_ENABLED + credentials env
+                val yandex = properties.providers.getValue("yandex")
+                assertThat(yandex.enabled).isFalse()
+                assertThat(yandex.clientId).isEmpty()
+                assertThat(yandex.clientSecret).isEmpty()
+                assertThat(yandex.trustedForEmailLinking).isTrue()
+                assertThat(yandex.issuerUri).isEqualTo("https://openid-connect.yandex.com")
+                assertThat(yandex.scopes).containsExactly("openid", "email")
             }
     }
 
