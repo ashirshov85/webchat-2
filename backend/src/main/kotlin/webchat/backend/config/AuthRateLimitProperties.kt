@@ -14,6 +14,11 @@ import java.time.Duration
  * The login route additionally carries the brute-force counter parameters
  * [RouteLimits.ThrottleLimits] (T048, research.md §8, SC-004) consumed by
  * `LoginThrottle`.
+ *
+ * [SsoLimits] (003 T047, research §9 of specs/003-sso-identity-providers,
+ * FR-009) extends the table with the five SSO routes — IP-only buckets,
+ * including the two GET routes (`providers`, `callback`) the filter could
+ * not see before.
  */
 @ConfigurationProperties(prefix = "auth.ratelimit")
 data class AuthRateLimitProperties(
@@ -25,7 +30,23 @@ data class AuthRateLimitProperties(
     val password: RouteLimits,
     val resetConfirm: RouteLimits,
     val refresh: RouteLimits,
+    val sso: SsoLimits,
 ) {
+    /**
+     * The five SSO routes of research §9 (normative source; mirrored by
+     * contracts/sso-api.md §1–5 and quickstart S6.2): authorize is stricter
+     * (10/1m — it CREATES flow contexts in Redis), the rest are 30/1m.
+     * All are IP-only: state is a single-use flow secret, not a source
+     * identifier, so no identifier buckets ride this group.
+     */
+    data class SsoLimits(
+        val providers: RouteLimits,
+        val authorize: RouteLimits,
+        val callback: RouteLimits,
+        val token: RouteLimits,
+        val linkAuthorize: RouteLimits,
+    )
+
     data class RouteLimits(
         val ip: String,
         val email: String? = null,

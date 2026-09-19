@@ -52,6 +52,18 @@ import java.time.Duration
  *
  * Redis unavailability fails OPEN (data-model.md §7 invariant): losing the
  * ephemeral store may only reset the limits, never 5xx the public endpoints.
+ *
+ * The 003 T047 extension (research §9 of specs/003-sso-identity-providers,
+ * FR-009): the same table, buckets and 429 problem+json + `Retry-After`
+ * cover the five SSO routes — including the GET legs (`/auth/sso/providers`,
+ * `/auth/sso/callback`) the POST-only matching could not see before. The
+ * SSO routes are IP-only (state is a single-use flow secret, not a source
+ * identifier), their bucket keys ride the `rl:ip:sso-*` family
+ * (data-model.md §5 of 003): `sso-providers` 30/1m, `sso-authorize` 10/1m
+ * (stricter — it creates flow contexts in Redis), `sso-callback` 30/1m
+ * (browser redirects must not be starved by legitimate retries),
+ * `sso-token` 30/1m (token-consuming like confirm/refresh in 002),
+ * `sso-link-authorize` 10/1m (Bearer, same shape as authorize).
  */
 @Suppress("LargeClass", "LongParameterList", "TooManyFunctions")
 class RateLimitFilter(
@@ -74,14 +86,20 @@ class RateLimitFilter(
 
     private val routes: Map<String, LimitedRoute> =
         mapOf(
-            "/api/v1/auth/register" to limitedRoute("register", properties.register),
-            "/api/v1/auth/register/resend" to limitedRoute("resend", properties.resend),
-            "/api/v1/auth/login" to limitedRoute("login", properties.login),
-            "/api/v1/auth/password-reset" to limitedRoute("password-reset", properties.passwordReset),
-            "/api/v1/auth/register/confirm" to limitedRoute("confirm", properties.confirm),
-            "/api/v1/auth/register/password" to limitedRoute("password", properties.password),
-            "/api/v1/auth/password-reset/confirm" to limitedRoute("reset-confirm", properties.resetConfirm),
-            "/api/v1/auth/refresh" to limitedRoute("refresh", properties.refresh),
+            "/api/v1/auth/register" to limitedRoute(POST_METHOD, "register", properties.register),
+            "/api/v1/auth/register/resend" to limitedRoute(POST_METHOD, "resend", properties.resend),
+            "/api/v1/auth/login" to limitedRoute(POST_METHOD, "login", properties.login),
+            "/api/v1/auth/password-reset" to limitedRoute(POST_METHOD, "password-reset", properties.passwordReset),
+            "/api/v1/auth/register/confirm" to limitedRoute(POST_METHOD, "confirm", properties.confirm),
+            "/api/v1/auth/register/password" to limitedRoute(POST_METHOD, "password", properties.password),
+            "/api/v1/auth/password-reset/confirm" to
+                limitedRoute(POST_METHOD, "reset-confirm", properties.resetConfirm),
+            "/api/v1/auth/refresh" to limitedRoute(POST_METHOD, "refresh", properties.refresh),
+            "/api/v1/auth/sso/providers" to ssoRoute("sso-providers", properties.sso.providers),
+            "/api/v1/auth/sso/authorize" to ssoRoute("sso-authorize", properties.sso.authorize),
+            "/api/v1/auth/sso/callback" to ssoRoute("sso-callback", properties.sso.callback),
+            "/api/v1/auth/sso/token" to ssoRoute("sso-token", properties.sso.token),
+            "/api/v1/auth/sso/link/authorize" to ssoRoute("sso-link-authorize", properties.sso.linkAuthorize),
         )
 
     override fun doFilterInternal(
@@ -89,7 +107,7 @@ class RateLimitFilter(
         response: HttpServletResponse,
         filterChain: FilterChain,
     ) {
-        val route = routes[request.requestURI]?.takeIf { request.method == POST_METHOD }
+        val route = routes[request.requestURI]?.takeIf { request.method == it.method }
         val admittedRequest = if (route == null) request else gate(route, request, response) ?: return
         filterChain.doFilter(admittedRequest, response)
     }
@@ -190,12 +208,15 @@ class RateLimitFilter(
         limit: RateLimit,
         key: String,
     ): BucketProxy {
+        // greedy (002): continuous drip; intervally (SSO, research §9 of 003):
+        // one portion per window — see ssoRoute for why the burst-proof form
+        val builder = Bandwidth.builder().capacity(limit.count)
         val bandwidth =
-            Bandwidth
-                .builder()
-                .capacity(limit.count)
-                .refillGreedy(limit.count, limit.window)
-                .build()
+            if (limit.intervallyRefill) {
+                builder.refillIntervally(limit.count, limit.window).build()
+            } else {
+                builder.refillGreedy(limit.count, limit.window).build()
+            }
         val configuration = BucketConfiguration.builder().addLimit(bandwidth).build()
         return proxyManager.getProxy(key.toByteArray(StandardCharsets.UTF_8)) { configuration }
     }
@@ -236,7 +257,40 @@ class RateLimitFilter(
             .digest(value.toByteArray(StandardCharsets.UTF_8))
             .joinToString(separator = EMPTY_STRING) { BYTE_TO_HEX_FORMAT.format(it) }
 
+    /**
+     * An SSO route of the research §9 (003) table: IP-only, and refilled
+     * with ONE portion at the end of the window (`refillIntervally`), unlike
+     * the continuous drip of the 002 routes. A limit of N/1m then reads as
+     * exactly N admissions per window regardless of how long the burst
+     * takes: a slow flood (the callback leg journals an `auth_event` per
+     * hit, so the burst may stretch for seconds) can never win tokens back
+     * mid-window from the greedy refill — the N+1-th request inside the
+     * window is deterministically rejected with the same uniform 429
+     * (SsoRateLimitIT, T046).
+     */
+    private fun ssoRoute(
+        name: String,
+        limits: AuthRateLimitProperties.RouteLimits,
+    ): LimitedRoute {
+        require(limits.email == null && limits.account == null) {
+            "SSO route '$name' is IP-only (research §9 of 003: " +
+                "state is a single-use flow secret, not a source identifier)"
+        }
+        return LimitedRoute(
+            method =
+                if (name == SSO_PROVIDERS_ROUTE_NAME || name == SSO_CALLBACK_ROUTE_NAME) {
+                    GET_METHOD
+                } else {
+                    POST_METHOD
+                },
+            name = name,
+            ipLimit = parseRateLimit(limits.ip, intervallyRefill = true),
+            identifierBucket = null,
+        )
+    }
+
     private fun limitedRoute(
+        method: String,
         name: String,
         limits: AuthRateLimitProperties.RouteLimits,
     ): LimitedRoute {
@@ -256,20 +310,24 @@ class RateLimitFilter(
                 "Route 'login' must define the account bucket (research.md §8, §11)"
             }
         }
-        return LimitedRoute(name, parseRateLimit(limits.ip), identifierBucket)
+        return LimitedRoute(method, name, parseRateLimit(limits.ip), identifierBucket)
     }
 
-    private fun parseRateLimit(spec: String): RateLimit {
+    private fun parseRateLimit(
+        spec: String,
+        intervallyRefill: Boolean = false,
+    ): RateLimit {
         val parts = spec.split(LIMIT_DELIMITER)
         require(parts.size == LIMIT_SPEC_PARTS) { "Malformed rate limit '$spec', expected '<count>/<window>'" }
         val count = parts.first().trim().toLong()
         require(count > 0) { "Rate limit count must be positive: '$spec'" }
-        return RateLimit(count, DurationStyle.detectAndParse(parts.last().trim()))
+        return RateLimit(count, DurationStyle.detectAndParse(parts.last().trim()), intervallyRefill)
     }
 
     private data class RateLimit(
         val count: Long,
         val window: Duration,
+        val intervallyRefill: Boolean = false,
     )
 
     private data class IdentifierBucket(
@@ -278,6 +336,7 @@ class RateLimitFilter(
     )
 
     private data class LimitedRoute(
+        val method: String,
         val name: String,
         val ipLimit: RateLimit,
         val identifierBucket: IdentifierBucket?,
@@ -287,11 +346,14 @@ class RateLimitFilter(
         private val log = LoggerFactory.getLogger(RateLimitFilter::class.java)
 
         const val POST_METHOD = "POST"
+        const val GET_METHOD = "GET"
         const val IP_KEY_FAMILY = "rl:ip"
         const val EMAIL_KEY_FAMILY = "rl:email"
         const val EMAIL_FIELD = "email"
         const val IDENTIFIER_FIELD = "identifier"
         const val LOGIN_ROUTE_NAME = "login"
+        const val SSO_PROVIDERS_ROUTE_NAME = "sso-providers"
+        const val SSO_CALLBACK_ROUTE_NAME = "sso-callback"
         const val REASON_DETAIL = "reason"
         const val LOCKOUT_REASON = "lockout"
         const val RETRY_AFTER_DETAIL = "retryAfterSec"

@@ -1,0 +1,59 @@
+# Local dex IdP for manual verification of 003-sso-identity-providers
+# (quickstart.md «Предусловия»/«Настройка и запуск», T042).
+# Started ONLY with `docker compose -f deploy/local/docker-compose.yml --profile sso up -d`
+# and reachable at http://localhost:5556 (issuer, authorization/token/userinfo/JWKS).
+#
+# Secret hygiene (SC-004, FR-007, spec.md Assumptions): the staticClient secret
+# below is the single documented repo exception — a dev-only dummy `dev-secret`,
+# заведомо неиспользуемое вне локального docker-compose значение; backend получает
+# его через env SSO_DEX_CLIENT_SECRET, never from this file (T043 adds a narrow
+# gitleaks path-allowlist for deploy/local/dex/.*).
+#
+# Static users (password for every account: `password`) map 1:1 to the quickstart
+# scenarios; dex marks their emails verified, as S2 (JIT) and S3 (auto-linking)
+# require:
+#   alice@example.com — S1 (existing identity login)
+#   bob@example.com   — S2 (first login → JIT account)
+#   carol@example.com — S3 step 1–3 (auto-linking into a password account)
+#   dave@example.com  — S3 step 4 (email_conflict when trusted-for-email-linking=false)
+issuer: http://localhost:5556
+
+web:
+  http: 0.0.0.0:5556
+
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+
+# keep the flow at the 3 interactions of SC-001 (provider choice → login → back)
+oauth2:
+  skipApprovalScreen: true
+
+enablePasswordDB: true
+
+staticPasswords:
+  - email: alice@example.com
+    hash: "$2a$10$4rr8Ch0qp7VTZ/vLGJOwyu5rlATaCBvjC1/XqfRFKKjM.JM.EJ71u"
+    username: alice
+    userID: 10b0ac41-50e6-54c1-aca1-a1291086303c
+  - email: bob@example.com
+    hash: "$2a$10$4PX2rWGGGT/0ZKTGVbL6.OI72I971clFGqXrrtkqQnfD0sMo0AA1q"
+    username: bob
+    userID: 9184b40a-4f12-5d48-8b9e-4e8d52b8cc97
+  - email: carol@example.com
+    hash: "$2a$10$ZjyfT3qs16/fV17qAIk6ueR9oERXSt7YrCwitJc9f.2gj0VFE5Gy."
+    username: carol
+    userID: 14085829-3a60-58c2-9b2f-00adc33a9df8
+  - email: dave@example.com
+    hash: "$2a$10$7cJJdXZHhfrrCObwt1aXBOvfHMWEm9bIEzxUC94/Vrc5QC9LrGDW6"
+    username: dave
+    userID: e0788ef7-b8e7-52c5-9f13-2723c7d44d76
+
+staticClients:
+  - id: webchat
+    redirectURIs:
+      # = sso.callback-url of the local backend run (quickstart «Предусловия»)
+      - http://localhost:8080/api/v1/auth/sso/callback
+    name: WebChat
+    secret: dev-secret # dev-only dummy (spec Assumptions, SC-004 exception)

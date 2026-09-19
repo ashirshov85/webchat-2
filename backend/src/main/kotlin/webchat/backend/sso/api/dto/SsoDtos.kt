@@ -1,5 +1,8 @@
 package webchat.backend.sso.api.dto
 
+import java.time.Instant
+import java.util.UUID
+
 /**
  * `SsoProvider` item of `SsoProvidersResponse` (sso-api.md §1): exactly
  * `{id, displayName}` (`additionalProperties: false`). `id` is the stable
@@ -53,4 +56,34 @@ data class SsoAuthorizeResponse(
  */
 data class SsoTokenRequest(
     val code: String? = null,
+)
+
+/**
+ * Contract §5 request body — `SsoLinkAuthorizeRequest` (sso-api.md §5):
+ * `{providerId}` only. Nullable so an absent field stays on the endpoint's
+ * declared 404 problem leg (unknown or disabled provider — one answer)
+ * instead of breaking deserialization.
+ */
+data class SsoLinkAuthorizeRequest(
+    val providerId: String? = null,
+)
+
+/**
+ * Contract §6 item — `Identity` (sso-api.md §6): one binding of the current
+ * user. [providerDisplayName] comes from the live configuration and is
+ * `null` when the provider has been removed from it — the binding itself
+ * survives (US4-3); [email] is the last provider-known email (nullable when
+ * the provider returned none, data-model.md §1).
+ */
+data class SsoIdentityResponse(
+    val id: UUID,
+    val providerId: String,
+    val providerDisplayName: String?,
+    val email: String?,
+    val linkedAt: Instant,
+)
+
+/** Contract §6 success body — `IdentitiesResponse` (sso-api.md §6), ordered by `linkedAt`. */
+data class SsoIdentitiesResponse(
+    val identities: List<SsoIdentityResponse>,
 )

@@ -27,6 +27,7 @@ import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestOperations
 import org.springframework.web.client.RestTemplate
+import webchat.backend.sso.SsoMetrics
 import webchat.backend.sso.oidc.OidcClientException.Reason
 import java.security.SecureRandom
 import java.time.Duration
@@ -111,6 +112,7 @@ class OidcClientException(
 @Component
 class OidcClient(
     private val registry: SsoProviderRegistry,
+    private val ssoMetrics: SsoMetrics,
 ) {
     private val decoders = ConcurrentHashMap<String, NimbusJwtDecoder>()
 
@@ -190,6 +192,10 @@ class OidcClient(
                         .build(),
                 )
             }
+        // research.md §14: the token leg is timed as
+        // `sso_idp_call_duration{provider, kind=token}` on success AND
+        // failure — the slow/errored provider calls are the signal (SC-005)
+        val tokenSample = ssoMetrics.startIdpCall(providerId, SsoMetrics.IdpCallKind.TOKEN)
         val tokenResponse =
             try {
                 tokenResponseClient.getTokenResponse(grantRequest)
@@ -199,6 +205,8 @@ class OidcClient(
                     "token endpoint of provider '$providerId' rejected the exchange",
                     e,
                 )
+            } finally {
+                tokenSample.stop()
             }
         val idToken =
             tokenResponse.additionalParameters[OidcParameterNames.ID_TOKEN] as? String
@@ -225,6 +233,10 @@ class OidcClient(
         deadline: Instant,
     ): OidcIdentityClaims {
         remainingUntil(deadline)
+        // research.md §14: the verification leg (incl. the lazily fetched
+        // key set) is timed as `sso_idp_call_duration{provider, kind=jwks}`
+        // on success AND failure (SC-005)
+        val jwksSample = ssoMetrics.startIdpCall(providerId, SsoMetrics.IdpCallKind.JWKS)
         val jwt =
             try {
                 decoderFor(providerId).decode(idToken)
@@ -234,6 +246,8 @@ class OidcClient(
                     "ID token of provider '$providerId' failed verification",
                     e,
                 )
+            } finally {
+                jwksSample.stop()
             }
         val invalidation =
             when {

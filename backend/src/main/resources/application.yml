@@ -96,6 +96,22 @@ auth:
       ip: 30/1m
     refresh:
       ip: 30/1m
+    # 003 research.md §9 (FR-009): the five SSO routes, per source IP;
+    # authorize/link-authorize are stricter (10/1m) — they create flow
+    # contexts in Redis; the GET routes (providers/callback) ride the same
+    # table since T047; values are the normative source mirrored by
+    # contracts/sso-api.md §1–5 and quickstart S6.2
+    sso:
+      providers:
+        ip: 30/1m
+      authorize:
+        ip: 10/1m
+      callback:
+        ip: 30/1m
+      token:
+        ip: 30/1m
+      link-authorize:
+        ip: 10/1m
   mail:
     # transactional sender address; prod value from env / K8s Secret (research.md §6)
     from: ${AUTH_MAIL_FROM:noreply@webchat.local}
@@ -127,14 +143,35 @@ sso:
   #     # userinfo-uri: https://...
   #     # jwks-uri: https://...
   #     scopes: [openid, email]            # default
-  # No providers configured by default; dex for local runs is added in T042.
-  providers: {}
+  providers:
+    # Local dex IdP (deploy/local/dex, docker compose --profile sso; T042).
+    # Opt-in like its container profile: without SSO_DEX_ENABLED the provider
+    # stays disabled, its empty-secret default is allowed by the fail-fast
+    # validation for disabled providers (T007), so runs without SSO env start
+    # cleanly; quickstart «Настройка и запуск»: SSO_DEX_ENABLED=true +
+    # SSO_DEX_CLIENT_SECRET=dev-secret (the dev-only dummy from deploy/local/dex).
+    dex:
+      display-name: dex
+      enabled: ${SSO_DEX_ENABLED:false}
+      # quickstart S3: allowlist for auto-linking by verified provider email
+      trusted-for-email-linking: true
+      client-id: webchat
+      # env / K8s Secret only (SC-004); empty default keeps the provider opt-in
+      client-secret: ${SSO_DEX_CLIENT_SECRET:}
+      # explicit endpoints of the dex container on :5556 — no discovery leg
+      authorization-uri: http://localhost:5556/auth
+      token-uri: http://localhost:5556/token
+      userinfo-uri: http://localhost:5556/userinfo
+      jwks-uri: http://localhost:5556/keys
+      scopes: [openid, email]
   # SSO flow context sso:flow:<state> — single-use, data-model.md §5
   flow-ttl: 10m
   # Handshake code sso:handshake:<sha256(code)> — single-use exchange for SPA (research §2)
   handshake-ttl: 2m
-  # OIDC redirect_uri; defaults to the public base URL of the SPA deployment
-  callback-url: ${app.public-base-url}/api/v1/auth/sso/callback
+  # OIDC redirect_uri. Local dev runs without an ingress — the backend answers
+  # on :8080 directly, matching the dex redirect-uri fixed by quickstart
+  # «Предусловия» (T042); real deployments override via env / K8s Secret.
+  callback-url: ${SSO_CALLBACK_URL:http://localhost:8080/api/v1/auth/sso/callback}
 
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)

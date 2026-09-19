@@ -1,7 +1,9 @@
 # Local development infrastructure for feature 002 (quickstart.md §2):
 #   PostgreSQL 17 :5432, Redis 7 :6379, Mailpit :8025 (UI) / :1025 (SMTP),
 #   SonarQube LTS :9000 (static analysis) + dedicated PostgreSQL for it
+#   + dex IdP :5556 behind the `sso` profile (003-sso quickstart, T042)
 # Usage: docker compose -f deploy/local/docker-compose.yml up -d
+#        docker compose -f deploy/local/docker-compose.yml --profile sso up -d
 # SonarQube on Linux requires: sudo sysctl -w vm.max_map_count=524288
 
 services:
@@ -88,6 +90,20 @@ services:
       timeout: 5s
       retries: 30
       start_period: 60s
+    restart: unless-stopped
+
+  # Local dex IdP for manual SSO verification (003-sso-identity-providers
+  # quickstart.md; config: deploy/local/dex/config.yaml). Opt-in via the `sso`
+  # profile, mirroring the opt-in SSO_DEX_ENABLED flag of the backend (T042).
+  dex:
+    image: dexidp/dex:v2.42.1
+    container_name: webchat-dex
+    profiles: ["sso"]
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      - ./dex/config.yaml:/etc/dex/config.yaml:ro
+    ports:
+      - "5556:5556"
     restart: unless-stopped
 
 volumes:

@@ -811,7 +811,9 @@ class SsoFlowIT(
 
         private const val RELATIVE_RETURN_TO = "/chat"
 
-        private const val BACKEND_CALLBACK_URL = "http://localhost:5173/api/v1/auth/sso/callback"
+        // T042: local-dev default of sso.callback-url — the backend answers on
+        // :8080 directly (no ingress), matching the dex redirect-uri
+        private const val BACKEND_CALLBACK_URL = "http://localhost:8080/api/v1/auth/sso/callback"
 
         private const val SPA_CALLBACK_PREFIX = "http://localhost:5173/sso/callback"
 

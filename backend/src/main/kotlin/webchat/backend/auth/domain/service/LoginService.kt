@@ -51,10 +51,18 @@ data class LoginResult(
  * hash is discarded; the reply stays the uniform 401.
  *
  * Only `active` accounts may open a session (US2-2): a pending or
- * awaiting-password account has no password yet, so ANY password yields 403
+ * awaiting_password account has no password yet, so ANY password yields 403
  * «завершите регистрацию» with no session and no token (checked before any
  * Argon2 work — the account's existence at this step is intentional guidance,
  * not a leak: the uniform 401 covers unknown identifiers only).
+ *
+ * Password-less ACTIVE accounts (T030, FR-013): since V9 the DB only implies
+ * `active => confirmed email` (ck_users_active_implies_email), so a JIT
+ * account provisioned via SSO (US2) is `active` with `password_hash IS NULL`.
+ * The guard routes such an account through the very same fictitious-hash
+ * Argon2 leg as an unknown identifier: one verification, the same timing, the
+ * same journalled login_failed and the SAME uniform 401 — a JIT account is
+ * never distinguishable from a wrong password (US2-5).
  *
  * Journal (FR-013, SC-005): login_success/login_failed carry the user id
  * (NULL when the identifier is unknown), the hashed IP and no secrets. The
@@ -83,9 +91,10 @@ class LoginService(
 ) {
     /**
      * Verifies the credentials and opens a session for an `active` account
-     * (FR-005). Every failure leg — unknown identifier, wrong password — is
-     * the uniform [InvalidCredentialsException]; an incomplete registration
-     * is the 403 [RegistrationIncompleteException].
+     * (FR-005). Every failure leg — unknown identifier, wrong password,
+     * password-less JIT account — is the uniform
+     * [InvalidCredentialsException]; an incomplete registration is the 403
+     * [RegistrationIncompleteException].
      */
     @Suppress("ReturnCount") // the three exit legs ARE the contract: uniform 401 ×2 + 403 (tasks.md T031)
     fun login(
@@ -106,6 +115,9 @@ class LoginService(
             throw RegistrationIncompleteException()
         }
 
+        // T030 (FR-013, US2-5): an ACTIVE JIT account has password_hash IS
+        // NULL — verify against the same fictitious hash as the unknown
+        // identifier leg, then fail uniformly; never a 403, never a hint
         val passwordHash = user.passwordHash ?: fictitiousPasswordHash
         if (!passwordEncoder.matches(password, passwordHash)) {
             failLogin(identifier, userId = user.id, clientIp = clientIp, userAgent = userAgent)
@@ -173,7 +185,10 @@ class LoginService(
         }
     }
 
-    /** The fictitious Argon2 hash for unknown identifiers — same encoder, same work factor. */
+    /**
+     * The fictitious Argon2 hash for unknown identifiers and password-less
+     * ACTIVE (JIT) accounts — same encoder, same work factor.
+     */
     private val fictitiousPasswordHash: String = passwordEncoder.encode(fictitiousSecret())
 
     private fun fictitiousSecret(): String {
