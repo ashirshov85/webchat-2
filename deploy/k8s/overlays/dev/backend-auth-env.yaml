@@ -142,9 +142,11 @@ spec:
                 secretKeyRef:
                   name: sso-credentials
                   key: SSO_YANDEX_CLIENT_SECRET
-            # SSO VK IdP: oauth2-userinfo with device_id binding — same Secret
+            # SSO VK IdP: oauth2-userinfo with device_id binding — same Secret;
+            # disabled on the stand (quickstart S8 «Откат»): flip to "true"
+            # after the VK app passes review / when login checks resume
             - name: SSO_VK_ENABLED
-              value: "true"
+              value: "false"
             - name: SSO_VK_CLIENT_ID
               valueFrom:
                 secretKeyRef:
