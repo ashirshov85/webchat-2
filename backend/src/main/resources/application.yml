@@ -164,6 +164,21 @@ sso:
       userinfo-uri: http://localhost:5556/userinfo
       jwks-uri: http://localhost:5556/keys
       scopes: [openid, email]
+    # Real IdP of the dev stand (Google): opt-in exactly like dex — without
+    # SSO_GOOGLE_ENABLED the provider stays disabled, and the fail-fast
+    # validation allows its empty client-id/secret defaults (T007). Endpoints
+    # come from Google's OIDC discovery (lazy, cached — research §5), so only
+    # issuer-uri is declared; secrets only via env / K8s Secret (SC-004).
+    google:
+      display-name: Google
+      enabled: ${SSO_GOOGLE_ENABLED:false}
+      # Google returns verified emails — allowlist for auto-linking by verified
+      # email (US2-7); drop to false to always require the explicit link flow
+      trusted-for-email-linking: true
+      client-id: ${SSO_GOOGLE_CLIENT_ID:}
+      client-secret: ${SSO_GOOGLE_CLIENT_SECRET:}
+      issuer-uri: https://accounts.google.com
+      scopes: [openid, email]
   # SSO flow context sso:flow:<state> — single-use, data-model.md §5
   flow-ttl: 10m
   # Handshake code sso:handshake:<sha256(code)> — single-use exchange for SPA (research §2)
