@@ -33,6 +33,14 @@ opaque refresh без изменений; `sessions` расширяется пр
   (подсчёт привязок за вычетом удаляемой строки), расширение enum `auth_event_type`
   (+6 SSO-событий).
 
+Расширение 2026-09-19 (Phase 9 tasks, research §16–§21 дополнения): per-provider
+режим `oauth2-userinfo` — вход через OAuth2-only провайдеров (Яндекс) без `id_token`:
+код → access-токен (confidential, PKCE опционален per-provider) → userinfo
+backchannel → маппинг клеймов (`subject/email/email-verified`) в единую
+`OidcIdentityClaims`. Домен резолвинга, сессии, аудит, лимиты и публичный
+API-контракт не меняются; бюджеты/изоляция/метрики переиспользуются
+(`kind=userinfo`).
+
 ## Technical Context
 
 **Language/Version**: Kotlin 2.2.21, JVM 21 (Temurin); TypeScript 5.9 strict, React 19, Vite 8 (фронтенд по стеку фичи 001)
@@ -65,7 +73,7 @@ opaque refresh без изменений; `sessions` расширяется пр
 | IV | API-First | Новые endpoints — только аддитивно в `contracts/openapi.yaml` (minor 0.3.0), TS-типы регенерируются `openapi-typescript` (drift-check в CI); breaking-changes нет | PASS |
 | V | Безопасность | Секреты — плейсхолдеры env/K8s Secrets, в БД/логах/контрактах отсутствуют (SC-004, gitleaks); state+nonce+PKCE против CSRF/подмены (FR-009); rate limiting на всех публичных SSO-endpoints; события — в `auth_events` без секретов (FR-011) | PASS |
 | VI | Test-First | Интеграционные тесты SSO обязательны: MockIdP (полный флоу, подмены/повторы, JIT/автосвязывание, привязки, сбои провайдера, лимиты) пишутся вместе с реализацией | PASS |
-| VII | YAGNI | Без admin-UI провайдеров (конфиг YAML); без хранения внешних токенов; без single logout; без SAML/чистого OAuth2; готовые компоненты spring-security-oauth2-client вместо самописного OIDC | PASS |
+| VII | YAGNI | Без admin-UI провайдеров (конфиг YAML); без хранения внешних токенов; без single logout; без SAML; режим `oauth2-userinfo` (расширение 2026-09-19) — не исключение из YAGNI, а требование конституции V («SSO OIDC/OAuth2») для OAuth2-only провайдеров (Яндекс); готовые компоненты spring-security-oauth2-client вместо самописного OIDC | PASS |
 | VIII | SOLID | Порты/адаптеры по конвенции 002: `ExternalIdentityRepository`, `SsoFlowStore`, `OidcClient` — за портами; домен (резолвинг идентичности) не зависит от HTTP-деталей провайдера | PASS |
 
 Нарушений нет — раздел Complexity Tracking не заполняется.

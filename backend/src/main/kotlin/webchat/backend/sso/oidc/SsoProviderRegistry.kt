@@ -46,6 +46,8 @@ class SsoProviderRegistrationException(
  *   reports `provider_disabled` (T040/T041).
  *
  * [registrationOf] resolves a provider to its [ClientRegistration]:
+ * - `oauth2-userinfo` (T056, US6) → deterministic build from the explicit
+ *   authorization/token/userinfo endpoints — no discovery, no JWKS;
  * - explicit endpoints → deterministic build, no network;
  * - issuer-uri only → lazy OIDC discovery on first use, cached in memory
  *   (research.md §5: no IdP calls at startup, so boot never depends on external
@@ -161,7 +163,27 @@ class SsoProviderRegistry(
         provider: SsoProperties.Provider,
     ): ClientRegistration {
         val builder =
-            if (provider.authorizationUri != null && provider.tokenUri != null) {
+            if (provider.protocol == SsoProperties.Protocol.OAUTH2_USERINFO) {
+                // T056 (US6, research.md §16): oauth2-userinfo is built from
+                // explicit endpoints only — no discovery, no JWKS (the profile
+                // leg is the userinfo call, T007 guarantees the URIs for
+                // enabled providers); issuer-uri/jwks-uri are ignored.
+                ClientRegistration
+                    .withRegistrationId(id)
+                    .authorizationUri(
+                        checkNotNull(provider.authorizationUri) {
+                            "sso.providers[$id]: enabled oauth2-userinfo provider must have authorization-uri (T007)"
+                        },
+                    ).tokenUri(
+                        checkNotNull(provider.tokenUri) {
+                            "sso.providers[$id]: enabled oauth2-userinfo provider must have token-uri (T007)"
+                        },
+                    ).userInfoUri(
+                        checkNotNull(provider.userinfoUri) {
+                            "sso.providers[$id]: enabled oauth2-userinfo provider must have userinfo-uri (T007)"
+                        },
+                    )
+            } else if (provider.authorizationUri != null && provider.tokenUri != null) {
                 // Explicit endpoints win when both shapes are configured — deterministic, no network.
                 ClientRegistration
                     .withRegistrationId(id)
@@ -201,7 +223,9 @@ class SsoProviderRegistry(
     /**
      * Immutable non-secret snapshot of a provider entry — safe to expose to
      * controllers and services; client credentials never leave the registry
-     * (SC-004/FR-011).
+     * (SC-004/FR-011). T056 (US6): carries the protocol mode, claim mapping
+     * and PKCE flag so the flow legs (OidcClient, T057) branch without
+     * re-reading the raw configuration.
      */
     class SsoProvider(
         val id: String,
@@ -212,6 +236,16 @@ class SsoProviderRegistry(
         val trustedForEmailLinking: Boolean = provider.trustedForEmailLinking
 
         val enabled: Boolean = provider.enabled
+
+        val protocol: SsoProperties.Protocol = provider.protocol
+
+        val subjectClaim: String = provider.subjectClaim
+
+        val emailClaim: String = provider.emailClaim
+
+        val emailVerifiedMode: SsoProperties.EmailVerifiedMode = provider.emailVerifiedMode
+
+        val pkce: Boolean = provider.pkce
 
         override fun toString(): String = "SsoProvider(id=$id, displayName=$displayName, enabled=$enabled)"
     }

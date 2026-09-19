@@ -29,8 +29,12 @@
 #     --from-literal=SSO_YANDEX_CLIENT_ID='<ClientID>' \
 #     --from-literal=SSO_YANDEX_CLIENT_SECRET='<ClientSecret>'
 # SSO_CALLBACK_URL must equal the Authorized redirect URI registered at each
-# provider (console.cloud.google.com / oauth.yandex.ru), and the issuers'
-# discovery documents supply the endpoints (application.yml sso.providers).
+# provider (console.cloud.google.com / oauth.yandex.ru). Endpoints: Google —
+# issuer discovery; Yandex — explicit (protocol oauth2-userinfo since T059,
+# application.yml sso.providers). ВАЖНО (Yandex): доступ «Адрес электронной
+# почты» обязателен в приложении oauth.yandex.ru — без него login.yandex.ru/info
+# не возвращает default_email и вход завершится email_not_verified /
+# provider_error (research §20, T060).
 apiVersion: apps/v1
 kind: Deployment
 metadata:

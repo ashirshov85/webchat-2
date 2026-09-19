@@ -112,6 +112,72 @@ dev-only dummy-секрет staticClient dex в `deploy/local/dex/`, см. Assum
    ≤5 c; парольный вход и `/login` работают; в `auth_events` — `sso_flow_error`,
    метрика `sso_flow_total{outcome="provider_error"}` растёт (`/actuator/prometheus`).
 
+### S7. Yandex на dev-стенде — oauth2-userinfo (US6, P1; дополнение 2026-09-19)
+
+Проверка реального OAuth2-провайдера без OIDC на dev-стенде
+(`https://dev.webchat.lkshr.ru`); локально — только через MockIdP
+(автотесты, research §21).
+
+**Предусловия**:
+
+1. Приложение на [oauth.yandex.ru](https://oauth.yandex.ru): платформа
+   «Веб-сервисы»; Redirect URI = `SSO_CALLBACK_URL`
+   (`https://dev.webchat.lkshr.ru/api/v1/auth/sso/callback`); доступ
+   «Адрес электронной почты» **обязателен** — без него
+   `GET login.yandex.ru/info` не возвращает `default_email`, вход
+   завершается `email_not_verified` / `provider_error` (research §20).
+   ClientID/ClientSecret приложения — на следующем шаге.
+2. Secret `sso-credentials` вне репозитория (SC-004), ключи Яндекса:
+   `SSO_YANDEX_CLIENT_ID` / `SSO_YANDEX_CLIENT_SECRET` (команда — в шапке
+   `deploy/k8s/overlays/dev/backend-auth-env.yaml`); overlay уже выставляет
+   `SSO_YANDEX_ENABLED=true` и `SSO_CALLBACK_URL`. Деплой overlay:
+   `kubectl kustomize deploy/k8s/overlays/dev | kubectl apply -f -`.
+3. Конфигурация провайдера — `application.yml` `sso.providers.yandex`
+   (research §20): `protocol: oauth2-userinfo`, явные endpoints
+   `oauth.yandex.ru/authorize|token` + `login.yandex.ru/info`,
+   `subject-claim: psuid`, `email-claim: default_email`,
+   `email-verified-mode: provider-guaranteed`, `pkce: false`; issuer удалён
+   (T059) — OIDC-discovery не используется.
+
+**Ручная проверка**:
+
+1. `/login` → кнопка «Yandex ID» → вход Яндекс-аккаунтом → возврат в SPA
+   с той же парой токенов, что при парольном входе (`GET /api/v1/users/me`
+   → 200; флоу — как S1, но профиль получен backchannel-запросом
+   `login.yandex.ru/info`, `id_token` не выдаётся).
+2. JIT: первый вход новым Яндекс-аккаунтом → создан active-аккаунт с
+   email = `default_email` (считается подтверждённым), системным username,
+   без пароля; `GET /api/v1/users/me/identities` → привязка `yandex`.
+3. Автосвязывание: существующий парольный аккаунт с тем же email, что
+   `default_email` Яндекс-аккаунта (`trusted-for-email-linking: true`) →
+   вход в существующий аккаунт, привязка добавлена (аналог S3-1/2).
+4. Привязки `/settings/security`: привязать/отвязать Yandex — правила как
+   в S4 (отвязка единственной привязки JIT-аккаунта без пароля → 409
+   `last_login_method`).
+
+**Диагностика 502** (`sso_error=provider_error`):
+
+- Изоляция per-provider: Яндекс недоступен/ошибается → только его флоу
+  завершается ошибкой ≤5 c; Google, dex и парольный вход работают
+  (SC-005, FR-010); в `auth_events` — `sso_flow_error`, растёт
+  `sso_flow_total{outcome="provider_error"}`; длительность userinfo-лага —
+  `sso_idp_call_duration{kind=userinfo}` (`/actuator/prometheus`).
+- Discovery больше не используется: у `yandex` нет issuer — не проверять
+  `.well-known/openid-configuration`, а проверить прямую достижимость
+  `https://oauth.yandex.ru/token` и `https://login.yandex.ru/info`
+   (например, `curl -s -o /dev/null -w '%{http_code}\n'` из пода backend) и
+  валидность client_id/secret в Secret `sso-credentials`.
+- `email_not_verified` на первом входе → в приложении oauth.yandex.ru не
+  включён доступ «Адрес электронной почты» (см. предусловие 1).
+
+**Откат**: `SSO_YANDEX_ENABLED=false` (изменить env в overlay, рестарт
+деплоя) → «Yandex ID» исчезает с экрана входа, прямой
+`POST /api/v1/auth/sso/authorize {providerId:"yandex"}` → 404; существующие
+привязки `yandex` и остальные способы входа не затронуты.
+
+**Приёмка**: раздел прошёл ручную проверку на dev-стенде после деплоя;
+результат фиксируется в PR.
+
 ## Автоматизированные проверки
 
 ```bash

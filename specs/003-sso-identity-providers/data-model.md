@@ -88,6 +88,11 @@ denylist, причины отзыва — **без изменений** (FR-002:
 | `client-secret` | `${SSO_<ID>_CLIENT_SECRET}` | — | плейсхолдер env/K8s Secret; в репозитории/БД/логах отсутствует (SC-004) |
 | `issuer-uri` | URI \| null | null | OIDC discovery (lazy-кэш) — альтернатива явным endpoints |
 | `authorization-uri`, `token-uri`, `userinfo-uri`, `jwks-uri` | URI \| null | null | явные endpoints (обязательны, если нет `issuer-uri`) |
+| `protocol` | `oidc` \| `oauth2-userinfo` | `oidc` | протокольный режим (research §16, дополнение 2026-09-19); `oauth2-userinfo`: обязательны authorization/token/userinfo-uri + client-id/secret, issuer/jwks игнорируются; id_token не запрашивается, профиль — userinfo-эндпоинт |
+| `subject-claim` | string | `sub` | имя клейма идентичности в userinfo (oauth2-userinfo; Яндекс: `psuid`) |
+| `email-claim` | string | `email` | имя клейма email в userinfo (Яндекс: `default_email`) |
+| `email-verified-mode` | `claim` \| `provider-guaranteed` | `claim` | источник факта подтверждения email: булев клейм `email_verified` \| провайдер гарантирует подтверждённость (Яндекс: `default_email`); гейт FR-004 без послаблений |
+| `pkce` | boolean | `true` | отправлять code_challenge S256; `false` для провайдеров без RFC 7636 (Яндекс; компенсация — §17) |
 | `scopes` | list | `openid, email` | — |
 
 Порядок провайдеров в `GET /auth/sso/providers` (contracts/sso-api.md §1) = порядок

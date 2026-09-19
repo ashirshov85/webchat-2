@@ -123,6 +123,11 @@ button:disabled {
   cursor: not-allowed;
 }
 
+section[aria-label='Single sign-on providers'] button + button {
+  margin-top: 10px;
+  margin-right: 10px;
+}
+
 [role='alert'] {
   margin: 0 0 14px;
   padding: 10px 12px;

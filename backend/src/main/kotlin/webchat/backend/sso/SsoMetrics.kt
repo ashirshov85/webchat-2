@@ -17,10 +17,10 @@ import org.springframework.stereotype.Component
  * provider-disabled/link-refused) and `provider_error` (any IdP leg
  * failure — the same events that journal `sso_flow_error`, FR-011).
  *
- * IdP call kinds: `token` (code exchange) and `jwks` (ID-token
- * verification incl. the lazily fetched key set). `userinfo` is part of
- * the declared vocabulary but never recorded: the flow is ID-token only
- * (spec Assumptions, "no external token storage").
+ * IdP call kinds: `token` (code exchange), `jwks` (ID-token verification
+ * incl. the lazily fetched key set) and `userinfo` — the profile leg of the
+ * `oauth2-userinfo` branch (T057, research.md §19); the access token behind
+ * it is consumed on the spot and never stored (FR-016).
  *
  * Tag values carry the provider id or the `unknown` marker of flows
  * rejected before their provider is known — never tokens, codes or
