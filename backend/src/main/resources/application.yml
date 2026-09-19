@@ -207,6 +207,33 @@ sso:
       authorization-uri: https://oauth.yandex.ru/authorize
       token-uri: https://oauth.yandex.ru/token
       userinfo-uri: https://login.yandex.ru/info
+    # Third real IdP (VK ID) — oauth2-userinfo like Yandex, but VK-shaped:
+    # the profile is nested under `user` (dot-path claims), the token
+    # endpoint takes client credentials in the POST body (no Basic header)
+    # and requires the authorize-issued `device_id` back in the exchange —
+    # the callback forwards it (token-device-id). `user_id` is the stable
+    # numeric subject; `email` arrives with the `email` scope and carries
+    # the boolean `email_verified` (claim mode, nested); PKCE S256 is
+    # supported by VK and kept on (default). Secrets only via env /
+    # K8s Secret (SC-004).
+    vk:
+      display-name: VK ID
+      enabled: ${SSO_VK_ENABLED:false}
+      # VK's email_verified claim gates the auto-linking allowlist (US2-7)
+      trusted-for-email-linking: true
+      protocol: oauth2-userinfo
+      subject-claim: user.user_id
+      email-claim: user.email
+      email-verified-mode: claim
+      email-verified-claim: user.email_verified
+      client-auth: post
+      token-device-id: true
+      scopes: [email]
+      client-id: ${SSO_VK_CLIENT_ID:}
+      client-secret: ${SSO_VK_CLIENT_SECRET:}
+      authorization-uri: https://id.vk.com/authorize
+      token-uri: https://id.vk.com/oauth/token
+      userinfo-uri: https://id.vk.com/oauth/user_info
   # SSO flow context sso:flow:<state> — single-use, data-model.md §5
   flow-ttl: 10m
   # Handshake code sso:handshake:<sha256(code)> — single-use exchange for SPA (research §2)

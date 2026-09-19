@@ -133,6 +133,9 @@ class MockIdP(
      * («нет subject-клейма»/«нет email-клейма»); `emailVerified == null`
      * omits `email_verified` (providers that guarantee the email by
      * definition send no such field — `provider-guaranteed` mode).
+     * `nestUnder` models the VK ID shape: the whole profile (subject, email,
+     * `email_verified` included) is nested under one object key (`user`) —
+     * the dot-path claim mapping of the client walks into it.
      */
     data class UserinfoClaims(
         val subjectClaim: String = DEFAULT_USERINFO_SUBJECT_CLAIM,
@@ -140,6 +143,7 @@ class MockIdP(
         val subject: String? = DEFAULT_SUBJECT,
         val email: String? = DEFAULT_EMAIL,
         val emailVerified: Boolean? = null,
+        val nestUnder: String? = null,
     )
 
     /** Consent-denied scenario: authorize 302-redirects back with `error=access_denied`. */
@@ -153,6 +157,14 @@ class MockIdP(
     /** Managed userinfo-endpoint failure scenario (oauth2 mode). */
     @Volatile
     var userinfoFailure = UserinfoFailure.NONE
+
+    /**
+     * VK-style device binding (oauth2 mode): when armed, the authorize
+     * redirect carries a fresh `device_id` and the token endpoint requires
+     * exactly that value back in the exchange body.
+     */
+    @Volatile
+    var issueDeviceId = false
 
     /** `iss` claim of minted ID tokens — align with the provider configuration under test. */
     @Volatile
@@ -200,6 +212,7 @@ class MockIdP(
         consentDenied = false
         tokenEndpointFailure = TokenEndpointFailure.NONE
         userinfoFailure = UserinfoFailure.NONE
+        issueDeviceId = false
         issuer = DEFAULT_ISSUER
         issuedCodes.clear()
         issuedAccessTokens.clear()
@@ -230,6 +243,7 @@ class MockIdP(
             return redirectTo(redirectUri, ERROR to ACCESS_DENIED, state = request.getParameter(STATE))
         }
         val code = randomToken()
+        val deviceId = if (issueDeviceId) randomToken() else null
         issuedCodes[code] =
             IssuedAuthorization(
                 clientId = clientId,
@@ -237,8 +251,14 @@ class MockIdP(
                 nonce = request.getParameter(NONCE_CLAIM),
                 codeChallenge = request.getParameter(CODE_CHALLENGE),
                 codeChallengeMethod = request.getParameter(CODE_CHALLENGE_METHOD),
+                deviceId = deviceId,
             )
-        return redirectTo(redirectUri, CODE to code, state = request.getParameter(STATE))
+        val redirectParameters =
+            buildList {
+                add(CODE to code)
+                deviceId?.let { add(DEVICE_ID to it) }
+            }
+        return redirectTo(redirectUri, *redirectParameters.toTypedArray(), state = request.getParameter(STATE))
     }
 
     @PostMapping("/token")
@@ -281,6 +301,11 @@ class MockIdP(
         if (!pkceMatches(request, issued)) {
             return oauthError(HttpStatus.BAD_REQUEST, INVALID_GRANT)
         }
+        // VK-style device binding: a device_id issued at authorize must come
+        // back in the exchange — a missing or foreign value is invalid_grant
+        if (issued.deviceId != null && request.getParameter(DEVICE_ID) != issued.deviceId) {
+            return oauthError(HttpStatus.BAD_REQUEST, INVALID_GRANT)
+        }
         val accessToken = randomToken()
         val body =
             linkedMapOf<String, Any>(
@@ -320,12 +345,14 @@ class MockIdP(
             return oauthError(HttpStatus.UNAUTHORIZED, INVALID_TOKEN)
         }
         val controlled = userinfoClaims
-        val body = LinkedHashMap<String, Any>()
-        controlled.subject?.takeIf(String::isNotEmpty)?.let { body[controlled.subjectClaim] = it }
+        val profile = LinkedHashMap<String, Any>()
+        controlled.subject?.takeIf(String::isNotEmpty)?.let { profile[controlled.subjectClaim] = it }
         controlled.email?.let {
-            body[controlled.emailClaim] = it
-            controlled.emailVerified?.let { verified -> body[EMAIL_VERIFIED_CLAIM] = verified }
+            profile[controlled.emailClaim] = it
+            controlled.emailVerified?.let { verified -> profile[EMAIL_VERIFIED_CLAIM] = verified }
         }
+        val body =
+            controlled.nestUnder?.let { nest -> LinkedHashMap<String, Any>(mapOf(nest to profile)) } ?: profile
         return ResponseEntity
             .status(HttpStatus.OK)
             .contentType(MediaType.APPLICATION_JSON)
@@ -440,6 +467,7 @@ class MockIdP(
         val nonce: String?,
         val codeChallenge: String?,
         val codeChallengeMethod: String?,
+        val deviceId: String? = null,
     )
 
     companion object {
@@ -519,6 +547,8 @@ class MockIdP(
         private const val CLIENT_ID = "client_id"
 
         private const val CODE = "code"
+
+        const val DEVICE_ID = "device_id"
 
         private const val STATE = "state"
 
