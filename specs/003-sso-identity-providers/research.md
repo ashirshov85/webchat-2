@@ -324,3 +324,146 @@ oasdiff breaking gate проходит без `BREAKING.md`; TS-типы рег�
 | Тестовый IdP | §12: MockIdP test-controller + Testcontainers |
 
 Неразрешённых NEEDS CLARIFICATION нет.
+
+---
+
+# Дополнение 2026-09-19: OAuth2-провайдеры без OIDC — режим `oauth2-userinfo`
+
+Контекст: фича 003 реализована и слита; на dev-стенде подключены Google (OIDC,
+работает) и Яндекс. Уточнение по факту: **Яндекс ID не поддерживает OIDC** — только
+OAuth 2.0 (authorize/token на `oauth.yandex.ru`, профиль через `GET login.yandex.ru/info`;
+`id_token` не выдаётся, discovery/JWKS нет; режим `?format=jwt` подписан HS256 без
+публичных ключей и для OIDC-верификации непригоден). Исходная Assumption спеки
+(«чистый OAuth2 не поддерживается — YAGNI») ревизуется: целевой провайдер без
+OIDC существует, конституция V требует «SSO (OIDC/**OAuth2**)». Ниже — решения
+расширения; нумерация продолжает основную часть.
+
+## 16. Протокольный режим провайдера: `protocol: oidc | oauth2-userinfo`
+
+**Decision**: в `SsoProperties.Provider` вводится атрибут `protocol` (default
+`oidc` — обратная совместимость: dex/google не меняют поведения). Значение
+`oauth2-userinfo` активирует альтернативную ветку флоу: тот же authorization code
+flow, но вместо верификации `id_token` — backchannel-запрос userinfo с полученным
+access-токеном и маппинг клеймов в `OidcIdentityClaims`. Для `oauth2-userinfo`
+обязательны явные `authorization-uri`, `token-uri`, `userinfo-uri` + client-id/secret;
+`issuer-uri`/`jwks-uri` не требуются и игнорируются (fail-fast T007 расширяется
+соответственно). Маппинг клеймов — конфигурируемые имена: `subject-claim`
+(default `sub`; Яндекс: `psuid`), `email-claim` (default `email`; Яндекс:
+`default_email`), `email-verified-mode: claim | provider-guaranteed` (default
+`claim` — читать булев клейм `email_verified`; `provider-guaranteed` — считать
+email подтверждённым по определению провайдера; Яндекс: `default_email` всегда
+подтверждён — неподтверждённые адреса не могут стать основными).
+
+**Rationale**: единая решающая матрица первого входа (§8, data-model §7) и весь
+домен резолвинга оперируют `OidcIdentityClaims{subject, email, emailVerified}` —
+источник клеймов (подписанный токен vs userinfo-эндпоинт) ортогонален домену;
+переиспользуем сессии/handshake/resolution/limы/audit без изменений, публичный
+контракт API не меняется (FR-008 не затронут — сильная сторона подхода).
+Декларативные имена клеймов вместо кодовых адаптеров «под Яндекса» — GitHub
+(`id`→sub, email из `/user/emails`) и VK закрываются конфигурацией или минимальным
+расширением, без новой ветки в домене.
+
+**Alternatives considered**:
+- *Брокер (dex/keycloak с yandex-коннектором)* — отвергнут: дополнительная
+  stateful-инфраструктура на стенд, двойной redirect, нестандартный коннектор;
+  конституция VII (готовые решения для протоколов) здесь о транспортной
+  библиотеке, а не о введении посредника.
+- *Перевод всего SSO на «userinfo-подход»* (без ID-токенов вообще) — отвергнут:
+  теряет криптографическую защиту OIDC-провайдеров, уже работающую (Google/dex).
+
+## 17. Доверие без ID-токена: компенсирующие меры
+
+**Decision**: для `oauth2-userinfo` границы доверия: (1) browser-leg связан с
+флоу одноразовым `state` в Redis (проверка до обмена — уже реализовано, US5-2);
+(2) код обменивается строго server-to-server по TLS с `client_secret`
+(confidential client) — access-токен не проходит через браузер; (3) userinfo
+запрашивается backchannel'ом с этим токеном — клеймы приходят от источника,
+который выдал токен именно нашему client_id; (4) nonce и подпись JWT отсутствуют
+как класс — их роль (связь кода с инициатором) выполняет state + привязка кода к
+redirect_uri. Уровень защиты = классический OAuth2 web-server flow —
+промышленный стандарт до появления OIDC; фиксируется как осознанное ограничение.
+
+**Rationale**: повторное использование кода/ответа исключено одноразовостью state
+и кода; перехват кода бесполезен без client_secret; подмена userinfo невозможна
+без компрометации TLS или secret. Email-гейт FR-004 остаётся без послаблений:
+`email-verified-mode` лишь выбирает источник факта подтверждения, `claim`-режим
+отклоняет неподтверждённые адреса ровно как OIDC-ветка.
+
+**Alternatives considered**:
+- *Принудительно требовать OIDC у всех провайдеров* — эквивалент отказу от
+  Яндекса (см. контекст).
+- *`?format=jwt` Яндекса + HS256* — отвергнуто: симметричная подпись без
+  распределения ключей нашему клиенту не верифицируется; отдельный механизм ради
+  отсутствия пользы.
+
+## 18. PKCE per-provider: `pkce: true | false`
+
+**Decision**: атрибут `pkce` (default `true`). Для Яндекса — `false`: OAuth-сервер
+Яндекса не поддерживает RFC 7636 (code_challenge игнорируется, code_verifier в
+token-запросе отвергается). Риск смягчён confidential-моделью: обмен кода с
+client_secret по TLS + точный redirect_uri + single-use state.
+
+**Rationale**: PKCE для public-клиентов — MUST, для confidential — defense in
+depth; сохраняем его везде, где провайдер поддерживает (OIDC-режим не меняется),
+но не жёстим для несовместимых провайдеров.
+
+**Alternatives considered**:
+- *Всегда слать PKCE* — Яндекс ответит ошибкой обмена (`provider_error`) —
+  фактически блокирует провайдера.
+
+## 19. Транспорт, таймауты, observability — переиспользование бюджетов
+
+**Decision**: userinfo-вызов идёт через тот же транспорт с пер-вызовными лимитами
+(connect 1 с / read 2 с) в рамках общего 5-секундного deadline callback'а
+(budget: token ≤2 с + userinfo ≤2 с); метрика `sso_idp_call_duration{kind=userinfo}`;
+отказы (транспорт/не-2xx/отсутствие subject-клейма) маппятся на существующие
+`provider_error` / 502-изоляцию per-provider без новых кодов. Внешний access-токен
+потребляется на месте и не сохраняется (Assumptions — без изменений).
+
+**Rationale**: SC-005 (≤5 с, изоляция) и FR-010 формулируются протокол-агностично;
+новый лег сопоставим с существующими (token+jwks → token+userinfo).
+
+**Alternatives considered**: отдельных бюджет не вводится — YAGNI.
+
+## 20. Yandex: конфигурация целевого провайдера
+
+**Decision** (нормативные значения для dev-стенда): `protocol: oauth2-userinfo`,
+endpoints `https://oauth.yandex.ru/authorize` / `https://oauth.yandex.ru/token` /
+`https://login.yandex.ru/info`, `subject-claim: psuid` (стабильный ID сквозь
+смену login; `uid` числовой легаси — не использовать), `email-claim:
+default_email`, `email-verified-mode: provider-guaranteed`, `pkce: false`,
+scopes — права задаются в приложении на oauth.yandex.ru (доступ «Адрес
+электронной почты» обязателен); redirect URI = общий `SSO_CALLBACK_URL`
+(`https://dev.webchat.lkshr.ru/api/v1/auth/sso/callback`). `trusted-for-email-linking: true`
+сохраняется (Яндекс подтверждает владельца default_email).
+
+**Rationale**: `psuid` — документированный постоянный идентификатор пользователя
+(логин меняется); `default_email` — подтверждённый основной адрес.
+
+**Alternatives considered**: `login` как subject — отвергнут (меняется);
+`uid` — отвергнут (legacy, не выдаётся новым приложениям).
+
+## 21. Тестирование: oauth2-режим MockIdP
+
+**Decision**: MockIdP (§12) расширяется режимом «oauth2-эндпоинт» для
+test-провайдера: token-ответ без `id_token` + `GET userinfo` (JSON c
+конфигурируемыми subject/email-клеймами, имитация psuid/default_email). Новый
+`SsoOauth2FlowIT`: полный вход (JIT), email-гейт (`provider-guaranteed` и `claim`
+режимы), отказы (userinfo недоступен / не-2xx / нет subject-клейма / неверный
+secret) → `provider_error`, изоляция от параллельного OIDC-провайдера, PKCE
+вкл/выкл.
+
+**Rationale**: та же Testcontainers-инфраструктура; соответствие конституции VI.
+
+**Alternatives considered**: внешний реальный Яндекс в CI — отвергнут (секреты,
+нестабильность, rate).
+
+## Сводка дополнения
+
+| Вопрос | Решение |
+|---|---|
+| Поддержка не-OIDC провайдеров | §16: `protocol: oauth2-userinfo` + конфигурируемый маппинг клеймов |
+| Доверие без подписи/nonce | §17: state single-use + confidential code exchange + TLS backchannel |
+| PKCE у Яндекса | §18: `pkce: false` per-provider |
+| Бюджеты/изоляция/метрики | §19: переиспользуются, `kind=userinfo` |
+| Нормативные значения Яндекса | §20 |

@@ -6,12 +6,12 @@
 
 **Tests**: Включены — конституция VI (Test-First) делает интеграционные тесты SSO обязательными; IT пишутся первыми в каждой фазе истории (MockIdP, research §12).
 
-**Organization**: Задачи сгруппированы по user stories (US1–US5 из spec.md) для независимой реализации и проверки каждой истории.
+**Organization**: Задачи сгруппированы по user stories (US1–US6 из spec.md) для независимой реализации и проверки каждой истории.
 
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Можно выполнять параллельно (разные файлы, нет зависимостей от незавершённых задач)
-- **[Story]**: Принадлежность к user story (US1–US5)
+- **[Story]**: Принадлежность к user story (US1–US6)
 - Все пути указаны от корня монорепо (`backend/`, `frontend/`, `contracts/`, `deploy/`)
 
 ---
@@ -189,6 +189,22 @@ Phase 3 (T006, T011, T013, T014) ставятся post-factum после зел�
 
 ---
 
+## Phase 9: Расширение 2026-09-19 — режим `oauth2-userinfo` (US6)
+
+**Purpose**: вход через OAuth2-only провайдеров (Яндекс) без изменения публичного контракта, домена резолвинга и модели сессий (research §16–§21 дополнения, spec US6/FR-014–016)
+
+- [ ] T054 [RED] [US6] Расширить `backend/src/test/kotlin/webchat/backend/config/SsoPropertiesTest.kt`: биндинг и fail-fast новых атрибутов — `protocol` (default `oidc`), `subject-claim`/`email-claim`/`email-verified-mode`/`pkce`; для включённого `oauth2-userinfo`: обязательны `authorization-uri`+`token-uri`+`userinfo-uri`+client-id+secret (отсутствие → падение старта), issuer/jwks не требуются; `pkce: false` без client-secret → падение (FR-015) — Приёмка: новые тесты RED до реализации T056, GREEN после; существующие ассерты dex/google/yandex не изменяются в поведении (protocol не задан → oidc)
+- [ ] T055 [RED] [P] [US6] Расширить `backend/src/test/kotlin/webchat/backend/sso/MockIdP.kt` oauth2-режимом test-провайдера: token-ответ **без** `id_token` + `GET <userinfo>` c JSON (`psuid`/`default_email` — имена полей конфигурируемы для тестов маппинга), опции «userinfo недоступен»/«не-2xx»/«нет subject-клейма»/«нет email-клейма» (research §21) — Приёмка: мок-эндпоинты поднимаются Testcontainers-контекстом; OIDC-режим мока не затронут
+- [ ] T056 [GREEN] Реализовать `protocol` в `SsoProperties.Provider` + валидацию T007 и `SsoProviderRegistry`: сборка `ClientRegistration` для `oauth2-userinfo` без discovery/jwks (явные endpoints), передача `pkce`/claim-атрибутов в провайдер-снапшот; `GET /auth/sso/providers` без изменений (контракт не меняется) — Приёмка: T054 GREEN
+- [ ] T057 [GREEN] Реализовать protocol-ветку в `backend/src/main/kotlin/webchat/backend/sso/oidc/OidcClient.kt`: `pkce:false` → authorization URL без code_challenge, обмен без code_verifier; после token-обмена — `GET userinfo` (Bearer, пер-вызовные лимиты connect 1с/read 2с в общем 5с-deadline, метрика `sso_idp_call_duration{kind=userinfo}`), маппинг `subject-claim`/`email-claim`/`email-verified-mode` → `OidcIdentityClaims`; пустой/отсутствующий subject → `ID_TOKEN_INVALID`-эквивалент → `provider_error`; access-токен не сохраняется (FR-016) — Приёмка: юнит-проверки маппинга; отказы через типизированные причины без секретов в сообщениях (SC-004)
+- [ ] T058 [RED→GREEN] [US6] `backend/src/test/kotlin/webchat/backend/sso/SsoOauth2FlowIT.kt`: полный вход через oauth2-мок (T055) → единая сессия (`POST /auth/sso/token`), JIT по `provider-guaranteed` email, email-гейт в `claim`-режиме (`email_verified:false` → `email_not_verified`), отказы (userinfo down/не-2xx/нет subject/неверный secret) → `provider_error` ≤5с + `sso_flow_error` аудит, изоляция от параллельного включённого OIDC-провайдера, `pkce:false` флоу, автосвязывание trusted/untrusted — Приёмка: IT зелёные стабильно (порядок IP-блоков — как T052)
+- [ ] T059 Перевести `sso.providers.yandex` в `backend/src/main/resources/application.yml` на целевую конфигурацию (research §20): `protocol: oauth2-userinfo`, явные endpoints `oauth.yandex.ru/authorize|token` + `login.yandex.ru/info`, `subject-claim: psuid`, `email-claim: default_email`, `email-verified-mode: provider-guaranteed`, `pkce: false`, issuer удалить; ассерты в SsoPropertiesTest — Приёмка: тест GREEN; `rg issuer` по yandex-блоку пуст
+- [ ] T060 Проверить dev-overlay (`deploy/k8s/overlays/dev/backend-auth-env.yaml`): env-врайринг yandex уже на месте (SSO_YANDEX_ENABLED/credentials из `sso-credentials`); `kubectl kustomize deploy/k8s/overlays/dev` рендерится; шапка Secret дополнена примечанием «доступ "Адрес электронной почты" обязателен в приложении oauth.yandex.ru» — Приёмка: рендер без ошибок
+- [ ] T061 Дополнить `specs/003-sso-identity-providers/quickstart.md` разделом «S7. Yandex на dev-стенде (oauth2-userinfo)»: предусловия (приложение oauth.yandex.ru: платформа «Веб-сервисы», redirect URI = SSO_CALLBACK_URL, доступ «Адрес электронной почты»; Secret `sso-credentials`), ручная проверка входа/JIT/привязки, диагностика 502 (discovery больше не используется), откат (`SSO_YANDEX_ENABLED=false`) — Приёмка: раздел прошёл ручную проверку на стенде после деплоя (фиксируется в PR)
+- [ ] T062 Финальный прогон и аудит расширения: `./gradlew check`, `pnpm --dir frontend test && lint`, `pnpm --dir frontend generate:api` + drift-check (контракт не меняется — диф пуст), `vacuum lint`, `oasdiff breaking`, gitleaks (новых секретов нет; плейсхолдеры `${SSO_YANDEX_*}`), спот-аудит: access-токен Яндекса не логируется/не хранится — Приёмка: все проверки зелёные; результат в PR-описании
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -283,7 +299,7 @@ Task: "T048 [US5] Метрики Micrometer"
 - При реализации одним агентом (OpenCode; конституция, «Development Workflow») задачи
   выполняются строго последовательно в порядке файла — Parallel-стратегии применимы
   только к командной работе
-- [Story] метки связывают задачи с US1–US5 из spec.md
+- [Story] метки связывают задачи с US1–US6 из spec.md
 - Тесты каждой истории писать первыми, проверять FAIL перед реализацией
 - Коммит после каждой задачи или логической группы
 - DoD каждой задачи (конституция, «Development Workflow»): зелёные тесты задачи

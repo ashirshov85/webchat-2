@@ -33,6 +33,14 @@ opaque refresh без изменений; `sessions` расширяется пр
   (подсчёт привязок за вычетом удаляемой строки), расширение enum `auth_event_type`
   (+6 SSO-событий).
 
+Расширение 2026-09-19 (Phase 9 tasks, research §16–§21 дополнения): per-provider
+режим `oauth2-userinfo` — вход через OAuth2-only провайдеров (Яндекс) без `id_token`:
+код → access-токен (confidential, PKCE опционален per-provider) → userinfo
+backchannel → маппинг клеймов (`subject/email/email-verified`) в единую
+`OidcIdentityClaims`. Домен резолвинга, сессии, аудит, лимиты и публичный
+API-контракт не меняются; бюджеты/изоляция/метрики переиспользуются
+(`kind=userinfo`).
+
 ## Technical Context
 
 **Language/Version**: Kotlin 2.2.21, JVM 21 (Temurin); TypeScript 5.9 strict, React 19, Vite 8 (фронтенд по стеку фичи 001)
