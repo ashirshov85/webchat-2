@@ -19,15 +19,18 @@
 # + clearing the auth flags restores the quickstart scenario, no image rebuild);
 # local docker-compose keeps Mailpit too (quickstart.md §2).
 #
-# SSO (003): Google IdP on the stand — declared in application.yml, disabled by
-# default; this overlay opts in. The sso-credentials Secret is created OUTSIDE
-# the repo on the cluster (SC-004) with the Google OAuth client credentials:
+# SSO (003): Google + Yandex IdPs on the stand — declared in application.yml,
+# disabled by default; this overlay opts in. The sso-credentials Secret is
+# created OUTSIDE the repo on the cluster (SC-004) with the OAuth client
+# credentials of both providers:
 #   kubectl -n dev create secret generic sso-credentials \
 #     --from-literal=SSO_GOOGLE_CLIENT_ID='<OAuth client id>' \
-#     --from-literal=SSO_GOOGLE_CLIENT_SECRET='<OAuth client secret>'
-# SSO_CALLBACK_URL must equal the Authorized redirect URI of the Google OAuth
-# client (console.cloud.google.com), and Google's issuer discovery supplies
-# the endpoints (application.yml sso.providers.google).
+#     --from-literal=SSO_GOOGLE_CLIENT_SECRET='<OAuth client secret>' \
+#     --from-literal=SSO_YANDEX_CLIENT_ID='<ClientID>' \
+#     --from-literal=SSO_YANDEX_CLIENT_SECRET='<ClientSecret>'
+# SSO_CALLBACK_URL must equal the Authorized redirect URI registered at each
+# provider (console.cloud.google.com / oauth.yandex.ru), and the issuers'
+# discovery documents supply the endpoints (application.yml sso.providers).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -117,6 +120,19 @@ spec:
                 secretKeyRef:
                   name: sso-credentials
                   key: SSO_GOOGLE_CLIENT_SECRET
+            # SSO Yandex IdP (003): same out-of-repo sso-credentials Secret
+            - name: SSO_YANDEX_ENABLED
+              value: "true"
+            - name: SSO_YANDEX_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: sso-credentials
+                  key: SSO_YANDEX_CLIENT_ID
+            - name: SSO_YANDEX_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sso-credentials
+                  key: SSO_YANDEX_CLIENT_SECRET
             # OIDC redirect_uri for every provider (sso.callback-url) — the
             # browser-facing stand URL, registered in Google Cloud Console
             - name: SSO_CALLBACK_URL
