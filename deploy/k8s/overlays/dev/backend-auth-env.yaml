@@ -18,6 +18,16 @@
 # (mailpit.yaml) as a rollback target (T025f: mailpit.dev.svc.cluster.local:1025
 # + clearing the auth flags restores the quickstart scenario, no image rebuild);
 # local docker-compose keeps Mailpit too (quickstart.md §2).
+#
+# SSO (003): Google IdP on the stand — declared in application.yml, disabled by
+# default; this overlay opts in. The sso-credentials Secret is created OUTSIDE
+# the repo on the cluster (SC-004) with the Google OAuth client credentials:
+#   kubectl -n dev create secret generic sso-credentials \
+#     --from-literal=SSO_GOOGLE_CLIENT_ID='<OAuth client id>' \
+#     --from-literal=SSO_GOOGLE_CLIENT_SECRET='<OAuth client secret>'
+# SSO_CALLBACK_URL must equal the Authorized redirect URI of the Google OAuth
+# client (console.cloud.google.com), and Google's issuer discovery supplies
+# the endpoints (application.yml sso.providers.google).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -92,3 +102,22 @@ spec:
                 secretKeyRef:
                   name: jwt-keys
                   key: AUTH_JWT_ACTIVE_KID
+            # SSO Google IdP (003): enable + credentials from the out-of-repo
+            # sso-credentials Secret (see header); disabled everywhere without
+            # this wiring (local dev, future prod overlays)
+            - name: SSO_GOOGLE_ENABLED
+              value: "true"
+            - name: SSO_GOOGLE_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: sso-credentials
+                  key: SSO_GOOGLE_CLIENT_ID
+            - name: SSO_GOOGLE_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: sso-credentials
+                  key: SSO_GOOGLE_CLIENT_SECRET
+            # OIDC redirect_uri for every provider (sso.callback-url) — the
+            # browser-facing stand URL, registered in Google Cloud Console
+            - name: SSO_CALLBACK_URL
+              value: https://dev.webchat.lkshr.ru/api/v1/auth/sso/callback

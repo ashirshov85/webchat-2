@@ -33,10 +33,11 @@ class SsoPropertiesTest {
                 // (no ingress), matching the dex redirect-uri of quickstart «Предусловия»
                 assertThat(properties.callbackUrl)
                     .isEqualTo("http://localhost:8080/api/v1/auth/sso/callback")
-                // T042: the only predefined provider is the opt-in local dex IdP —
-                // disabled without SSO_DEX_ENABLED, empty-secret default allowed by
-                // the fail-fast validation (T007)
-                assertThat(properties.providers.keys).containsExactly("dex")
+                // T042: the predefined providers are opt-in — the local dex IdP and
+                // the dev-stand Google IdP — both disabled without their
+                // SSO_*_ENABLED env, empty-secret defaults allowed by the
+                // fail-fast validation (T007)
+                assertThat(properties.providers.keys).containsExactly("dex", "google")
                 val dex = properties.providers.getValue("dex")
                 assertThat(dex.enabled).isFalse()
                 assertThat(dex.clientId).isEqualTo("webchat")
@@ -44,6 +45,15 @@ class SsoPropertiesTest {
                 assertThat(dex.trustedForEmailLinking).isTrue()
                 assertThat(dex.authorizationUri).isEqualTo("http://localhost:5556/auth")
                 assertThat(dex.tokenUri).isEqualTo("http://localhost:5556/token")
+                // Google: declared by issuer only — endpoints come from lazy OIDC
+                // discovery; enabled via SSO_GOOGLE_ENABLED + credentials env
+                val google = properties.providers.getValue("google")
+                assertThat(google.enabled).isFalse()
+                assertThat(google.clientId).isEmpty()
+                assertThat(google.clientSecret).isEmpty()
+                assertThat(google.trustedForEmailLinking).isTrue()
+                assertThat(google.issuerUri).isEqualTo("https://accounts.google.com")
+                assertThat(google.scopes).containsExactly("openid", "email")
             }
     }
 
