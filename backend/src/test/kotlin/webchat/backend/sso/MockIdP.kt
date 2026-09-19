@@ -21,6 +21,7 @@ import org.springframework.security.config.annotation.web.invoke
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.util.UriComponentsBuilder
@@ -61,6 +62,26 @@ import java.util.concurrent.ConcurrentHashMap
  * a wrong client secret (401 `invalid_client`) and a substituted or replayed
  * code (400 `invalid_grant`) — all reproduced by configuration and inputs.
  *
+ * OAuth2 mode (T055, research.md §21): the `oauth2-userinfo` protocol has no
+ * ID tokens, so a parallel set of endpoints model a pure-OAuth2 provider such
+ * as Yandex — both modes stay mounted side by side, which lets T058 run an
+ * OIDC provider and an oauth2 provider against the same context:
+ * - `GET /mock-idp/oauth2/authorize` — same authorization-code contract as the
+ *   OIDC authorize (a code bound to client/redirect; PKCE is simply absent in
+ *   the `pkce: false` flow, which the shared logic tolerates);
+ * - `POST /mock-idp/oauth2/token` — same validation legs (client auth,
+ *   single-use code, redirect/PKCE match, [tokenEndpointFailure]) but the
+ *   response omits `id_token` entirely; the issued `access_token` is recorded
+ *   for the userinfo leg;
+ * - `GET /mock-idp/oauth2/userinfo` — Bearer-authenticated profile JSON whose
+ *   field NAMES are test-controlled ([UserinfoClaims], defaults model the
+ *   Yandex shape `psuid`/`default_email`) so claim-mapping (`subject-claim` /
+ *   `email-claim` / `email-verified-mode`) is exercised against arbitrary
+ *   providers; managed failures: [userinfoFailure] unavailable (a delay longer
+ *   than any caller read timeout) / non-2xx, and claim omission — a `null`
+ *   subject or email leaves the field out of the JSON («нет subject-клейма» /
+ *   «нет email-клейма»).
+ *
  * Scenario state is mutable by design (test double): ITs share the cached
  * application context and drive this bean from the same JVM, resetting the
  * scenario state in @BeforeEach via [reset]. Registered clients survive the
@@ -92,6 +113,35 @@ class MockIdP(
         DELAY,
     }
 
+    /**
+     * Userinfo-endpoint failure scenario (research.md §21): an unavailable
+     * endpoint (a delay longer than any caller read timeout — the transport
+     * budget leg of SC-005) or a non-2xx answer.
+     */
+    enum class UserinfoFailure {
+        NONE,
+        UNAVAILABLE,
+        NOT_2XX,
+    }
+
+    /**
+     * Profile JSON minted by the oauth2-mode userinfo endpoint (research.md
+     * §21): the field NAMES are part of the controlled state so claim-mapping
+     * tests can point `subject-claim`/`email-claim` at arbitrary names — the
+     * defaults model the Yandex shape (`psuid`/`default_email`, research.md
+     * §20). A `null` subject/email omits the field from the JSON entirely
+     * («нет subject-клейма»/«нет email-клейма»); `emailVerified == null`
+     * omits `email_verified` (providers that guarantee the email by
+     * definition send no such field — `provider-guaranteed` mode).
+     */
+    data class UserinfoClaims(
+        val subjectClaim: String = DEFAULT_USERINFO_SUBJECT_CLAIM,
+        val emailClaim: String = DEFAULT_USERINFO_EMAIL_CLAIM,
+        val subject: String? = DEFAULT_SUBJECT,
+        val email: String? = DEFAULT_EMAIL,
+        val emailVerified: Boolean? = null,
+    )
+
     /** Consent-denied scenario: authorize 302-redirects back with `error=access_denied`. */
     @Volatile
     var consentDenied = false
@@ -100,6 +150,10 @@ class MockIdP(
     @Volatile
     var tokenEndpointFailure = TokenEndpointFailure.NONE
 
+    /** Managed userinfo-endpoint failure scenario (oauth2 mode). */
+    @Volatile
+    var userinfoFailure = UserinfoFailure.NONE
+
     /** `iss` claim of minted ID tokens — align with the provider configuration under test. */
     @Volatile
     var issuer = DEFAULT_ISSUER
@@ -107,9 +161,15 @@ class MockIdP(
     @Volatile
     private var claims = ControlledClaims()
 
+    @Volatile
+    private var userinfoClaims = UserinfoClaims()
+
     private val clients = ConcurrentHashMap<String, String>()
 
     private val issuedCodes = ConcurrentHashMap<String, IssuedAuthorization>()
+
+    /** Access tokens issued by the oauth2-mode token endpoint — the userinfo Bearer gate. */
+    private val issuedAccessTokens: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     init {
         registerClient(DEFAULT_CLIENT_ID, DEFAULT_CLIENT_SECRET)
@@ -128,18 +188,36 @@ class MockIdP(
         claims = controlledClaims
     }
 
+    /** Arms the profile JSON of the following userinfo answers (T055/T058 scenarios). */
+    fun setUserinfoClaims(controlledUserinfoClaims: UserinfoClaims) {
+        userinfoClaims = controlledUserinfoClaims
+    }
+
     /** Restores the default scenario state: claims, failure flags, issuer, issued codes. */
     fun reset() {
         claims = ControlledClaims()
+        userinfoClaims = UserinfoClaims()
         consentDenied = false
         tokenEndpointFailure = TokenEndpointFailure.NONE
+        userinfoFailure = UserinfoFailure.NONE
         issuer = DEFAULT_ISSUER
         issuedCodes.clear()
+        issuedAccessTokens.clear()
     }
 
     @GetMapping("/authorize")
+    fun authorize(request: HttpServletRequest): ResponseEntity<String> = issueAuthorizationCode(request)
+
+    /**
+     * OAuth2-mode authorize (research.md §21): the same authorization-code
+     * contract — a `pkce: false` provider simply arrives without
+     * `code_challenge`, which the shared logic tolerates.
+     */
+    @GetMapping("/oauth2/authorize")
+    fun oauth2Authorize(request: HttpServletRequest): ResponseEntity<String> = issueAuthorizationCode(request)
+
     @Suppress("ReturnCount") // each return is a protocol answer of an IdP authorize endpoint (RFC 6749 §4.1.2)
-    fun authorize(request: HttpServletRequest): ResponseEntity<String> {
+    private fun issueAuthorizationCode(request: HttpServletRequest): ResponseEntity<String> {
         val clientId = request.getParameter(CLIENT_ID)
         if (clientId == null || !clients.containsKey(clientId)) {
             return oauthError(HttpStatus.BAD_REQUEST, INVALID_CLIENT)
@@ -164,8 +242,23 @@ class MockIdP(
     }
 
     @PostMapping("/token")
-    @Suppress("ReturnCount") // each return is a distinct OAuth error code of the token endpoint (RFC 6749 §5.2)
-    fun token(request: HttpServletRequest): ResponseEntity<String> {
+    fun token(request: HttpServletRequest): ResponseEntity<String> = exchangeCode(request, includeIdToken = true)
+
+    /**
+     * OAuth2-mode token endpoint (research.md §21): identical validation legs,
+     * but the response carries no `id_token` — the profile comes from the
+     * userinfo endpoint. The minted access token is recorded so userinfo can
+     * authenticate the Bearer caller.
+     */
+    @PostMapping("/oauth2/token")
+    fun oauth2Token(request: HttpServletRequest): ResponseEntity<String> = exchangeCode(request, includeIdToken = false)
+
+    // each return is a distinct OAuth error code of the token endpoint (RFC 6749 §5.2)
+    @Suppress("ReturnCount", "CyclomaticComplexMethod")
+    private fun exchangeCode(
+        request: HttpServletRequest,
+        includeIdToken: Boolean,
+    ): ResponseEntity<String> {
         when (tokenEndpointFailure) {
             TokenEndpointFailure.DELAY -> Thread.sleep(DELAY_MILLIS)
             TokenEndpointFailure.HTTP_500 -> return oauthError(HttpStatus.INTERNAL_SERVER_ERROR, SERVER_ERROR)
@@ -188,14 +281,51 @@ class MockIdP(
         if (!pkceMatches(request, issued)) {
             return oauthError(HttpStatus.BAD_REQUEST, INVALID_GRANT)
         }
+        val accessToken = randomToken()
         val body =
-            mapOf(
-                ACCESS_TOKEN to randomToken(),
+            linkedMapOf<String, Any>(
+                ACCESS_TOKEN to accessToken,
                 TOKEN_TYPE to BEARER,
                 EXPIRES_IN to ACCESS_TOKEN_TTL_SECONDS,
                 SCOPE to (request.getParameter(SCOPE) ?: DEFAULT_SCOPES_PARAMETER),
-                ID_TOKEN to mintIdToken(issued, credentials.first),
             )
+        if (includeIdToken) {
+            body[ID_TOKEN] = mintIdToken(issued, credentials.first)
+        } else {
+            issuedAccessTokens.add(accessToken)
+        }
+        return ResponseEntity
+            .status(HttpStatus.OK)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(objectMapper.writeValueAsString(body))
+    }
+
+    /**
+     * OAuth2-mode userinfo (research.md §21): Bearer-authenticated profile
+     * JSON with test-controlled field names. Missing/foreign Bearer tokens
+     * answer 401 `invalid_token` — a real provider rejects unknown callers.
+     */
+    @GetMapping("/oauth2/userinfo")
+    @Suppress("ReturnCount") // each return is a protocol answer of the userinfo endpoint
+    fun userinfo(
+        @RequestHeader(AUTHORIZATION_HEADER) authorization: String?,
+    ): ResponseEntity<String> {
+        when (userinfoFailure) {
+            UserinfoFailure.UNAVAILABLE -> Thread.sleep(DELAY_MILLIS)
+            UserinfoFailure.NOT_2XX -> return oauthError(HttpStatus.INTERNAL_SERVER_ERROR, SERVER_ERROR)
+            UserinfoFailure.NONE -> Unit
+        }
+        val accessToken = authorization?.takeIf { it.startsWith(BEARER_PREFIX) }?.removePrefix(BEARER_PREFIX)
+        if (accessToken.isNullOrEmpty() || accessToken !in issuedAccessTokens) {
+            return oauthError(HttpStatus.UNAUTHORIZED, INVALID_TOKEN)
+        }
+        val controlled = userinfoClaims
+        val body = LinkedHashMap<String, Any>()
+        controlled.subject?.takeIf(String::isNotEmpty)?.let { body[controlled.subjectClaim] = it }
+        controlled.email?.let {
+            body[controlled.emailClaim] = it
+            controlled.emailVerified?.let { verified -> body[EMAIL_VERIFIED_CLAIM] = verified }
+        }
         return ResponseEntity
             .status(HttpStatus.OK)
             .contentType(MediaType.APPLICATION_JSON)
@@ -319,11 +449,17 @@ class MockIdP(
 
         const val DEFAULT_ISSUER = "https://mock-idp.test"
 
-        private const val DEFAULT_SUBJECT = "mock-subject"
+        /** Controlled-claims defaults — public for IT assertions on scenario resets. */
+        const val DEFAULT_SUBJECT = "mock-subject"
 
-        private const val DEFAULT_EMAIL = "mock-user@example.com"
+        const val DEFAULT_EMAIL = "mock-user@example.com"
 
         private const val DEFAULT_EMAIL_VERIFIED = true
+
+        /** OAuth2-mode defaults: the Yandex userinfo shape (research.md §20). */
+        private const val DEFAULT_USERINFO_SUBJECT_CLAIM = "psuid"
+
+        private const val DEFAULT_USERINFO_EMAIL_CLAIM = "default_email"
 
         private const val ACCESS_TOKEN_TTL_SECONDS = 3_600
 
@@ -397,6 +533,10 @@ class MockIdP(
         private const val TOKEN_TYPE = "token_type"
 
         private const val BEARER = "Bearer"
+
+        private const val BEARER_PREFIX = "Bearer "
+
+        private const val INVALID_TOKEN = "invalid_token"
 
         private const val EXPIRES_IN = "expires_in"
 

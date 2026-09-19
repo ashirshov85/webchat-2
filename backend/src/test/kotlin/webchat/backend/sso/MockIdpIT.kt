@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.web.client.TestRestTemplate
 import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
@@ -35,6 +36,13 @@ import java.util.Base64
  * scenario (HTTP 500, delay > timeout, wrong secret, substituted/replayed
  * code, withdrawn consent). The first END-TO-END run through the backend SSO
  * endpoints is the anchor T019/T026 (`SsoFlowIT`).
+ *
+ * T055 acceptance (research.md §21): the oauth2-mode endpoints rise in the
+ * same Testcontainers context — token answer without `id_token`, userinfo
+ * JSON with configurable field names (the Yandex `psuid`/`default_email`
+ * shape), the managed userinfo failures (unavailable / non-2xx / omitted
+ * subject or email claim) — while the OIDC mode stays untouched (the suite
+ * above is its regression, plus an explicit no-leak test).
  */
 class MockIdpIT(
     @Autowired private val restTemplate: TestRestTemplate,
@@ -182,10 +190,132 @@ class MockIdpIT(
         assertThat(objectMapper.readTree(response.body).path(ERROR).asText()).isEqualTo("invalid_grant")
     }
 
+    // T055 (US6, research.md §21): the oauth2-mode half of the MockIdP
+
+    @Test
+    fun `oauth2 token answer omits id_token and its access token opens userinfo`() {
+        // the pkce:false shape — neither a code_challenge nor a code_verifier
+        val code = issueOauth2Code()
+
+        val response = exchangeOauth2Code(code)
+        val body = objectMapper.readTree(response.body)
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
+        assertThat(body.path(ACCESS_TOKEN).asText()).isNotBlank
+        assertThat(body.path(TOKEN_TYPE).asText()).isEqualTo(BEARER)
+        assertThat(body.has(ID_TOKEN)).isFalse
+
+        val userinfo = userinfo(body.path(ACCESS_TOKEN).asText())
+        assertThat(userinfo.statusCode).isEqualTo(HttpStatus.OK)
+        val profile = objectMapper.readTree(userinfo.body)
+        assertThat(profile.path(PSUID_CLAIM).asText()).isEqualTo(MockIdP.DEFAULT_SUBJECT)
+        assertThat(profile.path(DEFAULT_EMAIL_CLAIM).asText()).isEqualTo("mock-user@example.com")
+        // the default shape is provider-guaranteed: no email_verified field
+        assertThat(profile.has(EMAIL_VERIFIED_CLAIM)).isFalse
+    }
+
+    @Test
+    fun `userinfo field names and values are configurable for claim mapping`() {
+        mockIdP.setUserinfoClaims(
+            MockIdP.UserinfoClaims(
+                subjectClaim = "uid",
+                emailClaim = "mail",
+                subject = "mapping-subject-7",
+                email = "mapped@example.com",
+                emailVerified = true,
+            ),
+        )
+        val accessToken = oauth2AccessToken()
+
+        val profile = objectMapper.readTree(userinfo(accessToken).body)
+
+        assertThat(profile.path("uid").asText()).isEqualTo("mapping-subject-7")
+        assertThat(profile.path("mail").asText()).isEqualTo("mapped@example.com")
+        assertThat(profile.path(EMAIL_VERIFIED_CLAIM).asBoolean()).isTrue
+        assertThat(profile.has(PSUID_CLAIM)).isFalse
+        assertThat(profile.has(DEFAULT_EMAIL_CLAIM)).isFalse
+    }
+
+    @Test
+    fun `userinfo rejects a missing or foreign bearer token with 401`() {
+        assertThat(userinfo(accessToken = null).statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
+
+        val response = userinfo("forged-access-token")
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
+        assertThat(objectMapper.readTree(response.body).path(ERROR).asText()).isEqualTo("invalid_token")
+    }
+
+    @Test
+    fun `userinfo unavailable flag delays beyond the caller read timeout`() {
+        mockIdP.userinfoFailure = MockIdP.UserinfoFailure.UNAVAILABLE
+        val impatientClient =
+            RestTemplate(
+                SimpleClientHttpRequestFactory().apply { setReadTimeout(FAST_READ_TIMEOUT_MILLIS) },
+            )
+
+        assertThatThrownBy {
+            impatientClient.exchange(
+                URI.create(rootUri() + OAUTH2_USERINFO_PATH),
+                HttpMethod.GET,
+                HttpEntity<String>(HttpHeaders()),
+                String::class.java,
+            )
+        }.isInstanceOf(ResourceAccessException::class.java)
+    }
+
+    @Test
+    fun `userinfo non-2xx flag answers a server error`() {
+        mockIdP.userinfoFailure = MockIdP.UserinfoFailure.NOT_2XX
+
+        val response = userinfo(oauth2AccessToken())
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR)
+        assertThat(objectMapper.readTree(response.body).path(ERROR).asText()).isEqualTo("server_error")
+    }
+
+    @Test
+    fun `omitted subject or email claims are absent from the userinfo json`() {
+        mockIdP.setUserinfoClaims(MockIdP.UserinfoClaims(subject = null, email = null))
+
+        val profile = objectMapper.readTree(userinfo(oauth2AccessToken()).body)
+
+        assertThat(profile.has(PSUID_CLAIM)).isFalse
+        assertThat(profile.has(DEFAULT_EMAIL_CLAIM)).isFalse
+        assertThat(profile.has(EMAIL_VERIFIED_CLAIM)).isFalse
+    }
+
+    @Test
+    fun `oauth2 scenario state does not leak into the oidc token endpoint`() {
+        mockIdP.userinfoFailure = MockIdP.UserinfoFailure.NOT_2XX
+        mockIdP.setUserinfoClaims(
+            MockIdP.UserinfoClaims(subjectClaim = "uid", subject = "other-subject", email = null),
+        )
+        mockIdP.setClaims(MockIdP.ControlledClaims(subject = SUBJECT, email = EMAIL, emailVerified = true))
+        val code = issueCode(codeChallenge = s256(VERIFIER))
+
+        val jwt = jwksDecoder().decode(idTokenOf(exchangeCode(code)))
+
+        assertThat(jwt.subject).isEqualTo(SUBJECT)
+        assertThat(jwt.getClaimAsString(EMAIL_CLAIM)).isEqualTo(EMAIL)
+    }
+
     private fun issueCode(codeChallenge: String? = null): String {
-        val response = authorize(codeChallenge = codeChallenge)
+        val response = authorize(path = AUTHORIZE_PATH, codeChallenge = codeChallenge)
         assertThat(response.statusCode).isEqualTo(HttpStatus.FOUND)
         return queryParameters(response).getValue(CODE)
+    }
+
+    private fun issueOauth2Code(): String {
+        val response = authorize(path = OAUTH2_AUTHORIZE_PATH)
+        assertThat(response.statusCode).isEqualTo(HttpStatus.FOUND)
+        return queryParameters(response).getValue(CODE)
+    }
+
+    /** Full oauth2 leg: code → access token, for tests that only need the profile call. */
+    private fun oauth2AccessToken(): String {
+        val body = objectMapper.readTree(exchangeOauth2Code(issueOauth2Code()).body)
+        return body.path(ACCESS_TOKEN).asText()
     }
 
     /**
@@ -206,10 +336,13 @@ class MockIdpIT(
             },
         )
 
-    private fun authorize(codeChallenge: String? = null): ResponseEntity<String> {
+    private fun authorize(
+        path: String = AUTHORIZE_PATH,
+        codeChallenge: String? = null,
+    ): ResponseEntity<String> {
         val builder =
             UriComponentsBuilder
-                .fromPath("/mock-idp/authorize")
+                .fromPath(path)
                 .queryParam(CLIENT_ID, MockIdP.DEFAULT_CLIENT_ID)
                 .queryParam(REDIRECT_URI, CALLBACK_URI)
                 .queryParam(RESPONSE_TYPE, "code")
@@ -229,10 +362,32 @@ class MockIdpIT(
         clientSecret: String = MockIdP.DEFAULT_CLIENT_SECRET,
     ): ResponseEntity<String> =
         restTemplate.postForEntity(
-            "/mock-idp/token",
+            AUTHORIZE_TOKEN_PATH,
             HttpEntity(tokenForm(code, codeVerifier), tokenHeaders(clientSecret)),
             String::class.java,
         )
+
+    /** OAuth2-mode exchange: no code_verifier leg (the `pkce: false` shape, research.md §18). */
+    private fun exchangeOauth2Code(
+        code: String,
+        clientSecret: String = MockIdP.DEFAULT_CLIENT_SECRET,
+    ): ResponseEntity<String> =
+        restTemplate.postForEntity(
+            OAUTH2_TOKEN_PATH,
+            HttpEntity(tokenForm(code, codeVerifier = null), tokenHeaders(clientSecret)),
+            String::class.java,
+        )
+
+    private fun userinfo(accessToken: String?): ResponseEntity<String> {
+        val headers = HttpHeaders()
+        accessToken?.let(headers::setBearerAuth)
+        return restTemplate.exchange(
+            OAUTH2_USERINFO_PATH,
+            HttpMethod.GET,
+            HttpEntity<String>(headers),
+            String::class.java,
+        )
+    }
 
     private fun tokenHeaders(clientSecret: String = MockIdP.DEFAULT_CLIENT_SECRET): HttpHeaders =
         HttpHeaders().apply {
@@ -242,13 +397,13 @@ class MockIdpIT(
 
     private fun tokenForm(
         code: String,
-        codeVerifier: String,
+        codeVerifier: String?,
     ): MultiValueMap<String, String> =
         LinkedMultiValueMap<String, String>().apply {
             add(GRANT_TYPE, "authorization_code")
             add(CODE, code)
             add(REDIRECT_URI, CALLBACK_URI)
-            add(CODE_VERIFIER, codeVerifier)
+            codeVerifier?.let { add(CODE_VERIFIER, it) }
         }
 
     /** Verification machinery mirrors the production OidcClient: Nimbus against the JWKS endpoint. */
@@ -283,6 +438,21 @@ class MockIdpIT(
 
     private companion object {
         const val CALLBACK_URI = "http://localhost:5173/api/v1/auth/sso/callback"
+
+        const val AUTHORIZE_PATH = "/mock-idp/authorize"
+
+        const val AUTHORIZE_TOKEN_PATH = "/mock-idp/token"
+
+        const val OAUTH2_AUTHORIZE_PATH = "/mock-idp/oauth2/authorize"
+
+        const val OAUTH2_TOKEN_PATH = "/mock-idp/oauth2/token"
+
+        const val OAUTH2_USERINFO_PATH = "/mock-idp/oauth2/userinfo"
+
+        /** The Yandex-shaped userinfo field names (research.md §20). */
+        const val PSUID_CLAIM = "psuid"
+
+        const val DEFAULT_EMAIL_CLAIM = "default_email"
 
         const val STATE_VALUE = "it-state-1a2b3c4d5e6f"
 
