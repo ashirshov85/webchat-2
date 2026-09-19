@@ -179,22 +179,34 @@ sso:
       client-secret: ${SSO_GOOGLE_CLIENT_SECRET:}
       issuer-uri: https://accounts.google.com
       scopes: [openid, email]
-    # Second real IdP of the dev stand (Yandex ID): same opt-in pattern —
-    # issuer-only declaration, endpoints from Yandex's OIDC discovery (lazy,
-    # cached — research §5); secrets only via env / K8s Secret (SC-004).
-    # Caveats of the code contract: PKCE S256 is sent on every authorize
-    # (OidcClient.startAuthorization) and email_verified defaults to false
-    # when the ID token omits it — both must hold at Yandex for first login.
+    # Second real IdP of the dev stand (Yandex ID) in the target
+    # `oauth2-userinfo` mode (research §16–§20, T059): no OIDC discovery and
+    # no ID-token verification — the profile comes from a backchannel
+    # GET login.yandex.ru/info; `psuid` is the stable subject (login may
+    # change, `uid` is legacy), `default_email` is always confirmed by
+    # Yandex (provider-guaranteed, research §20); PKCE off — Yandex's OAuth
+    # server does not support RFC 7636 (research §18), mitigated by the
+    # confidential code exchange with client-secret over TLS (FR-015).
+    # Scopes are not requested: permissions (the «Адрес электронной почты»
+    # access) are granted by the app on oauth.yandex.ru (research §20);
+    # secrets only via env / K8s Secret (SC-004).
     yandex:
       display-name: Yandex ID
       enabled: ${SSO_YANDEX_ENABLED:false}
-      # Yandex confirms mailbox ownership — allowlist for auto-linking by
-      # verified email (US2-7); same trade-off as google above
+      # Yandex confirms mailbox ownership (default_email is always verified)
+      # — allowlist for auto-linking by verified email (US2-7); research §20
       trusted-for-email-linking: true
+      protocol: oauth2-userinfo
+      subject-claim: psuid
+      email-claim: default_email
+      email-verified-mode: provider-guaranteed
+      pkce: false
+      scopes: []
       client-id: ${SSO_YANDEX_CLIENT_ID:}
       client-secret: ${SSO_YANDEX_CLIENT_SECRET:}
-      issuer-uri: https://openid-connect.yandex.com
-      scopes: [openid, email]
+      authorization-uri: https://oauth.yandex.ru/authorize
+      token-uri: https://oauth.yandex.ru/token
+      userinfo-uri: https://login.yandex.ru/info
   # SSO flow context sso:flow:<state> — single-use, data-model.md §5
   flow-ttl: 10m
   # Handshake code sso:handshake:<sha256(code)> — single-use exchange for SPA (research §2)

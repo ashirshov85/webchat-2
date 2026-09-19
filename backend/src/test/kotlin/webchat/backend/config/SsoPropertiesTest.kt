@@ -54,19 +54,35 @@ class SsoPropertiesTest {
                 assertThat(google.trustedForEmailLinking).isTrue()
                 assertThat(google.issuerUri).isEqualTo("https://accounts.google.com")
                 assertThat(google.scopes).containsExactly("openid", "email")
-                // Yandex: same issuer-only shape as google — lazy discovery,
-                // enabled via SSO_YANDEX_ENABLED + credentials env
+                // T059 (US6): yandex is switched to the target
+                // `oauth2-userinfo` shape (research §20) — explicit
+                // oauth.yandex.ru/login.yandex.ru endpoints, psuid/
+                // default_email claim mapping, provider-guaranteed email,
+                // PKCE off, no scopes (permissions live in the app on
+                // oauth.yandex.ru); still opt-in — enabled only via
+                // SSO_YANDEX_ENABLED + credentials env
                 val yandex = properties.providers.getValue("yandex")
                 assertThat(yandex.enabled).isFalse()
                 assertThat(yandex.clientId).isEmpty()
                 assertThat(yandex.clientSecret).isEmpty()
                 assertThat(yandex.trustedForEmailLinking).isTrue()
-                assertThat(yandex.issuerUri).isEqualTo("https://openid-connect.yandex.com")
-                assertThat(yandex.scopes).containsExactly("openid", "email")
-                // T054 (US6): `protocol` is not set for any predefined provider —
-                // the default `oidc` keeps the dex/google/yandex behavior
-                // unchanged (research §16, backward compatibility)
-                listOf("dex", "google", "yandex").forEach { id ->
+                assertThat(yandex.issuerUri).isNull()
+                assertThat(yandex.protocol)
+                    .isEqualTo(SsoProperties.Protocol.OAUTH2_USERINFO)
+                assertThat(yandex.subjectClaim).isEqualTo("psuid")
+                assertThat(yandex.emailClaim).isEqualTo("default_email")
+                assertThat(yandex.emailVerifiedMode)
+                    .isEqualTo(SsoProperties.EmailVerifiedMode.PROVIDER_GUARANTEED)
+                assertThat(yandex.pkce).isFalse()
+                assertThat(yandex.authorizationUri)
+                    .isEqualTo("https://oauth.yandex.ru/authorize")
+                assertThat(yandex.tokenUri).isEqualTo("https://oauth.yandex.ru/token")
+                assertThat(yandex.userinfoUri).isEqualTo("https://login.yandex.ru/info")
+                assertThat(yandex.scopes).isEmpty()
+                // T054 (US6): the protocol default `oidc` keeps the dex and
+                // google behavior unchanged (research §16, backward
+                // compatibility)
+                listOf("dex", "google").forEach { id ->
                     assertThat(properties.providers.getValue(id).protocol)
                         .isEqualTo(SsoProperties.Protocol.OIDC)
                 }
