@@ -73,8 +73,10 @@ class SsoHandshakeCodeInvalidException : RuntimeException("Token is invalid or e
  *
  * `GET /api/v1/auth/sso/callback` — the browser leg (never JSON): the flow
  * state is consumed atomically (`GETDEL` — a replay is rejected before any
- * side effect, SC-006), the code is exchanged and the ID token verified
- * within the overall 5 s callback deadline (SC-005), then either identity
+ * side effect, SC-006), the code is exchanged and the identity verified
+ * within the overall 5 s callback deadline (SC-005) — ID-token
+ * verification for `oidc` providers, the Bearer userinfo call for
+ * `oauth2-userinfo` (T057) — then either identity
  * resolution (login flows) or [IdentityLinkService] (link flows started by
  * `POST /auth/sso/link/authorize`, T035) runs, and the outcome leaves as a
  * 302: a single-use handshake code on login success, `?linked=<providerId>`
@@ -203,12 +205,14 @@ class SsoController(
     }
 
     /**
-     * The two IdP legs shared by both purposes (sso-api.md §3): the
-     * code→token exchange and the ID-token verification, both inside the
-     * overall callback deadline; `null` maps to the single `provider_error`.
-     * A registration that cannot be built (discovery outage of an
-     * issuer-based provider, T041) maps there too — the browser leg answers
-     * with the 302 redirect, never a 500 (US4-4 isolation).
+     * The provider backchannel legs shared by both purposes (sso-api.md §3):
+     * the code→token exchange plus the protocol-dependent profile leg — ID
+     * token verification for `oidc`, the Bearer userinfo call for
+     * `oauth2-userinfo` (T057) — both inside the overall callback deadline;
+     * `null` maps to the single `provider_error`. A registration that cannot
+     * be built (discovery outage of an issuer-based provider, T041) maps
+     * there too — the browser leg answers with the 302 redirect, never a 500
+     * (US4-4 isolation).
      */
     private fun exchangeAndVerify(
         flow: SsoFlowContext,
@@ -216,8 +220,7 @@ class SsoController(
     ): OidcIdentityClaims? {
         val deadline = Instant.now().plus(CALLBACK_DEADLINE)
         return try {
-            val idToken = oidcClient.exchangeCodeForIdToken(flow.providerId, flow.codeVerifier, code, deadline)
-            oidcClient.verifyIdToken(flow.providerId, idToken, flow.nonce, deadline)
+            oidcClient.completeAuthorizationCodeFlow(flow.providerId, flow.codeVerifier, code, flow.nonce, deadline)
         } catch (_: OidcClientException) {
             null
         } catch (_: SsoProviderRegistrationException) {

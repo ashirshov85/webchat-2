@@ -247,7 +247,7 @@ class SsoProviderRegistry(
 
         val pkce: Boolean = provider.pkce
 
-        override fun toString(): String = "SsoProvider(id=$id, displayName=$displayName, enabled=$enabled, protocol=$protocol)"
+        override fun toString(): String = "SsoProvider(id=$id, displayName=$displayName, enabled=$enabled)"
     }
 
     private companion object {

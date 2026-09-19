@@ -1,7 +1,10 @@
 package webchat.backend.sso.oidc
 
+import org.springframework.core.ParameterizedTypeReference
+import org.springframework.http.HttpHeaders
 import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.http.converter.FormHttpMessageConverter
+import org.springframework.http.converter.HttpMessageConversionException
 import org.springframework.security.oauth2.client.endpoint.OAuth2AuthorizationCodeGrantRequest
 import org.springframework.security.oauth2.client.endpoint.RestClientAuthorizationCodeTokenResponseClient
 import org.springframework.security.oauth2.client.http.OAuth2ErrorResponseErrorHandler
@@ -11,6 +14,7 @@ import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequest
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
 import org.springframework.security.oauth2.core.OAuth2AuthorizationException
 import org.springframework.security.oauth2.core.OAuth2TokenValidator
+import org.springframework.security.oauth2.core.endpoint.OAuth2AccessTokenResponse
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationExchange
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationResponse
@@ -25,8 +29,10 @@ import org.springframework.security.oauth2.jwt.JwtValidators
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
+import org.springframework.web.client.RestClientException
 import org.springframework.web.client.RestOperations
 import org.springframework.web.client.RestTemplate
+import webchat.backend.config.SsoProperties
 import webchat.backend.sso.SsoMetrics
 import webchat.backend.sso.oidc.OidcClientException.Reason
 import java.security.SecureRandom
@@ -36,18 +42,28 @@ import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Server-side half of an OIDC authorization code flow (T015, research.md §1):
- * PKCE S256 + state + nonce for the browser redirect, the code→token exchange
- * and ID-token verification. [SsoProviderRegistry] supplies the providers.
+ * Server-side half of the SSO authorization code flow (T015, research.md §1)
+ * with the two protocol branches of T057 (US6, research.md §16):
+ * - `oidc` — PKCE S256 + state + nonce for the browser redirect, the code→token
+ *   exchange and ID-token verification against the provider JWKS;
+ * - `oauth2-userinfo` — the same code exchange (PKCE per provider flag,
+ *   research.md §18), then a backchannel Bearer userinfo call whose claims are
+ *   mapped into [OidcIdentityClaims] by the configured
+ *   `subject-claim`/`email-claim`/`email-verified-mode` (research.md §16).
+ * [SsoProviderRegistry] supplies the providers.
  *
  * The [OidcAuthorization.codeVerifier] and [OidcAuthorization.nonce] returned
  * by [startAuthorization] are flow secrets — the caller persists them in the
  * Redis flow context (`sso:flow:<state>`, data-model.md §5); the browser only
  * ever sees the challenge (server-side confidential client, research.md §3).
+ * Both are minted for every protocol so the flow-context shape stays uniform
+ * (data-model.md §5); the `oauth2-userinfo` branch never sends the nonce
+ * (no ID token to bind it to, research.md §17) and a `pkce: false` provider
+ * never uses the verifier (research.md §18).
  *
- * External access tokens are NOT returned or stored — only the ID token is
- * consumed on the spot; the identity claims are all the domain needs (spec
- * Assumptions, "no external token storage"). Failures surface as
+ * External access tokens are NOT returned or stored (FR-016) — the userinfo
+ * call consumes one on the spot; the identity claims are all the domain needs
+ * (spec Assumptions, "no external token storage"). Failures surface as
  * [OidcClientException] with non-secret markers only (SC-004, FR-011).
  */
 data class OidcAuthorization(
@@ -68,8 +84,11 @@ data class OidcIdentityClaims(
  * A provider interaction failed: transport error or non-2xx token response
  * ([Reason.TOKEN_ENDPOINT]), no `id_token` in the response
  * ([Reason.ID_TOKEN_MISSING]), a token that failed signature/`iss`/`aud`/
- * `exp`/`nonce`/`sub` verification ([Reason.ID_TOKEN_INVALID]), or the
- * callback deadline budget already spent ([Reason.DEADLINE_EXCEEDED]).
+ * `exp`/`nonce`/`sub` verification ([Reason.ID_TOKEN_INVALID]) — also the
+ * verdict of an oauth2-userinfo profile without a usable subject claim,
+ * which is the same "identity unusable" class (T057) — a failed userinfo
+ * leg ([Reason.USERINFO_ENDPOINT]), or the callback deadline budget already
+ * spent ([Reason.DEADLINE_EXCEEDED]).
  *
  * The caller maps every reason to the `provider_error` redirect and the
  * `sso_flow_error` audit event (contracts/sso-api.md §3, research.md §10) —
@@ -85,6 +104,7 @@ class OidcClientException(
         TOKEN_ENDPOINT,
         ID_TOKEN_MISSING,
         ID_TOKEN_INVALID,
+        USERINFO_ENDPOINT,
         DEADLINE_EXCEEDED,
     }
 }
@@ -110,6 +130,7 @@ class OidcClientException(
  * discovered metadata in memory (T014).
  */
 @Component
+@Suppress("TooManyFunctions") // T057: one function per flow leg — the two protocol branches share the class
 class OidcClient(
     private val registry: SsoProviderRegistry,
     private val ssoMetrics: SsoMetrics,
@@ -122,46 +143,109 @@ class OidcClient(
 
     /**
      * Builds the provider authorization URL (authorize step, T022) and the
-     * secrets to persist: PKCE S256 challenge goes into the URL, the verifier
-     * and nonce stay server-side (research.md §3). state/nonce are 256-bit
-     * base64url tokens.
+     * secrets to persist. Protocol/PKCE branches (T057, research.md §16/§18):
+     * - `oidc` — PKCE S256 challenge in the URL (unless `pkce: false`) plus a
+     *   `nonce` parameter bound to the later ID-token check;
+     * - `oauth2-userinfo` — no `nonce` (no ID token to bind, research.md §17);
+     *   PKCE applies per the provider flag alone.
+     *
+     * state/nonce/verifier are 256-bit base64url tokens; all three are minted
+     * regardless of branch so the Redis flow context keeps its uniform shape
+     * (data-model.md §5) — the unused legs are simply never sent anywhere.
      */
     fun startAuthorization(providerId: String): OidcAuthorization {
         val registration = registry.registrationOf(providerId)
+        val provider = providerOf(providerId)
         val state = randomToken()
         val nonce = randomToken()
         val builder =
             baseRequestBuilder(registration)
                 .state(state)
-                .additionalParameters(mapOf(IdTokenClaimNames.NONCE to nonce))
-        OAuth2AuthorizationRequestCustomizers.withPkce().accept(builder)
+        if (provider.protocol == SsoProperties.Protocol.OIDC) {
+            builder.additionalParameters(mapOf(IdTokenClaimNames.NONCE to nonce))
+        }
+        if (provider.pkce) {
+            OAuth2AuthorizationRequestCustomizers.withPkce().accept(builder)
+        }
         val request = builder.build()
-        val codeVerifier = request.getAttribute(PkceParameterNames.CODE_VERIFIER) as String
+        // pkce=false: no challenge was sent, so the minted verifier is an
+        // inert placeholder of the uniform flow context — never transmitted
+        val codeVerifier = request.getAttribute(PkceParameterNames.CODE_VERIFIER) as? String ?: randomToken()
         return OidcAuthorization(request.authorizationRequestUri, state, nonce, codeVerifier)
     }
 
     /**
-     * Exchanges the authorization code at the provider token endpoint
-     * (callback step) and returns the raw ID token. [codeVerifier] comes from
-     * the consumed flow context — the rebuilt authorization request carries
-     * it so the standard converter adds `code_verifier` to the token request.
-     * Every other token of the response is discarded (no external token
-     * storage). A 400/5xx answer, a wrong client secret or an unreachable
-     * endpoint — including a secret rotated between authorize and callback
-     * (spec Edge Cases) — surfaces as [OidcClientException].
+     * The callback backchannel (T057): the code→token exchange plus the
+     * protocol-dependent profile leg, both inside the overall callback
+     * deadline (SC-005) —
+     * - `oidc`: [exchangeCode] then [verifyIdToken] (T015 behavior unchanged);
+     * - `oauth2-userinfo`: [exchangeCode] (without `code_verifier` for a
+     *   `pkce: false` provider, research.md §18), then the Bearer userinfo
+     *   call whose claims are mapped by the provider's
+     *   `subject-claim`/`email-claim`/`email-verified-mode` (research.md §16).
+     *
+     * The external access token of the oauth2 branch exists only inside this
+     * call — it backs the single userinfo request and is never returned,
+     * stored or logged (FR-016). A missing or blank subject claim is the
+     * `ID_TOKEN_INVALID`-equivalent verdict: a provider without a unique
+     * subject is treated as misconfigured and the flow is rejected.
      */
-    fun exchangeCodeForIdToken(
+    fun completeAuthorizationCodeFlow(
         providerId: String,
         codeVerifier: String,
         authorizationCode: String,
+        nonce: String,
         deadline: Instant,
-    ): String {
+    ): OidcIdentityClaims {
+        val provider = providerOf(providerId)
+        val tokenResponse =
+            exchangeCode(providerId, provider, codeVerifier, authorizationCode, deadline)
+        return when (provider.protocol) {
+            SsoProperties.Protocol.OIDC -> {
+                val idToken =
+                    tokenResponse.additionalParameters[OidcParameterNames.ID_TOKEN] as? String
+                        ?: throw OidcClientException(
+                            Reason.ID_TOKEN_MISSING,
+                            "provider '$providerId' returned no id_token",
+                        )
+                verifyIdToken(providerId, idToken, nonce, deadline)
+            }
+            SsoProperties.Protocol.OAUTH2_USERINFO ->
+                fetchUserinfoClaims(
+                    providerId,
+                    provider,
+                    tokenResponse.accessToken.tokenValue,
+                    deadline,
+                )
+        }
+    }
+
+    /**
+     * Exchanges the authorization code at the provider token endpoint
+     * (callback step) and returns the full token response. [codeVerifier]
+     * comes from the consumed flow context — for a `pkce: true` provider the
+     * rebuilt authorization request carries it so the standard converter adds
+     * `code_verifier` to the token request; a `pkce: false` provider never
+     * sees the parameter (research.md §18). Every other token of the response
+     * is discarded (no external token storage). A 400/5xx answer, a wrong
+     * client secret or an unreachable endpoint — including a secret rotated
+     * between authorize and callback (spec Edge Cases) — surfaces as
+     * [OidcClientException].
+     */
+    private fun exchangeCode(
+        providerId: String,
+        provider: SsoProviderRegistry.SsoProvider,
+        codeVerifier: String,
+        authorizationCode: String,
+        deadline: Instant,
+    ): OAuth2AccessTokenResponse {
         val remaining = remainingUntil(deadline)
         val registration = registry.registrationOf(providerId)
-        val authorizationRequest =
-            baseRequestBuilder(registration)
-                .attributes(mapOf(PkceParameterNames.CODE_VERIFIER to codeVerifier))
-                .build()
+        val requestBuilder = baseRequestBuilder(registration)
+        if (provider.pkce) {
+            requestBuilder.attributes(mapOf(PkceParameterNames.CODE_VERIFIER to codeVerifier))
+        }
+        val authorizationRequest = requestBuilder.build()
         val authorizationResponse =
             OAuth2AuthorizationResponse
                 .success(authorizationCode)
@@ -208,13 +292,7 @@ class OidcClient(
             } finally {
                 tokenSample.stop()
             }
-        val idToken =
-            tokenResponse.additionalParameters[OidcParameterNames.ID_TOKEN] as? String
-                ?: throw OidcClientException(
-                    Reason.ID_TOKEN_MISSING,
-                    "provider '$providerId' returned no id_token",
-                )
-        return idToken
+        return tokenResponse
     }
 
     /**
@@ -226,7 +304,7 @@ class OidcClient(
      * claims; email is trimmed (data-model.md §1), `email_verified` defaults
      * to `false` when absent or unparseable.
      */
-    fun verifyIdToken(
+    private fun verifyIdToken(
         providerId: String,
         idToken: String,
         expectedNonce: String,
@@ -268,6 +346,78 @@ class OidcClient(
         )
     }
 
+    /**
+     * The profile leg of the `oauth2-userinfo` branch (T057, research.md
+     * §16/§19): `GET <userinfo-uri>` with the exchanged access token as the
+     * Bearer credential — the compensating trust measure of the mode: the
+     * claims come from the very source that issued the token to THIS
+     * client_id over the server-to-server TLS backchannel (research.md §17).
+     *
+     * The access token lives only in this stack frame (FR-016). The call
+     * carries the per-call caps (connect 1 s / read 2 s, SC-005) shrunk to
+     * the remaining callback budget and is timed as
+     * `sso_idp_call_duration{provider, kind=userinfo}` on success AND failure
+     * (research.md §14). A transport error, a non-2xx answer or an unreadable
+     * body is the typed [Reason.USERINFO_ENDPOINT] failure; a profile without
+     * a usable subject claim is the [Reason.ID_TOKEN_INVALID]-equivalent
+     * verdict of [userinfoIdentityClaims]. Messages never contain the access
+     * token or any claim values (SC-004).
+     */
+    private fun fetchUserinfoClaims(
+        providerId: String,
+        provider: SsoProviderRegistry.SsoProvider,
+        accessToken: String,
+        deadline: Instant,
+    ): OidcIdentityClaims {
+        val remaining = remainingUntil(deadline)
+        val registration = registry.registrationOf(providerId)
+        val userinfoUri =
+            registration.providerDetails.userInfoEndpoint.uri
+                ?: throw OidcClientException(
+                    Reason.USERINFO_ENDPOINT,
+                    "provider '$providerId' has no userinfo endpoint configured",
+                )
+        val body = userinfoBodyOf(providerId, userinfoUri, accessToken, remaining)
+        return userinfoIdentityClaims(body, provider.subjectClaim, provider.emailClaim, provider.emailVerifiedMode)
+    }
+
+    /** The timed `GET userinfo` itself — every transport/decoding failure is the one typed answer. */
+    private fun userinfoBodyOf(
+        providerId: String,
+        userinfoUri: String,
+        accessToken: String,
+        remaining: Duration,
+    ): Map<String, Any>? {
+        val userinfoClient =
+            RestClient
+                .builder()
+                .requestFactory(requestFactory(remaining))
+                .build()
+        val userinfoSample = ssoMetrics.startIdpCall(providerId, SsoMetrics.IdpCallKind.USERINFO)
+        return try {
+            userinfoClient
+                .get()
+                .uri(userinfoUri)
+                .header(HttpHeaders.AUTHORIZATION, "$BEARER_PREFIX$accessToken")
+                .retrieve()
+                .body(USERINFO_TYPE)
+        } catch (e: RestClientException) {
+            throw OidcClientException(
+                Reason.USERINFO_ENDPOINT,
+                "userinfo endpoint of provider '$providerId' failed",
+                e,
+            )
+        } catch (e: HttpMessageConversionException) {
+            throw OidcClientException(
+                Reason.USERINFO_ENDPOINT,
+                "userinfo response of provider '$providerId' is unreadable",
+                e,
+            )
+        } finally {
+            userinfoSample.stop()
+        }
+    }
+
     private fun baseRequestBuilder(registration: ClientRegistration): OAuth2AuthorizationRequest.Builder =
         OAuth2AuthorizationRequest
             .authorizationCode()
@@ -275,6 +425,10 @@ class OidcClient(
             .authorizationUri(registration.providerDetails.authorizationUri)
             .redirectUri(registration.redirectUri)
             .scopes(registration.scopes)
+
+    private fun providerOf(providerId: String): SsoProviderRegistry.SsoProvider =
+        registry.find(providerId)
+            ?: throw SsoProviderRegistrationException(providerId, "provider is unknown")
 
     private fun decoderFor(providerId: String): NimbusJwtDecoder =
         decoders.computeIfAbsent(providerId) { id -> buildDecoder(id, registry.registrationOf(id)) }
@@ -334,15 +488,68 @@ class OidcClient(
         return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
 
-    private companion object {
+    internal companion object {
         val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(1)
 
         val READ_TIMEOUT: Duration = Duration.ofSeconds(2)
+
+        val USERINFO_TYPE = object : ParameterizedTypeReference<Map<String, Any>>() {}
 
         val SECURE_RANDOM = SecureRandom()
 
         const val RANDOM_TOKEN_BYTES = 32
 
         const val MIN_TIMEOUT_MILLIS = 1
+
+        const val BEARER_PREFIX = "Bearer "
+
+        /**
+         * Maps the userinfo profile JSON into [OidcIdentityClaims] (T057,
+         * research.md §16): [subjectClaim] (default `sub`, Yandex `psuid`) —
+         * a missing, blank or non-scalar value is the
+         * [Reason.ID_TOKEN_INVALID]-equivalent verdict: a provider without a
+         * unique subject is unusable; [emailClaim] (default `email`, Yandex
+         * `default_email`) — trimmed, empty/absent → `null`; the verified
+         * fact per [SsoProperties.EmailVerifiedMode] — `CLAIM` reads the
+         * boolean `email_verified` (string tolerated, absent/unparseable →
+         * `false`), `PROVIDER_GUARANTEED` is `true` by definition (the
+         * email-owning resolution rows still gate on the email itself,
+         * data-model.md §7).
+         */
+        @Throws(OidcClientException::class)
+        fun userinfoIdentityClaims(
+            body: Map<String, Any?>?,
+            subjectClaim: String,
+            emailClaim: String,
+            emailVerifiedMode: SsoProperties.EmailVerifiedMode,
+        ): OidcIdentityClaims {
+            val subject =
+                when (val raw = body?.get(subjectClaim)) {
+                    is String -> raw.trim()
+                    is Number -> raw.toString()
+                    else -> null
+                }?.takeIf(String::isNotEmpty)
+                    ?: throw OidcClientException(
+                        Reason.ID_TOKEN_INVALID,
+                        "userinfo profile carries no usable subject claim '$subjectClaim'",
+                    )
+            return OidcIdentityClaims(
+                subject = subject,
+                email = (body?.get(emailClaim) as? String)?.trim()?.takeIf(String::isNotEmpty),
+                emailVerified =
+                    when (emailVerifiedMode) {
+                        SsoProperties.EmailVerifiedMode.PROVIDER_GUARANTEED -> true
+                        SsoProperties.EmailVerifiedMode.CLAIM ->
+                            emailVerifiedOf(body?.get(StandardClaimNames.EMAIL_VERIFIED))
+                    },
+            )
+        }
+
+        private fun emailVerifiedOf(raw: Any?): Boolean =
+            when (raw) {
+                is Boolean -> raw
+                is String -> raw.toBooleanStrictOrNull() ?: false
+                else -> false
+            }
     }
 }
