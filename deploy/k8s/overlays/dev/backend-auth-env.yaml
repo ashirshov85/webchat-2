@@ -144,7 +144,12 @@ spec:
                   key: SSO_YANDEX_CLIENT_SECRET
             # SSO VK IdP: oauth2-userinfo with device_id binding — same Secret;
             # disabled on the stand (quickstart S8 «Откат»): flip to "true"
-            # after the VK app passes review / when login checks resume
+            # after the VK app passes review / when login checks resume.
+            # The secretKeyRefs are optional: the sso-credentials Secret does
+            # not carry the VK keys until the app exists — an optional ref
+            # leaves the env unset, which the disabled provider tolerates
+            # (empty ${SSO_VK_*:} defaults, T007); drop `optional` after the
+            # keys are added so a missing key fails loudly again.
             - name: SSO_VK_ENABLED
               value: "false"
             - name: SSO_VK_CLIENT_ID
@@ -152,11 +157,13 @@ spec:
                 secretKeyRef:
                   name: sso-credentials
                   key: SSO_VK_CLIENT_ID
+                  optional: true
             - name: SSO_VK_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: sso-credentials
                   key: SSO_VK_CLIENT_SECRET
+                  optional: true
             # OIDC redirect_uri for every provider (sso.callback-url) — the
             # browser-facing stand URL, registered in Google Cloud Console
             - name: SSO_CALLBACK_URL
