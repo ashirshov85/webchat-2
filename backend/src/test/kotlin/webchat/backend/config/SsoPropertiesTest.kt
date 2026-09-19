@@ -34,10 +34,10 @@ class SsoPropertiesTest {
                 assertThat(properties.callbackUrl)
                     .isEqualTo("http://localhost:8080/api/v1/auth/sso/callback")
                 // T042: the predefined providers are opt-in — the local dex IdP
-                // and the dev-stand Google/Yandex IdPs — all disabled without
+                // and the dev-stand Google/Yandex/VK IdPs — all disabled without
                 // their SSO_*_ENABLED env, empty-secret defaults allowed by
                 // the fail-fast validation (T007)
-                assertThat(properties.providers.keys).containsExactly("dex", "google", "yandex")
+                assertThat(properties.providers.keys).containsExactly("dex", "google", "yandex", "vk")
                 val dex = properties.providers.getValue("dex")
                 assertThat(dex.enabled).isFalse()
                 assertThat(dex.clientId).isEqualTo("webchat")
@@ -319,6 +319,79 @@ class SsoPropertiesTest {
                 assertThat(provider.emailVerifiedMode)
                     .isEqualTo(SsoProperties.EmailVerifiedMode.CLAIM)
                 assertThat(provider.pkce).isTrue()
+                // VK-atribute defaults: Basic client auth, standard top-level
+                // email_verified claim, no device_id forwarding
+                assertThat(provider.clientAuth).isEqualTo(SsoProperties.ClientAuth.BASIC)
+                assertThat(provider.emailVerifiedClaim).isNull()
+                assertThat(provider.tokenDeviceId).isFalse()
+            }
+    }
+
+    @Test
+    fun bindsVkProviderFromApplicationYml() {
+        // VK ID: oauth2-userinfo with the VK shape — nested dot-path claims
+        // (user.user_id/user.email/user.email_verified), claim-mode verified
+        // fact, client credentials in the token POST body, authorize-issued
+        // device_id forwarded to the exchange, PKCE kept on (VK supports
+        // RFC 7636); opt-in via SSO_VK_ENABLED + credentials env
+        ApplicationContextRunner()
+            .withInitializer(ConfigDataApplicationContextInitializer())
+            .withUserConfiguration(SsoPropertiesConfiguration::class.java)
+            .run { context ->
+                assertThat(context).hasNotFailed()
+                val vk = context.getBean(SsoProperties::class.java).providers.getValue("vk")
+
+                assertThat(vk.enabled).isFalse()
+                assertThat(vk.clientId).isEmpty()
+                assertThat(vk.clientSecret).isEmpty()
+                assertThat(vk.trustedForEmailLinking).isTrue()
+                assertThat(vk.issuerUri).isNull()
+                assertThat(vk.protocol)
+                    .isEqualTo(SsoProperties.Protocol.OAUTH2_USERINFO)
+                assertThat(vk.subjectClaim).isEqualTo("user.user_id")
+                assertThat(vk.emailClaim).isEqualTo("user.email")
+                assertThat(vk.emailVerifiedMode)
+                    .isEqualTo(SsoProperties.EmailVerifiedMode.CLAIM)
+                assertThat(vk.emailVerifiedClaim).isEqualTo("user.email_verified")
+                assertThat(vk.pkce).isTrue()
+                assertThat(vk.clientAuth).isEqualTo(SsoProperties.ClientAuth.POST)
+                assertThat(vk.tokenDeviceId).isTrue()
+                assertThat(vk.authorizationUri).isEqualTo("https://id.vk.com/authorize")
+                assertThat(vk.tokenUri).isEqualTo("https://id.vk.com/oauth/token")
+                assertThat(vk.userinfoUri).isEqualTo("https://id.vk.com/oauth/user_info")
+                assertThat(vk.scopes).containsExactly("email")
+            }
+    }
+
+    @Test
+    fun bindsVkStyleProviderAttributes() {
+        contextRunner
+            .withPropertyValues(
+                "sso.callback-url=http://localhost:8080/api/v1/auth/sso/callback",
+                "sso.providers.vk.display-name=VK ID",
+                "sso.providers.vk.protocol=oauth2-userinfo",
+                "sso.providers.vk.client-id=vk-client",
+                "sso.providers.vk.client-secret=vk-secret",
+                "sso.providers.vk.authorization-uri=https://id.vk.com/authorize",
+                "sso.providers.vk.token-uri=https://id.vk.com/oauth/token",
+                "sso.providers.vk.userinfo-uri=https://id.vk.com/oauth/user_info",
+                "sso.providers.vk.subject-claim=user.user_id",
+                "sso.providers.vk.email-claim=user.email",
+                "sso.providers.vk.email-verified-mode=claim",
+                "sso.providers.vk.email-verified-claim=user.email_verified",
+                "sso.providers.vk.client-auth=post",
+                "sso.providers.vk.token-device-id=true",
+            ).run { context ->
+                assertThat(context).hasNotFailed()
+                val provider = context.getBean(SsoProperties::class.java).providers.getValue("vk")
+
+                assertThat(provider.subjectClaim).isEqualTo("user.user_id")
+                assertThat(provider.emailClaim).isEqualTo("user.email")
+                assertThat(provider.emailVerifiedClaim).isEqualTo("user.email_verified")
+                assertThat(provider.emailVerifiedMode)
+                    .isEqualTo(SsoProperties.EmailVerifiedMode.CLAIM)
+                assertThat(provider.clientAuth).isEqualTo(SsoProperties.ClientAuth.POST)
+                assertThat(provider.tokenDeviceId).isTrue()
             }
     }
 

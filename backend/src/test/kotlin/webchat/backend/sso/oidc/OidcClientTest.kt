@@ -124,6 +124,67 @@ class OidcClientTest {
         }
     }
 
+    @Test
+    fun mapsNestedVkStyleClaimsInClaimMode() {
+        // the VK ID profile shape: everything nested under `user`, the
+        // numeric `user_id` subject, the boolean verified fact inside the nest
+        val claims =
+            OidcClient.userinfoIdentityClaims(
+                body =
+                    mapOf(
+                        "user" to
+                            mapOf(
+                                "user_id" to 4242424,
+                                "email" to "user@vk.example",
+                                "email_verified" to true,
+                            ),
+                    ),
+                subjectClaim = "user.user_id",
+                emailClaim = "user.email",
+                emailVerifiedMode = SsoProperties.EmailVerifiedMode.CLAIM,
+                emailVerifiedClaim = "user.email_verified",
+            )
+
+        assertThat(claims.subject).isEqualTo("4242424")
+        assertThat(claims.email).isEqualTo("user@vk.example")
+        assertThat(claims.emailVerified).isTrue()
+    }
+
+    @Test
+    fun missingNestedSubjectClaimIsTheIdTokenInvalidVerdict() {
+        listOf<Map<String, Any?>>(
+            // the nest itself is absent
+            mapOf("email" to "user@vk.example"),
+            // the nest exists but carries no user_id leg
+            mapOf("user" to mapOf("email" to "user@vk.example")),
+        ).forEach { body ->
+            assertThatThrownBy {
+                OidcClient.userinfoIdentityClaims(
+                    body = body,
+                    subjectClaim = "user.user_id",
+                    emailClaim = "user.email",
+                    emailVerifiedMode = SsoProperties.EmailVerifiedMode.CLAIM,
+                )
+            }.isInstanceOfSatisfying(OidcClientException::class.java) { e ->
+                assertThat(e.reason).isEqualTo(OidcClientException.Reason.ID_TOKEN_INVALID)
+            }
+        }
+    }
+
+    @Test
+    fun nestedEmailVerifiedFalseStaysFalse() {
+        val claims =
+            OidcClient.userinfoIdentityClaims(
+                body = mapOf("user" to mapOf("user_id" to 1, "email_verified" to false)),
+                subjectClaim = "user.user_id",
+                emailClaim = "user.email",
+                emailVerifiedMode = SsoProperties.EmailVerifiedMode.CLAIM,
+                emailVerifiedClaim = "user.email_verified",
+            )
+
+        assertThat(claims.emailVerified).isFalse()
+    }
+
     // authorize-URL shape per protocol/pkce flags (research.md §16–§18)
 
     @Test
@@ -269,6 +330,36 @@ class OidcClientTest {
         ).isNotNull
     }
 
+    @Test
+    fun vkStyleFlowSendsDeviceIdAndPostCredentialsToTheTokenEndpoint() {
+        val server = startLocalIdp()
+        userinfoScenario.set(UserinfoScenario.Vk)
+        val client = clientOf(vkProperties(server.address.port))
+
+        val claims =
+            client.completeAuthorizationCodeFlow(
+                providerId = PROVIDER_ID,
+                codeVerifier = "flow-context-verifier-placeholder",
+                authorizationCode = "issued-code",
+                nonce = "flow-context-nonce-placeholder",
+                deadline = Instant.now().plusSeconds(5),
+                deviceId = "vk-device-42",
+            )
+
+        // the nested profile mapped through the dot-path claims
+        assertThat(claims.subject).isEqualTo("4242424")
+        assertThat(claims.email).isEqualTo("user@vk.example")
+        assertThat(claims.emailVerified).isTrue()
+        val tokenRequest = recordedRequests.single { it.path == "/token" }
+        // VK contract: credentials in the body, not the Basic header…
+        assertThat(tokenRequest.authorization).isNull()
+        assertThat(tokenRequest.body)
+            .contains("client_id=webchat-it")
+            .contains("client_secret=mock-secret")
+        // …and the authorize-issued device_id returns at the exchange
+        assertThat(tokenRequest.body).contains("device_id=vk-device-42")
+    }
+
     private fun clientOf(properties: SsoProperties): OidcClient =
         OidcClient(SsoProviderRegistry(properties), SsoMetrics(SimpleMeterRegistry()))
 
@@ -308,6 +399,30 @@ class OidcClientTest {
                 ),
         )
 
+    /** The VK shape: dot-path claims, client-auth post, device_id forwarding, pkce off. */
+    private fun vkProperties(serverPort: Int): SsoProperties {
+        val base = "http://127.0.0.1:$serverPort"
+        return propertiesOf(
+            provider =
+                SsoProperties.Provider(
+                    displayName = "VK ID",
+                    protocol = SsoProperties.Protocol.OAUTH2_USERINFO,
+                    pkce = false,
+                    subjectClaim = "user.user_id",
+                    emailClaim = "user.email",
+                    emailVerifiedMode = SsoProperties.EmailVerifiedMode.CLAIM,
+                    emailVerifiedClaim = "user.email_verified",
+                    clientAuth = SsoProperties.ClientAuth.POST,
+                    tokenDeviceId = true,
+                    clientId = "webchat-it",
+                    clientSecret = "mock-secret",
+                    authorizationUri = "$base/authorize",
+                    tokenUri = "$base/token",
+                    userinfoUri = "$base/userinfo",
+                ),
+        )
+    }
+
     private fun propertiesOf(provider: SsoProperties.Provider): SsoProperties =
         SsoProperties(
             callbackUrl = CALLBACK_URL,
@@ -331,6 +446,7 @@ class OidcClientTest {
                     recordedRequests += RecordedRequest("/userinfo", "", authorization)
                     when (userinfoScenario.get()) {
                         UserinfoScenario.Ok -> respond(exchange, USERINFO_RESPONSE_JSON)
+                        UserinfoScenario.Vk -> respond(exchange, VK_USERINFO_RESPONSE_JSON)
                         UserinfoScenario.Not2xx -> respond(exchange, ERROR_RESPONSE_JSON, 500)
                         UserinfoScenario.NoSubjectClaim -> respond(exchange, NO_SUBJECT_RESPONSE_JSON)
                     }
@@ -368,6 +484,7 @@ class OidcClientTest {
 
     private enum class UserinfoScenario {
         Ok,
+        Vk,
         Not2xx,
         NoSubjectClaim,
     }
@@ -385,6 +502,10 @@ class OidcClientTest {
 
         const val USERINFO_RESPONSE_JSON =
             """{"psuid":"ya-subject-1","default_email":"user@ya.example"}"""
+
+        /** The VK ID profile shape: nested under `user`, numeric subject. */
+        const val VK_USERINFO_RESPONSE_JSON =
+            """{"user":{"user_id":4242424,"email":"user@vk.example","email_verified":true}}"""
 
         const val NO_SUBJECT_RESPONSE_JSON = """{"default_email":"user@ya.example"}"""
 

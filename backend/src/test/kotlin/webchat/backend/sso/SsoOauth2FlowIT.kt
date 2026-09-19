@@ -61,7 +61,10 @@ import java.util.concurrent.atomic.AtomicInteger
  *   parallel-protocol isolation leg (an oauth2 outage/degradation must never
  *   touch the OIDC provider, and vice versa);
  * - `bad-secret` — an oauth2 provider whose client secret the IdP rejects
- *   (`invalid_client`), the secret-rotation leg of US6.
+ *   (`invalid_client`), the secret-rotation leg of US6;
+ * - `vkish` — the VK shape: nested dot-path claims (`user.user_id`),
+ *   `client-auth: post`, `token-device-id: true` (the authorize-issued
+ *   `device_id` must return at the exchange), claim-mode verified fact.
  *
  * Covered acceptance (research.md §21, tasks.md T058):
  * - the full oauth2 login — authorize → IdP redirect → callback →
@@ -115,7 +118,13 @@ class SsoOauth2FlowIT(
 
         // the contract does not change with the protocol (FR-008): same
         // shape, same configuration order — oauth2 and OIDC side by side
-        assertThat(ids).containsExactly(YAX_PROVIDER_ID, CLAIM_PROVIDER_ID, OIDC_PROVIDER_ID, BAD_SECRET_PROVIDER_ID)
+        assertThat(ids).containsExactly(
+            YAX_PROVIDER_ID,
+            CLAIM_PROVIDER_ID,
+            OIDC_PROVIDER_ID,
+            BAD_SECRET_PROVIDER_ID,
+            VK_PROVIDER_ID,
+        )
         providers.forEach { provider ->
             assertThat(provider.has("clientId")).isFalse()
             assertThat(provider.has("clientSecret")).isFalse()
@@ -246,6 +255,44 @@ class SsoOauth2FlowIT(
         assertThat(identityRow(CLAIM_PROVIDER_ID, SUBJECT_QUINN)!!["provider_email_verified"]).isEqualTo(true)
     }
 
+    @Test
+    fun `vk style nested profile with device binding lands in the unified session`() {
+        val usersBefore = usersCount()
+        // the VK shape: profile nested under `user` (dot-path claims), the
+        // boolean email_verified inside the nest, and the authorize-issued
+        // device_id required back at the token exchange (client-auth: post)
+        mockIdP.issueDeviceId = true
+        mockIdP.setUserinfoClaims(vkProfile(SUBJECT_VK, EMAIL_VK, emailVerified = true))
+
+        val sso = performSsoLogin(VK_PROVIDER_ID)
+
+        // the forwarded device_id satisfied the token exchange — without it
+        // the IdP answers invalid_grant and the flow rejects (the next test)
+        assertThat(sso.body["user"]["email"].asText()).isEqualTo(EMAIL_VK)
+        assertThat(usersCount()).isEqualTo(usersBefore + 1)
+        val identity = identityRow(VK_PROVIDER_ID, SUBJECT_VK)!!
+        assertThat(identity["provider_email"]).isEqualTo(EMAIL_VK)
+        assertThat(identity["provider_email_verified"]).isEqualTo(true)
+        val session = sessionRow(sessionIdOf(sso.refreshToken)!!)!!
+        assertThat(session["auth_method"]).isEqualTo("sso")
+    }
+
+    @Test
+    fun `vk flow without the device binding is rejected as provider error`() {
+        val usersBefore = usersCount()
+        mockIdP.issueDeviceId = true
+        mockIdP.setUserinfoClaims(vkProfile(SUBJECT_VK, EMAIL_VK, emailVerified = true))
+
+        // a browser leg that drops the IdP-issued device_id: the token
+        // endpoint answers invalid_grant → the single provider_error redirect
+        val callbackResponse = callback(driveToCallbackUrl(VK_PROVIDER_ID, includeDeviceId = false))
+        assertThat(callbackResponse.statusCode).isEqualTo(HttpStatus.FOUND)
+        val spaParameters = queryParametersOf(callbackResponse.headers.location.toString())
+        assertThat(spaParameters.getValue(SSO_ERROR_PARAMETER)).isEqualTo(PROVIDER_ERROR_CODE)
+        assertThat(usersCount()).isEqualTo(usersBefore)
+        assertThat(handshakeKeyCount()).isZero()
+    }
+
     /**
      * US6 failure matrix (research.md §19/§21): every degraded oauth2 leg —
      * userinfo slower than the read cap, userinfo non-2xx, a profile without
@@ -352,7 +399,10 @@ class SsoOauth2FlowIT(
     // --- SSO flow driving ---------------------------------------------------
 
     /** Runs authorize → IdP redirect and returns the ready-made backend callback URL. */
-    private fun driveToCallbackUrl(providerId: String): String {
+    private fun driveToCallbackUrl(
+        providerId: String,
+        includeDeviceId: Boolean = true,
+    ): String {
         val authorizeResponse = authorize(providerId)
         assertThat(authorizeResponse.statusCode).isEqualTo(HttpStatus.OK)
         val authorizationUrl = objectMapper.readTree(authorizeResponse.body)["authorizationUrl"].asText()
@@ -362,12 +412,15 @@ class SsoOauth2FlowIT(
         val idpParameters = queryParametersOf(idpRedirect.headers.location.toString())
         assertThat(idpParameters).doesNotContainKey(ERROR_PARAMETER)
 
-        return UriComponentsBuilder
-            .fromHttpUrl(rootUri() + CALLBACK_PATH)
-            .queryParam(STATE, idpParameters.getValue(STATE))
-            .queryParam(CODE, idpParameters.getValue(CODE))
-            .build()
-            .toUriString()
+        val builder =
+            UriComponentsBuilder
+                .fromHttpUrl(rootUri() + CALLBACK_PATH)
+                .queryParam(STATE, idpParameters.getValue(STATE))
+                .queryParam(CODE, idpParameters.getValue(CODE))
+        // a VK-style IdP appends device_id to its redirect — the honest
+        // browser forwards it to the callback leg
+        if (includeDeviceId) idpParameters[DEVICE_ID]?.let { builder.queryParam(DEVICE_ID, it) }
+        return builder.build().toUriString()
     }
 
     /** The browser callback leg over the real port — never follows the SPA 302. */
@@ -748,6 +801,21 @@ class SsoOauth2FlowIT(
             emailVerified = emailVerified,
         )
 
+    /** The VK-shaped profile: everything nested under `user`, VK field names. */
+    private fun vkProfile(
+        subject: String,
+        email: String,
+        emailVerified: Boolean,
+    ): MockIdP.UserinfoClaims =
+        MockIdP.UserinfoClaims(
+            subjectClaim = VK_SUBJECT_CLAIM,
+            emailClaim = VK_EMAIL_CLAIM,
+            subject = subject,
+            email = email,
+            emailVerified = emailVerified,
+            nestUnder = VK_PROFILE_NEST,
+        )
+
     private fun oidcClaims(
         subject: String,
         email: String,
@@ -789,6 +857,7 @@ class SsoOauth2FlowIT(
                 registerClient(YAX_CLIENT_ID, YAX_CLIENT_SECRET)
                 registerClient(CLAIM_CLIENT_ID, CLAIM_CLIENT_SECRET)
                 registerClient(OIDC_CLIENT_ID, OIDC_CLIENT_SECRET)
+                registerClient(VK_CLIENT_ID, VK_CLIENT_SECRET)
             }
 
         /**
@@ -884,6 +953,23 @@ class SsoOauth2FlowIT(
             registry.add("sso.providers.$BAD_SECRET_PROVIDER_ID.client-id") { YAX_CLIENT_ID }
             registry.add("sso.providers.$BAD_SECRET_PROVIDER_ID.client-secret") { BAD_CLIENT_SECRET }
             registerOauth2Endpoints(registry, BAD_SECRET_PROVIDER_ID)
+
+            // the VK-shaped provider: nested dot-path claims, claim-mode
+            // verified fact, client credentials in the token POST body,
+            // authorize-issued device_id forwarded to the exchange; PKCE
+            // stays on (VK supports RFC 7636, unlike Yandex)
+            registry.add("sso.providers.$VK_PROVIDER_ID.display-name") { "VK-ish" }
+            registry.add("sso.providers.$VK_PROVIDER_ID.trusted-for-email-linking") { "true" }
+            registry.add("sso.providers.$VK_PROVIDER_ID.protocol") { "oauth2-userinfo" }
+            registry.add("sso.providers.$VK_PROVIDER_ID.subject-claim") { "$VK_PROFILE_NEST.$VK_SUBJECT_CLAIM" }
+            registry.add("sso.providers.$VK_PROVIDER_ID.email-claim") { "$VK_PROFILE_NEST.$VK_EMAIL_CLAIM" }
+            registry.add("sso.providers.$VK_PROVIDER_ID.email-verified-mode") { "claim" }
+            registry.add("sso.providers.$VK_PROVIDER_ID.email-verified-claim") { "$VK_PROFILE_NEST.email_verified" }
+            registry.add("sso.providers.$VK_PROVIDER_ID.client-auth") { "post" }
+            registry.add("sso.providers.$VK_PROVIDER_ID.token-device-id") { "true" }
+            registry.add("sso.providers.$VK_PROVIDER_ID.client-id") { VK_CLIENT_ID }
+            registry.add("sso.providers.$VK_PROVIDER_ID.client-secret") { VK_CLIENT_SECRET }
+            registerOauth2Endpoints(registry, VK_PROVIDER_ID)
         }
 
         /** Explicit oauth2-mode MockIdP endpoints of one provider (research.md §21). */
@@ -912,6 +998,8 @@ class SsoOauth2FlowIT(
 
         private const val BAD_SECRET_PROVIDER_ID = "bad-secret"
 
+        private const val VK_PROVIDER_ID = "vkish"
+
         private const val YAX_CLIENT_ID = "webchat-ya"
 
         private const val YAX_CLIENT_SECRET = "ya-oauth2-secret"
@@ -925,6 +1013,19 @@ class SsoOauth2FlowIT(
         private const val OIDC_CLIENT_SECRET = "oidc-mate-secret"
 
         private const val BAD_CLIENT_SECRET = "rotated-away-oauth2-secret"
+
+        private const val VK_CLIENT_ID = "webchat-vk"
+
+        private const val VK_CLIENT_SECRET = "vk-oauth2-secret"
+
+        /** The VK-shaped userinfo field names and profile nest. */
+        private const val VK_SUBJECT_CLAIM = "user_id"
+
+        private const val VK_EMAIL_CLAIM = "email"
+
+        private const val VK_PROFILE_NEST = "user"
+
+        private const val DEVICE_ID = "device_id"
 
         /** The Yandex-shaped userinfo claim names (research.md §20). */
         private const val YAX_SUBJECT_CLAIM = "psuid"
@@ -979,6 +1080,11 @@ class SsoOauth2FlowIT(
         private const val SUBJECT_SIMON = "subject-simon-oidc"
 
         private const val EMAIL_SIMON = "simon.oidc@example.com"
+
+        /** The VK subject: the stable numeric `user_id` of id.vk.com. */
+        private const val SUBJECT_VK = "4242424"
+
+        private const val EMAIL_VK = "vera.vk@example.com"
 
         private const val USERNAME_TESS = "tesla"
 

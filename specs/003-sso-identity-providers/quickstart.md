@@ -178,6 +178,48 @@ dev-only dummy-секрет staticClient dex в `deploy/local/dex/`, см. Assum
 **Приёмка**: раздел прошёл ручную проверку на dev-стенде после деплоя;
 результат фиксируется в PR.
 
+### S8. VK ID на dev-стенде — oauth2-userinfo с device_id (P1; дополнение 2026-09-19)
+
+Третий реальный провайдер: VK ID (`id.vk.com`) — тот же `oauth2-userinfo`
+режим, что Яндекс, но с особенностями VK: профиль вложен в объект `user`
+(dot-path клеймы `user.user_id` / `user.email` / `user.email_verified`),
+креды клиента уходят в POST-body token-запроса (`client-auth: post`), а
+authorize-выдаанный `device_id` возвращается в обмен кода
+(`token-device-id: true` — callback пробрасывает параметр автоматически).
+
+**Предусловия**:
+
+1. Приложение на [dev.vk.com](https://dev.vk.com) (тип «Веб-сайт» /
+   «Веб»): Redirect URI = `SSO_CALLBACK_URL`
+   (`https://dev.webchat.lkshr.ru/api/v1/auth/sso/callback`); «Доступ к
+   e-mail» включён — без него `GET id.vk.com/oauth/user_info` не вернёт
+   `user.email`, вход завершится без адреса (no JIT / no auto-link).
+   ClientID («ID приложения»)/ClientSecret («Защищённый ключ») — на
+   следующем шаге.
+2. Secret `sso-credentials` вне репозитория (SC-004), ключи VK:
+   `SSO_VK_CLIENT_ID` / `SSO_VK_CLIENT_SECRET` (команда — в шапке
+   `deploy/k8s/overlays/dev/backend-auth-env.yaml`); overlay выставляет
+   `SSO_VK_ENABLED=true`.
+3. Конфигурация провайдера — `application.yml` `sso.providers.vk`: явные
+   endpoints `id.vk.com/authorize` + `id.vk.com/oauth/token` +
+   `id.vk.com/oauth/user_info`, `scopes: [email]`, PKCE S256 включён
+   (VK поддерживает RFC 7636 — в отличие от Яндекса).
+
+**Ручная проверка**: как S7 (вход → единая сессия, JIT по
+`user.email` при `user.email_verified=true`, автосвязывание, привязки),
+кнопка «VK ID».
+
+**Диагностика 502** (`sso_error=provider_error`): как S7, но прямая
+достижимость `https://id.vk.com/oauth/token` и
+`https://id.vk.com/oauth/user_info`; `device_id`-лег проверяется
+автотестами (`SsoOauth2FlowIT`), на стенде его нарушения не бывает.
+
+**Откат**: `SSO_VK_ENABLED=false` → «VK ID» исчезает с экрана входа,
+привязки `vk` не затронуты.
+
+**Приёмка**: раздел прошёл ручную проверку на dev-стенде после деплоя;
+результат фиксируется в PR.
+
 ## Автоматизированные проверки
 
 ```bash

@@ -51,6 +51,17 @@ data class SsoProperties(
     }
 
     /**
+     * Client authentication of the token endpoint (RFC 6749 §2.3.1):
+     * `basic` — HTTP Basic `Authorization` header (default); `post` —
+     * `client_id`/`client_secret` in the request body (VK-style providers
+     * that reject the Basic header).
+     */
+    enum class ClientAuth {
+        BASIC,
+        POST,
+    }
+
+    /**
      * Source of the "email verified" fact (research.md §16): `claim` — read
      * the boolean `email_verified` claim; `provider-guaranteed` — the
      * provider guarantees the configured email claim is verified by
@@ -78,6 +89,12 @@ data class SsoProperties(
         val userinfoUri: String? = null,
         val jwksUri: String? = null,
         val scopes: List<String> = listOf("openid", "email"),
+        // VK ID (RFC 6749 §2.3.1): token-endpoint client authentication shape
+        val clientAuth: ClientAuth = ClientAuth.BASIC,
+        // claim name (dot-path allowed) of the boolean verified fact; null → standard `email_verified`
+        val emailVerifiedClaim: String? = null,
+        // VK ID: forward the callback `device_id` parameter into the token exchange body
+        val tokenDeviceId: Boolean = false,
     ) {
         fun validate(id: String) {
             require(providerIdRegex.matches(id)) {

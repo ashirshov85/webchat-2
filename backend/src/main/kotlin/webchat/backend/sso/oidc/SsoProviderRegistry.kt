@@ -5,6 +5,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.security.oauth2.client.registration.ClientRegistration
 import org.springframework.security.oauth2.client.registration.ClientRegistrations
 import org.springframework.security.oauth2.core.AuthorizationGrantType
+import org.springframework.security.oauth2.core.ClientAuthenticationMethod
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
@@ -214,6 +215,11 @@ class SsoProviderRegistry(
                 checkNotNull(provider.clientSecret) {
                     "sso.providers[$id]: enabled provider must have client-secret (T007)"
                 },
+            ).clientAuthenticationMethod(
+                when (provider.clientAuth) {
+                    SsoProperties.ClientAuth.POST -> ClientAuthenticationMethod.CLIENT_SECRET_POST
+                    SsoProperties.ClientAuth.BASIC -> ClientAuthenticationMethod.CLIENT_SECRET_BASIC
+                },
             ).authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
             .redirectUri(callbackUrl)
             .scope(provider.scopes)
@@ -245,7 +251,12 @@ class SsoProviderRegistry(
 
         val emailVerifiedMode: SsoProperties.EmailVerifiedMode = provider.emailVerifiedMode
 
+        val emailVerifiedClaim: String? = provider.emailVerifiedClaim
+
         val pkce: Boolean = provider.pkce
+
+        /** VK ID: forward the callback `device_id` into the token exchange (SsoController → OidcClient). */
+        val tokenDeviceId: Boolean = provider.tokenDeviceId
 
         override fun toString(): String = "SsoProvider(id=$id, displayName=$displayName, enabled=$enabled)"
     }

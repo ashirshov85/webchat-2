@@ -158,6 +158,7 @@ class SsoController(
         @RequestParam(required = false) state: String?,
         @RequestParam(required = false) code: String?,
         @RequestParam(required = false) error: String?,
+        @RequestParam(name = "device_id", required = false) deviceId: String?,
         servletRequest: HttpServletRequest,
     ): ResponseEntity<Unit> {
         val clientIp = clientIpResolver.resolve(servletRequest)
@@ -194,7 +195,7 @@ class SsoController(
         // or an unbuildable registration (discovery down, T041) — is the single
         // provider_error outcome (research.md §5)
         val claims =
-            exchangeAndVerify(flow, code)
+            exchangeAndVerify(flow, code, deviceId)
                 ?: return flowRejected(ERROR_PROVIDER_ERROR, flow.providerId, clientIp, userAgent, spaPath)
 
         return if (flow.purpose == SsoFlowPurpose.LINK) {
@@ -217,10 +218,18 @@ class SsoController(
     private fun exchangeAndVerify(
         flow: SsoFlowContext,
         code: String,
+        deviceId: String?,
     ): OidcIdentityClaims? {
         val deadline = Instant.now().plus(CALLBACK_DEADLINE)
         return try {
-            oidcClient.completeAuthorizationCodeFlow(flow.providerId, flow.codeVerifier, code, flow.nonce, deadline)
+            oidcClient.completeAuthorizationCodeFlow(
+                flow.providerId,
+                flow.codeVerifier,
+                code,
+                flow.nonce,
+                deadline,
+                deviceId,
+            )
         } catch (_: OidcClientException) {
             null
         } catch (_: SsoProviderRegistrationException) {

@@ -190,16 +190,18 @@ class OidcClient(
      * `ID_TOKEN_INVALID`-equivalent verdict: a provider without a unique
      * subject is treated as misconfigured and the flow is rejected.
      */
+    @Suppress("LongParameterList") // one flat parameter per flow leg (data-model.md §5) + the VK device binding
     fun completeAuthorizationCodeFlow(
         providerId: String,
         codeVerifier: String,
         authorizationCode: String,
         nonce: String,
         deadline: Instant,
+        deviceId: String? = null,
     ): OidcIdentityClaims {
         val provider = providerOf(providerId)
         val tokenResponse =
-            exchangeCode(providerId, provider, codeVerifier, authorizationCode, deadline)
+            exchangeCode(provider, codeVerifier, authorizationCode, deadline, deviceId)
         return when (provider.protocol) {
             SsoProperties.Protocol.OIDC -> {
                 val idToken =
@@ -233,12 +235,13 @@ class OidcClient(
      * [OidcClientException].
      */
     private fun exchangeCode(
-        providerId: String,
         provider: SsoProviderRegistry.SsoProvider,
         codeVerifier: String,
         authorizationCode: String,
         deadline: Instant,
+        deviceId: String? = null,
     ): OAuth2AccessTokenResponse {
+        val providerId = provider.id
         val remaining = remainingUntil(deadline)
         val registration = registry.registrationOf(providerId)
         val requestBuilder = baseRequestBuilder(registration)
@@ -275,6 +278,14 @@ class OidcClient(
                         }.defaultStatusHandler(OAuth2ErrorResponseErrorHandler())
                         .build(),
                 )
+                // VK ID contract: the authorize leg issued `device_id` — its
+                // token endpoint requires the very value back in the body.
+                // Gated by the provider flag, so no other provider ever
+                // sends the parameter; the client instance is per-call, so
+                // the closure carries this flow's value only.
+                if (provider.tokenDeviceId && !deviceId.isNullOrBlank()) {
+                    setParametersCustomizer { parameters -> parameters.add(DEVICE_ID_PARAMETER, deviceId) }
+                }
             }
         // research.md §14: the token leg is timed as
         // `sso_idp_call_duration{provider, kind=token}` on success AND
@@ -378,7 +389,13 @@ class OidcClient(
                     "provider '$providerId' has no userinfo endpoint configured",
                 )
         val body = userinfoBodyOf(providerId, userinfoUri, accessToken, remaining)
-        return userinfoIdentityClaims(body, provider.subjectClaim, provider.emailClaim, provider.emailVerifiedMode)
+        return userinfoIdentityClaims(
+            body,
+            provider.subjectClaim,
+            provider.emailClaim,
+            provider.emailVerifiedMode,
+            provider.emailVerifiedClaim,
+        )
     }
 
     /** The timed `GET userinfo` itself — every transport/decoding failure is the one typed answer. */
@@ -503,6 +520,11 @@ class OidcClient(
 
         const val BEARER_PREFIX = "Bearer "
 
+        /** VK ID token-exchange body parameter carrying the authorize-issued device binding. */
+        const val DEVICE_ID_PARAMETER = "device_id"
+
+        const val DOT = "."
+
         /**
          * Maps the userinfo profile JSON into [OidcIdentityClaims] (T057,
          * research.md §16): [subjectClaim] (default `sub`, Yandex `psuid`) —
@@ -522,9 +544,10 @@ class OidcClient(
             subjectClaim: String,
             emailClaim: String,
             emailVerifiedMode: SsoProperties.EmailVerifiedMode,
+            emailVerifiedClaim: String? = null,
         ): OidcIdentityClaims {
             val subject =
-                when (val raw = body?.get(subjectClaim)) {
+                when (val raw = claimAt(body, subjectClaim)) {
                     is String -> raw.trim()
                     is Number -> raw.toString()
                     else -> null
@@ -535,14 +558,32 @@ class OidcClient(
                     )
             return OidcIdentityClaims(
                 subject = subject,
-                email = (body?.get(emailClaim) as? String)?.trim()?.takeIf(String::isNotEmpty),
+                email = (claimAt(body, emailClaim) as? String)?.trim()?.takeIf(String::isNotEmpty),
                 emailVerified =
                     when (emailVerifiedMode) {
                         SsoProperties.EmailVerifiedMode.PROVIDER_GUARANTEED -> true
                         SsoProperties.EmailVerifiedMode.CLAIM ->
-                            emailVerifiedOf(body?.get(StandardClaimNames.EMAIL_VERIFIED))
+                            emailVerifiedOf(
+                                claimAt(body, emailVerifiedClaim ?: StandardClaimNames.EMAIL_VERIFIED),
+                            )
                     },
             )
+        }
+
+        /**
+         * Resolves a claim path through nested JSON objects: a plain name
+         * (`psuid`) reads the top level, a dot-path (`user.user_id` — the VK
+         * ID profile shape) walks the nesting; a missing leg answers `null`.
+         */
+        private fun claimAt(
+            body: Map<String, Any?>?,
+            path: String,
+        ): Any? {
+            var current: Any? = body
+            for (segment in path.split(DOT)) {
+                current = (current as? Map<*, *>)?.get(segment) ?: return null
+            }
+            return current
         }
 
         private fun emailVerifiedOf(raw: Any?): Boolean =
