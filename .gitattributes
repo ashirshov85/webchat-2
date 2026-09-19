@@ -1,0 +1,15 @@
+# Line-ending policy: every text file is stored as LF in the repo AND
+# checked out as LF on every platform (eol=lf) — Windows-side editors on the
+# shared /mnt/d checkout (IDEA) can no longer reintroduce repo-wide CRLF
+# churn. Git auto-detects binaries (NUL byte probe) and leaves them untouched.
+* text=auto eol=lf
+
+# Explicit binaries (no end-of-line conversion ever)
+*.jar binary
+
+# Windows batch scripts only run reliably with CRLF (repo stays LF,
+# working tree gets CRLF on checkout)
+*.bat text eol=crlf
+
+# Shell scripts must stay LF everywhere
+*.sh text eol=lf
