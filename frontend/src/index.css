@@ -123,9 +123,12 @@ button:disabled {
   cursor: not-allowed;
 }
 
+section[aria-label='Single sign-on providers'] button {
+  margin-right: 10px;
+}
+
 section[aria-label='Single sign-on providers'] button + button {
   margin-top: 10px;
-  margin-right: 10px;
 }
 
 [role='alert'] {
