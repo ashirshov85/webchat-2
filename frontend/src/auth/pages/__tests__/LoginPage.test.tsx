@@ -41,18 +41,35 @@ afterEach(() => {
 })
 
 function fillLoginForm(identifier: string, password: string) {
-  fireEvent.change(screen.getByLabelText('Identifier'), { target: { value: identifier } })
-  fireEvent.change(screen.getByLabelText('Password'), { target: { value: password } })
-  fireEvent.click(screen.getByRole('button', { name: 'Login' }))
+  fireEvent.change(screen.getByLabelText('Email или имя пользователя'), {
+    target: { value: identifier },
+  })
+  fireEvent.change(screen.getByLabelText('Пароль'), { target: { value: password } })
+  fireEvent.click(screen.getByRole('button', { name: 'ВОЙТИ' }))
 }
 
 describe('LoginPage', () => {
   it('renders the login form', () => {
     render(<LoginPage />)
 
-    expect(screen.getByLabelText('Identifier')).toBeInTheDocument()
-    expect(screen.getByLabelText('Password')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Login' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Email или имя пользователя')).toBeInTheDocument()
+    expect(screen.getByLabelText('Пароль')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'ВОЙТИ' })).toBeInTheDocument()
+  })
+
+  it('toggles the password field type and the eye button aria-label', () => {
+    render(<LoginPage />)
+
+    const password = screen.getByLabelText('Пароль')
+    expect(password).toHaveAttribute('type', 'password')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Показать пароль' }))
+    expect(password).toHaveAttribute('type', 'text')
+    expect(screen.getByRole('button', { name: 'Скрыть пароль' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Скрыть пароль' }))
+    expect(password).toHaveAttribute('type', 'password')
+    expect(screen.getByRole('button', { name: 'Показать пароль' })).toBeInTheDocument()
   })
 
   it('submits credentials and stores the token pair on success', async () => {

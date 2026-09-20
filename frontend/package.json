@@ -18,6 +18,8 @@
     "generate:api": "openapi-typescript ../contracts/openapi.yaml -o src/api/schema.d.ts"
   },
   "dependencies": {
+    "@fontsource/cinzel": "^5.3.0",
+    "@fontsource/eb-garamond": "^5.3.0",
     "@opentelemetry/context-zone": "^2.0.0",
     "@opentelemetry/core": "^2.0.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.222.0",
