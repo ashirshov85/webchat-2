@@ -205,6 +205,36 @@ Phase 3 (T006, T011, T013, T014) ставятся post-factum после зел�
 
 ---
 
+## Phase 10: Расширение 2026-09-20 — US7: экран входа в стиле дизайн-прототипа
+
+**Purpose**: презентационный редизайн `/login` по прототипу `tmp/login.html`
+(research §22 — нормативный инвентарь, spec US7 / FR-017–021 / SC-008);
+контракт, поведение входа и остальные страницы не меняются.
+
+- [ ] T063 [P] [US7] Зависимости и ассеты: `pnpm --dir frontend add @fontsource/cinzel @fontsource/eb-garamond`; фон — копия `tmp/bg2.png` → `frontend/public/bg2.png` (каталог `tmp/` не версионируется — фон коммитится из public) — Приёмка: `pnpm --dir frontend build` OK; `@fontsource` в `package.json`; файл фона в сборке
+- [ ] T064 [RED] [US7] Обновить тесты до русского DOM-контракта (research §22.5): `frontend/src/auth/pages/__tests__/LoginPage.test.tsx` — label «Email или имя пользователя»/«Пароль», кнопка «ВОЙТИ», кейс глаза (toggle type + переключение aria-label); `frontend/src/auth/pages/__tests__/LoginPageSso.test.tsx` — кнопки «Продолжить с Google»/«Продолжить с GitHub», скрытие SSO-блока и разделителя «ИЛИ» при пустом перечне; поведенческие ассерты (submit, alert/status, redirect, returnTo) без изменений — Приёмка: FAIL до T065/T066, GREEN после; тесты остальных страниц не правятся
+- [ ] T065 [GREEN] [US7] Создать `frontend/src/auth/pages/auth-theme.css` по research §22.1–22.2 — общий стиль-файл US7/US8: scoped-классы `.auth-*` (fixed-обёртка + scroll-safe центрирование, палитра, карточка, заклёпки, бейдж с `prefers-reduced-motion`, поля, золотая кнопка, divider, SSO-кнопки, футер, alert/status в карточке), overrides глобальных правил по §22.4 — Приёмка: `pnpm --dir frontend lint` OK; `frontend/src/index.css` не изменён
+- [ ] T066 [GREEN] [US7] Переписать разметку `frontend/src/auth/pages/LoginPage.tsx`: импорты `@fontsource/*` (веса 700/800 и 400) и `./auth-theme.css`; карточка (заклёпки, шестерёнка-бейдж, STEAMCHAT + подпись), поля с иконками + sr-only label + placeholder, глаз (`showPassword` state), кнопка «ВОЙТИ» (disabled = submitting), divider «ИЛИ», SSO-кнопки «Продолжить с {displayName}» с иконками research §22.3 (aria-hidden), футер-ссылка `/register`; вся логика US1 (login, providers, authorize, returnTo, problemMessage) без изменений — Приёмка: T064 GREEN; `pnpm --dir frontend typecheck` OK
+- [ ] T067 [US7] Скрыть глобальный `<h1>WebChat</h1>` на `/login` и `/register`: условный рендер в `frontend/src/App.tsx` по pathname (US7-6/US8-6; `/register` стилизуется в Phase 11 — до T071 там временно отсутствует h1 при старом стиле страницы); остальные маршруты не затронуты — Приёмка: `frontend/src/App.test.tsx` зелёный без правок; все frontend-тесты зелёные
+- [ ] T068 [US7] Дополнить `specs/003-sso-identity-providers/quickstart.md` разделом «S9. Экран входа — визуальный прототип (US7)»: ручная проверка (фон/карточка/шрифты/заклёпки/бейдж, функциональный паритет входа, глаз, SSO-кнопки с иконками, h1 скрыт, reduced-motion) — Приёмка: раздел прошёл ручную проверку локально (`pnpm --dir frontend dev`), фиксация в PR
+- [ ] T069 [US7] Финальный прогон US7: `pnpm --dir frontend test && pnpm --dir frontend lint && pnpm --dir frontend typecheck && pnpm --dir frontend build`; drift-check контракта: `pnpm --dir frontend generate:api` + `git diff --exit-code -- frontend/src/api/schema.d.ts` (диф пуст — контракт не менялся); gitleaks — новых находок нет — Приёмка: все проверки зелёные (SC-008)
+
+---
+
+## Phase 11: Расширение 2026-09-20 — US8: экран регистрации в стиле дизайн-прототипа
+
+**Purpose**: применение визуального языка US7 к `/register` (research §22.6,
+spec US8 / FR-022); контракт, поведение регистрации и остальные страницы не
+меняются. Выполняется сразу после Phase 10 (общий `auth-theme.css` из T065,
+скрытие h1 из T067).
+
+- [ ] T070 [RED] [US8] Обновить Register-ветку `frontend/src/auth/pages/__tests__/RegisterPages.test.tsx` до русского DOM-контракта (research §22.5): label «Имя пользователя»/«Email», кнопка «ЗАРЕГИСТРИРОВАТЬСЯ»; сценарии submit/400/409/success без изменений; ConfirmRegistration- и SetPassword-ветки файла не правятся (страницы вне scope) — Приёмка: Register-тесты FAIL до T071, GREEN после; остальные сьюты без правок
+- [ ] T071 [GREEN] [US8] Переписать разметку `frontend/src/auth/pages/RegisterPage.tsx` по research §22.6: импорт `./auth-theme.css`; та же карточка (заклёпки, бейдж, STEAMCHAT + подпись) + заголовок «Создание аккаунта»; поля username/email с иконками + sr-only label + placeholder (`autoComplete` сохранён); кнопка «ЗАРЕГИСТРИРОВАТЬСЯ» (disabled = submitting); success-текст на русском; футер «Уже есть аккаунт? Войти» → `/login`; без divider/SSO-блока; логика `register`/`problemMessage` без изменений — Приёмка: T070 GREEN; `pnpm --dir frontend typecheck` OK
+- [ ] T072 [US8] Дополнить quickstart S9 шагами регистрации: карточка того же стиля, поля/кнопка/футер, навигация `/login` ↔ `/register`, h1 скрыт, success-сообщение после 202 — Приёмка: раздел прошёл ручную проверку (`pnpm --dir frontend dev`), фиксация в PR
+- [ ] T073 [US8] Финальный прогон US8: `pnpm --dir frontend test && pnpm --dir frontend lint && pnpm --dir frontend typecheck && pnpm --dir frontend build`; drift-check контракта пуст; gitleaks — новых находок нет — Приёмка: все проверки зелёные (SC-008)
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -214,6 +244,7 @@ Phase 3 (T006, T011, T013, T014) ставятся post-factum после зел�
 - **User Stories (Phases 3–7)**: все зависят от Phase 2
   - Могут идти параллельно (при наличии ресурсов) или последовательно по приоритету (US1 → US2 → US3 → US4 → US5)
 - **Polish (Phase 8)**: зависит от завершения всех историй
+- **Расширения (Phase 9–11)**: после Phase 8; Phase 10 (US7) — чисто frontend поверх существующих SSO-кнопок (Phase 3), контракта и backend не касается; Phase 11 (US8) — сразу за Phase 10, переиспользует `auth-theme.css` (T065) и скрытие h1 (T067); внутри фаз строго последовательно: T063 → T064 (RED) → T065/T066 (GREEN) → T067 → T068/T069, затем T070 (RED) → T071 (GREEN) → T072/T073
 
 ### User Story Dependencies
 
@@ -299,7 +330,7 @@ Task: "T048 [US5] Метрики Micrometer"
 - При реализации одним агентом (OpenCode; конституция, «Development Workflow») задачи
   выполняются строго последовательно в порядке файла — Parallel-стратегии применимы
   только к командной работе
-- [Story] метки связывают задачи с US1–US6 из spec.md
+- [Story] метки связывают задачи с US1–US8 из spec.md
 - Тесты каждой истории писать первыми, проверять FAIL перед реализацией
 - Коммит после каждой задачи или логической группы
 - DoD каждой задачи (конституция, «Development Workflow»): зелёные тесты задачи
