@@ -42,8 +42,11 @@ export function RegisterPage() {
 
         <h1 className="auth-brand-title">STEAMCHAT</h1>
         <div className="auth-brand-sub">
-          CONNECT<span className="auth-brand-sub-sep">·</span>CHAT
-          <span className="auth-brand-sub-sep">·</span>EXPLORE
+          {'CONNECT'}
+          <span className="auth-brand-sub-sep">·</span>
+          {'CHAT'}
+          <span className="auth-brand-sub-sep">·</span>
+          {'EXPLORE'}
         </div>
         <h2 className="auth-form-title">Создание аккаунта</h2>
 

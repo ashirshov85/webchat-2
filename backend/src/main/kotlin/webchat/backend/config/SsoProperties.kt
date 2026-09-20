@@ -106,8 +106,8 @@ data class SsoProperties(
             }
             require(displayName.isNotBlank()) { "sso.providers[$id]: display-name must not be blank" }
             requireHttpUri(id, "issuer-uri", issuerUri)
-            requireHttpUri(id, "authorization-uri", authorizationUri)
-            requireHttpUri(id, "token-uri", tokenUri)
+            requireHttpUri(id, AUTHORIZATION_URI_NAME, authorizationUri)
+            requireHttpUri(id, TOKEN_URI_NAME, tokenUri)
             requireHttpUri(id, "userinfo-uri", userinfoUri)
             requireHttpUri(id, "jwks-uri", jwksUri)
             requireHttpUri(id, "email-endpoint", emailEndpoint)
@@ -126,8 +126,8 @@ data class SsoProperties(
                     // research.md §16: explicit endpoints are mandatory;
                     // issuer-uri/jwks-uri are OIDC-only and ignored here
                     listOf(
-                        "authorization-uri" to authorizationUri,
-                        "token-uri" to tokenUri,
+                        AUTHORIZATION_URI_NAME to authorizationUri,
+                        TOKEN_URI_NAME to tokenUri,
                         "userinfo-uri" to userinfoUri,
                     ).forEach { (name, uri) ->
                         require(!uri.isNullOrBlank()) {
@@ -138,8 +138,8 @@ data class SsoProperties(
                 Protocol.OIDC ->
                     if (issuerUri.isNullOrBlank()) {
                         listOf(
-                            "authorization-uri" to authorizationUri,
-                            "token-uri" to tokenUri,
+                            AUTHORIZATION_URI_NAME to authorizationUri,
+                            TOKEN_URI_NAME to tokenUri,
                             "jwks-uri" to jwksUri,
                         ).forEach { (name, uri) ->
                             require(!uri.isNullOrBlank()) {
@@ -171,6 +171,8 @@ data class SsoProperties(
 
         companion object {
             private const val PROVIDER_ID_PATTERN = "^[a-z0-9][a-z0-9-]{0,63}$"
+            private const val AUTHORIZATION_URI_NAME = "authorization-uri"
+            private const val TOKEN_URI_NAME = "token-uri"
             private val providerIdRegex = Regex(PROVIDER_ID_PATTERN)
         }
     }
