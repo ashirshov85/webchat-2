@@ -17,7 +17,7 @@ function currentReturnTo(): string | null {
   return value !== null && value !== '' ? value : null
 }
 
-function ProviderIcon({ providerId }: { providerId: string }) {
+function ProviderIcon({ providerId }: { readonly providerId: string }) {
   switch (providerId) {
     case 'google':
       return (
@@ -173,8 +173,11 @@ export function LoginPage() {
 
         <h1 className="auth-brand-title">STEAMCHAT</h1>
         <div className="auth-brand-sub">
-          CONNECT<span className="auth-brand-sub-sep">·</span>CHAT
-          <span className="auth-brand-sub-sep">·</span>EXPLORE
+          {'CONNECT'}
+          <span className="auth-brand-sub-sep">·</span>
+          {'CHAT'}
+          <span className="auth-brand-sub-sep">·</span>
+          {'EXPLORE'}
         </div>
 
         {user !== null && <output>Welcome, {user.username}!</output>}
