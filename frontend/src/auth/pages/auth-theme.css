@@ -34,7 +34,7 @@
   z-index: 1;
   width: 380px;
   max-width: 90vw;
-  margin: auto;
+  margin: auto auto 8vh;
   padding: 46px 34px 32px;
   background: var(--panel-bg);
   border: 2px solid var(--gold-dark);
