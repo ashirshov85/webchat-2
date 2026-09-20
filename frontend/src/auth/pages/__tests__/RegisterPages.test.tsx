@@ -30,18 +30,18 @@ afterEach(() => {
 })
 
 function fillRegistrationForm(username: string, email: string) {
-  fireEvent.change(screen.getByLabelText('Username'), { target: { value: username } })
+  fireEvent.change(screen.getByLabelText('Имя пользователя'), { target: { value: username } })
   fireEvent.change(screen.getByLabelText('Email'), { target: { value: email } })
-  fireEvent.click(screen.getByRole('button', { name: 'Register' }))
+  fireEvent.click(screen.getByRole('button', { name: 'ЗАРЕГИСТРИРОВАТЬСЯ' }))
 }
 
 describe('RegisterPage', () => {
   it('renders the registration form', () => {
     render(<RegisterPage />)
 
-    expect(screen.getByLabelText('Username')).toBeInTheDocument()
+    expect(screen.getByLabelText('Имя пользователя')).toBeInTheDocument()
     expect(screen.getByLabelText('Email')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Register' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'ЗАРЕГИСТРИРОВАТЬСЯ' })).toBeInTheDocument()
   })
 
   it('submits username and email and shows the check-your-email notice on 202', async () => {
