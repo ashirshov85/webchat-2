@@ -44,8 +44,9 @@ describe('LoginPage SSO', () => {
 
     const section = await screen.findByLabelText('Single sign-on providers')
     expect(section).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Google' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'GitHub' })).toBeInTheDocument()
+    expect(screen.getByText('ИЛИ')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Продолжить с Google' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Продолжить с GitHub' })).toBeInTheDocument()
     expect(mockListSsoProviders).toHaveBeenCalledTimes(1)
   })
 
@@ -57,7 +58,7 @@ describe('LoginPage SSO', () => {
     await act(async () => {})
 
     expect(screen.queryByLabelText('Single sign-on providers')).not.toBeInTheDocument()
-    expect(screen.queryByText('Or continue with')).not.toBeInTheDocument()
+    expect(screen.queryByText('ИЛИ')).not.toBeInTheDocument()
   })
 
   it('navigates to the authorization URL on provider click', async () => {
@@ -68,7 +69,7 @@ describe('LoginPage SSO', () => {
     assignSpy = stubLocationAssign()
     render(<LoginPage />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'GitHub' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Продолжить с GitHub' }))
 
     await waitFor(() =>
       expect(assignSpy).toHaveBeenCalledWith('https://idp.example/oauth/authorize?state=abc'),
@@ -91,7 +92,7 @@ describe('LoginPage SSO', () => {
     })
     render(<LoginPage />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Google' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Продолжить с Google' }))
 
     await waitFor(() => expect(assignSpy).toHaveBeenCalledTimes(1))
     expect(mockAuthorizeSso).toHaveBeenCalledWith({
@@ -112,7 +113,7 @@ describe('LoginPage SSO', () => {
     assignSpy = stubLocationAssign()
     render(<LoginPage />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Google' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Продолжить с Google' }))
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Provider not found')
