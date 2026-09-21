@@ -84,7 +84,8 @@ class JdbcMessageRepositoryIT : AbstractIntegrationTest() {
     @Test
     fun `an actual new record un-hides both participants while the dedup path does not`() {
         val (chat, alice, bob) = dialog()
-        val recorded = (messageRepository.insert(newMessage(chat, alice, "первое")) as MessageInsertResult.Inserted).message
+        val recorded =
+            (messageRepository.insert(newMessage(chat, alice, "первое")) as MessageInsertResult.Inserted).message
         jdbcTemplate.update(HIDE_ALL_SQL, chat)
         assertThat(hidden(chat, alice)).isTrue()
         assertThat(hidden(chat, bob)).isTrue()
@@ -109,11 +110,13 @@ class JdbcMessageRepositoryIT : AbstractIntegrationTest() {
     @Test
     fun `last_seq never regresses on an out-of-order seq`() {
         val (chat, alice, _) = dialog()
-        val first = (messageRepository.insert(newMessage(chat, alice, "первое")) as MessageInsertResult.Inserted).message
+        val first =
+            (messageRepository.insert(newMessage(chat, alice, "первое")) as MessageInsertResult.Inserted).message
 
         jdbcTemplate.update(SET_LAST_SEQ_SQL, first.seq + 100, chat)
 
-        val second = (messageRepository.insert(newMessage(chat, alice, "второе")) as MessageInsertResult.Inserted).message
+        val second =
+            (messageRepository.insert(newMessage(chat, alice, "второе")) as MessageInsertResult.Inserted).message
 
         assertThat(second.seq).isEqualTo(first.seq + 1)
         assertThat(chatLastSeq(chat))
@@ -154,14 +157,19 @@ class JdbcMessageRepositoryIT : AbstractIntegrationTest() {
         repeat(DELETED_MESSAGES) {
             messageRepository.insert(newMessage(chat, if (it % 2 == 0) alice else bob, "msg-$it"))
         }
-        val deletedSeqs = messageRepository.findVisiblePage(chat, alice, before = null, limit = 50).map { it.seq }.reversed()
+        val deletedSeqs =
+            messageRepository
+                .findVisiblePage(chat, alice, before = null, limit = 50)
+                .map { it.seq }
+                .reversed()
         jdbcTemplate.update(DELETE_HISTORY_SQL, chat, alice)
 
         val afterDeletion = messageRepository.findVisiblePage(chat, alice, before = null, limit = 50)
 
         assertThat(afterDeletion).isEmpty()
 
-        val revived = (messageRepository.insert(newMessage(chat, bob, "после удаления")) as MessageInsertResult.Inserted).message
+        val revived =
+            (messageRepository.insert(newMessage(chat, bob, "после удаления")) as MessageInsertResult.Inserted).message
 
         val alicePage = messageRepository.findVisiblePage(chat, alice, before = null, limit = 50)
 
@@ -204,7 +212,13 @@ class JdbcMessageRepositoryIT : AbstractIntegrationTest() {
         chatId: UUID,
         senderId: UUID,
         text: String,
-    ): NewMessage = NewMessage(id = UUID.randomUUID(), chatId = chatId, senderId = senderId, text = MessageText.normalize(text))
+    ): NewMessage =
+        NewMessage(
+            id = UUID.randomUUID(),
+            chatId = chatId,
+            senderId = senderId,
+            text = MessageText.normalize(text),
+        )
 
     /** Sends [count] fresh messages and returns their seqs ASCENDING as actually allocated. */
     private fun sentSeqs(
@@ -214,7 +228,9 @@ class JdbcMessageRepositoryIT : AbstractIntegrationTest() {
     ): List<Long> =
         (1..count)
             .map {
-                (messageRepository.insert(newMessage(chatId, senderId, "msg-$it")) as MessageInsertResult.Inserted).message.seq
+                val inserted =
+                    messageRepository.insert(newMessage(chatId, senderId, "msg-$it")) as MessageInsertResult.Inserted
+                inserted.message.seq
             }.sorted()
 
     private fun chatLastSeq(chatId: UUID): Long =
