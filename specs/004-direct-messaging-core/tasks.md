@@ -31,7 +31,7 @@ description: "Task list for feature implementation"
 **Purpose**: Конфигурация фичи и тестовая база (проект и конвейер 001–003 уже существуют)
 
 - [X] T001 Создать `ChatsProperties` (`@ConfigurationProperties("chats")`: `message.max-length=4096`, `message.page-size=50`, `rate-limit.messages-per-minute=30`, `realtime.heartbeat=15s`) и секцию `chats.*` в конфигурации — в `backend/src/main/kotlin/webchat/backend/config/ChatsProperties.kt` и `backend/src/main/resources/application.yml` (значения = контракту FR-003/008/011); приёмка: контекст стартует с `chats.*`, значения совпадают с контрактом (используются IT T008a/T030/T038)
-- [ ] T002 [P] Создать тестовые фикстуры для IT мессенджинга (регистрация+auth двух и более пользователей, создание чата, отправка сообщений, чтение SSE-кадров) — в `backend/src/test/kotlin/webchat/backend/chats/MessagingTestSupport.kt` (поверх `AbstractIntegrationTest`, Testcontainers PG+Redis); приёмка: фикстуры компилируются и используются IT T007/T008/T008a/T029
+- [X] T002 [P] Создать тестовые фикстуры для IT мессенджинга (регистрация+auth двух и более пользователей, создание чата, отправка сообщений, чтение SSE-кадров) — в `backend/src/test/kotlin/webchat/backend/chats/MessagingTestSupport.kt` (поверх `AbstractIntegrationTest`, Testcontainers PG+Redis); приёмка: фикстуры компилируются и используются IT T007/T008/T008a/T029
 
 ---
 
