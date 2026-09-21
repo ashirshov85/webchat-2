@@ -88,7 +88,7 @@ no`, [research.md §9](./research.md)).
 состояния (переподключение безопасно, FR-009); авторизация на каждом ресурсе — membership
 диалога (FR-002, конституция V); идемпотентность отправки по клиентскому UUID (FR-004,
 конституция III); значения 4096 символов / 30 сообщений в минуту / 50 на страницу —
-фиксируются в контракте (FR-003/008/011); блокировка — семантика FR-020 без утечки факта
+фиксируются в контракте (FR-003/008/011); rate-limit покрытие новых endpoints (конституция V, Security): отправка сообщений — пер-юзер флуд-лимит FR-011 (`rl:user:msgsend:*`); `GET /users/search` (№19) — пер-юзер лимит 30 req/мин (`rl:user:search:{userId}`, та же Bucket4j+Lettuce инфраструктура 002), отклонение `429 flood_limit` + `Retry-After` (код — в контракте №19, задача T053a); мутированные операции №11/№17/№21–24 защищены Bearer-аутентификацией и membership-проверкой (FR-002), отдельные лимиты не вводятся (VII) — для №17 (POST /read) достаточно: идемпотентный GREATEST-update одной строки (chat_id, user_id), реальная частота ограничена клиентским троттлингом ≤500 мс (T044) и одним водяным знаком на чат; чтение (№12/№13/№15) — пер-юзер лимит в 004 не вводится (задокументированное отклонение от конституции V / Security «Rate limiting на публичных endpoints»: идемпотентные чтения из PG, защита — общеинфраструктурный ingress-лимит платформы; пер-юзер read-лимит — платформенная задача ROADMAP, триггер — рост 429/латентности по метрикам ingress); блокировка — семантика FR-020 без утечки факта
 блокировки заблокированному (кроме явной ошибки при отправке); обратная совместимость
 контракта (additive minor); переподключение клиента сходится рефетчем (до 005).
 Retention: 12-месячная политика хранения с архивацией сообщений (конституция
@@ -104,8 +104,8 @@ p95-латентности и отсутствие 5xx при 429 на мини�
 cross-cutting-задача (ROADMAP).
 
 **Scale/Scope**: 7 новых endpoints диалогов/сообщений (№11–17) + 1 SSE-канал (№18) + 6
-endpoints контактов/поиска/блокировок (№19–24) — итого 14; 5 таблиц PG (2 миграции) + 2
-семейства Redis-ключей/каналов;
+endpoints контактов/поиска/блокировок (№19–24) — итого 14; 5 таблиц PG (2 миграции) + 3 семейства
+Redis-ключей/каналов (`rl:user:msgsend:*`, `rl:user:search:*`, `rt:user:{id}`);
 SPA: мессенджер-страница (панель «Чаты»/«Контакты» + окно диалога) и hook-слой SSE/outbox;
 1 k6-сценарий. E2EE, групповые чаты, push-уведомления, курсорный delta-sync при
 переподключении — вне объёма (Assumptions, ROADMAP 005).
@@ -173,11 +173,11 @@ backend/src/main/kotlin/webchat/backend/
 │   ├── domain/
 │   │   ├── model/                            # Chat, ChatParticipant, Message, MessageText (валидация FR-003)
 │   │   ├── port/                             # ChatRepository, MessageRepository, ParticipantRepository,
-│   │   │                                     #   BlockRepository, RealtimeEventPublisher (реализован в realtime/)
+│   │   │                                     #   RealtimeEventPublisher (реализован в realtime/)
 │   │   └── service/                          # ChatService (ensure/удаление), MessageService (отправка+дедуп),
 │   │                                         #   HistoryService (пагинация), ReadService (GREATEST-водяной знак)
 │   └── repository/                           # JdbcChatRepository (ensure ON CONFLICT), JdbcMessageRepository
-│                                               #   (INSERT … ON CONFLICT), JdbcParticipantRepository, JdbcBlockRepository
+│                                               #   (INSERT … ON CONFLICT), JdbcParticipantRepository
 ├── contacts/                                 # контакты, блокировки, поиск пользователей
 │   ├── api/
 │   │   ├── ContactController.kt              # список (сортировка login/email), добавление, удаление
@@ -185,9 +185,9 @@ backend/src/main/kotlin/webchat/backend/
 │   │   └── UserSearchController.kt           # GET /users/search?query= (точное email ИЛИ логин, lower())
 │   ├── domain/
 │   │   ├── model/                            # Contact, UserBlock
-│   │   ├── port/                             # ContactRepository, UserLookupPort
+│   │   ├── port/                             # ContactRepository, BlockRepository, UserLookupPort
 │   │   └── service/                          # ContactService, BlockService
-│   └── repository/                           # JdbcContactRepository, JdbcUserLookup (lower()-индексы users)
+│   └── repository/                           # JdbcContactRepository, JdbcBlockRepository, JdbcUserLookup (lower()-индексы users)
 ├── realtime/
 │   ├── RealtimeController.kt                # GET /api/v1/users/me/events (SseEmitter, heartbeat)
 │   ├── SseConnectionRegistry.kt             # emitters по userId (в рамках инстанса; мульти-сессии/устройства)
