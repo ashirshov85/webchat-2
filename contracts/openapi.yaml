@@ -19,13 +19,15 @@ info:
     link/authorize, GET /users/me/identities и DELETE идентичности
     требуют Bearer. Endpoint'ы 002 не изменились (аддитивно, minor-бамп).
 
-    Фича 004 (messaging): endpoints №11–18 — личные текстовые диалоги
+    Фича 004 (messaging): endpoints №11–24 — личные текстовые диалоги
     (ensure/чтение/удаление, история с курсорной пагинацией, отправка с
-    клиентской дедупликацией, read-отметки) и реалтайм-канал SSE
-    №18 /users/me/events. Все новые пути требуют Bearer: публичный
+    клиентской дедупликацией, read-отметки), реалтайм-канал SSE
+    №18 /users/me/events, контакты, точный поиск пользователей и
+    блокировки (№19–24). Все новые пути требуют Bearer: публичный
     перечень 002–003 не расширен. Фиксированные константы: максимум текста
     сообщения — 4096 символов после trim; страница истории — 50 сообщений;
-    флуд-лимит отправки — 30 сообщений/мин на пользователя. Изменение —
+    флуд-лимит отправки — 30 сообщений/мин на пользователя; лимит поиска
+    пользователей — 30 запросов/мин на пользователя. Изменение —
     только additive (0.3.0 → 0.4.0, без BREAKING.md).
 tags:
   - name: auth
@@ -38,6 +40,8 @@ tags:
     description: 'Личные текстовые диалоги: создание, история, отправка, прочтение, удаление'
   - name: realtime
     description: Реалтайм-канал SSE — поток событий пользователя (message.created, chat.read)
+  - name: contacts
+    description: 'Контакты пользователя, точный поиск пользователей, блокировки'
 security:
   - bearerAuth: []
 paths:
@@ -1211,6 +1215,266 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /api/v1/users/search:
+    get:
+      operationId: searchUsers
+      tags: [users]
+      summary: Точный поиск пользователя по email или логину (№19, Bearer)
+      description: >
+        Точное совпадение полного email ИЛИ полного логина, без учёта
+        регистра (FR-016): query содержит @ → сравнение lower(email),
+        иначе lower(username) — username не допускает @ (правило 002).
+        Результат — 0..1 пользователь: пустой список — корректный ответ
+        (совпадения нет, edge). Защита от перебора (FR-016): не более
+        30 запросов/мин на пользователя — 31-й запрос в окне →
+        429 flood_limit + Retry-After (сек до доступного токена), поиск
+        не выполняется.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: 'Полный email или полный логин искомого пользователя; отсутствует, пустой или длиннее 254 символов → 400 query_missing'
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 254
+      responses:
+        '200':
+          description: Результат точного поиска — 0..1 пользователь (пустой список — корректный ответ)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsersSearchResponse'
+        '400':
+          description: 'query отсутствует, пустой или длиннее 254 символов (errors: {query: [query_missing]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Лимит поиска 30 запросов/мин на пользователя — защита от перебора (errors: {query: [flood_limit]}; FR-016); поиск не выполняется'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/contacts:
+    get:
+      operationId: listContacts
+      tags: [contacts]
+      summary: Список контактов пользователя (№20, Bearer)
+      description: >
+        Контакты вызывающего с серверной алфавитной сортировкой по
+        выбранному полю без учёта регистра (FR-015): sort=login — по
+        lower(username) (по умолчанию), sort=email — по lower(email).
+        Пустой список — корректный ответ.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sort
+          in: query
+          required: false
+          description: 'Поле серверной алфавитной сортировки без учёта регистра; по умолчанию login; иное значение → 400 invalid_sort'
+          schema:
+            type: string
+            enum: [login, email]
+            default: login
+      responses:
+        '200':
+          description: Контакты, отсортированные алфавитно по выбранному полю без учёта регистра
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactsResponse'
+        '400':
+          description: 'sort не login и не email (errors: {sort: [invalid_sort]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: addContact
+      tags: [contacts]
+      summary: Добавить пользователя в контакты (№21, Bearer)
+      description: >
+        Односторонняя запись в личный список контактов вызывающего
+        (FR-016). 201 — контакт создан; 200 — уже добавлен, дубль не
+        создаётся (edge). Добавление самого себя → 422 self_forbidden.
+        Контакты не зависят от чатов и блокировок: удаление контакта (№22)
+        не затрагивает единый диалог пары (FR-017); блокировка не
+        затрагивает контакты (FR-020) — заблокированный может добавлять
+        блокирующего в свои контакты.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [userId]
+              properties:
+                userId:
+                  type: string
+                  format: uuid
+                  description: Добавляемый пользователь; добавление самого себя → 422 self_forbidden
+      responses:
+        '200':
+          description: Контакт уже добавлен — возвращён существующий ContactView (дубль не создаётся)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactView'
+        '201':
+          description: Контакт создан — ContactView
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactView'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Пользователь не найден (errors: {user: [user_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 'Добавление самого себя в контакты запрещено (errors: {userId: [self_forbidden]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/contacts/{userId}:
+    delete:
+      operationId: deleteContact
+      tags: [contacts]
+      summary: Удалить контакт (№22, Bearer)
+      description: >
+        Удаляет пользователя из списка контактов вызывающего. Идемпотентно:
+        несуществующий контакт — тоже 204. Удаление контакта — независимая
+        операция: единый диалог пары и его история не затрагиваются,
+        переписка остаётся доступной и продолжается (FR-017).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Удаляемый из контактов пользователь
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Контакт удалён (идемпотентно; чат и история пары не затронуты)
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/users/{userId}/block:
+    put:
+      operationId: blockUser
+      tags: [contacts]
+      summary: Заблокировать пользователя (№23, Bearer)
+      description: >
+        Односторонняя блокировка, управляется блокирующим (FR-020).
+        Идемпотентно: повторная блокировка — 204 без изменений (edge).
+        Пока блок действует: отправка в диалоге пары запрещена в обе
+        стороны без создания записей (№16 → 403 chat_blocked_by_you у
+        блокирующего, 403 you_are_blocked у заблокированного — единственное
+        явное уведомление заблокированного); прочтения блокирующего не
+        двигают водяной знак и не публикуются, прочтения заблокированного
+        двигают водяной знак локально без публикации (№17); бейдж
+        непрочитанных у блокирующего «замирает» (№12). Контакты не
+        затрагиваются. Единственная проекция блокировки в API —
+        blockedByMe; поле «кто заблокировал меня» отсутствует. Разблокировка
+        — №24.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Блокируемый пользователь
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Блокировка установлена (идемпотентно — повторная блокировка без изменений)
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Пользователь не найден (errors: {user: [user_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 'Блокировка самого себя запрещена (errors: {userId: [self_forbidden]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    delete:
+      operationId: unblockUser
+      tags: [contacts]
+      summary: Разблокировать пользователя (№24, Bearer)
+      description: >
+        Снимает блокировку вызывающего с пользователя. Идемпотентно:
+        разблокировка не заблокированного — тоже 204. Возвращает обычное
+        поведение диалога — отправку, прочтения, бейдж и события прочтения
+        (FR-010) — без потери истории (FR-020).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Разблокируемый пользователь
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Блокировка снята (идемпотентно); обычное поведение диалога возобновляется
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   securitySchemes:
     bearerAuth:
@@ -1643,3 +1907,36 @@ components:
           type: string
           format: uuid
           description: Кто прочитал
+    ContactView:
+      type: object
+      additionalProperties: false
+      required: [user, createdAt]
+      properties:
+        user:
+          $ref: '#/components/schemas/PublicUser'
+          description: Пользователь из списка контактов вызывающего
+        createdAt:
+          type: string
+          format: date-time
+          description: Когда пользователь добавлен в контакты вызывающего
+    ContactsResponse:
+      type: object
+      additionalProperties: false
+      required: [contacts]
+      properties:
+        contacts:
+          type: array
+          description: 'Контакты вызывающего: серверная алфавитная сортировка по выбранному полю без учёта регистра — lower(username) при sort=login, lower(email) при sort=email (FR-015); пустой список валиден'
+          items:
+            $ref: '#/components/schemas/ContactView'
+    UsersSearchResponse:
+      type: object
+      additionalProperties: false
+      required: [users]
+      properties:
+        users:
+          type: array
+          maxItems: 1
+          description: 'Точное совпадение полного email ИЛИ полного логина без учёта регистра (FR-016): 0..1 элемент; пустой список — корректный ответ (совпадения нет)'
+          items:
+            $ref: '#/components/schemas/PublicUser'
