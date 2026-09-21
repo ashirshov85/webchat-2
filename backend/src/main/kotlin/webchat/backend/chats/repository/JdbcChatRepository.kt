@@ -29,9 +29,7 @@ import java.util.UUID
 class JdbcChatRepository(
     private val jdbcTemplate: JdbcTemplate,
 ) : ChatRepository {
-    override fun findById(
-        chatId: UUID,
-    ): Chat? = jdbcTemplate.query(FIND_BY_ID_SQL, CHAT_ROW_MAPPER, chatId).firstOrNull()
+    override fun findById(chatId: UUID): Chat? = jdbcTemplate.query(FIND_BY_ID_SQL, CHAT_ROW_MAPPER, chatId).firstOrNull()
 
     @Transactional
     override fun ensure(
