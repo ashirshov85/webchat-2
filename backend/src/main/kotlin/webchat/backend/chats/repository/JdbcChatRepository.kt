@@ -29,7 +29,9 @@ import java.util.UUID
 class JdbcChatRepository(
     private val jdbcTemplate: JdbcTemplate,
 ) : ChatRepository {
-    override fun findById(chatId: UUID): Chat? = jdbcTemplate.query(FIND_BY_ID_SQL, CHAT_ROW_MAPPER, chatId).firstOrNull()
+    override fun findById(
+        chatId: UUID,
+    ): Chat? = jdbcTemplate.query(FIND_BY_ID_SQL, CHAT_ROW_MAPPER, chatId).firstOrNull()
 
     @Transactional
     override fun ensure(
@@ -38,7 +40,7 @@ class JdbcChatRepository(
     ): ChatEnsureResult {
         require(callerId != peerId) { "a dialog requires two distinct users (FR-001)" }
         val candidateId = UUID.randomUUID()
-        val (low, high) = if (callerId < peerId) callerId to peerId else peerId to callerId
+        val (low, high) = Chat.canonicalPair(callerId, peerId)
         val created = jdbcTemplate.update(INSERT_CHAT_SQL, candidateId, low, high) == 1
 
         val chat =

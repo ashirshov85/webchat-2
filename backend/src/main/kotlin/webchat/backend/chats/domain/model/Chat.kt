@@ -23,7 +23,9 @@ data class Chat(
     val lastSeq: Long = 0,
 ) {
     init {
-        require(userLowId < userHighId) { "chat pair must be in canonical order user_low_id < user_high_id" }
+        require(canonicalPair(userLowId, userHighId).first == userLowId) {
+            "chat pair must be in canonical order user_low_id < user_high_id"
+        }
     }
 
     /** FR-002: membership check used by every chats resource. */
@@ -48,6 +50,20 @@ data class Chat(
 
     companion object {
         /**
+         * PG orders uuid byte-wise UNSIGNED (the V10 CHECK
+         * `user_low_id < user_high_id` and the UNIQUE pair key use
+         * least/greatest), while Java's [UUID.compareTo] is SIGNED on the
+         * two 64-bit halves — the orders disagree whenever the most
+         * significant byte crosses 0x80 (regression: JdbcChatRepositoryIT).
+         * The hex form compares exactly in PG byte order. Single ordering
+         * source for the model invariant and the JDBC adapters.
+         */
+        fun canonicalPair(
+            a: UUID,
+            b: UUID,
+        ): Pair<UUID, UUID> = if (a.toString() < b.toString()) a to b else b to a
+
+        /**
          * Opens (or re-resolves) the single dialog of a pair: canonical
          * least/greatest order regardless of the argument order; a dialog
          * with oneself is refused here in addition to the `422 self_forbidden`
@@ -60,7 +76,7 @@ data class Chat(
             at: Instant,
         ): Chat {
             require(a != b) { "a dialog requires two distinct users (FR-001)" }
-            val (low, high) = if (a < b) a to b else b to a
+            val (low, high) = canonicalPair(a, b)
             return Chat(id = id, userLowId = low, userHighId = high, createdAt = at)
         }
     }
