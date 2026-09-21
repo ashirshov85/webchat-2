@@ -271,6 +271,20 @@ sso:
   # «Предусловия» (T042); real deployments override via env / K8s Secret.
   callback-url: ${SSO_CALLBACK_URL:http://localhost:8080/api/v1/auth/sso/callback}
 
+chats:
+  message:
+    # 004 api-contract.md header (FR-003): text length cap after trim
+    max-length: 4096
+    # 004 api-contract.md №15 (FR-008): history page size, limit 1..50
+    page-size: 50
+  rate-limit:
+    # 004 api-contract.md №16 (FR-011): per-user send flood limit,
+    # rl:user:msgsend:{userId} bucket (T032)
+    messages-per-minute: 30
+  realtime:
+    # 004 realtime-channel.md: SSE `:ka` heartbeat every 15 s (T018)
+    heartbeat: 15s
+
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)
   observations:
