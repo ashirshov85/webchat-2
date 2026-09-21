@@ -65,7 +65,7 @@ description: "Task list for feature implementation"
 
 ### Implementation for User Story 1
 
-- [ ] T009 [P] [US1] Доменные модели `Chat`, `ChatParticipant`, `Message`, `MessageText` (валидация FR-003: trim начальных/конечных пробелов, непустой, ≤4096 после trim) — в `backend/src/main/kotlin/webchat/backend/chats/domain/model/`
+- [X] T009 [P] [US1] Доменные модели `Chat`, `ChatParticipant`, `Message`, `MessageText` (валидация FR-003: trim начальных/конечных пробелов, непустой, ≤4096 после trim) — в `backend/src/main/kotlin/webchat/backend/chats/domain/model/`
 - [ ] T010 [P] [US1] Порты домена `ChatRepository`, `MessageRepository`, `ParticipantRepository`, `RealtimeEventPublisher` — в `backend/src/main/kotlin/webchat/backend/chats/domain/port/` (DIP: адаптеры снаружи)
 - [ ] T011 [US1] `JdbcChatRepository` (ensure: `INSERT … ON CONFLICT (user_low_id, user_high_id) DO NOTHING` + SELECT, снятие `hidden`, ленивое создание двух `chat_participants` в одной транзакции) и `JdbcParticipantRepository` (чтение per-user состояния) — в `backend/src/main/kotlin/webchat/backend/chats/repository/`
 - [ ] T012 [US1] `JdbcMessageRepository`: `INSERT … ON CONFLICT (id) DO NOTHING RETURNING *` + SELECT по id (дедуп-путь), выборка страницы `ORDER BY seq DESC` с фильтром видимости `seq > deleted_up_to_seq`, обновление `chats.last_seq` в той же транзакции, сброс `hidden=false` у обоих участников (только при фактической новой записи, не в дедуп-пути; возврат чата в список при новом входящем — FR-021, data-model «hidden») — в `backend/src/main/kotlin/webchat/backend/chats/repository/JdbcMessageRepository.kt`
