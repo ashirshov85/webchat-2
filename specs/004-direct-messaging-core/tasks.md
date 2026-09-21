@@ -61,7 +61,7 @@ description: "Task list for feature implementation"
 
 - [X] T007 [P] [US1] `RealtimeSseIT`: SSE-поток отдаёт `retry: 3000`, heartbeat `:ka` каждые 15 с, кадр `message.created` (payload = схеме контракта) обоим участникам после POST — в `backend/src/test/kotlin/webchat/backend/realtime/RealtimeSseIT.kt` (WebTestClient, [research.md §13](./research.md))
 - [X] T008 [P] [US1] `ChatAccessIT`: не-участник получает `403 not_participant` на `GET/DELETE /chats/{id}`, `GET/POST /chats/{id}/messages`, `POST /chats/{id}/read`; несуществующий чат → `404` (FR-002) — в `backend/src/test/kotlin/webchat/backend/chats/ChatAccessIT.kt`
-- [ ] T008a [P] [US1] `MessageValidationIT`: ровно 4096 символов (после trim) → `201`; 4097 → `400 text_too_long`; текст только из пробелов/переводов строк → `400 text_blank`; внутренние пробелы сохраняются в записи — в `backend/src/test/kotlin/webchat/backend/chats/MessageValidationIT.kt` (FR-003, Edge Cases)
+- [X] T008a [P] [US1] `MessageValidationIT`: ровно 4096 символов (после trim) → `201`; 4097 → `400 text_too_long`; текст только из пробелов/переводов строк → `400 text_blank`; внутренние пробелы сохраняются в записи — в `backend/src/test/kotlin/webchat/backend/chats/MessageValidationIT.kt` (FR-003, Edge Cases)
 
 ### Implementation for User Story 1
 
