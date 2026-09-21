@@ -166,7 +166,8 @@ chat (FR-018). Создание ленивое: `INSERT … ON CONFLICT DO NOTHI
 ## Выводные представления API (не хранятся)
 
 - **ChatListItem** (GET /chats): `chatId, peer{id,username,email}, lastMessage{id,text(превью),
-  seq, senderId, createdAt} | null, unreadCount, blockedByMe, updatedAt(сортировка)`.
+  seq, senderId, createdAt} | null, unreadCount, blockedByMe` — ключ сортировки списка:
+  `lastMessage.createdAt` DESC NULLS LAST, tie-break `chatId` (контракт №12).
 - **ChatView** (GET /chats/{id}, ensure): `chatId, peer, blockedByMe, peerReadUpToSeq,
   myReadUpToSeq, hidden(после delete)`.
 - **MessageView**: `id, chatId, senderId, text, seq, createdAt` — галочки/статусы клиент
