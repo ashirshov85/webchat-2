@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WebChat Public API
-  version: 0.3.0
+  version: 0.4.0
   description: >
     Публичный API веб-чата. Единственный источник истины публичного API;
     TypeScript-типы фронтенда генерируются из этого файла автоматически.
@@ -18,6 +18,15 @@ info:
     публичны 4 маршрута (providers, authorize, callback, token);
     link/authorize, GET /users/me/identities и DELETE идентичности
     требуют Bearer. Endpoint'ы 002 не изменились (аддитивно, minor-бамп).
+
+    Фича 004 (messaging): endpoints №11–18 — личные текстовые диалоги
+    (ensure/чтение/удаление, история с курсорной пагинацией, отправка с
+    клиентской дедупликацией, read-отметки) и реалтайм-канал SSE
+    №18 /users/me/events. Все новые пути требуют Bearer: публичный
+    перечень 002–003 не расширен. Фиксированные константы: максимум текста
+    сообщения — 4096 символов после trim; страница истории — 50 сообщений;
+    флуд-лимит отправки — 30 сообщений/мин на пользователя. Изменение —
+    только additive (0.3.0 → 0.4.0, без BREAKING.md).
 tags:
   - name: auth
     description: Регистрация, вход, сессии, восстановление пароля
@@ -25,6 +34,10 @@ tags:
     description: Данные пользователя
   - name: sso
     description: Вход через внешних identity-провайдеров (OIDC/OAuth2) и управление привязками
+  - name: chats
+    description: 'Личные текстовые диалоги: создание, история, отправка, прочтение, удаление'
+  - name: realtime
+    description: Реалтайм-канал SSE — поток событий пользователя (message.created, chat.read)
 security:
   - bearerAuth: []
 paths:
@@ -748,6 +761,456 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /api/v1/chats/ensure:
+    post:
+      operationId: ensureChat
+      tags: [chats]
+      summary: Открыть личный диалог с пользователем (№11, Bearer)
+      description: >
+        Возвращает существующий диалог пары пользователей либо создаёт новый
+        (201 — создан; 200 — уже существует). Повторное открытие существующего
+        чата снимает hidden у вызывающего: чат возвращается в список; история,
+        удалённая через №14, остаётся скрытой водяным знаком deleted_up_to_seq.
+        Пара пользователей имеет ровно один диалог (idempotent ensure, FR-001).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureChatRequest'
+      responses:
+        '200':
+          description: Диалог уже существует — возвращён существующий ChatView (hidden снят у вызывающего)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatView'
+        '201':
+          description: Диалог создан — ChatView
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatView'
+        '400':
+          description: 'Невалидное тело (errors: {peerUserId: [invalid_uuid]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Собеседник не найден (errors: {peer: [peer_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: 'Диалог с самим собой запрещён (errors: {peerUserId: [self_forbidden]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/chats:
+    get:
+      operationId: listChats
+      tags: [chats]
+      summary: Список диалогов пользователя (№12, Bearer)
+      description: >
+        ChatListItem одним запросом. Серверная сортировка: последнее видимое
+        сообщение (входящее или исходящее) по убыванию createdAt; чаты без
+        видимых сообщений — ниже; исключены только удалённые без новых
+        сообщений (hidden ∧ last_seq ≤ deleted_up_to_seq). Новый входящий
+        снимает hidden и возвращает чат в список (FR-021). Превью
+        lastMessage.text — полный текст (обрезка ≤64 симв. — клиентский
+        рендер).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Диалоги пользователя, отсортированные по последнему видимому сообщению
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [chats]
+                properties:
+                  chats:
+                    type: array
+                    description: По убыванию createdAt последнего видимого сообщения; пустой список валиден
+                    items:
+                      $ref: '#/components/schemas/ChatListItem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/chats/{chatId}:
+    get:
+      operationId: getChat
+      tags: [chats]
+      summary: Диалог по идентификатору (№13, Bearer)
+      description: >
+        ChatView пары с водяными знаками прочтения. Авторизация на уровне
+        ресурса — membership диалога (FR-002): не-участник получает 403
+        not_participant на существующем чате; несуществующий — 404.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          description: Идентификатор диалога
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Диалог
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatView'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: 'Вызывающий — не участник диалога (errors: {chat: [not_participant]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Диалог не найден (errors: {chat: [chat_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    delete:
+      operationId: deleteChat
+      tags: [chats]
+      summary: Удаление диалога у себя (№14, Bearer)
+      description: >
+        Per-user удаление (FR-021): история скрывается водяным знаком
+        deleted_up_to_seq = last_seq и hidden = true только у удалившего;
+        второй участник не затронут. Новый входящий снимает hidden и
+        возвращает чат в список — без старой истории (она остаётся за водяным
+        знаком). Повторный вызов — 204 (идемпотентно).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          description: Идентификатор диалога
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: История скрыта у вызывающего (идемпотентно)
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: 'Вызывающий — не участник диалога (errors: {chat: [not_participant]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Диалог не найден (errors: {chat: [chat_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/chats/{chatId}/messages:
+    get:
+      operationId: listMessages
+      tags: [chats]
+      summary: Страница истории диалога (№15, Bearer)
+      description: >
+        Сообщения по seq DESC (новее — раньше), ровно те, что seq < before
+        (курсор эксклюзивный); без before — последние видимые вызывающему
+        (seq > deleted_up_to_seq). limit 1–50, по умолчанию/максимум 50
+        (FR-008). nextBefore — seq самой старой записи страницы; отсутствует,
+        когда старее нет (пустая страница на границе — корректный ответ).
+        Порядок стабилен между повторными загрузками (seq).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          description: Идентификатор диалога
+          schema:
+            type: string
+            format: uuid
+        - name: before
+          in: query
+          required: false
+          description: 'Эксклюзивный курсор: только записи seq < before (seq самой старой записи предыдущей страницы)'
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: limit
+          in: query
+          required: false
+          description: Размер страницы 1–50; по умолчанию 50 (фиксированный максимум — FR-008)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 50
+      responses:
+        '200':
+          description: Страница истории (по seq DESC); пустая страница на границе — без nextBefore и без ошибок
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagePage'
+        '400':
+          description: 'limit вне 1–50 (errors: {limit: [limit_out_of_range]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: 'Вызывающий — не участник диалога (errors: {chat: [not_participant]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Диалог не найден (errors: {chat: [chat_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: sendMessage
+      tags: [chats]
+      summary: Отправка сообщения (№16, Bearer)
+      description: >
+        Exactly-once запись (FR-004/FR-012): clientMessageId — клиентский UUID,
+        ретраи тем же id дают 200 существующей записи без дубля; id,
+        принадлежащий другой записи, — 409. Текст: trim начальных/конечных
+        пробелов, непустой, ≤4096 символов после trim (FR-003). Валидный текст
+        записывается с сохранением внутренних пробелов. 201 — записано; 200 —
+        дедупликация (запись уже существует). Флуд-лимит — 30 сообщений/мин на
+        пользователя (FR-011): 31-е новое сообщение в окне → 429 flood_limit +
+        Retry-After (сек до доступного токена); ретрай уже записанного
+        сообщения (дедуп-путь) не штрафуется. Блокировка пары (FR-020):
+        отправитель блокирует получателя → 403 chat_blocked_by_you; получатель
+        блокирует отправителя → 403 you_are_blocked; записи нет.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          description: Идентификатор диалога
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '200':
+          description: Дедупликация — clientMessageId уже записан, возвращена существующая запись Message (дубля нет)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '201':
+          description: Сообщение записано — Message
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          description: 'Валидация: text только из пробелов/переводов строк (errors: {text: [text_blank]}); длиннее 4096 символов после trim (errors: {text: [text_too_long]}); не-UUID clientMessageId (errors: {clientMessageId: [invalid_uuid]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: 'Вызывающий — не участник (errors: {chat: [not_participant]}); отправитель блокирует получателя (errors: {chat: [chat_blocked_by_you]}); получатель блокирует отправителя (errors: {chat: [you_are_blocked]}) — записи нет'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Диалог не найден (errors: {chat: [chat_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: 'clientMessageId принадлежит другой записи (errors: {clientMessageId: [message_id_conflict]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Флуд-лимит 30 сообщений/мин на пользователя (errors: {text: [flood_limit]}; FR-011) — записи нет'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/chats/{chatId}/read:
+    post:
+      operationId: markRead
+      tags: [chats]
+      summary: Отметить сообщения прочитанными (№17, Bearer)
+      description: >
+        Двигает водяной знак прочтения вызывающего до upToSeq включительно
+        (FR-010). Идемпотентно и монотонно: повторное/меньшее upToSeq не
+        откатывает и не публикует событие. upToSeq больше seq последнего
+        сообщения диалога → 400 invalid_up_to_seq, водяной знак не двигается.
+        При действующей блокировке пары (FR-020): вызывающий — блокирующий →
+        204 без эффекта (водяной знак не двигается, событие не публикуется —
+        «замирание»); вызывающий — заблокированный → 204, водяной знак
+        двигается локально, событие блокирующему не публикуется.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          description: Идентификатор диалога
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReadRequest'
+      responses:
+        '204':
+          description: Водяной знак продвинут (или без эффекта при повторном/меньшем upToSeq и при блокировке)
+        '400':
+          description: 'upToSeq меньше 1 или больше seq последнего сообщения диалога (errors: {upToSeq: [invalid_up_to_seq]}) — водяной знак не двигается'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: 'Вызывающий — не участник диалога (errors: {chat: [not_participant]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Диалог не найден (errors: {chat: [chat_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/events:
+    get:
+      operationId: streamUserEvents
+      tags: [realtime]
+      summary: Поток событий пользователя — SSE (№18, Bearer)
+      description: >
+        Единый realtime-поток событий пользователя (FR-022, US6): мультиплекс
+        всех диалогов; каждое устройство/сессия открывает свой поток. Канал
+        строго server→client: отправка — REST №16 (подтверждение = HTTP-ответ).
+        Подключение: Authorization Bearer (тот же access JWT, что и REST;
+        токен в URL запрещён) + Accept: text/event-stream. Фрейминг WHATWG
+        SSE: первая строка потока — retry: 3000 (подсказка реконнекта);
+        heartbeat-комментарий :ka каждые 15 с. Кадры: event: message.created |
+        chat.read, за которым одна data:-строка с JSON-полем одной строкой,
+        UTF-8. Событие message.created (FR-007) публикуется обоим участникам
+        после коммита записи: payload {chatId, message: Message}; отправитель
+        рендерит свои исходящие с других устройств сразу «доставлено»; клиент
+        дедуплицирует по message.id. Событие chat.read (FR-010):
+        payload {chatId, readUpToSeq, byUserId} — собеседник прочитал до
+        readUpToSeq включительно; монотонно (повторные/меньшие не публикуются).
+        Канал at-most-once: при (пере)подключении клиент выполняет рефетч
+        REST (№12/№15); порядок/дубли исключены серверным seq и дедупом по id.
+        Неизвестные клиенту event:-типы обязаны игнорироваться (прямая
+        совместимость, US6-3).
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: 'SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, события message.created и chat.read (фрейминг и payloads — в описании операции)'
+          headers:
+            X-Accel-Buffering:
+              description: 'no — отключение буферизации прокси (кадры доставляются немедленно, без агрегации за ingress)'
+              schema:
+                type: string
+                const: no
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Сырой SSE-поток (текст по спецификации WHATWG)
+              examples:
+                streamSample:
+                  summary: Первый кадр (retry) + события message.created и chat.read + heartbeat
+                  value: |
+                    retry: 3000
+
+                    event: message.created
+                    data: {"chatId":"7dc5f5c0-0000-4a10-8b00-000000000001","message":{"id":"0b0f5e70-0000-4c20-9d00-000000000002","chatId":"7dc5f5c0-0000-4a10-8b00-000000000001","senderId":"9a2c8e40-0000-4d30-a100-000000000003","text":"Привет","seq":128,"createdAt":"2026-09-20T12:00:00.123Z"}}
+
+                    event: chat.read
+                    data: {"chatId":"7dc5f5c0-0000-4a10-8b00-000000000001","readUpToSeq":128,"byUserId":"9a2c8e40-0000-4d30-a100-000000000003"}
+
+                    :ka
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   securitySchemes:
     bearerAuth:
@@ -1022,3 +1485,161 @@ components:
           description: Привязки пользователя, упорядоченные по linkedAt
           items:
             $ref: '#/components/schemas/Identity'
+    EnsureChatRequest:
+      type: object
+      additionalProperties: false
+      required: [peerUserId]
+      properties:
+        peerUserId:
+          type: string
+          format: uuid
+          description: Собеседник; диалог с самим собой → 422 self_forbidden
+    ChatView:
+      type: object
+      additionalProperties: false
+      required: [chatId, peer, blockedByMe, peerReadUpToSeq, myReadUpToSeq]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+          description: Идентификатор диалога пары пользователей
+        peer:
+          $ref: '#/components/schemas/PublicUser'
+          description: Собеседник (вторая сторона диалога)
+        blockedByMe:
+          type: boolean
+          description: 'Вызывающий блокирует собеседника (FR-020). Единственная проекция блокировок в API: поле «кто заблокировал меня» отсутствует — заблокированный узнаёт о блокировке только из 403 you_are_blocked при отправке'
+        peerReadUpToSeq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Водяной знак прочтения собеседника (0 — ничего не прочитано); для двойной галочки отправителя
+        myReadUpToSeq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Водяной знак прочтения вызывающего (0 — ничего не прочитано)
+    Message:
+      type: object
+      additionalProperties: false
+      required: [id, chatId, senderId, text, seq, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: '= clientMessageId из №16: клиентский UUID, exactly-once дедупликация (FR-004)'
+        chatId:
+          type: string
+          format: uuid
+        senderId:
+          type: string
+          format: uuid
+          description: Отправитель (участник диалога)
+        text:
+          type: string
+          maxLength: 4096
+          description: Триммированный по краям текст (FR-003); внутренние пробелы сохраняются; ≤4096 символов после trim
+        seq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Монотонный порядок внутри диалога (уникален в рамках чата); основа курсорной пагинации №15
+        createdAt:
+          type: string
+          format: date-time
+    ChatListItem:
+      type: object
+      additionalProperties: false
+      required: [chatId, peer, lastMessage, unreadCount, blockedByMe]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+        peer:
+          $ref: '#/components/schemas/PublicUser'
+          description: Собеседник
+        lastMessage:
+          description: Последнее видимое вызывающему сообщение (входящее или исходящее); null — видимых сообщений нет (пустой или полностью удалённый у себя диалог)
+          anyOf:
+            - $ref: '#/components/schemas/Message'
+            - type: 'null'
+        unreadCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Входящие сообщения с seq > myReadUpToSeq (видимые вызывающему); при блокировке у блокирующего «замирает» (FR-020)
+        blockedByMe:
+          type: boolean
+          description: Вызывающий блокирует собеседника — метка «заблокирован» в UI (FR-020)
+    MessagePage:
+      type: object
+      additionalProperties: false
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          description: Страница истории по seq DESC (новее — раньше); ровно те, что seq < before; пустая страница на границе — корректный ответ
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/Message'
+        nextBefore:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 'Курсор следующей страницы: seq самой старой записи этой страницы; отсутствует, когда старее нет (история исчерпана)'
+    SendMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [clientMessageId, text]
+      properties:
+        clientMessageId:
+          type: string
+          format: uuid
+          description: Клиентский UUID сообщения; ретраи тем же id → 200 существующей записи (exactly-once, FR-004); принадлежность другой записи → 409
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: 'FR-003: trim начальных/конечных пробелов, непустой после trim (иначе 400 text_blank), ≤4096 символов после trim (иначе 400 text_too_long); внутренние пробелы сохраняются'
+    ReadRequest:
+      type: object
+      additionalProperties: false
+      required: [upToSeq]
+      properties:
+        upToSeq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Прочитано до seq включительно; 1 ≤ upToSeq ≤ seq последнего сообщения диалога (иначе 400 invalid_up_to_seq); идемпотентно и монотонно
+    MessageCreatedEvent:
+      type: object
+      additionalProperties: false
+      description: 'SSE-событие №18 message.created: новое сообщение записано и закоммичено (FR-007); публикуется обоим участникам — получателю для отображения, отправителю для остальных его устройств/сессий'
+      required: [chatId, message]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+          description: Диалог события
+        message:
+          $ref: '#/components/schemas/Message'
+          description: Та же схема, что в №16/№15; клиент дедуплицирует по message.id
+    ChatReadEvent:
+      type: object
+      additionalProperties: false
+      description: 'SSE-событие №18 chat.read: собеседник просмотрел сообщения диалога до readUpToSeq включительно (FR-010); монотонно — публикуется только при продвижении водяного знака; при блокировке не публикуется ни в канал блокирующего, ни в канал заблокированного (FR-020)'
+      required: [chatId, readUpToSeq, byUserId]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+          description: Диалог
+        readUpToSeq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Новый водяной знак читавшего
+        byUserId:
+          type: string
+          format: uuid
+          description: Кто прочитал
