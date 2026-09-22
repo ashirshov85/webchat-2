@@ -191,6 +191,41 @@ describe('useChatMessages realtime appends', () => {
   })
 })
 
+describe('useChatMessages outbox confirmation (T036, FR-012)', () => {
+  it('merges the 201/200 server copy and converges with a racing SSE frame into one instance', async () => {
+    const stream = installStream()
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)], 10))
+    const { result } = mountChatMessages('chat-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    // The outbox send is acknowledged (201/200): message.id = clientMessageId.
+    act(() => {
+      result.current.confirmMessage({ ...makeMessage('chat-1', 'cm-1', 20), senderId: 'me-1' })
+    })
+    expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'cm-1'])
+
+    // The own-stream SSE frame for the same message races the acknowledgement —
+    // exactly one instance survives (FR-004/FR-009).
+    emitMessageCreated(stream, { ...makeMessage('chat-1', 'cm-1', 20), senderId: 'me-1' })
+    expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'cm-1'])
+  })
+
+  it('appends an own outgoing message sent from another device via the own stream (US2-6)', async () => {
+    const stream = installStream()
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)], 10))
+    const { result } = mountChatMessages('chat-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitMessageCreated(stream, { ...makeMessage('chat-1', 'other-device-1', 20), senderId: 'me-1' })
+
+    expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'other-device-1'])
+  })
+})
+
 describe('useChatMessages convergence on SSE (re)connect (FR-009)', () => {
   it('refetches the latest page on onOpen and converges without duplicates or reordering', async () => {
     const stream = installStream()

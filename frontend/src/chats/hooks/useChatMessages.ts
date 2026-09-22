@@ -6,6 +6,14 @@
  * triggers a silent refetch of the latest page; the merged view keeps
  * the server `seq` order and never duplicates or reorders already
  * rendered messages (SC-002/003; contracts/realtime-channel.md §4).
+ *
+ * Outbox confirmation (US2, T036): `confirmMessage` merges the server
+ * `Message` returned by the 201/200 send acknowledgement, turning the
+ * optimistic «отправляется» entry into «доставлено»; a racing SSE
+ * `message.created` frame for the same id converges to a single
+ * instance. Outgoing messages sent from another device arrive as
+ * regular `message.created` frames on the own stream and render
+ * «доставлено» immediately (US2-6 multidevice).
  */
 import { useCallback, useEffect, useState } from 'react'
 import { listMessages } from '../../api/chats'
@@ -20,7 +28,12 @@ export interface UseChatMessagesResult {
   readonly status: ChatMessagesStatus
   readonly error: unknown
   /** Re-runs the latest-page fetch with the same converge semantics. */
-  reload(): void
+  readonly reload: () => void
+  /**
+   * Merges the server copy of a sent message (201/200 response of the
+   * outbox send, T036) with the usual dedup/order semantics.
+   */
+  readonly confirmMessage: (message: Message) => void
 }
 
 function isSameMessage(a: Message, b: Message): boolean {
@@ -126,5 +139,9 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     setRefreshCount((count) => count + 1)
   }, [])
 
-  return { messages, status, error, reload }
+  const confirmMessage = useCallback((message: Message) => {
+    setMessages((previous) => reconcileMessages(previous, [message]))
+  }, [])
+
+  return { messages, status, error, reload, confirmMessage }
 }

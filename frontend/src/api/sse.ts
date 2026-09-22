@@ -153,7 +153,15 @@ function retryAfter(failures: number, signal: AbortSignal): StreamAttempt {
 }
 
 async function openStream(failures: number, signal: AbortSignal): Promise<StreamAttempt> {
-  const token = await currentToken()
+  let token: string | null
+  try {
+    token = await currentToken()
+  } catch {
+    // The refresh request itself failed at the network level — a
+    // transient condition retried on the usual backoff, never an
+    // unhandled rejection that would kill the stream loop.
+    return signal.aborted ? { outcome: 'stop' } : retryAfter(failures + 1, signal)
+  }
   if (token === null || signal.aborted) {
     return { outcome: 'stop' }
   }
@@ -168,7 +176,14 @@ async function openStream(failures: number, signal: AbortSignal): Promise<Stream
   }
   if (response.status === 401) {
     await discardBody(response)
-    if ((await refreshTokens()) === null || signal.aborted) {
+    let refreshed: boolean
+    try {
+      refreshed = (await refreshTokens()) !== null
+    } catch {
+      // Same transient semantics as above: backoff, not a crash.
+      return signal.aborted ? { outcome: 'stop' } : retryAfter(failures + 1, signal)
+    }
+    if (!refreshed || signal.aborted) {
       return { outcome: 'stop' }
     }
     return failures === 0 ? { outcome: 'retry-now' } : retryAfter(failures + 1, signal)

@@ -300,6 +300,55 @@ describe('streamUserEvents connection', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it('retries on the backoff when the initial token refresh fails at the network level', async () => {
+    session.getAccessToken.mockReturnValue(null)
+    client.refreshTokens.mockRejectedValueOnce(new Error('refresh offline'))
+    fetchMock.mockReturnValueOnce(Promise.resolve(sseStream().response))
+    const onOpen = vi.fn()
+
+    connection = streamUserEvents({ onOpen })
+    await flush()
+
+    // A failed refresh request behaves like a failed connection attempt:
+    // no fetch, no crash — the client backs off and tries again.
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(onOpen).not.toHaveBeenCalled()
+
+    // The next attempt finds a valid token in memory (refresh succeeded
+    // elsewhere) and connects normally.
+    session.getAccessToken.mockReturnValue('access-fresh')
+    client.refreshTokens.mockResolvedValue(null)
+
+    await vi.advanceTimersByTimeAsync(499)
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(bearerOf(fetchMock.mock.calls[0]!)).toBe('Bearer access-fresh')
+    await flush()
+    expect(onOpen).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries on the backoff when a mid-stream 401 refresh fails at the network level', async () => {
+    session.getAccessToken.mockReturnValue('access-1')
+    client.refreshTokens.mockRejectedValueOnce(new Error('refresh offline'))
+    fetchMock
+      .mockReturnValueOnce(Promise.resolve(new Response(null, { status: 401 })))
+      .mockReturnValueOnce(Promise.resolve(sseStream().response))
+    const onOpen = vi.fn()
+
+    connection = streamUserEvents({ onOpen })
+    await flush()
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(onOpen).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(500)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await flush()
+    expect(onOpen).toHaveBeenCalledTimes(1)
+  })
+
   it('cancels pending reconnection attempts after close()', async () => {
     const stream = sseStream()
     fetchMock.mockReturnValueOnce(Promise.resolve(stream.response))
