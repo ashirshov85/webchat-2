@@ -53,6 +53,36 @@ body {
   padding: 24px 16px 48px;
 }
 
+/* Messenger shell (feature 004, T025): panel on the left + dialog window */
+#root:has(.messenger) {
+  max-width: 1080px;
+}
+
+.messenger {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  margin-top: 16px;
+}
+
+.messenger-panel,
+.messenger-dialog {
+  margin-top: 0;
+  min-height: 320px;
+}
+
+.messenger-empty {
+  margin: 0;
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .messenger {
+    grid-template-columns: 1fr;
+  }
+}
+
 h1 {
   font-size: 1.75rem;
   margin: 0 0 8px;
