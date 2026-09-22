@@ -36,12 +36,15 @@ data class ChatPeerView(
  *
  * `peerReadUpToSeq`/`myReadUpToSeq` (T043) carry the FR-010 per-user
  * marks of both sides — the sender renders ✓✓ from `peerReadUpToSeq`;
- * `blockedByMe` lands with User Story 5 (T054) — each story extends this
- * view independently without touching the pair resolve.
+ * `blockedByMe` (T054, FR-020) is the ONLY block projection in the API:
+ * the caller blocks the peer — the inverse «who blocked me» field is
+ * deliberately absent, the blocked user learns about the block ONLY from
+ * the `403 you_are_blocked` of his own send (research.md 004 §6).
  */
 data class ChatView(
     val chatId: UUID,
     val peer: ChatPeerView,
+    val blockedByMe: Boolean,
     val peerReadUpToSeq: Long,
     val myReadUpToSeq: Long,
 )

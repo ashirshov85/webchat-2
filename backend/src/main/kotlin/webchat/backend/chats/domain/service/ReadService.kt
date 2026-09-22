@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
+import webchat.backend.contacts.domain.port.BlockRepository
 import java.util.UUID
 
 /**
@@ -50,12 +51,25 @@ class InvalidUpToSeqException : RuntimeException("upToSeq is outside the recorde
  * Later stories join without restructuring: the blocking-pair
  * suppression of FR-020 (T054) wraps the UPDATE/publish legs, and the
  * `webchat_read_advanced_total` counter (T046) hooks the advance below.
+ *
+ * The FR-020 suppression (T054, research.md 004 §6) — two distinct legs:
+ *  * the caller BLOCKS the peer (the blocker views the blocked dialog):
+ *    `204`, the watermark does NOT move and nothing is published — his
+ *    statuses and the unread badge «freeze» naturally (sends into the
+ *    pair are refused, so the numerator cannot grow; reads are
+ *    suppressed, so it cannot reset);
+ *  * the caller IS blocked by the peer (he may still VIEW the history):
+ *    `204`, his own watermark DOES advance locally (harmless and
+ *    monotone — after an unblock the state is already correct), but the
+ *    `chat.read` event is NOT delivered to the blocker — the blocked
+ *    side's activity is never revealed.
  */
 @Service
 class ReadService(
     private val chatService: ChatService,
     private val participantRepository: ParticipantRepository,
     private val realtimeEventPublisher: RealtimeEventPublisher,
+    private val blockRepository: BlockRepository,
     private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(ReadService::class.java)
@@ -63,8 +77,10 @@ class ReadService(
     /**
      * Contract №17: `204` in every non-refused case — an actual advance
      * (event published), an idempotent repeat and a smaller `upToSeq`
-     * (silent no-op, US4-5). Refusals leave as typed exceptions: 404/403
-     * from the membership gate, `400 invalid_up_to_seq` from the bound.
+     * (silent no-op, US4-5) and both FR-020 suppressed legs (T054: the
+     * blocker's frozen no-op, the blocked user's silent local advance).
+     * Refusals leave as typed exceptions: 404/403 from the membership
+     * gate, `400 invalid_up_to_seq` from the bound.
      */
     fun markRead(
         chatId: UUID,
@@ -73,13 +89,15 @@ class ReadService(
     ) {
         val chat = chatService.get(chatId, callerId)
         if (upToSeq < MIN_UP_TO_SEQ || upToSeq > chat.lastSeq) throw InvalidUpToSeqException()
-
-        val advanced = participantRepository.advanceReadUpTo(chatId, callerId, upToSeq) ?: return
-        readAdvancedTotal().increment()
         val peerId =
             checkNotNull(chat.peerOf(callerId)) {
                 "the caller passed the membership gate, so the peer must resolve"
             }
+        if (blockRepository.exists(callerId, peerId)) return
+
+        val advanced = participantRepository.advanceReadUpTo(chatId, callerId, upToSeq) ?: return
+        readAdvancedTotal().increment()
+        if (blockRepository.exists(peerId, callerId)) return
         publishIsolated(
             peerId,
             ChatReadEvent(chatId = chat.id, readUpToSeq = advanced.lastReadSeq, byUserId = callerId),

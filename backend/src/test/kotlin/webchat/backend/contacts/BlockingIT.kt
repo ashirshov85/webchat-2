@@ -250,11 +250,14 @@ class BlockingIT(
         val answerSeq = sendMessageOk(bob, chatId, fromBlockedText)["seq"].asLong()
         assertThat(answerSeq).isGreaterThan(afterSeq)
 
-        openUserEvents(bob).use { bobStream ->
+        // The reader is BOB, so realtime-channel.md §3.2 delivers
+        // `chat.read` to the PEER (ALICE) — her stream proves the event
+        // flows again after the unblock.
+        openUserEvents(alice).use { aliceStream ->
             assertThat(markRead(bob, chatId, upToSeq = answerSeq).statusCode)
                 .overridingErrorMessage("a regular read must answer 204 after the unblock")
                 .isEqualTo(HttpStatus.NO_CONTENT)
-            val readEvent = bobStream.awaitEvent(CHAT_READ_EVENT, deliveryBudget)
+            val readEvent = aliceStream.awaitEvent(CHAT_READ_EVENT, deliveryBudget)
             assertThat(readEvent["readUpToSeq"].asLong())
                 .overridingErrorMessage("chat.read must flow to the peer again after the unblock (FR-010)")
                 .isEqualTo(answerSeq)

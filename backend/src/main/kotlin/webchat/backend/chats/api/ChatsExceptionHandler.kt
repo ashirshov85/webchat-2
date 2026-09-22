@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import webchat.backend.chats.domain.model.InvalidMessageTextException
 import webchat.backend.chats.domain.model.MessageTextViolation
+import webchat.backend.chats.domain.service.ChatBlockedByYouException
 import webchat.backend.chats.domain.service.ChatNotFoundException
 import webchat.backend.chats.domain.service.FloodLimitException
 import webchat.backend.chats.domain.service.InvalidUpToSeqException
@@ -16,6 +17,7 @@ import webchat.backend.chats.domain.service.MessageIdConflictException
 import webchat.backend.chats.domain.service.NotParticipantException
 import webchat.backend.chats.domain.service.PeerNotFoundException
 import webchat.backend.chats.domain.service.SelfForbiddenException
+import webchat.backend.chats.domain.service.YouAreBlockedException
 
 /**
  * RFC 9457 rendering for the chats API errors (api-contract.md §1, the
@@ -52,6 +54,27 @@ class ChatsExceptionHandler {
     fun onNotParticipant(): ProblemDetail =
         problem(HttpStatus.FORBIDDEN, NOT_PARTICIPANT_DETAIL)
             .apply { setProperty(ERRORS_PROPERTY, mapOf(CHAT_FIELD to listOf(NOT_PARTICIPANT_CODE))) }
+
+    /**
+     * 403 (api-contract.md №16, FR-020, T054): the SENDER blocks the
+     * recipient — the refusal of the blocker himself; nothing was written
+     * and nothing was published into either stream.
+     */
+    @ExceptionHandler(ChatBlockedByYouException::class)
+    fun onChatBlockedByYou(): ProblemDetail =
+        problem(HttpStatus.FORBIDDEN, CHAT_BLOCKED_BY_YOU_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(CHAT_FIELD to listOf(CHAT_BLOCKED_BY_YOU_CODE))) }
+
+    /**
+     * 403 (api-contract.md №16, FR-020, T054): the RECIPIENT blocks the
+     * sender — the explicit notification of the blocked user, his ONLY
+     * way to learn about the block; nothing was written and nothing was
+     * published into either stream.
+     */
+    @ExceptionHandler(YouAreBlockedException::class)
+    fun onYouAreBlocked(): ProblemDetail =
+        problem(HttpStatus.FORBIDDEN, YOU_ARE_BLOCKED_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(CHAT_FIELD to listOf(YOU_ARE_BLOCKED_CODE))) }
 
     /** 400 (api-contract.md №11): absent or malformed `peerUserId`. */
     @ExceptionHandler(InvalidPeerUserIdException::class)
@@ -151,6 +174,8 @@ class ChatsExceptionHandler {
         const val PEER_NOT_FOUND_CODE = "peer_not_found"
         const val CHAT_NOT_FOUND_CODE = "chat_not_found"
         const val NOT_PARTICIPANT_CODE = "not_participant"
+        const val CHAT_BLOCKED_BY_YOU_CODE = "chat_blocked_by_you"
+        const val YOU_ARE_BLOCKED_CODE = "you_are_blocked"
         const val INVALID_UUID_CODE = "invalid_uuid"
         const val TEXT_BLANK_CODE = "text_blank"
         const val TEXT_TOO_LONG_CODE = "text_too_long"
@@ -162,6 +187,8 @@ class ChatsExceptionHandler {
         const val PEER_NOT_FOUND_DETAIL = "The requested peer user does not exist"
         const val CHAT_NOT_FOUND_DETAIL = "The requested chat does not exist"
         const val NOT_PARTICIPANT_DETAIL = "The caller is not a participant of this chat"
+        const val CHAT_BLOCKED_BY_YOU_DETAIL = "You blocked this peer, so the dialog is closed for your messages (FR-020)"
+        const val YOU_ARE_BLOCKED_DETAIL = "The peer blocked you, so the dialog is closed for your messages (FR-020)"
         const val INVALID_PEER_USER_ID_DETAIL = "peerUserId must be a UUID"
         const val INVALID_MESSAGE_TEXT_DETAIL = "message text violates FR-003 (blank or over 4096 after trim)"
         const val INVALID_CLIENT_MESSAGE_ID_DETAIL = "clientMessageId must be a UUID"

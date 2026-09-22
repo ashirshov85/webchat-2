@@ -38,6 +38,8 @@ import webchat.backend.chats.domain.service.MessageIdConflictException
 import webchat.backend.chats.domain.service.MessageService
 import webchat.backend.chats.domain.service.ReadService
 import webchat.backend.config.ChatsProperties
+import webchat.backend.contacts.domain.model.UserBlock
+import webchat.backend.contacts.domain.port.BlockRepository
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -222,24 +224,26 @@ class MessageControllerTest {
         MessageController(
             messageService =
                 MessageService(
-                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants),
+                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants, NoopBlockRepository),
                     messageRepository = repository,
                     realtimeEventPublisher = NoopRealtimePublisher,
                     chatsProperties = TEST_PROPERTIES,
                     rateLimitProxyManager = floodControl,
+                    blockRepository = NoopBlockRepository,
                     meterRegistry = SimpleMeterRegistry(),
                 ),
             historyService =
                 HistoryService(
-                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants),
+                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants, NoopBlockRepository),
                     messageRepository = repository,
                     chatsProperties = TEST_PROPERTIES,
                 ),
             readService =
                 ReadService(
-                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants),
+                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants, NoopBlockRepository),
                     participantRepository = participants,
                     realtimeEventPublisher = NoopRealtimePublisher,
+                    blockRepository = NoopBlockRepository,
                     meterRegistry = SimpleMeterRegistry(),
                 ),
         )
@@ -351,6 +355,24 @@ class MessageControllerTest {
         override fun findByEmail(email: String): User? = null
     }
 
+    /** The FR-020 pair is unblocked here — the blocking legs are owned by BlockingIT (T048). */
+    private object NoopBlockRepository : BlockRepository {
+        override fun block(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): UserBlock = error("the message paths never establish a block")
+
+        override fun unblock(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Unit = error("the message paths never lift a block")
+
+        override fun exists(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Boolean = false
+    }
+
     private companion object {
         const val VALID_TEXT = "привет"
         const val PAGE_SIZE = 50
@@ -379,7 +401,7 @@ class MessageControllerTest {
         val TEST_PROPERTIES =
             ChatsProperties(
                 message = ChatsProperties.Message(maxLength = TEST_CAP, pageSize = PAGE_SIZE),
-                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30),
+                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30, searchesPerMinute = 30),
                 realtime = ChatsProperties.Realtime(heartbeat = Duration.ofSeconds(15)),
             )
     }

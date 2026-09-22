@@ -17,6 +17,7 @@ import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.config.ChatsProperties
+import webchat.backend.contacts.domain.port.BlockRepository
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.UUID
@@ -40,6 +41,25 @@ class FloodLimitException(
     val retryAfterSeconds: Long,
 ) : RuntimeException("the per-user send flood limit is exhausted") {
     val code: String = "flood_limit"
+}
+
+/**
+ * 403 (api-contract.md №16, FR-020): the SENDER blocks the recipient —
+ * the refusal the blocker himself sees («вы заблокировали получателя»).
+ * Rejected BEFORE the INSERT, so no record and no publication exist.
+ */
+class ChatBlockedByYouException : RuntimeException("the caller blocks the peer of this chat (FR-020)") {
+    val code: String = "chat_blocked_by_you"
+}
+
+/**
+ * 403 (api-contract.md №16, FR-020): the RECIPIENT blocks the sender —
+ * the explicit notification of the blocked user, his ONLY way to learn
+ * about the block (the API carries no inverse block field). Rejected
+ * BEFORE the INSERT, so no record and no publication exist.
+ */
+class YouAreBlockedException : RuntimeException("the peer of this chat blocks the caller (FR-020)") {
+    val code: String = "you_are_blocked"
 }
 
 /**
@@ -70,8 +90,9 @@ sealed interface MessageSendResult {
  *  1. membership (FR-002, T014) → FR-003 text normalization → the
  *     per-user flood bucket (FR-011, T032: `rl:user:msgsend:{userId}`,
  *     30 tokens/min in Redis — AFTER the dedup, BEFORE the INSERT, so a
- *     refused send consumes its token but writes nothing) → the
- *     exactly-once INSERT (`ON CONFLICT`, owned by
+ *     refused send consumes its token but writes nothing) → the FR-020
+ *     blocking-pair gate (T054: BOTH directions checked before the
+ *     INSERT) → the exactly-once INSERT (`ON CONFLICT`, owned by
  *     [MessageRepository.insert]) → `201` strictly after the PG commit →
  *     `message.created` published to `rt:user:{sender}` AND
  *     `rt:user:{recipient}` AFTER that commit (FR-004 basis, FR-007).
@@ -90,7 +111,11 @@ sealed interface MessageSendResult {
  *
  * Later stories insert their gates into this path without restructuring
  * it: the blocking-pair refusals (T054) — AFTER the dedup fast-path and
- * between the flood bucket and the INSERT.
+ * between the flood bucket and the INSERT — are in place: a retry of an
+ * already recorded message resolves through the dedup FIRST and is never
+ * blocked (FR-020 edge), while every fresh send into a blocked pair is
+ * refused before any record with `403 chat_blocked_by_you` /
+ * `403 you_are_blocked` and publishes nothing into either stream.
  */
 @Service
 class MessageService(
@@ -99,6 +124,7 @@ class MessageService(
     private val realtimeEventPublisher: RealtimeEventPublisher,
     private val chatsProperties: ChatsProperties,
     private val rateLimitProxyManager: ProxyManager<ByteArray>,
+    private val blockRepository: BlockRepository,
     private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(MessageService::class.java)
@@ -118,6 +144,7 @@ class MessageService(
         val chat = chatService.get(chatId, senderId)
         val text = MessageText.normalize(rawText, chatsProperties.message.maxLength)
         enforceFloodLimit(senderId)
+        enforceBlockPair(chat, senderId)
         val outcome =
             messageRepository.insert(
                 NewMessage(id = clientMessageId, chatId = chat.id, senderId = senderId, text = text),
@@ -221,8 +248,57 @@ class MessageService(
             ).build()
 
     /**
-     * SC-008 (T032, later T054): send-path refusals by reason — `flood`
-     * here; the blocking-pair codes join the same counter in T054.
+     * T054 (FR-020, research.md 004 §6): the blocking-pair gate — the
+     * block acts in BOTH directions, checked as two point lookups on the
+     * `(blocker_id, blocked_id)` PK pair STRICTLY BEFORE the INSERT (after
+     * the dedup fast-path and the flood bucket, per the path contract
+     * above):
+     *
+     *  * `exists(sender, recipient)` → the sender is the blocker —
+     *    `403 chat_blocked_by_you`;
+     *  * `exists(recipient, sender)` → the sender is the blocked one —
+     *    `403 you_are_blocked`, his ONLY notification of the block (the
+     *    API carries no inverse field).
+     *
+     * A refused send writes nothing, publishes nothing (neither stream
+     * may learn about the attempt — the Edge Case of BlockingIT) and is
+     * never flood-exempt: only the FR-004 dedup of an ALREADY recorded id
+     * passes a blocked pair, because it runs earlier. The warn logs carry
+     * ids ONLY — never the message text (constitution V, SC-008) — and
+     * the `webchat_send_rejected_total{reason=blocked_by_you|
+     * you_are_blocked}` counters grow.
+     */
+    private fun enforceBlockPair(
+        chat: Chat,
+        senderId: UUID,
+    ) {
+        val recipientId =
+            checkNotNull(chat.peerOf(senderId)) {
+                "the sender passed the membership gate, so the peer must resolve"
+            }
+        if (blockRepository.exists(senderId, recipientId)) {
+            log.warn(
+                "send refused: user <{}> blocks the peer of chat <{}> (FR-020 chat_blocked_by_you)",
+                senderId,
+                chat.id,
+            )
+            rejectedTotal(REASON_BLOCKED_BY_YOU).increment()
+            throw ChatBlockedByYouException()
+        }
+        if (blockRepository.exists(recipientId, senderId)) {
+            log.warn(
+                "send refused: user <{}> is blocked in chat <{}> (FR-020 you_are_blocked)",
+                senderId,
+                chat.id,
+            )
+            rejectedTotal(REASON_YOU_ARE_BLOCKED).increment()
+            throw YouAreBlockedException()
+        }
+    }
+
+    /**
+     * SC-008 (T032+T054): send-path refusals by reason — `flood` (FR-011)
+     * and the blocking-pair codes of FR-020.
      */
     private fun rejectedTotal(reason: String): Counter =
         Counter
@@ -332,6 +408,10 @@ class MessageService(
         const val SEND_REJECTED_TOTAL = "webchat_send_rejected_total"
         const val TAG_REASON = "reason"
         const val REASON_FLOOD = "flood"
+
+        /** SC-008 (T054, FR-020): the blocking-pair refusal reasons. */
+        const val REASON_BLOCKED_BY_YOU = "blocked_by_you"
+        const val REASON_YOU_ARE_BLOCKED = "you_are_blocked"
 
         /** SC-008 (T037, research.md 004 §11): dedup hits of the send path. */
         const val DEDUP_TOTAL = "webchat_message_dedup_total"

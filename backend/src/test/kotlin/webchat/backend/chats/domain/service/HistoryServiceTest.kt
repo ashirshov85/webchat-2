@@ -16,6 +16,8 @@ import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.config.ChatsProperties
+import webchat.backend.contacts.domain.model.UserBlock
+import webchat.backend.contacts.domain.port.BlockRepository
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -122,7 +124,7 @@ class HistoryServiceTest {
 
     private val service =
         HistoryService(
-            chatService = ChatService(NoopUserRepository, GateChatRepository, NoopParticipantRepository),
+            chatService = ChatService(NoopUserRepository, GateChatRepository, NoopParticipantRepository, NoopBlockRepository),
             messageRepository = repository,
             chatsProperties = TEST_PROPERTIES,
         )
@@ -210,6 +212,24 @@ class HistoryServiceTest {
         override fun findByEmail(email: String): User? = null
     }
 
+    /** The FR-020 pair is unblocked here — history stays readable under a block (BlockingIT, T048). */
+    private object NoopBlockRepository : BlockRepository {
+        override fun block(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): UserBlock = error("the history path never establishes a block")
+
+        override fun unblock(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Unit = error("the history path never lifts a block")
+
+        override fun exists(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Boolean = false
+    }
+
     private companion object {
         const val CODE_CHAT_NOT_FOUND = "chat_not_found"
         const val CODE_NOT_PARTICIPANT = "not_participant"
@@ -228,7 +248,7 @@ class HistoryServiceTest {
         val TEST_PROPERTIES =
             ChatsProperties(
                 message = ChatsProperties.Message(maxLength = TEST_CAP, pageSize = PAGE_SIZE),
-                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30),
+                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30, searchesPerMinute = 30),
                 realtime = ChatsProperties.Realtime(heartbeat = Duration.ofSeconds(15)),
             )
     }

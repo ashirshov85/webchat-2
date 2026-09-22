@@ -6,6 +6,7 @@ import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
+import webchat.backend.contacts.domain.port.BlockRepository
 import java.util.UUID
 
 /**
@@ -73,12 +74,18 @@ data class ReadWatermarks(
  * The read fields of `ChatView` (T043): [readWatermarks] projects the two
  * per-user marks of the resolved dialog for №11/№13 — the FR-010 watermark
  * is advanced by `ReadService` (№17) and only READ here.
+ *
+ * The FR-020 block projection of `ChatView`/`ChatListItem` (T054):
+ * [blockedByMe] is a point lookup `exists(me, peer)` on the block pair —
+ * the ONLY direction ever exposed; the inverse «who blocked me» is
+ * deliberately not derivable from this service (research.md 004 §6).
  */
 @Service
 class ChatService(
     private val userRepository: UserRepository,
     private val chatRepository: ChatRepository,
     private val participantRepository: ParticipantRepository,
+    private val blockRepository: BlockRepository,
 ) {
     fun ensure(
         callerId: UUID,
@@ -118,6 +125,25 @@ class ChatService(
             myReadUpToSeq = marks[callerId]?.lastReadSeq ?: DEFAULT_READ_UP_TO_SEQ,
             peerReadUpToSeq = marks[peerId]?.lastReadSeq ?: DEFAULT_READ_UP_TO_SEQ,
         )
+    }
+
+    /**
+     * T054 (FR-020, research.md 004 §6): the `blockedByMe` projection of
+     * `ChatView` (№11/№13) and later `ChatListItem` (№12, T055) — ONE
+     * point lookup `exists(caller, peer)` on the `(blocker_id, blocked_id)`
+     * PK pair. This is the ONLY block direction the API ever answers: the
+     * dialog stays fully visible to the blocked user without any mark —
+     * he learns about the block ONLY from the `403 you_are_blocked` of his
+     * own send (the leakage ban of FR-020).
+     */
+    fun blockedByMe(
+        chat: Chat,
+        callerId: UUID,
+    ): Boolean {
+        val peerId =
+            chat.peerOf(callerId)
+                ?: error("chat ${chat.id} does not involve the authenticated caller")
+        return blockRepository.exists(callerId, peerId)
     }
 
     private companion object {

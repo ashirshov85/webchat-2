@@ -74,7 +74,7 @@ class RealtimeControllerTest {
         val TEST_PROPERTIES =
             ChatsProperties(
                 message = ChatsProperties.Message(maxLength = 4096, pageSize = 50),
-                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30),
+                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30, searchesPerMinute = 30),
                 realtime = ChatsProperties.Realtime(heartbeat = Duration.ofMinutes(10)),
             )
     }

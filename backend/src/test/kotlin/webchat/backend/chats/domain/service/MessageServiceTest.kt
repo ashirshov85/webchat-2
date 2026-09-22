@@ -28,6 +28,8 @@ import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.config.ChatsProperties
+import webchat.backend.contacts.domain.model.UserBlock
+import webchat.backend.contacts.domain.port.BlockRepository
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -47,10 +49,13 @@ import java.util.function.Supplier
  * retries) / `409 message_id_conflict`, and — only for an actual new
  * record — fans `message.created` out to BOTH participants strictly
  * AFTER the durable insert (FR-007). The T032 flood bucket joins as the
- * last gate before the INSERT: a drained bucket refuses the send with
+ * last-but-one gate before the INSERT: a drained bucket refuses the send with
  * the ceil-of-refill-wait `Retry-After` and the
  * `webchat_send_rejected_total{reason=flood}` counter, while the dedup
- * fast-path stays ahead of it. The PG transaction itself is owned
+ * fast-path stays ahead of it. The T054 blocking-pair gate (FR-020) is the
+ * final pre-INSERT refusal: both directions answer their `403` code and the
+ * `blocked_by_you`/`you_are_blocked` counters, the dedup stays ahead of it
+ * too. The PG transaction itself is owned
  * by the repository (JdbcMessageRepositoryIT of T012); the Redis bucket
  * wiring — key family, drip, fail-open — by FloodLimitIT (T030); the
  * HTTP problem+json rendering is owned by the api layer (T017,
@@ -303,6 +308,59 @@ class MessageServiceTest {
         assertThat(meterRegistry.find(METRIC_SEND_REJECTED).counters()).isEmpty()
     }
 
+    @Test
+    fun `send refuses the blocker with chat_blocked_by_you before any write`() {
+        // T054 (FR-020): the sender blocks the recipient — refused after
+        // the dedup/flood gates, strictly before the INSERT.
+        blocks.blockedPairs = setOf(ALICE to BOB)
+
+        val exception =
+            assertThrows<ChatBlockedByYouException> {
+                service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+            }
+
+        assertThat(exception.code).isEqualTo(CODE_CHAT_BLOCKED_BY_YOU)
+        assertThat(repository.inserts).isEmpty()
+        assertThat(publisher.messageCreated).isEmpty()
+        assertThat(meterRegistry.find(METRIC_SEND_REJECTED).counters().map { it.id.getTag("reason") to it.count() })
+            .overridingErrorMessage("the refusal must grow webchat_send_rejected_total{reason=blocked_by_you}")
+            .containsExactly(REASON_BLOCKED_BY_YOU to 1.0)
+    }
+
+    @Test
+    fun `send refuses the blocked sender with you_are_blocked before any write`() {
+        // T054 (FR-020): the recipient blocks the sender — the explicit
+        // notification of the blocked user, his ONLY block projection.
+        blocks.blockedPairs = setOf(BOB to ALICE)
+
+        val exception =
+            assertThrows<YouAreBlockedException> {
+                service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+            }
+
+        assertThat(exception.code).isEqualTo(CODE_YOU_ARE_BLOCKED)
+        assertThat(repository.inserts).isEmpty()
+        assertThat(publisher.messageCreated).isEmpty()
+        assertThat(meterRegistry.find(METRIC_SEND_REJECTED).counters().map { it.id.getTag("reason") to it.count() })
+            .overridingErrorMessage("the refusal must grow webchat_send_rejected_total{reason=you_are_blocked}")
+            .containsExactly(REASON_YOU_ARE_BLOCKED to 1.0)
+    }
+
+    @Test
+    fun `the dedup fast-path converges a retry of a blocked pair without a refusal`() {
+        // The FR-020 edge (BlockingIT): only an ALREADY recorded id may
+        // pass a blocked pair — the T031 lookup runs before the block
+        // gate, so the retry converges and no rejection sample lands.
+        repository.existingById = STORED
+        blocks.blockedPairs = setOf(BOB to ALICE, ALICE to BOB)
+
+        val result = service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+
+        assertThat(result).isEqualTo(MessageSendResult.Existing(STORED))
+        assertThat(repository.inserts).isEmpty()
+        assertThat(meterRegistry.find(METRIC_SEND_REJECTED).counters()).isEmpty()
+    }
+
     private val timeline = mutableListOf<String>()
 
     private val repository = ScriptedMessageRepository(MessageInsertResult.Inserted(STORED), timeline)
@@ -336,13 +394,17 @@ class MessageServiceTest {
             ).thenReturn(admittingBucket)
     }
 
+    /** The T054 seam: the (blocker, blocked) pairs the FR-020 gate answers `true` for. */
+    private val blocks = ScriptedBlockRepository()
+
     private val service =
         MessageService(
-            chatService = ChatService(NoopUserRepository, GateChatRepository, NoopParticipantRepository),
+            chatService = ChatService(NoopUserRepository, GateChatRepository, NoopParticipantRepository, blocks),
             messageRepository = repository,
             realtimeEventPublisher = publisher,
             chatsProperties = TEST_PROPERTIES,
             rateLimitProxyManager = floodControl,
+            blockRepository = blocks,
             meterRegistry = meterRegistry,
         )
 
@@ -351,15 +413,19 @@ class MessageServiceTest {
         const val CODE_NOT_PARTICIPANT = "not_participant"
         const val CODE_MESSAGE_ID_CONFLICT = "message_id_conflict"
         const val CODE_FLOOD_LIMIT = "flood_limit"
+        const val CODE_CHAT_BLOCKED_BY_YOU = "chat_blocked_by_you"
+        const val CODE_YOU_ARE_BLOCKED = "you_are_blocked"
 
         /** T028: the SC-001 ack timer and its outcome tag values. */
         const val METRIC_ACK_SECONDS = "webchat_message_ack_seconds"
         const val OUTCOME_CREATED = "created"
         const val OUTCOME_EXISTING = "existing"
 
-        /** T032: the SC-008 rejection counter and its reason tag value. */
+        /** T032/T054: the SC-008 rejection counter and its reason tag values. */
         const val METRIC_SEND_REJECTED = "webchat_send_rejected_total"
         const val REASON_FLOOD = "flood"
+        const val REASON_BLOCKED_BY_YOU = "blocked_by_you"
+        const val REASON_YOU_ARE_BLOCKED = "you_are_blocked"
 
         /** T037: the SC-008 dedup-hit counter (research.md 004 §11). */
         const val METRIC_DEDUP_TOTAL = "webchat_message_dedup_total"
@@ -392,7 +458,7 @@ class MessageServiceTest {
         val TEST_PROPERTIES =
             ChatsProperties(
                 message = ChatsProperties.Message(maxLength = TEST_CAP, pageSize = 50),
-                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30),
+                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30, searchesPerMinute = 30),
                 realtime = ChatsProperties.Realtime(heartbeat = Duration.ofSeconds(15)),
             )
     }
@@ -488,5 +554,30 @@ class MessageServiceTest {
         override fun findByUsername(username: String): User? = null
 
         override fun findByEmail(email: String): User? = null
+    }
+
+    /**
+     * The T054 fixture: point lookups against the scripted
+     * [blockedPairs] — the exact `exists(blocker, blocked)` seam the
+     * FR-020 gate consults; the block/unblock writes are never reached
+     * by a send (they belong to the contacts feature, BlockingIT).
+     */
+    private class ScriptedBlockRepository : BlockRepository {
+        var blockedPairs: Set<Pair<UUID, UUID>> = emptySet()
+
+        override fun block(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): UserBlock = error("a send never establishes a block")
+
+        override fun unblock(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Unit = error("a send never lifts a block")
+
+        override fun exists(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Boolean = blockerId to blockedId in blockedPairs
     }
 }

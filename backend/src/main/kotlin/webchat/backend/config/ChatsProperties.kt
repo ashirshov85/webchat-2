@@ -41,5 +41,4 @@ data class ChatsProperties(
     data class Realtime(
         val heartbeat: Duration,
     )
-
 }

@@ -10,6 +10,8 @@ import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
+import webchat.backend.contacts.domain.model.UserBlock
+import webchat.backend.contacts.domain.port.BlockRepository
 import java.time.Instant
 import java.util.UUID
 
@@ -104,15 +106,32 @@ class ChatServiceTest {
             .isEqualTo(ReadWatermarks(myReadUpToSeq = 0, peerReadUpToSeq = 0))
     }
 
+    /**
+     * T054 (FR-020): `blockedByMe` is the caller's OWN direction ONLY —
+     * `exists(me, peer)`; the inverse «who blocked me» is not derivable
+     * (the blocked side keeps the unmarked view).
+     */
+    @Test
+    fun `blockedByMe projects only the caller's own block direction`() {
+        blocks.blockedPairs = setOf(ALICE to BOB)
+
+        assertThat(service.blockedByMe(PAIR_CHAT, ALICE)).isTrue
+        assertThat(service.blockedByMe(PAIR_CHAT, BOB)).isFalse
+    }
+
     private val repository = RecordingChatRepository()
 
     private val participants = MapParticipantRepository()
+
+    /** The T054 seam: the (blocker, blocked) pairs `blockedByMe` answers `true` for. */
+    private val blocks = ScriptedBlockRepository()
 
     private val service =
         ChatService(
             userRepository = MapUserRepository(ALICE, BOB),
             chatRepository = repository,
             participantRepository = participants,
+            blockRepository = blocks,
         )
 
     private companion object {
@@ -192,5 +211,25 @@ class ChatServiceTest {
         override fun findByUsername(username: String): User? = null
 
         override fun findByEmail(email: String): User? = null
+    }
+
+    /** The T054 fixture: point lookups against the scripted [blockedPairs] (empty — no blocks). */
+    private class ScriptedBlockRepository : BlockRepository {
+        var blockedPairs: Set<Pair<UUID, UUID>> = emptySet()
+
+        override fun block(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): UserBlock = error("the chat lifecycle never establishes a block here")
+
+        override fun unblock(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Unit = error("the chat lifecycle never lifts a block here")
+
+        override fun exists(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Boolean = blockerId to blockedId in blockedPairs
     }
 }

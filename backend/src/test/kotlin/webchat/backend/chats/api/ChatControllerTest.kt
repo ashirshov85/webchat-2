@@ -15,6 +15,8 @@ import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.service.ChatService
+import webchat.backend.contacts.domain.model.UserBlock
+import webchat.backend.contacts.domain.port.BlockRepository
 import java.time.Instant
 import java.util.UUID
 
@@ -94,6 +96,24 @@ class ChatControllerTest {
         view.assertPairView()
     }
 
+    @Test
+    fun `getChat projects blockedByMe for the blocker only`() {
+        // T054 (FR-020): the ONLY block projection of ChatView — the
+        // caller's own mark; the dialog stays visible either way.
+        blocks.blockedPairs = setOf(ALICE to BOB)
+
+        val blockerView = controller.getChat(PAIR_CHAT.id, tokenOf(ALICE))
+        val blockedView = controller.getChat(PAIR_CHAT.id, tokenOf(BOB))
+
+        assertThat(blockerView.blockedByMe)
+            .overridingErrorMessage("the blocker must see blockedByMe=true")
+            .isTrue
+        assertThat(blockedView.blockedByMe)
+            .overridingErrorMessage(
+                "the blocked user must see NO block mark — the inverse projection may not exist (FR-020)",
+            ).isFalse
+    }
+
     private fun webchat.backend.chats.api.dto.ChatView.assertPairView() {
         assertThat(chatId).isEqualTo(PAIR_CHAT.id)
         assertThat(peer.id).isEqualTo(BOB)
@@ -101,6 +121,9 @@ class ChatControllerTest {
         assertThat(peer.email).isEqualTo("bob@example.com")
         assertThat(peer.status).isEqualTo("pending_email_confirmation")
         assertThat(peer.createdAt).isEqualTo(CREATED_AT)
+        assertThat(blockedByMe)
+            .overridingErrorMessage("the unblocked fixture pair carries no block mark")
+            .isFalse
         assertThat(myReadUpToSeq)
             .overridingErrorMessage("ALICE has no participant row — her watermark reads as the openapi default 0")
             .isZero()
@@ -118,6 +141,9 @@ class ChatControllerTest {
 
     private val repository = ScriptedChatRepository()
 
+    /** The T054 seam: the (blocker, blocked) pairs the `blockedByMe` projection answers `true` for. */
+    private val blocks = ScriptedBlockRepository()
+
     private val controller =
         ChatController(
             chatService =
@@ -125,6 +151,7 @@ class ChatControllerTest {
                     userRepository = MapUserRepository(),
                     chatRepository = repository,
                     participantRepository = MapParticipantRepository(),
+                    blockRepository = blocks,
                 ),
             userRepository = MapUserRepository(),
         )
@@ -198,6 +225,26 @@ class ChatControllerTest {
             userId: UUID,
             chatLastSeq: Long,
         ): ChatParticipant? = null
+    }
+
+    /** The T054 fixture: point lookups against the scripted [blockedPairs] (empty — no blocks). */
+    private class ScriptedBlockRepository : BlockRepository {
+        var blockedPairs: Set<Pair<UUID, UUID>> = emptySet()
+
+        override fun block(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): UserBlock = error("the chat views never establish a block")
+
+        override fun unblock(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Unit = error("the chat views never lift a block")
+
+        override fun exists(
+            blockerId: UUID,
+            blockedId: UUID,
+        ): Boolean = blockerId to blockedId in blockedPairs
     }
 
     /** Serves both participants with stable PublicUser fields (the auth port reused across features). */

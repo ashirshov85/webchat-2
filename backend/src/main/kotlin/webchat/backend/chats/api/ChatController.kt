@@ -84,11 +84,13 @@ class ChatController(
 
     /**
      * The dialog projected for its participant: the peer side resolved via
-     * [UserRepository] and the US4 read watermarks via
+     * [UserRepository], the US4 read watermarks via
      * [ChatService.readWatermarks] (T043 — `myReadUpToSeq` for the caller,
-     * `peerReadUpToSeq` for the ✓✓ of the sender). The peer row always
-     * exists (the FK pair of V10 and the №11 pre-check guarantee it) — a
-     * miss is a broken invariant, not a client answer.
+     * `peerReadUpToSeq` for the ✓✓ of the sender) and the FR-020 block
+     * projection via [ChatService.blockedByMe] (T054 — the caller's own
+     * «заблокирован» mark only). The peer row always exists (the FK pair
+     * of V10 and the №11 pre-check guarantee it) — a miss is a broken
+     * invariant, not a client answer.
      */
     private fun view(
         chat: Chat,
@@ -111,6 +113,7 @@ class ChatController(
                     status = peer.status.name.lowercase(),
                     createdAt = peer.createdAt,
                 ),
+            blockedByMe = chatService.blockedByMe(chat, callerId),
             peerReadUpToSeq = watermarks.peerReadUpToSeq,
             myReadUpToSeq = watermarks.myReadUpToSeq,
         )
