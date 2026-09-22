@@ -6,8 +6,10 @@ import org.junit.jupiter.api.assertThrows
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.ParticipantRepository
 import java.time.Instant
 import java.util.UUID
 
@@ -79,12 +81,38 @@ class ChatServiceTest {
         assertThat(service.get(PAIR_CHAT.id, BOB)).isEqualTo(PAIR_CHAT)
     }
 
+    /**
+     * T043: the №11/№13 read fields — the watermarks project PER SIDE from
+     * the participant rows (the reader its own mark, the sender the peer's
+     * mark), never as a chat-wide value; a side without a row reads as the
+     * openapi default 0 («0 — ничего не прочитано»).
+     */
+    @Test
+    fun `readWatermarks projects each side its own mark`() {
+        participants.readMarks[ALICE] = ALICE_READ_SEQ
+        participants.readMarks[BOB] = BOB_READ_SEQ
+
+        assertThat(service.readWatermarks(PAIR_CHAT, ALICE))
+            .isEqualTo(ReadWatermarks(myReadUpToSeq = ALICE_READ_SEQ, peerReadUpToSeq = BOB_READ_SEQ))
+        assertThat(service.readWatermarks(PAIR_CHAT, BOB))
+            .isEqualTo(ReadWatermarks(myReadUpToSeq = BOB_READ_SEQ, peerReadUpToSeq = ALICE_READ_SEQ))
+    }
+
+    @Test
+    fun `readWatermarks answers the openapi default 0 when a side has no row`() {
+        assertThat(service.readWatermarks(PAIR_CHAT, ALICE))
+            .isEqualTo(ReadWatermarks(myReadUpToSeq = 0, peerReadUpToSeq = 0))
+    }
+
     private val repository = RecordingChatRepository()
+
+    private val participants = MapParticipantRepository()
 
     private val service =
         ChatService(
             userRepository = MapUserRepository(ALICE, BOB),
             chatRepository = repository,
+            participantRepository = participants,
         )
 
     private companion object {
@@ -100,6 +128,10 @@ class ChatServiceTest {
         val UNKNOWN_CHAT = UUID.fromString("00000000-0000-0000-0000-0000000000ee")
         val CREATED_AT = Instant.parse("2026-01-01T00:00:00Z")
         val PAIR_CHAT = Chat.forPair(UUID.fromString("00000000-0000-0000-0000-0000000000aa"), ALICE, BOB, CREATED_AT)
+
+        /** T043 fixture marks: distinct per side, so a swap would not pass unnoticed. */
+        const val ALICE_READ_SEQ = 3L
+        const val BOB_READ_SEQ = 5L
     }
 
     /** Remembers the ensure arguments — the refusals MUST precede any repository write. */
@@ -115,6 +147,33 @@ class ChatServiceTest {
             ensureCalls += callerId to peerId
             return ChatEnsureResult.Created(PAIR_CHAT)
         }
+    }
+
+    /** T043: the per-user read marks of the pair dialog, mutable per test. */
+    private class MapParticipantRepository : ParticipantRepository {
+        val readMarks = mutableMapOf<UUID, Long>()
+
+        override fun find(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun findForChat(chatId: UUID): List<ChatParticipant> =
+            readMarks.map { (userId, seq) ->
+                ChatParticipant(chatId = chatId, userId = userId, lastReadSeq = seq, createdAt = CREATED_AT)
+            }
+
+        override fun advanceReadUpTo(
+            chatId: UUID,
+            userId: UUID,
+            upToSeq: Long,
+        ): ChatParticipant? = null
+
+        override fun deleteUpTo(
+            chatId: UUID,
+            userId: UUID,
+            chatLastSeq: Long,
+        ): ChatParticipant? = null
     }
 
     /** The auth port reused across features (sso does the same); existence only — the users table is the source. */

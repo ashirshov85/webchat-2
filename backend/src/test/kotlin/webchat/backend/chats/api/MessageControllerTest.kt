@@ -222,7 +222,7 @@ class MessageControllerTest {
         MessageController(
             messageService =
                 MessageService(
-                    chatService = ChatService(NoopUserRepository, GateChatRepository),
+                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants),
                     messageRepository = repository,
                     realtimeEventPublisher = NoopRealtimePublisher,
                     chatsProperties = TEST_PROPERTIES,
@@ -231,13 +231,13 @@ class MessageControllerTest {
                 ),
             historyService =
                 HistoryService(
-                    chatService = ChatService(NoopUserRepository, GateChatRepository),
+                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants),
                     messageRepository = repository,
                     chatsProperties = TEST_PROPERTIES,
                 ),
             readService =
                 ReadService(
-                    chatService = ChatService(NoopUserRepository, GateChatRepository),
+                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants),
                     participantRepository = participants,
                     realtimeEventPublisher = NoopRealtimePublisher,
                 ),
@@ -290,6 +290,8 @@ class MessageControllerTest {
             chatId: UUID,
             userId: UUID,
         ): ChatParticipant? = null
+
+        override fun findForChat(chatId: UUID): List<ChatParticipant> = emptyList()
 
         override fun advanceReadUpTo(
             chatId: UUID,

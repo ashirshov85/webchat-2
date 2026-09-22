@@ -5,6 +5,7 @@ import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.ParticipantRepository
 import java.util.UUID
 
 /**
@@ -44,6 +45,17 @@ class NotParticipantException : RuntimeException("the caller is not a participan
 }
 
 /**
+ * The read watermark pair of a dialog projected for ONE participant
+ * (T043, openapi 0.4.0 №11/№13): [myReadUpToSeq] is the caller's own
+ * mark, [peerReadUpToSeq] the peer's mark the sender's ✓✓ renders from
+ * (research.md 004 §5) — per-user state, never a chat-wide value.
+ */
+data class ReadWatermarks(
+    val myReadUpToSeq: Long,
+    val peerReadUpToSeq: Long,
+)
+
+/**
  * Dialog lifecycle of User Story 1 (T013): the idempotent pair resolve and
  * the membership-gated read.
  *
@@ -57,11 +69,16 @@ class NotParticipantException : RuntimeException("the caller is not a participan
  * the same gate — `404 chat_not_found` first, then `403 not_participant`
  * for a stranger (Carol), so the two are never distinguishable beyond
  * membership. List (№12) and the per-user delete (№14) join here in T055/T056.
+ *
+ * The read fields of `ChatView` (T043): [readWatermarks] projects the two
+ * per-user marks of the resolved dialog for №11/№13 — the FR-010 watermark
+ * is advanced by `ReadService` (№17) and only READ here.
  */
 @Service
 class ChatService(
     private val userRepository: UserRepository,
     private val chatRepository: ChatRepository,
+    private val participantRepository: ParticipantRepository,
 ) {
     fun ensure(
         callerId: UUID,
@@ -79,5 +96,32 @@ class ChatService(
         val chat = chatRepository.findById(chatId) ?: throw ChatNotFoundException()
         if (!chat.involves(callerId)) throw NotParticipantException()
         return chat
+    }
+
+    /**
+     * T043: `myReadUpToSeq`/`peerReadUpToSeq` of `ChatView` (№11/№13) —
+     * both [webchat.backend.chats.domain.model.ChatParticipant] rows in
+     * one read; a missing row reads as the contract default 0 («0 — ничего
+     * не прочитано»), matching the `minimum: 0` of openapi 0.4.0. Monotone
+     * by construction: the values mirror the GREATEST-watermark rows and
+     * are never derived.
+     */
+    fun readWatermarks(
+        chat: Chat,
+        callerId: UUID,
+    ): ReadWatermarks {
+        val peerId =
+            chat.peerOf(callerId)
+                ?: error("chat ${chat.id} does not involve the authenticated caller")
+        val marks = participantRepository.findForChat(chat.id).associateBy { it.userId }
+        return ReadWatermarks(
+            myReadUpToSeq = marks[callerId]?.lastReadSeq ?: DEFAULT_READ_UP_TO_SEQ,
+            peerReadUpToSeq = marks[peerId]?.lastReadSeq ?: DEFAULT_READ_UP_TO_SEQ,
+        )
+    }
+
+    private companion object {
+        /** Openapi 0.4.0 `peerReadUpToSeq`/`myReadUpToSeq`: 0 — nothing read yet. */
+        const val DEFAULT_READ_UP_TO_SEQ = 0L
     }
 }

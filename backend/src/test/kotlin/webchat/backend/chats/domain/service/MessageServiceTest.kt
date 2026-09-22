@@ -13,6 +13,7 @@ import org.mockito.Mockito
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.InvalidMessageTextException
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
@@ -24,6 +25,7 @@ import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
+import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.config.ChatsProperties
 import java.time.Duration
@@ -336,7 +338,7 @@ class MessageServiceTest {
 
     private val service =
         MessageService(
-            chatService = ChatService(NoopUserRepository, GateChatRepository),
+            chatService = ChatService(NoopUserRepository, GateChatRepository, NoopParticipantRepository),
             messageRepository = repository,
             realtimeEventPublisher = publisher,
             chatsProperties = TEST_PROPERTIES,
@@ -451,6 +453,28 @@ class MessageServiceTest {
             callerId: UUID,
             peerId: UUID,
         ): ChatEnsureResult = error("a send never ensures a chat")
+    }
+
+    /** The watermark port stands unused here — a send never touches the read marks (T043 leg). */
+    private object NoopParticipantRepository : ParticipantRepository {
+        override fun find(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun findForChat(chatId: UUID): List<ChatParticipant> = emptyList()
+
+        override fun advanceReadUpTo(
+            chatId: UUID,
+            userId: UUID,
+            upToSeq: Long,
+        ): ChatParticipant? = null
+
+        override fun deleteUpTo(
+            chatId: UUID,
+            userId: UUID,
+            chatLastSeq: Long,
+        ): ChatParticipant? = null
     }
 
     /** The auth port stands unused here — the send path reads membership, not user rows. */

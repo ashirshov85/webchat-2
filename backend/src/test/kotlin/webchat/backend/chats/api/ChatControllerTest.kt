@@ -10,8 +10,10 @@ import webchat.backend.auth.domain.model.UserStatus
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.api.dto.EnsureChatRequest
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.service.ChatService
 import java.time.Instant
 import java.util.UUID
@@ -22,6 +24,11 @@ import java.util.UUID
  * `200 ChatView`, projects the peer as the reused `PublicUser` shape for
  * the CALLER's side of the dialog, and rejects an absent/malformed
  * `peerUserId` as the typed 400 carrier BEFORE the service is touched.
+ *
+ * The T043 leg: `ChatView` carries BOTH read watermarks — `myReadUpToSeq`
+ * of the caller and `peerReadUpToSeq` of the peer — projected per side
+ * from the participant rows (a side with NO row reads as the openapi
+ * default 0, «0 — ничего не прочитано»).
  *
  * The membership/problem+json legs render through [ChatsExceptionHandler]
  * and are asserted end-to-end by ChatAccessIT (T008, green at the T028
@@ -54,6 +61,12 @@ class ChatControllerTest {
 
         assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
         assertThat(response.body!!.peer.id).isEqualTo(ALICE)
+        assertThat(response.body!!.myReadUpToSeq)
+            .overridingErrorMessage("the reader must see its OWN mark as myReadUpToSeq")
+            .isEqualTo(BOB_READ_SEQ)
+        assertThat(response.body!!.peerReadUpToSeq)
+            .overridingErrorMessage("the reader must see the peer's mark as peerReadUpToSeq")
+            .isZero()
     }
 
     @Test
@@ -88,6 +101,12 @@ class ChatControllerTest {
         assertThat(peer.email).isEqualTo("bob@example.com")
         assertThat(peer.status).isEqualTo("pending_email_confirmation")
         assertThat(peer.createdAt).isEqualTo(CREATED_AT)
+        assertThat(myReadUpToSeq)
+            .overridingErrorMessage("ALICE has no participant row — her watermark reads as the openapi default 0")
+            .isZero()
+        assertThat(peerReadUpToSeq)
+            .overridingErrorMessage("the sender's ✓✓ source is the peer's (BOB's) watermark")
+            .isEqualTo(BOB_READ_SEQ)
     }
 
     private fun tokenOf(userId: UUID): Jwt =
@@ -101,7 +120,12 @@ class ChatControllerTest {
 
     private val controller =
         ChatController(
-            chatService = ChatService(userRepository = MapUserRepository(), chatRepository = repository),
+            chatService =
+                ChatService(
+                    userRepository = MapUserRepository(),
+                    chatRepository = repository,
+                    participantRepository = MapParticipantRepository(),
+                ),
             userRepository = MapUserRepository(),
         )
 
@@ -110,9 +134,14 @@ class ChatControllerTest {
         val BOB = UUID.fromString("00000000-0000-0000-0000-000000000002")
         val CREATED_AT = Instant.parse("2026-01-01T00:00:00Z")
         val PAIR_CHAT = Chat.forPair(UUID.fromString("00000000-0000-0000-0000-0000000000aa"), ALICE, BOB, CREATED_AT)
+
+        /** T043 fixture: BOB (the reader) has advanced his watermark; ALICE has no row yet. */
+        const val BOB_READ_SEQ = 7L
     }
 
-    /** Answers Created on the FIRST ensure of a pair, Existing afterwards (№11 statuses, FR-018). */
+    /**
+     * Answers Created on the FIRST ensure of a pair, Existing afterwards (№11 statuses, FR-018).
+     */
     private class ScriptedChatRepository : ChatRepository {
         val ensureCalls = mutableListOf<Pair<UUID, UUID>>()
         private val ensuredPairs = mutableSetOf<Pair<UUID, UUID>>()
@@ -131,6 +160,44 @@ class ChatControllerTest {
                 ChatEnsureResult.Existing(PAIR_CHAT)
             }
         }
+    }
+
+    /**
+     * T043 fixture: serves the per-user read marks of the pair dialog —
+     * BOB at [BOB_READ_SEQ], ALICE with no row at all (the openapi
+     * default-0 leg of the watermark projection).
+     */
+    private class MapParticipantRepository : ParticipantRepository {
+        override fun find(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun findForChat(chatId: UUID): List<ChatParticipant> =
+            if (chatId != PAIR_CHAT.id) {
+                emptyList()
+            } else {
+                listOf(
+                    ChatParticipant(
+                        chatId = chatId,
+                        userId = BOB,
+                        lastReadSeq = BOB_READ_SEQ,
+                        createdAt = CREATED_AT,
+                    ),
+                )
+            }
+
+        override fun advanceReadUpTo(
+            chatId: UUID,
+            userId: UUID,
+            upToSeq: Long,
+        ): ChatParticipant? = null
+
+        override fun deleteUpTo(
+            chatId: UUID,
+            userId: UUID,
+            chatLastSeq: Long,
+        ): ChatParticipant? = null
     }
 
     /** Serves both participants with stable PublicUser fields (the auth port reused across features). */

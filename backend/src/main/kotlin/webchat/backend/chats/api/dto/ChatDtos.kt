@@ -32,13 +32,16 @@ data class ChatPeerView(
 
 /**
  * Contract №11/№13 success body — `ChatView` (openapi.yaml 0.4.0): the
- * resolved dialog plus the peer projection.
+ * resolved dialog, the peer projection and the US4 read watermarks.
  *
- * The read watermarks `peerReadUpToSeq`/`myReadUpToSeq` land with User
- * Story 4 (T043) and `blockedByMe` with User Story 5 (T054) — each story
- * extends this view independently without touching the pair resolve.
+ * `peerReadUpToSeq`/`myReadUpToSeq` (T043) carry the FR-010 per-user
+ * marks of both sides — the sender renders ✓✓ from `peerReadUpToSeq`;
+ * `blockedByMe` lands with User Story 5 (T054) — each story extends this
+ * view independently without touching the pair resolve.
  */
 data class ChatView(
     val chatId: UUID,
     val peer: ChatPeerView,
+    val peerReadUpToSeq: Long,
+    val myReadUpToSeq: Long,
 )

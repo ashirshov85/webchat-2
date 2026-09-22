@@ -84,9 +84,11 @@ class ChatController(
 
     /**
      * The dialog projected for its participant: the peer side resolved via
-     * [UserRepository]. The peer row always exists (the FK pair of V10 and
-     * the №11 pre-check guarantee it) — a miss is a broken invariant, not
-     * a client answer.
+     * [UserRepository] and the US4 read watermarks via
+     * [ChatService.readWatermarks] (T043 — `myReadUpToSeq` for the caller,
+     * `peerReadUpToSeq` for the ✓✓ of the sender). The peer row always
+     * exists (the FK pair of V10 and the №11 pre-check guarantee it) — a
+     * miss is a broken invariant, not a client answer.
      */
     private fun view(
         chat: Chat,
@@ -98,6 +100,7 @@ class ChatController(
         val peer =
             userRepository.findById(peerId)
                 ?: error("chat ${chat.id} peer $peerId does not resolve")
+        val watermarks = chatService.readWatermarks(chat, callerId)
         return ChatView(
             chatId = chat.id,
             peer =
@@ -108,6 +111,8 @@ class ChatController(
                     status = peer.status.name.lowercase(),
                     createdAt = peer.createdAt,
                 ),
+            peerReadUpToSeq = watermarks.peerReadUpToSeq,
+            myReadUpToSeq = watermarks.myReadUpToSeq,
         )
     }
 }

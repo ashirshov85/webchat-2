@@ -26,6 +26,16 @@ interface ParticipantRepository {
     ): ChatParticipant?
 
     /**
+     * T043: BOTH participant rows of the dialog in one read — the service
+     * projects [ChatParticipant.lastReadSeq] per side into the read fields
+     * of `ChatView` (`myReadUpToSeq`/`peerReadUpToSeq`, openapi 0.4.0
+     * №11/№13). Ensure creates both rows lazily in its transaction, so
+     * both exist for a resolved dialog; a missing row reads as the
+     * watermark 0 («0 — ничего не прочитано»).
+     */
+    fun findForChat(chatId: UUID): List<ChatParticipant>
+
+    /**
      * `POST /chats/{chatId}/read` (№17, T042) — the monotone
      * GREATEST-update (data-model 004 §2):
      * `UPDATE … SET last_read_seq = GREATEST(last_read_seq, :upToSeq)

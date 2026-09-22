@@ -29,6 +29,13 @@ class JdbcParticipantRepository(
         userId: UUID,
     ): ChatParticipant? = jdbcTemplate.query(FIND_SQL, ROW_MAPPER, chatId, userId).firstOrNull()
 
+    override fun findForChat(chatId: UUID): List<ChatParticipant> =
+        jdbcTemplate.query(
+            FIND_FOR_CHAT_SQL,
+            ROW_MAPPER,
+            chatId,
+        )
+
     override fun advanceReadUpTo(
         chatId: UUID,
         userId: UUID,
@@ -62,6 +69,14 @@ class JdbcParticipantRepository(
             SELECT chat_id, user_id, last_read_seq, deleted_up_to_seq, hidden, created_at
             FROM chat_participants
             WHERE chat_id = ? AND user_id = ?
+            """.trimIndent()
+
+        /** T043: the two watermark rows of №11/№13 `ChatView` in one read. */
+        val FIND_FOR_CHAT_SQL =
+            """
+            SELECT chat_id, user_id, last_read_seq, deleted_up_to_seq, hidden, created_at
+            FROM chat_participants
+            WHERE chat_id = ?
             """.trimIndent()
 
         val ADVANCE_READ_SQL =

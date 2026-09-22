@@ -233,6 +233,33 @@ class ReadReceiptsIT(
         }
     }
 
+    /**
+     * T043 (US4): the №13 `GET /chats/{id}` and №11 `POST /chats/ensure`
+     * `ChatView` carries BOTH read watermarks of the dialog — the caller's
+     * own `myReadUpToSeq` and the peer's `peerReadUpToSeq` the sender
+     * renders ✓✓ from (research.md §5). A fresh dialog answers 0/0 on
+     * both sides; after the recipient's №17 advance each side sees exactly
+     * its own projection — the reader its mark, the sender the peer's
+     * mark — the watermark is per-user state, never a chat-wide value.
+     */
+    @Test
+    fun `chat view carries both read watermarks for get and ensure`() {
+        val (alice, bob) = messagingPair()
+        val chatId = ensureChatOk(alice, bob.id)
+        val seqs = sendFrom(alice, chatId, VIEW_TEXT_PREFIX, count = VIEW_MESSAGES)
+
+        assertReadWatermarks(ensureChat(bob, alice.id), myReadUpToSeq = 0, peerReadUpToSeq = 0)
+        assertReadWatermarks(getChat(alice, chatId), myReadUpToSeq = 0, peerReadUpToSeq = 0)
+
+        assertThat(markRead(bob, chatId, upToSeq = seqs.last()).statusCode)
+            .overridingErrorMessage("the recipient's mark must answer 204 before the view is re-read")
+            .isEqualTo(HttpStatus.NO_CONTENT)
+
+        assertReadWatermarks(getChat(bob, chatId), myReadUpToSeq = seqs.last(), peerReadUpToSeq = 0)
+        assertReadWatermarks(getChat(alice, chatId), myReadUpToSeq = 0, peerReadUpToSeq = seqs.last())
+        assertReadWatermarks(ensureChat(alice, bob.id), myReadUpToSeq = 0, peerReadUpToSeq = seqs.last())
+    }
+
     /** One №15 page projected to ascending helper order: descending `seq`s plus the cursor. */
     private data class HistoryPage(
         val seqs: List<Long>,
@@ -302,6 +329,41 @@ class ReadReceiptsIT(
             ).containsExactly(INVALID_UP_TO_SEQ)
     }
 
+    /**
+     * The T043 watermark projection of №11/№13: an OK `ChatView` body with
+     * exactly the expected `myReadUpToSeq`/`peerReadUpToSeq`. The field
+     * PRESENCE is asserted first (`isNumber`) — a missing field would
+     * otherwise read as the Jackson default 0 and silently pass.
+     */
+    private fun assertReadWatermarks(
+        response: ResponseEntity<String>,
+        myReadUpToSeq: Long,
+        peerReadUpToSeq: Long,
+    ) {
+        assertThat(response.statusCode)
+            .overridingErrorMessage("the chat view must answer 200, got <%s>: %s", response.statusCode, response.body)
+            .isEqualTo(HttpStatus.OK)
+        val view = objectMapper.readTree(response.body)
+        assertThat(view.path(MY_READ_UP_TO_SEQ_FIELD).isNumber)
+            .overridingErrorMessage(
+                "ChatView must carry the numeric <%s> (openapi 0.4.0), view: %s",
+                MY_READ_UP_TO_SEQ_FIELD,
+                response.body,
+            ).isTrue
+        assertThat(view.path(PEER_READ_UP_TO_SEQ_FIELD).isNumber)
+            .overridingErrorMessage(
+                "ChatView must carry the numeric <%s> (openapi 0.4.0), view: %s",
+                PEER_READ_UP_TO_SEQ_FIELD,
+                response.body,
+            ).isTrue
+        assertThat(view.path(MY_READ_UP_TO_SEQ_FIELD).asLong())
+            .overridingErrorMessage("myReadUpToSeq must be <%d>, view: %s", myReadUpToSeq, response.body)
+            .isEqualTo(myReadUpToSeq)
+        assertThat(view.path(PEER_READ_UP_TO_SEQ_FIELD).asLong())
+            .overridingErrorMessage("peerReadUpToSeq must be <%d>, view: %s", peerReadUpToSeq, response.body)
+            .isEqualTo(peerReadUpToSeq)
+    }
+
     /** The durable watermark row behind the dialog — `chat_participants.last_read_seq`. */
     private fun lastReadSeq(
         chatId: UUID,
@@ -338,11 +400,16 @@ class ReadReceiptsIT(
         const val BOUNDARY_TEXT_PREFIX = "read-boundary"
         const val REENTRY_TEXT_PREFIX = "read-reentry"
         const val REALTIME_TEXT = "прочитано в реальном времени — US4 ✓✓"
+        const val VIEW_TEXT_PREFIX = "read-view"
+
+        const val MY_READ_UP_TO_SEQ_FIELD = "myReadUpToSeq"
+        const val PEER_READ_UP_TO_SEQ_FIELD = "peerReadUpToSeq"
 
         const val ADVANCE_MESSAGES = 3
         const val IDEMPOTENT_MESSAGES = 4
         const val BOUNDARY_MESSAGES = 2
         const val REENTRY_MESSAGES = 5
+        const val VIEW_MESSAGES = 2
         const val PAGE_LIMIT = 3
 
         const val BELOW_MINIMUM_UP_TO_SEQ = 0L
