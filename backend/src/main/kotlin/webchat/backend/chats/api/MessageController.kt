@@ -13,23 +13,30 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 import webchat.backend.chats.api.dto.MessagePageView
 import webchat.backend.chats.api.dto.MessageView
+import webchat.backend.chats.api.dto.ReadRequest
 import webchat.backend.chats.api.dto.SendMessageRequest
 import webchat.backend.chats.domain.model.InvalidMessageTextException
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageTextViolation
 import webchat.backend.chats.domain.service.HistoryService
+import webchat.backend.chats.domain.service.InvalidUpToSeqException
 import webchat.backend.chats.domain.service.MessageSendResult
 import webchat.backend.chats.domain.service.MessageService
+import webchat.backend.chats.domain.service.ReadService
 import java.util.UUID
 
 /**
- * The message endpoints of User Story 1 (api-contract.md №15/№16) — a thin
- * HTTP adapter over [MessageService] (the exactly-once send with the
- * `201`/`200` dedup statuses of FR-004) and [HistoryService] (the cursor
- * page of FR-008): every business rule stays in the services; this layer
- * only resolves the token owner, parses the request into typed 400
- * carriers and projects the domain [Message] as the shared contract
- * `Message` schema (№16 answer, №15 pages — one shape, US6).
+ * The message endpoints of User Story 1 (api-contract.md №15/№16) and the
+ * read receipt of User Story 4 (№17) — thin HTTP adapters over
+ * [MessageService] (the exactly-once send with the `201`/`200` dedup
+ * statuses of FR-004), [HistoryService] (the cursor page of FR-008) and
+ * [ReadService] (the monotone watermark advance of FR-010): every
+ * business rule stays in the services; this layer only resolves the
+ * token owner, parses the request into typed 400 carriers and projects
+ * the domain [Message] as the shared contract `Message` schema (№16
+ * answer, №15 pages — one shape, US6). №17 lives here by the plan.md
+ * grouping «отправка, история, прочтение» — one controller for the
+ * dialog's message surface.
  *
  * The security chain has ALREADY authenticated the request (the same
  * Bearer gate as №11); the owner id is the token `sub` claim. All
@@ -37,10 +44,11 @@ import java.util.UUID
  * [ChatsExceptionHandler].
  */
 @RestController
-@RequestMapping("/api/v1/chats/{chatId}/messages")
+@RequestMapping("/api/v1/chats/{chatId}")
 class MessageController(
     private val messageService: MessageService,
     private val historyService: HistoryService,
+    private val readService: ReadService,
 ) {
     /**
      * Contract №16: the idempotent send — `201 Message` when a fresh
@@ -49,7 +57,7 @@ class MessageController(
      * duplicate). The flood (`429`) and blocking-pair (`403`) gates join
      * this path in later stories (T032/T054) without changing the map.
      */
-    @PostMapping
+    @PostMapping("/messages")
     fun send(
         @PathVariable chatId: UUID,
         @RequestBody request: SendMessageRequest,
@@ -75,7 +83,7 @@ class MessageController(
      * The `limit` bounds (`400 limit_out_of_range`) are checked in
      * [HistoryService] against the contract-fixed `1..50`.
      */
-    @GetMapping
+    @GetMapping("/messages")
     fun list(
         @PathVariable chatId: UUID,
         @RequestParam before: Long? = null,
@@ -90,7 +98,33 @@ class MessageController(
         )
     }
 
+    /**
+     * Contract №17 (US4): the read receipt — `204` in every non-refused
+     * case (FR-010): an actual advance publishes `chat.read` to the peer
+     * after the commit (SC-007), a repeated or smaller `upToSeq` is the
+     * idempotent/monotone no-op of US4-5. An absent `upToSeq` is the
+     * contract 400 `errors: {upToSeq: [invalid_up_to_seq]}` before the
+     * service is touched; 404/403/400 of the bound stay in
+     * [ReadService].
+     */
+    @PostMapping("/read")
+    fun read(
+        @PathVariable chatId: UUID,
+        @RequestBody request: ReadRequest,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Void> {
+        readService.markRead(chatId, callerId(accessToken), parseUpToSeq(request.upToSeq))
+        return ResponseEntity.noContent().build()
+    }
+
     private fun callerId(accessToken: Jwt): UUID = UUID.fromString(accessToken.subject)
+
+    /**
+     * The №17 bound gate: an absent `upToSeq` is below the FR-010
+     * minimum (`1 ≤ upToSeq`), rejected as the contract 400 before the
+     * service is touched.
+     */
+    private fun parseUpToSeq(raw: Long?): Long = raw ?: throw InvalidUpToSeqException()
 
     /**
      * The №16 id gate: an absent or malformed `clientMessageId` becomes

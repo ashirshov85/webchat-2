@@ -39,6 +39,21 @@ data class MessageView(
 )
 
 /**
+ * Contract №17 request body — `ReadRequest` (api-contract.md §4,
+ * openapi.yaml 0.4.0): exactly `{upToSeq: int64}` — «прочитано до seq
+ * включительно», bound `1 ≤ upToSeq ≤ seq последнего сообщения диалога`.
+ *
+ * The value arrives as a nullable raw on purpose: an ABSENT `upToSeq` is
+ * rejected HERE as the contract 400 `errors: {upToSeq:
+ * [invalid_up_to_seq]}` (below the minimum of the FR-010 bound) instead
+ * of dying in deserialization — the reply stays a typed problem, never
+ * the default error page (the same convention as [SendMessageRequest]).
+ */
+data class ReadRequest(
+    val upToSeq: Long? = null,
+)
+
+/**
  * Contract №15 success body — `MessagePage` (openapi.yaml 0.4.0):
  * [messages] ordered `seq DESC` and the EXCLUSIVE cursor [nextBefore] —
  * the `seq` of the oldest row of THIS page, ABSENT at exhaustion (an

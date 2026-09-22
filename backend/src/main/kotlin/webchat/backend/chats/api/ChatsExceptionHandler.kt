@@ -10,6 +10,7 @@ import webchat.backend.chats.domain.model.InvalidMessageTextException
 import webchat.backend.chats.domain.model.MessageTextViolation
 import webchat.backend.chats.domain.service.ChatNotFoundException
 import webchat.backend.chats.domain.service.FloodLimitException
+import webchat.backend.chats.domain.service.InvalidUpToSeqException
 import webchat.backend.chats.domain.service.LimitOutOfRangeException
 import webchat.backend.chats.domain.service.MessageIdConflictException
 import webchat.backend.chats.domain.service.NotParticipantException
@@ -103,6 +104,16 @@ class ChatsExceptionHandler {
             .apply { setProperty(ERRORS_PROPERTY, mapOf(LIMIT_FIELD to listOf(LIMIT_OUT_OF_RANGE_CODE))) }
 
     /**
+     * 400 (api-contract.md №17): `upToSeq` outside the FR-010 bound
+     * `1..seq of the last message of the dialog` (or absent) — the
+     * watermark does not move.
+     */
+    @ExceptionHandler(InvalidUpToSeqException::class)
+    fun onInvalidUpToSeq(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, INVALID_UP_TO_SEQ_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(UP_TO_SEQ_FIELD to listOf(INVALID_UP_TO_SEQ_CODE))) }
+
+    /**
      * 429 (api-contract.md №16): the FR-011 send flood limit — the
      * per-user allowance is exhausted, `Retry-After` carries the integral
      * seconds to the next available token and NOTHING was written. The
@@ -135,6 +146,7 @@ class ChatsExceptionHandler {
         const val TEXT_FIELD = "text"
         const val CLIENT_MESSAGE_ID_FIELD = "clientMessageId"
         const val LIMIT_FIELD = "limit"
+        const val UP_TO_SEQ_FIELD = "upToSeq"
         const val SELF_FORBIDDEN_CODE = "self_forbidden"
         const val PEER_NOT_FOUND_CODE = "peer_not_found"
         const val CHAT_NOT_FOUND_CODE = "chat_not_found"
@@ -144,6 +156,7 @@ class ChatsExceptionHandler {
         const val TEXT_TOO_LONG_CODE = "text_too_long"
         const val MESSAGE_ID_CONFLICT_CODE = "message_id_conflict"
         const val LIMIT_OUT_OF_RANGE_CODE = "limit_out_of_range"
+        const val INVALID_UP_TO_SEQ_CODE = "invalid_up_to_seq"
         const val FLOOD_LIMIT_CODE = "flood_limit"
         const val SELF_FORBIDDEN_DETAIL = "A dialog requires two distinct users"
         const val PEER_NOT_FOUND_DETAIL = "The requested peer user does not exist"
@@ -154,6 +167,7 @@ class ChatsExceptionHandler {
         const val INVALID_CLIENT_MESSAGE_ID_DETAIL = "clientMessageId must be a UUID"
         const val MESSAGE_ID_CONFLICT_DETAIL = "the clientMessageId belongs to another stored message"
         const val LIMIT_OUT_OF_RANGE_DETAIL = "limit must be within 1..50"
+        const val INVALID_UP_TO_SEQ_DETAIL = "upToSeq must be within 1..seq of the last message of the dialog"
         const val FLOOD_LIMIT_DETAIL = "The message rate limit is exceeded; retry after the indicated interval"
     }
 }

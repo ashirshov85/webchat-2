@@ -14,8 +14,10 @@ import org.springframework.http.HttpStatus
 import org.springframework.security.oauth2.jwt.Jwt
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.chats.api.dto.ReadRequest
 import webchat.backend.chats.api.dto.SendMessageRequest
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.InvalidMessageTextException
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
@@ -27,11 +29,14 @@ import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
+import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.chats.domain.service.ChatService
 import webchat.backend.chats.domain.service.HistoryService
+import webchat.backend.chats.domain.service.InvalidUpToSeqException
 import webchat.backend.chats.domain.service.MessageIdConflictException
 import webchat.backend.chats.domain.service.MessageService
+import webchat.backend.chats.domain.service.ReadService
 import webchat.backend.config.ChatsProperties
 import java.time.Duration
 import java.time.Instant
@@ -39,20 +44,23 @@ import java.util.UUID
 import java.util.function.Supplier
 
 /**
- * Unit-level verification of the T017 mandates (api-contract.md №15/№16):
- * the HTTP adapter maps the exactly-once send to `201 MessageView` on a
- * fresh record and `200 MessageView` on the idempotent retry (FR-004),
- * projects the domain record verbatim as the contract `Message` schema
- * (№16 answer and №15 pages share ONE shape, US6), rejects an
- * absent/malformed `clientMessageId` (`errors: {clientMessageId:
- * [invalid_uuid]}`) and an absent `text` (`text_blank`) as typed 400
- * carriers BEFORE the service is touched, and derives the №15
- * `MessagePage` — `messages` by `seq DESC` plus `nextBefore`, absent at
- * exhaustion (FR-008).
+ * Unit-level verification of the T017 mandates (api-contract.md №15/№16)
+ * and the T042 №17 mapping: the HTTP adapter maps the exactly-once send
+ * to `201 MessageView` on a fresh record and `200 MessageView` on the
+ * idempotent retry (FR-004), projects the domain record verbatim as the
+ * contract `Message` schema (№16 answer and №15 pages share ONE shape,
+ * US6), rejects an absent/malformed `clientMessageId` (`errors:
+ * {clientMessageId: [invalid_uuid]}`) and an absent `text`
+ * (`text_blank`) as typed 400 carriers BEFORE the service is touched,
+ * derives the №15 `MessagePage` — `messages` by `seq DESC` plus
+ * `nextBefore`, absent at exhaustion (FR-008) — and maps №17 to the bare
+ * `204` with the parsed `upToSeq` (an absent value rejected BEFORE the
+ * service is touched, FR-010).
  *
  * The membership/FR-003/problem+json legs render through
  * [ChatsExceptionHandler] and are asserted end-to-end by ChatAccessIT
- * (T008) and MessageValidationIT (T008a).
+ * (T008) and MessageValidationIT (T008a); the №17 watermark semantics —
+ * by ReadReceiptsIT (T041).
  */
 class MessageControllerTest {
     @Test
@@ -149,6 +157,24 @@ class MessageControllerTest {
         view.messages.single().assertStoredView()
     }
 
+    @Test
+    fun `read answers the bare 204 and forwards the parsed upToSeq`() {
+        val response = controller.read(CHAT_ID, ReadRequest(upToSeq = LAST_SEQ), tokenOf(ALICE))
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.NO_CONTENT)
+        assertThat(response.body).isNull()
+        assertThat(participants.advances).containsExactly(AdvanceCall(CHAT_ID, ALICE, LAST_SEQ))
+    }
+
+    @Test
+    fun `read rejects an absent upToSeq before the service is touched`() {
+        assertThrows<InvalidUpToSeqException> {
+            controller.read(CHAT_ID, ReadRequest(upToSeq = null), tokenOf(ALICE))
+        }
+
+        assertThat(participants.advances).isEmpty()
+    }
+
     private fun webchat.backend.chats.api.dto.MessageView.assertStoredView() {
         assertThat(id).isEqualTo(CLIENT_MESSAGE_ID)
         assertThat(chatId).isEqualTo(CHAT_ID)
@@ -166,6 +192,9 @@ class MessageControllerTest {
             .build()
 
     private val repository = ScriptedMessageRepository()
+
+    /** The №17 leg fixture: remembers every advance and always reports it applied. */
+    private val participants = ScriptedParticipantRepository()
 
     /**
      * T032: the flood gate always admits in this unit scope — the token
@@ -206,6 +235,12 @@ class MessageControllerTest {
                     messageRepository = repository,
                     chatsProperties = TEST_PROPERTIES,
                 ),
+            readService =
+                ReadService(
+                    chatService = ChatService(NoopUserRepository, GateChatRepository),
+                    participantRepository = participants,
+                    realtimeEventPublisher = NoopRealtimePublisher,
+                ),
         )
 
     private data class PageCall(
@@ -213,6 +248,12 @@ class MessageControllerTest {
         val viewerId: UUID,
         val before: Long?,
         val limit: Int,
+    )
+
+    private data class AdvanceCall(
+        val chatId: UUID,
+        val userId: UUID,
+        val upToSeq: Long,
     )
 
     /** Serves both the №16 write ([outcome]) and the №15 page ([page]), remembering every call. */
@@ -239,6 +280,36 @@ class MessageControllerTest {
             pageCalls += PageCall(chatId, viewerId, before, limit)
             return page
         }
+    }
+
+    /** The №17 watermark sink (T042): an always-applied advance, remembering every call. */
+    private class ScriptedParticipantRepository : ParticipantRepository {
+        val advances = mutableListOf<AdvanceCall>()
+
+        override fun find(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun advanceReadUpTo(
+            chatId: UUID,
+            userId: UUID,
+            upToSeq: Long,
+        ): ChatParticipant? {
+            advances += AdvanceCall(chatId, userId, upToSeq)
+            return ChatParticipant(
+                chatId = chatId,
+                userId = userId,
+                lastReadSeq = upToSeq,
+                createdAt = CREATED_AT,
+            )
+        }
+
+        override fun deleteUpTo(
+            chatId: UUID,
+            userId: UUID,
+            chatLastSeq: Long,
+        ): ChatParticipant? = null
     }
 
     /** The realtime leg is irrelevant to the HTTP mapping — a silent sink keeps the unit surface narrow. */
@@ -288,7 +359,11 @@ class MessageControllerTest {
         val UNKNOWN_CHAT = UUID.fromString("00000000-0000-0000-0000-0000000000ee")
         val CLIENT_MESSAGE_ID = UUID.fromString("00000000-0000-0000-0000-0000000000bb")
         val CREATED_AT = Instant.parse("2026-01-01T00:00:00Z")
-        val PAIR_CHAT = Chat.forPair(CHAT_ID, ALICE, BOB, CREATED_AT)
+
+        /** The №17 bound top: the gated pair chat has two recorded messages. */
+        const val LAST_SEQ = 2L
+
+        val PAIR_CHAT = Chat.forPair(CHAT_ID, ALICE, BOB, CREATED_AT).advanceLastSeq(LAST_SEQ)
         val STORED =
             Message(
                 id = CLIENT_MESSAGE_ID,

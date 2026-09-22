@@ -252,8 +252,11 @@ class ReadReceiptsIT(
         val page = objectMapper.readTree(response.body)
         val seqs = page["messages"].map { it["seq"].asLong() }
         assertThat(seqs)
-            .overridingErrorMessage("the page must carry the requested amount of messages")
-            .hasSize(PAGE_LIMIT)
+            .overridingErrorMessage(
+                "the page must be non-empty and never longer than the requested limit " +
+                    "(the trailing partial page of a shorter history is the №15 boundary answer)",
+            ).isNotEmpty()
+            .hasSizeLessThanOrEqualTo(PAGE_LIMIT)
         val nextBefore = page["nextBefore"]?.asLong()
         return HistoryPage(seqs, nextBefore)
     }
