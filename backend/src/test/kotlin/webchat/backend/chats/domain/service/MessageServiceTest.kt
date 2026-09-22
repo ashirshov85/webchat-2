@@ -218,6 +218,43 @@ class MessageServiceTest {
     }
 
     @Test
+    fun `dedup counter grows on both legs of the 200 retry and not on a fresh record`() {
+        // T037: the fast-path leg (the T031 lookup hit)…
+        repository.existingById = STORED
+        service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+        // …and the ON CONFLICT race leg of parallel retries (the empty
+        // `RETURNING` resolved by the repository SELECT).
+        repository.existingById = null
+        repository.outcome = MessageInsertResult.Duplicate(STORED)
+        service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+        // a fresh `201` record is NOT a dedup hit.
+        repository.outcome = MessageInsertResult.Inserted(STORED)
+        service.send(CHAT_ID, ALICE, UUID.randomUUID(), VALID_TEXT)
+
+        val dedupCounters = meterRegistry.find(METRIC_DEDUP_TOTAL).counters()
+        assertThat(dedupCounters)
+            .overridingErrorMessage("every 200-dedup resolution must grow webchat_message_dedup_total")
+            .hasSize(1)
+        assertThat(dedupCounters.single().count())
+            .overridingErrorMessage("exactly the two retry legs — fast-path and race — count as dedup hits")
+            .isEqualTo(2.0)
+    }
+
+    @Test
+    fun `dedup counter stays untouched by refusals and foreign-id conflicts`() {
+        repository.existingById = STORED.copy(senderId = BOB)
+        assertThrows<MessageIdConflictException> {
+            service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+        }
+        floodAnswer = ConsumptionProbe.rejected(0, NANOS_TO_WAIT, NANOS_TO_WAIT)
+        assertThrows<FloodLimitException> {
+            service.send(CHAT_ID, ALICE, UUID.randomUUID(), VALID_TEXT)
+        }
+
+        assertThat(meterRegistry.find(METRIC_DEDUP_TOTAL).counters()).isEmpty()
+    }
+
+    @Test
     fun `a realtime fan-out failure does not fail the durable send`() {
         publisher.failFor = setOf(ALICE, BOB)
 
@@ -321,6 +358,9 @@ class MessageServiceTest {
         /** T032: the SC-008 rejection counter and its reason tag value. */
         const val METRIC_SEND_REJECTED = "webchat_send_rejected_total"
         const val REASON_FLOOD = "flood"
+
+        /** T037: the SC-008 dedup-hit counter (research.md 004 §11). */
+        const val METRIC_DEDUP_TOTAL = "webchat_message_dedup_total"
 
         /** 1.5s of refill wait — the №16 Retry-After must ceil it to 2s. */
         const val NANOS_TO_WAIT = 1_500_000_000L

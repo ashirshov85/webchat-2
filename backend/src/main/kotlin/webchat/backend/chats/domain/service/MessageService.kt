@@ -111,6 +111,7 @@ class MessageService(
     ): MessageSendResult {
         val ack = Timer.start(meterRegistry)
         resolveDedupFastPath(chatId, senderId, clientMessageId)?.let { recorded ->
+            dedupTotal().increment()
             ack.stop(ackTimer(OUTCOME_EXISTING))
             return MessageSendResult.Existing(recorded)
         }
@@ -130,6 +131,7 @@ class MessageService(
             is MessageInsertResult.Duplicate -> {
                 val existing = outcome.existing
                 if (existing.chatId != chat.id || existing.senderId != senderId) throw MessageIdConflictException()
+                dedupTotal().increment()
                 ack.stop(ackTimer(OUTCOME_EXISTING))
                 MessageSendResult.Existing(existing)
             }
@@ -275,6 +277,23 @@ class MessageService(
     }
 
     /**
+     * T037 (research.md 004 §11, SC-008): `webchat_message_dedup_total`
+     * counts every send that resolved through the dedup — BOTH legs: the
+     * T031 fast-path lookup hit and the ON CONFLICT race leg of parallel
+     * retries ([MessageInsertResult.Duplicate]) — i.e. every `200`
+     * idempotent acknowledgement; a fresh `201` record is not a dedup
+     * hit. The share of deduplications is this counter over all acked
+     * sends of [ACK_SECONDS].
+     */
+    private fun dedupTotal(): Counter =
+        Counter
+            .builder(DEDUP_TOTAL)
+            .description(
+                "Send-path dedup hits: retries converged to the stored record (200), " +
+                    "both the fast-path and the ON CONFLICT race leg (SC-008)",
+            ).register(meterRegistry)
+
+    /**
      * T028 (research.md 004 §11): `webchat_message_ack_seconds` times the
      * send path from the POST arrival (the entry of [send]) to the durable
      * `201`/`200` acknowledgement (SC-001) — only acked sends record a
@@ -313,5 +332,8 @@ class MessageService(
         const val SEND_REJECTED_TOTAL = "webchat_send_rejected_total"
         const val TAG_REASON = "reason"
         const val REASON_FLOOD = "flood"
+
+        /** SC-008 (T037, research.md 004 §11): dedup hits of the send path. */
+        const val DEDUP_TOTAL = "webchat_message_dedup_total"
     }
 }
