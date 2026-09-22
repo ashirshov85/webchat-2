@@ -130,7 +130,7 @@ description: "Task list for feature implementation"
 ### Implementation for User Story 3
 
 - [X] T039 [US3] Пагинация в `useChatMessages`: подгрузка старых при прокрутке (`before=nextBefore`), prepend к списку, остановка при исчерпании, пустое состояние диалога — в `frontend/src/chats/hooks/useChatMessages.ts` и `frontend/src/chats/components/MessageList.tsx`
-- [ ] T040 [P] [US3] Frontend-тесты: подгрузка старых страниц до начала, граница (пустая страница — без ошибок), пустое состояние чата — в `frontend/src/chats/components/__tests__/MessageList.pagination.test.tsx`; прогон `HistoryIT` зелёным
+- [X] T040 [P] [US3] Frontend-тесты: подгрузка старых страниц до начала, граница (пустая страница — без ошибок), пустое состояние чата — в `frontend/src/chats/components/__tests__/MessageList.pagination.test.tsx`; прогон `HistoryIT` зелёным
 
 **Checkpoint**: История доступна и пагинируется при повторном входе (quickstart §3.3)
 
