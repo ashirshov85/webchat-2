@@ -17,14 +17,17 @@ namespace: dev
 # Backend OTLP endpoint (US5): traces go to the in-cluster OTel Collector
 # in front of the dev LGTM stack (T028, research.md §21).
 patches:
+  # labelSelector (not name): applies to every webchat ingress, including the
+  # SSE ingress webchat-sse (feature 004 T020) — its host and TLS must match
+  # the main one, otherwise the stream route would not receive dev traffic.
   - path: ingress-host.yaml
     target:
       kind: Ingress
-      name: webchat
+      labelSelector: app=webchat
   - path: ingress-tls.yaml
     target:
       kind: Ingress
-      name: webchat
+      labelSelector: app=webchat
   - path: backend-otlp-env.yaml
     target:
       kind: Deployment

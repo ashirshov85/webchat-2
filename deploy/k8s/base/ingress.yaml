@@ -36,3 +36,38 @@ spec:
                 name: frontend
                 port:
                   name: http
+---
+# SSE user event stream (feature 004, endpoint №18 GET /api/v1/users/me/events, T020).
+# ingress-nginx annotations apply to a whole Ingress resource, so the stream route
+# lives in a separate Ingress: rules of same-host ingresses merge into one server
+# and this Exact location wins over the /api Prefix above — annotations below scope
+# ONLY to the event stream (research.md §9):
+#   - proxy-buffering "off": SSE frames are flushed immediately, not accumulated
+#     by the proxy (belt-and-suspenders with the app's X-Accel-Buffering: no);
+#   - read/send timeouts 3600s (≥ 5 min): the 15 s heartbeat (:ka) keeps resetting
+#     the timer on healthy streams; the timeout only drops a stuck connection,
+#     after which the client reconnects (reconnect is normal — research.md §9).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webchat-sse
+  labels:
+    app: webchat
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: nginx
+  # Placeholder host — replaced by overlay (deploy/k8s/overlays/dev) per environment.
+  rules:
+    - host: webchat.example.com
+      http:
+        paths:
+          - path: /api/v1/users/me/events
+            pathType: Exact
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http
