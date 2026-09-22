@@ -87,18 +87,24 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
      * Registers and logs in a fresh user (US1 fixture basis). Every call
      * produces a unique username/email/source IP, so callers never collide on
      * unique rows or the register/login Redis buckets (5/1h per IP, 10/1m per
-     * IP — application.yml auth.ratelimit).
+     * IP — application.yml auth.ratelimit). The optional [email] override
+     * (T047) keeps the username random while pinning the address — the
+     * case-insensitive sort fixtures need an email order that differs from
+     * the username order.
      */
-    protected fun messagingUser(label: String): MessagingUser {
+    protected fun messagingUser(
+        label: String,
+        email: String? = null,
+    ): MessagingUser {
         val username = "$label-${UUID.randomUUID().toString().substring(0, UUID_SUFFIX_LENGTH)}"
-        val email = "$username@example.com"
+        val userEmail = email ?: "$username@example.com"
 
-        val registration = postJson(REGISTER_PATH, mapOf("username" to username, "email" to email))
+        val registration = postJson(REGISTER_PATH, mapOf("username" to username, "email" to userEmail))
         assertThat(registration.statusCode)
             .overridingErrorMessage("registration of fixture user <%s> must be accepted", username)
             .isEqualTo(HttpStatus.ACCEPTED)
 
-        val confirmation = postJson(CONFIRM_PATH, mapOf("token" to extractVerificationToken(email)))
+        val confirmation = postJson(CONFIRM_PATH, mapOf("token" to extractVerificationToken(userEmail)))
         assertThat(confirmation.statusCode)
             .overridingErrorMessage("email confirmation for fixture user <%s> must succeed", username)
             .isEqualTo(HttpStatus.OK)
