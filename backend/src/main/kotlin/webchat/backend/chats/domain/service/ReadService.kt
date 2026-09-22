@@ -1,5 +1,7 @@
 package webchat.backend.chats.domain.service
 
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import webchat.backend.chats.domain.port.ChatReadEvent
@@ -54,6 +56,7 @@ class ReadService(
     private val chatService: ChatService,
     private val participantRepository: ParticipantRepository,
     private val realtimeEventPublisher: RealtimeEventPublisher,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(ReadService::class.java)
 
@@ -72,6 +75,7 @@ class ReadService(
         if (upToSeq < MIN_UP_TO_SEQ || upToSeq > chat.lastSeq) throw InvalidUpToSeqException()
 
         val advanced = participantRepository.advanceReadUpTo(chatId, callerId, upToSeq) ?: return
+        readAdvancedTotal().increment()
         val peerId =
             checkNotNull(chat.peerOf(callerId)) {
                 "the caller passed the membership gate, so the peer must resolve"
@@ -108,8 +112,24 @@ class ReadService(
         }
     }
 
+    /**
+     * T046 (research.md 004 §11, SC-008): `webchat_read_advanced_total`
+     * counts every ACTUAL watermark advance — the rowcount > 0 leg ONLY;
+     * the idempotent no-ops of US4-5 (a repeated or smaller `upToSeq`)
+     * and the `400/403/404` refusals never increment it, so the counter
+     * is exactly the read-path signal the SC-007 budget is judged by.
+     */
+    private fun readAdvancedTotal(): Counter =
+        Counter
+            .builder(READ_ADVANCED_TOTAL)
+            .description("Read-path watermark advances: the last_read_seq GREATEST-update actually moved (SC-007)")
+            .register(meterRegistry)
+
     private companion object {
         /** FR-010 bound: the watermark starts at the first message — `upToSeq ≥ 1`. */
         const val MIN_UP_TO_SEQ = 1L
+
+        /** research.md 004 §11 observability contract name. */
+        const val READ_ADVANCED_TOTAL = "webchat_read_advanced_total"
     }
 }

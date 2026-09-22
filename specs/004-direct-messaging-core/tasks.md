@@ -152,7 +152,7 @@ description: "Task list for feature implementation"
 - [X] T043 [US4] Поля чтения в `ChatView` (`peerReadUpToSeq`, `myReadUpToSeq`) для `GET /chats/{id}` и `POST /chats/ensure` — в `backend/src/main/kotlin/webchat/backend/chats/api/dto/` и `ChatService`/`JdbcParticipantRepository`
 - [X] T044 [US4] Frontend: отправка read-отметок при отображении сообщений (троттлинг ≤500 мс — укладывается в SC-007 ≤2 с с запасом; при рендере новых и загрузке страниц истории, включая страницы, подгруженные пагинацией T039); рендер ✓✓ для `seq ≤ peerReadUpToSeq` (из ChatView и событий `chat.read`, монотонно) — в `frontend/src/chats/hooks/useChatMessages.ts`, `frontend/src/chats/components/MessageList.tsx`
 - [X] T045 [P] [US4] Frontend-тесты: ✓/✓✓ по водяному знаку и `chat.read`, отсутствие галочек на входящих, троттлинг отправки read — в `frontend/src/chats/components/__tests__/MessageList.test.tsx` (расширение)
-- [ ] T046 [US4] Метрика `webchat_read_advanced_total` + прогон `ReadReceiptsIT` зелёным — в `backend/src/main/kotlin/webchat/backend/chats/domain/service/ReadService.kt`
+- [X] T046 [US4] Метрика `webchat_read_advanced_total` + прогон `ReadReceiptsIT` зелёным — в `backend/src/main/kotlin/webchat/backend/chats/domain/service/ReadService.kt`
 
 **Checkpoint**: Цикл общения замкнут: доставлено/прочитано с realtime-обновлением (quickstart §3.4)
 

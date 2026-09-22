@@ -240,6 +240,7 @@ class MessageControllerTest {
                     chatService = ChatService(NoopUserRepository, GateChatRepository, participants),
                     participantRepository = participants,
                     realtimeEventPublisher = NoopRealtimePublisher,
+                    meterRegistry = SimpleMeterRegistry(),
                 ),
         )
 
