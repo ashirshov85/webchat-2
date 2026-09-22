@@ -1,5 +1,6 @@
 package webchat.backend.chats.api
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -167,6 +168,7 @@ class MessageControllerTest {
                     messageRepository = repository,
                     realtimeEventPublisher = NoopRealtimePublisher,
                     chatsProperties = TEST_PROPERTIES,
+                    meterRegistry = SimpleMeterRegistry(),
                 ),
             historyService =
                 HistoryService(

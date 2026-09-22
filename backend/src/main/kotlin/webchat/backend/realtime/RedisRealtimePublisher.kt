@@ -2,6 +2,8 @@ package webchat.backend.realtime
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
 import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
 import org.springframework.context.annotation.Bean
@@ -148,10 +150,12 @@ internal class RedisRealtimePubSubConfig {
  * contract payloads ([MessageView] for `message.created`).
  */
 @Component
+@Suppress("TooManyFunctions") // T028: one function per fan-out leg plus the SC-005 timer
 class RedisRealtimePublisher(
     private val connectionRegistry: SseConnectionRegistry,
     private val objectMapper: ObjectMapper,
     private val pubSub: RealtimePubSub,
+    private val meterRegistry: MeterRegistry,
 ) : RealtimeEventPublisher,
     SseConnectionRegistry.ConnectionListener {
     /**
@@ -229,9 +233,11 @@ class RedisRealtimePublisher(
         eventName: String,
         payload: Any,
     ) {
+        val push = Timer.start(meterRegistry)
         try {
             val envelope = objectMapper.writeValueAsString(RealtimeEnvelope(event = eventName, data = payload))
             pubSub.publish(userChannel(toUserId), envelope)
+            push.stop(pushTimer(STAGE_PUBLISH))
         } catch (failure: Exception) {
             log.warn(
                 "realtime publish of a <{}> event to user <{}> failed; " +
@@ -254,9 +260,11 @@ class RedisRealtimePublisher(
         channel: String,
         json: String,
     ) {
+        val push = Timer.start(meterRegistry)
         val userId = userIdOf(channel) ?: return
         val frame = incomingFrame(json) ?: return
         connectionRegistry.dispatch(userId, frame.eventName, frame.payload.toString())
+        push.stop(pushTimer(STAGE_DISPATCH))
     }
 
     private fun userIdOf(channel: String): UUID? {
@@ -312,7 +320,34 @@ class RedisRealtimePublisher(
         /** realtime-channel.md §3.1: the `MessageCreatedEvent` payload fields. */
         const val FIELD_CHAT_ID = "chatId"
         const val FIELD_MESSAGE = "message"
+
+        /** research.md 004 §11 observability contract name (SC-005). */
+        const val PUSH_SECONDS = "webchat_realtime_push_seconds"
+
+        const val TAG_STAGE = "stage"
+
+        /**
+         * The two timed legs of the post-commit push pipeline: the Redis
+         * PUBLISH of the envelope and the dispatch of the inbound frame to
+         * the local SSE emitters (the wire frame write itself).
+         */
+        const val STAGE_PUBLISH = "publish"
+        const val STAGE_DISPATCH = "dispatch"
     }
+
+    /**
+     * T028 (research.md 004 §11): `webchat_realtime_push_seconds` observes
+     * the realtime fan-out legs of SC-005 — the outbound publish leg
+     * (post-commit handoff → Redis PUBLISH) and the inbound dispatch leg
+     * (channel receipt → the SSE frame written to every local session).
+     */
+    private fun pushTimer(stage: String): Timer =
+        Timer
+            .builder(PUSH_SECONDS)
+            .description(
+                "Realtime push pipeline latency: the post-commit publish leg and the SSE frame dispatch leg (SC-005)",
+            ).tag(TAG_STAGE, stage)
+            .register(meterRegistry)
 }
 
 /**

@@ -3,6 +3,7 @@ package webchat.backend.realtime
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatCode
 import org.junit.jupiter.api.AfterEach
@@ -40,8 +41,10 @@ class RedisRealtimePublisherTest {
 
     private val registry = SseConnectionRegistry(SLOW_HEARTBEAT_PROPERTIES)
 
+    private val meterRegistry = SimpleMeterRegistry()
+
     private val publisher =
-        RedisRealtimePublisher(registry, MAPPER, pubSub).apply {
+        RedisRealtimePublisher(registry, MAPPER, pubSub, meterRegistry).apply {
             attach()
         }
 
@@ -160,6 +163,23 @@ class RedisRealtimePublisherTest {
     }
 
     @Test
+    fun `both push legs record the realtime push latency`() {
+        publisher.publishMessageCreated(ALICE, MESSAGE_CREATED)
+        val (channel, json) = pubSub.published.single()
+        pubSub.deliver(channel, json)
+
+        val pushTimers = meterRegistry.find(METRIC_PUSH_SECONDS).timers()
+        assertThat(pushTimers.map { it.id.getTag("stage") to it.count() })
+            .overridingErrorMessage(
+                "both push legs must record $METRIC_PUSH_SECONDS (SC-005): " +
+                    "the post-commit publish leg and the SSE-dispatch leg",
+            ).containsExactlyInAnyOrder(
+                STAGE_PUBLISH to 1L,
+                STAGE_DISPATCH to 1L,
+            )
+    }
+
+    @Test
     fun `a dead transport never fails the durable send path`() {
         pubSub.failPublish = true
 
@@ -249,6 +269,11 @@ class RedisRealtimePublisherTest {
         val CHAT_READ = ChatReadEvent(chatId = CHAT_ID, readUpToSeq = SEQ, byUserId = BOB)
 
         const val ENVELOPE = """{"event":"message.created","data":{"seq":128}}"""
+
+        /** T028: the SC-005 push timer and its stage tag values. */
+        const val METRIC_PUSH_SECONDS = "webchat_realtime_push_seconds"
+        const val STAGE_PUBLISH = "publish"
+        const val STAGE_DISPATCH = "dispatch"
 
         /** Slow enough that no heartbeat tick interferes with the dispatch assertions. */
         val SLOW_HEARTBEAT_PROPERTIES =

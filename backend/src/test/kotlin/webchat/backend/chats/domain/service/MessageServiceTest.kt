@@ -1,5 +1,6 @@
 package webchat.backend.chats.domain.service
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -137,6 +138,21 @@ class MessageServiceTest {
     }
 
     @Test
+    fun `send records the ack latency for both the fresh and the retried record`() {
+        service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+        repository.outcome = MessageInsertResult.Duplicate(STORED)
+        service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+
+        val ackTimers = meterRegistry.find(METRIC_ACK_SECONDS).timers()
+        assertThat(ackTimers.map { it.id.getTag("outcome") to it.count() })
+            .containsExactlyInAnyOrder(
+                OUTCOME_CREATED to 1L,
+                OUTCOME_EXISTING to 1L,
+            )
+        assertThat(ackTimers.all { it.totalTime(java.util.concurrent.TimeUnit.NANOSECONDS) >= 0 }).isTrue()
+    }
+
+    @Test
     fun `a realtime fan-out failure does not fail the durable send`() {
         publisher.failFor = setOf(ALICE, BOB)
 
@@ -152,18 +168,26 @@ class MessageServiceTest {
 
     private val publisher = RecordingRealtimePublisher(timeline = timeline)
 
+    private val meterRegistry = SimpleMeterRegistry()
+
     private val service =
         MessageService(
             chatService = ChatService(NoopUserRepository, GateChatRepository),
             messageRepository = repository,
             realtimeEventPublisher = publisher,
             chatsProperties = TEST_PROPERTIES,
+            meterRegistry = meterRegistry,
         )
 
     private companion object {
         const val CODE_CHAT_NOT_FOUND = "chat_not_found"
         const val CODE_NOT_PARTICIPANT = "not_participant"
         const val CODE_MESSAGE_ID_CONFLICT = "message_id_conflict"
+
+        /** T028: the SC-001 ack timer and its outcome tag values. */
+        const val METRIC_ACK_SECONDS = "webchat_message_ack_seconds"
+        const val OUTCOME_CREATED = "created"
+        const val OUTCOME_EXISTING = "existing"
 
         const val VALID_TEXT = "привет"
         const val BLANKISH_TEXT = "  \t\n \n\t "

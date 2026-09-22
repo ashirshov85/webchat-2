@@ -1,5 +1,7 @@
 package webchat.backend.chats.domain.service
 
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.Timer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import webchat.backend.chats.domain.model.Chat
@@ -64,6 +66,7 @@ class MessageService(
     private val messageRepository: MessageRepository,
     private val realtimeEventPublisher: RealtimeEventPublisher,
     private val chatsProperties: ChatsProperties,
+    private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(MessageService::class.java)
 
@@ -73,6 +76,7 @@ class MessageService(
         clientMessageId: UUID,
         rawText: String,
     ): MessageSendResult {
+        val ack = Timer.start(meterRegistry)
         val chat = chatService.get(chatId, senderId)
         val text = MessageText.normalize(rawText, chatsProperties.message.maxLength)
         val outcome =
@@ -82,11 +86,13 @@ class MessageService(
         return when (outcome) {
             is MessageInsertResult.Inserted -> {
                 publishCreated(chat, outcome.message)
+                ack.stop(ackTimer(OUTCOME_CREATED))
                 MessageSendResult.Created(outcome.message)
             }
             is MessageInsertResult.Duplicate -> {
                 val existing = outcome.existing
                 if (existing.chatId != chat.id || existing.senderId != senderId) throw MessageIdConflictException()
+                ack.stop(ackTimer(OUTCOME_EXISTING))
                 MessageSendResult.Existing(existing)
             }
         }
@@ -135,5 +141,30 @@ class MessageService(
                 failure.message,
             )
         }
+    }
+
+    /**
+     * T028 (research.md 004 §11): `webchat_message_ack_seconds` times the
+     * send path from the POST arrival (the entry of [send]) to the durable
+     * `201`/`200` acknowledgement (SC-001) — only acked sends record a
+     * sample; a refused send (400/403/404/409/429) abandons its sample and
+     * stays unobserved here.
+     */
+    private fun ackTimer(outcome: String): Timer =
+        Timer
+            .builder(ACK_SECONDS)
+            .description("Send-path acknowledgement latency: POST arrival to the durable 201/200 outcome (SC-001)")
+            .tag(TAG_OUTCOME, outcome)
+            .register(meterRegistry)
+
+    private companion object {
+        /** research.md 004 §11 observability contract name. */
+        const val ACK_SECONDS = "webchat_message_ack_seconds"
+
+        const val TAG_OUTCOME = "outcome"
+
+        /** The two acked outcomes: the `201` fresh record and the `200` FR-004 retry. */
+        const val OUTCOME_CREATED = "created"
+        const val OUTCOME_EXISTING = "existing"
     }
 }

@@ -85,7 +85,7 @@ description: "Task list for feature implementation"
 - [X] T026 [P] [US1] Компоненты `MessageList` (исходящие со статусом ✓ после подтверждения, входящие без галочек), `MessageInput` (клиентская превалидация по правилу FR-003: trim, непустой, ≤4096 после trim; невалидный текст не попадает в чат и outbox — локальная понятная ошибка, US1-4), `ErrorBanner` (ошибки 400 валидации) — в `frontend/src/chats/components/MessageList.tsx`, `frontend/src/chats/components/MessageInput.tsx`, `frontend/src/chats/components/ErrorBanner.tsx`
 - [X] T027 [P] [US1] Frontend-тесты: SSE-ридер (парсинг кадров, реконнект/`onOpen`, приоритет клиентского backoff над `retry`-кадром) и `MessageList` (статусы «отправляется»/«доставлено», отсутствие галочек на входящих) — в `frontend/src/api/__tests__/sse.test.ts` и `frontend/src/chats/components/__tests__/MessageList.test.tsx`
 - [X] T027a [P] [US2] Тест сходимости при переподключении (FR-009, US2-5): `onOpen` SSE-клиента → рефетч истории → дедуп по `message.id`, порядок и статусы сохраняются, дублей нет — в `frontend/src/chats/hooks/__tests__/useChatMessages.test.ts`
-- [ ] T028 [US1] Метрики `webchat_message_ack_seconds`, `webchat_realtime_push_seconds` (Micrometer) в `MessageService`/`RedisRealtimePublisher` + прогон `RealtimeSseIT`, `ChatAccessIT` зелёными — файлы по месту реализации
+- [X] T028 [US1] Метрики `webchat_message_ack_seconds`, `webchat_realtime_push_seconds` (Micrometer) в `MessageService`/`RedisRealtimePublisher` + прогон `RealtimeSseIT`, `ChatAccessIT` зелёными — файлы по месту реализации
 
 **Checkpoint**: MVP работает: диалог, отправка, статусы, realtime-доставка, membership — проверяется независимо (quickstart §3.1)
 
