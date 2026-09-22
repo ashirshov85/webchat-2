@@ -136,6 +136,44 @@ class ContactsIT(
         assertThat(userIds(boundary)).isEmpty()
     }
 
+    /**
+     * FR-016/№19 (T053a): the per-user enumeration guard — 30 searches per
+     * minute (`rl:user:search:{userId}`, research.md 004 §7). The 31st
+     * search of the window is refused `429` problem+json with
+     * `errors.query=[flood_limit]` and an integral `Retry-After` of ≥1s;
+     * the bucket is strictly per-user, so a DIFFERENT user searches
+     * undisturbed right after the refusal. Like [FloodLimitIT][webchat.backend.chats.FloodLimitIT],
+     * the greedy 30/60s drip may re-grant tokens mid-burst, so the first
+     * refusal is asserted to land at search 31+ and within the
+     * deterministic refill bound (`30 + elapsed/2`), never at a fixed
+     * attempt index. A miss query spends the token the same as a hit —
+     * the guard counts SEARCHES, not results (enumeration protection).
+     */
+    @Test
+    fun `search past the thirty-per-minute allowance is refused with 429 flood_limit and Retry-After`() {
+        val mallory = messagingUser("enumerator")
+        val victor = messagingUser("enumeratee")
+
+        val burst = searchUntilFlood(mallory)
+
+        assertSearchFloodRejection(burst.rejection)
+        assertThat(burst.accepted.toLong())
+            .overridingErrorMessage(
+                "the full 30-search allowance of FR-016 must be spendable in one burst before any 429, " +
+                    "got %d accepted",
+                burst.accepted,
+            ).isGreaterThanOrEqualTo(SEARCH_WINDOW.toLong())
+
+        val peer = searchUsers(victor, victor.username)
+        assertThat(peer.statusCode)
+            .overridingErrorMessage(
+                "the search flood bucket is per-user — a different user must search undisturbed, got <%s>: %s",
+                peer.statusCode,
+                peer.body,
+            ).isEqualTo(HttpStatus.OK)
+        assertThat(userIds(peer)).containsExactly(victor.id.toString())
+    }
+
     /** №21/FR-016: adding oneself is refused `422 self_forbidden` and leaves no partial state. */
     @Test
     fun `adding self as a contact is refused with 422 self_forbidden`() {
@@ -308,6 +346,93 @@ class ContactsIT(
         return exchange(user, HttpMethod.GET, path)
     }
 
+    /** A drain-to-429 search burst: the count of `200`s plus the first refusal. */
+    private data class SearchBurst(
+        val accepted: Int,
+        val rejection: ResponseEntity<String>,
+    )
+
+    /**
+     * Fires miss searches back to back until the first non-`200` answer.
+     * The first non-`200` IS the expected `429` (asserted by the caller
+     * through [assertSearchFloodRejection]); the greedy 30/60s drip may
+     * re-grant tokens while the burst runs, so the accepted count is
+     * bounded by `30 + elapsedSeconds/2 + 1` — never a fixed index — and
+     * must stay at or above the full 30-search allowance.
+     */
+    private fun searchUntilFlood(user: MessagingUser): SearchBurst {
+        var accepted = 0
+        var rejection: ResponseEntity<String>? = null
+        val startedAt = System.nanoTime()
+        var attempt = 0
+        while (rejection == null && attempt < SEARCH_BURST_ATTEMPT_CAP) {
+            attempt += 1
+            val response = searchUsers(user, "$FLOOD_QUERY_PREFIX-$attempt")
+            if (response.statusCode == HttpStatus.OK) {
+                accepted += 1
+            } else {
+                rejection = response
+            }
+        }
+        val elapsedSeconds = (System.nanoTime() - startedAt) / SEARCH_NANOS_PER_SECOND
+        assertThat(rejection)
+            .overridingErrorMessage(
+                "the 30-searches-per-minute bucket (FR-016) must refuse the burst of %d searches, " +
+                    "but every attempt answered 200 — the flood limit is not enforced on №19",
+                SEARCH_BURST_ATTEMPT_CAP,
+            ).isNotNull
+        val dripBound = SEARCH_WINDOW.toLong() + elapsedSeconds / 2 + SEARCH_DRIP_SLACK
+        assertThat(accepted.toLong())
+            .overridingErrorMessage(
+                "the first refusal must land at search 31+ of the window and within the greedy-drip bound " +
+                    "30+elapsed/2+1 (accepted=<%d>, elapsed=<%ds>, bound=<%d>)",
+                accepted,
+                elapsedSeconds,
+                dripBound,
+            ).isBetween(SEARCH_WINDOW.toLong(), dripBound)
+        return SearchBurst(accepted, rejection!!)
+    }
+
+    /**
+     * The exact №19 429 of api-contract.md: `429` + problem+json with
+     * `errors.query=[flood_limit]` and an integral `Retry-After` of at
+     * least 1 second (openapi №19 `Retry-After` minimum: 1) within one
+     * refill window (≤60s).
+     */
+    private fun assertSearchFloodRejection(rejection: ResponseEntity<String>) {
+        assertThat(rejection.statusCode)
+            .overridingErrorMessage(
+                "the search flood refusal must be 429 (FR-016), got <%s>: %s",
+                rejection.statusCode,
+                rejection.body,
+            ).isEqualTo(HttpStatus.TOO_MANY_REQUESTS)
+        assertThat(rejection.headers.contentType?.toString())
+            .overridingErrorMessage("the search flood refusal must be RFC 9457 application/problem+json")
+            .contains(PROBLEM_JSON_MEDIA_TYPE)
+        val retryAfterHeader = rejection.headers.getFirst(HttpHeaders.RETRY_AFTER)
+        val retryAfterSeconds = retryAfterHeader?.trim()?.toLongOrNull()
+        assertThat(retryAfterSeconds)
+            .overridingErrorMessage(
+                "Retry-After must be integral seconds ≥ 1 (openapi №19), got <%s>",
+                retryAfterHeader,
+            ).isNotNull
+        assertThat(retryAfterSeconds!!)
+            .overridingErrorMessage(
+                "Retry-After must be within one refill window (≥1s, ≤60s), got <%s>",
+                retryAfterHeader,
+            ).isBetween(RETRY_AFTER_FLOOR_SECONDS, RETRY_AFTER_CEILING_SECONDS)
+        val problem = objectMapper.readTree(rejection.body)
+        val codes = problem["errors"]?.get(QUERY_FIELD)?.map { it.asText() }.orEmpty()
+        assertThat(codes)
+            .overridingErrorMessage(
+                "the problem must carry the contract code errors.%s=[%s], got <%s> in %s",
+                QUERY_FIELD,
+                FLOOD_LIMIT,
+                codes,
+                rejection.body,
+            ).containsExactly(FLOOD_LIMIT)
+    }
+
     /** Contract №20 `GET /api/v1/contacts?sort=login|email` — raw response. */
     private fun listContacts(
         user: MessagingUser,
@@ -414,5 +539,17 @@ class ContactsIT(
         const val USER_NOT_FOUND = "user_not_found"
         const val INVALID_SORT = "invalid_sort"
         const val QUERY_MAX_LENGTH = 254
+
+        /** FR-016/api-contract.md №19 (T053a): 30 searches per minute per user. */
+        const val FLOOD_LIMIT = "flood_limit"
+        const val FLOOD_QUERY_PREFIX = "flood-probe"
+        const val SEARCH_WINDOW = 30
+
+        /** Burst headroom for the greedy-drip tokens re-granted mid-run. */
+        const val SEARCH_BURST_ATTEMPT_CAP = 40
+        const val SEARCH_DRIP_SLACK = 1L
+        const val RETRY_AFTER_FLOOR_SECONDS = 1L
+        const val RETRY_AFTER_CEILING_SECONDS = 60L
+        const val SEARCH_NANOS_PER_SECOND = 1_000_000_000L
     }
 }

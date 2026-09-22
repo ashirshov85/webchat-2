@@ -281,6 +281,9 @@ chats:
     # 004 api-contract.md №16 (FR-011): per-user send flood limit,
     # rl:user:msgsend:{userId} bucket (T032)
     messages-per-minute: 30
+    # 004 api-contract.md №19 (FR-016): per-user search flood limit,
+    # rl:user:search:{userId} bucket — защита от перебора (T053a)
+    searches-per-minute: 30
   realtime:
     # 004 realtime-channel.md: SSE `:ka` heartbeat every 15 s (T018)
     heartbeat: 15s

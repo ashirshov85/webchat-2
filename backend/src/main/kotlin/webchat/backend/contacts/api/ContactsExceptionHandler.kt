@@ -1,7 +1,9 @@
 package webchat.backend.contacts.api
 
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ProblemDetail
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import webchat.backend.contacts.domain.service.SelfForbiddenException
@@ -46,6 +48,22 @@ class ContactsExceptionHandler {
         problem(HttpStatus.BAD_REQUEST, INVALID_SORT_DETAIL)
             .apply { setProperty(ERRORS_PROPERTY, mapOf(SORT_FIELD to listOf(INVALID_SORT_CODE))) }
 
+    /**
+     * 429 (api-contract.md №19, FR-016, T053a): the per-user search
+     * flood limit — the allowance is exhausted, `Retry-After` carries the
+     * integral seconds to the next available token and the search is NOT
+     * performed. The query itself is never echoed (constitution V).
+     */
+    @ExceptionHandler(SearchFloodException::class)
+    fun onSearchFlood(failure: SearchFloodException): ResponseEntity<ProblemDetail> =
+        ResponseEntity
+            .status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, failure.retryAfterSeconds.toString())
+            .body(
+                problem(HttpStatus.TOO_MANY_REQUESTS, FLOOD_LIMIT_DETAIL)
+                    .apply { setProperty(ERRORS_PROPERTY, mapOf(QUERY_FIELD to listOf(FLOOD_LIMIT_CODE))) },
+            )
+
     /** 400 (api-contract.md №21): the request `userId` is absent or not a UUID. */
     @ExceptionHandler(InvalidContactUserIdException::class)
     fun onInvalidContactUserId(): ProblemDetail =
@@ -72,10 +90,13 @@ class ContactsExceptionHandler {
         const val USER_NOT_FOUND_CODE = "user_not_found"
         const val SELF_FORBIDDEN_CODE = "self_forbidden"
         const val INVALID_UUID_CODE = "invalid_uuid"
+        const val FLOOD_LIMIT_CODE = "flood_limit"
         const val QUERY_MISSING_DETAIL = "query must be present, non-empty and at most 254 characters"
         const val INVALID_SORT_DETAIL = "sort must be one of: login, email"
         const val USER_NOT_FOUND_DETAIL = "The requested target user does not exist"
         const val SELF_FORBIDDEN_DETAIL = "A contact or block needs two distinct users"
         const val INVALID_CONTACT_USER_ID_DETAIL = "userId must be a UUID"
+        const val FLOOD_LIMIT_DETAIL =
+            "The per-user search flood limit is exhausted (30 searches/minute); the search was not performed"
     }
 }
