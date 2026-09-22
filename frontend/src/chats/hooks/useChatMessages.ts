@@ -14,10 +14,18 @@
  * instance. Outgoing messages sent from another device arrive as
  * regular `message.created` frames on the own stream and render
  * «доставлено» immediately (US2-6 multidevice).
+ *
+ * History pagination (US3, T039, FR-008): `loadOlder` fetches the page
+ * above the rendered window with the exclusive cursor
+ * `before = nextBefore` and prepends it via the same reconcile (dedup +
+ * stable `seq` order). The cursor only ever moves back: a convergence
+ * refetch of the latest page never re-opens already explored history.
+ * When a page comes back without `nextBefore` (or empty — the boundary
+ * answer), the history is exhausted and loading stops.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { listMessages } from '../../api/chats'
-import type { Message } from '../../api/chats'
+import type { Message, MessagePage } from '../../api/chats'
 import { useRealtime } from './useRealtime'
 
 export type ChatMessagesStatus = 'loading' | 'ready' | 'error'
@@ -34,6 +42,17 @@ export interface UseChatMessagesResult {
    * outbox send, T036) with the usual dedup/order semantics.
    */
   readonly confirmMessage: (message: Message) => void
+  /** Older history pages exist above the rendered window (FR-008). */
+  readonly hasOlder: boolean
+  /** An older page request is currently in flight. */
+  readonly loadingOlder: boolean
+  /**
+   * Loads one older page (`before = nextBefore`, exclusive cursor) and
+   * prepends it. No-op when the history is exhausted, no chat is open
+   * or a page is already in flight; keeps the cursor on failure so the
+   * user can retry by scrolling again.
+   */
+  readonly loadOlder: () => void
 }
 
 function isSameMessage(a: Message, b: Message): boolean {
@@ -82,12 +101,41 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
   )
   const [error, setError] = useState<unknown>(null)
   const [refreshCount, setRefreshCount] = useState(0)
+  /**
+   * Exclusive cursor of the oldest explored page (FR-008): the `before`
+   * value for the next older-page request. `null` — no older history is
+   * known to exist (exhausted or nothing loaded yet).
+   */
+  const [oldestSeq, setOldestSeq] = useState<number | null>(null)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const loadingOlderRef = useRef(false)
+  /** Invalidates in-flight older-page responses on chat switch. */
+  const epochRef = useRef(0)
 
   useEffect(() => {
     setMessages([])
     setError(null)
     setStatus(chatId === null ? 'ready' : 'loading')
+    setOldestSeq(null)
+    setLoadingOlder(false)
+    loadingOlderRef.current = false
+    epochRef.current += 1
   }, [chatId])
+
+  /**
+   * Applies a latest-page fetch (initial load / onOpen convergence):
+   * merges the messages and moves the cursor back only — a refetch
+   * never re-opens history that was already explored by `loadOlder`.
+   */
+  const applyLatestPage = useCallback((page: MessagePage) => {
+    setMessages((previous) => reconcileMessages(previous, page.messages))
+    const nextBefore = page.nextBefore
+    if (nextBefore === undefined) {
+      setOldestSeq(null)
+      return
+    }
+    setOldestSeq((previous) => (previous === null ? nextBefore : Math.min(previous, nextBefore)))
+  }, [])
 
   useEffect(() => {
     if (chatId === null) {
@@ -102,7 +150,7 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
         }
         setError(null)
         setStatus('ready')
-        setMessages((previous) => reconcileMessages(previous, page.messages))
+        applyLatestPage(page)
       } catch (cause) {
         if (cancelled) {
           return
@@ -114,7 +162,7 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     return () => {
       cancelled = true
     }
-  }, [chatId, refreshCount])
+  }, [chatId, refreshCount, applyLatestPage])
 
   useEffect(() => {
     if (chatId === null) {
@@ -143,5 +191,45 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     setMessages((previous) => reconcileMessages(previous, [message]))
   }, [])
 
-  return { messages, status, error, reload, confirmMessage }
+  const loadOlder = useCallback(() => {
+    if (chatId === null || oldestSeq === null || loadingOlderRef.current) {
+      return
+    }
+    const epoch = epochRef.current
+    loadingOlderRef.current = true
+    setLoadingOlder(true)
+    void (async () => {
+      try {
+        const page = await listMessages(chatId, { before: oldestSeq })
+        if (epochRef.current !== epoch) {
+          return
+        }
+        // A boundary answer (empty page and/or no nextBefore) is a
+        // normal exhaustion signal — stop asking for older history.
+        setOldestSeq(
+          page.nextBefore !== undefined && page.messages.length > 0 ? page.nextBefore : null,
+        )
+        setMessages((previous) => reconcileMessages(previous, page.messages))
+      } catch {
+        // Keep the cursor and the rendered window; the next scroll to
+        // the top retries the page.
+      } finally {
+        if (epochRef.current === epoch) {
+          loadingOlderRef.current = false
+          setLoadingOlder(false)
+        }
+      }
+    })()
+  }, [chatId, oldestSeq])
+
+  return {
+    messages,
+    status,
+    error,
+    reload,
+    confirmMessage,
+    hasOlder: oldestSeq !== null,
+    loadingOlder,
+    loadOlder,
+  }
 }

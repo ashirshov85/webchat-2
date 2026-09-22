@@ -47,7 +47,8 @@ export function MessengerPage() {
     }
   }, [])
 
-  const { messages, status, error, reload, confirmMessage } = useChatMessages(activeChatId)
+  const { messages, status, error, reload, confirmMessage, hasOlder, loadingOlder, loadOlder } =
+    useChatMessages(activeChatId)
 
   const handleConfirmed = useCallback(
     (message: Message) => {
@@ -106,6 +107,9 @@ export function MessengerPage() {
               outbox={chatOutbox}
               onRetry={handleRetry}
               onRemove={handleRemove}
+              hasOlder={hasOlder}
+              loadingOlder={loadingOlder}
+              onLoadOlder={loadOlder}
             />
             <MessageInput onSend={handleSend} disabled={currentUserId === null} />
           </>

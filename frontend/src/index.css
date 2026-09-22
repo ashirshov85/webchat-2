@@ -95,6 +95,14 @@ body {
   overflow-y: auto;
 }
 
+/* Older-page fetch indicator above the rendered window (feature 004, T039) */
+.message-history {
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.85em;
+  padding: 2px 0;
+}
+
 .message {
   max-width: 72%;
   padding: 8px 12px;

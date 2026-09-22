@@ -20,9 +20,19 @@
  * the confirmed copy renders «доставлено ✓» instead. Outgoing from
  * another device arrives as a regular server message via the own SSE
  * stream and renders «доставлено ✓» immediately (US2-6).
+ *
+ * History pagination (US3, T039, FR-008): the list itself is the scroll
+ * container; scrolling close to the top calls `onLoadOlder`, and the
+ * freshly prepended older page keeps the viewport anchored to the same
+ * newest content (no visual jump). An empty dialog renders the plain
+ * empty state without errors.
  */
+import { useEffect, useRef } from 'react'
 import type { Message } from '../../api/chats'
 import type { OutboxRecord } from '../outbox'
+
+/** Distance from the top (px) that triggers an older-page request. */
+const TOP_LOAD_THRESHOLD = 48
 
 export interface PendingMessage {
   /** Client-generated UUID (FR-004) — becomes message.id on the server. */
@@ -43,6 +53,12 @@ export interface MessageListProps {
   readonly onRetry?: (clientMessageId: string) => void
   /** Local deletion of a `failed` record (FR-012). */
   readonly onRemove?: (clientMessageId: string) => void
+  /** Older history pages exist above the rendered window (US3). */
+  readonly hasOlder?: boolean
+  /** An older page request is currently in flight (US3). */
+  readonly loadingOlder?: boolean
+  /** Requests the next older page via `before=nextBefore` (US3). */
+  readonly onLoadOlder?: () => void
 }
 
 export function MessageList({
@@ -52,7 +68,43 @@ export function MessageList({
   outbox = [],
   onRetry,
   onRemove,
+  hasOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
 }: MessageListProps) {
+  const listRef = useRef<HTMLOListElement>(null)
+  /** scrollHeight captured when an older page is requested — the anchor. */
+  const anchorHeightRef = useRef<number | null>(null)
+  const firstMessageIdRef = useRef<string | undefined>(messages[0]?.id)
+
+  useEffect(() => {
+    const list = listRef.current
+    const first = messages[0]
+    if (list !== null && first !== undefined && anchorHeightRef.current !== null) {
+      // Only a prepend (the oldest rendered message changed) shifts the
+      // viewport; appends at the bottom keep the scroll untouched.
+      if (first.id !== firstMessageIdRef.current) {
+        const grown = list.scrollHeight - anchorHeightRef.current
+        if (grown > 0) {
+          list.scrollTop += grown
+        }
+      }
+    }
+    anchorHeightRef.current = null
+    firstMessageIdRef.current = first?.id
+  }, [messages])
+
+  const handleScroll = () => {
+    const list = listRef.current
+    if (list === null || loadingOlder || !hasOlder || onLoadOlder === undefined) {
+      return
+    }
+    if (list.scrollTop <= TOP_LOAD_THRESHOLD) {
+      anchorHeightRef.current = list.scrollHeight
+      onLoadOlder()
+    }
+  }
+
   const confirmedIds = new Set(messages.map((message) => message.id))
   const activePending = pending.filter((entry) => !confirmedIds.has(entry.clientMessageId))
   const activeOutbox = outbox.filter((entry) => !confirmedIds.has(entry.clientMessageId))
@@ -62,7 +114,17 @@ export function MessageList({
   }
 
   return (
-    <ol className="message-list" aria-label="Сообщения диалога">
+    <ol
+      className="message-list"
+      aria-label="Сообщения диалога"
+      ref={listRef}
+      onScroll={handleScroll}
+    >
+      {loadingOlder && (
+        <li className="message-history" aria-busy="true">
+          Загрузка истории…
+        </li>
+      )}
       {messages.map((message) => {
         const outgoing = message.senderId === currentUserId
         return (
