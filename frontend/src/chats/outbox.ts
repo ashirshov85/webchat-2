@@ -118,9 +118,8 @@ export function updateOutboxRecord(
     return null
   }
   const nextState = patch.state ?? previous.state
-  const nextPatch: OutboxRecordPatch = nextState === 'sending'
-    ? { errorCode: undefined, retryAt: undefined, ...patch }
-    : patch
+  const nextPatch: OutboxRecordPatch =
+    nextState === 'sending' ? { errorCode: undefined, retryAt: undefined, ...patch } : patch
   records[index] = {
     clientMessageId: previous.clientMessageId,
     chatId: previous.chatId,
