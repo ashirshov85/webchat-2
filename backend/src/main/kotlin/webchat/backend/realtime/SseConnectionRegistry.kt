@@ -4,6 +4,7 @@ import jakarta.annotation.PreDestroy
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
+import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import webchat.backend.config.ChatsProperties
 import java.nio.charset.StandardCharsets
@@ -164,6 +165,11 @@ class SseConnectionRegistry(
      * unregister it and mark it complete so the container releases the
      * async request; the failure is routine, so it logs at debug with
      * ids only (never payloads, constitution V).
+     *
+     * The frame goes through the `Set` overload of
+     * [ResponseBodyEmitter.send]: it writes the pre-rendered WHATWG text
+     * VERBATIM, while SseEmitter's Object overloads would wrap any
+     * payload into `data:` lines and corrupt the framing.
      */
     @Suppress("TooGenericExceptionCaught") // a dead socket signals itself by throwing
     private fun sendDroppingDeadConnections(
@@ -172,7 +178,7 @@ class SseConnectionRegistry(
         frameText: String,
     ) {
         try {
-            emitter.send(frameText, FRAME_MEDIA_TYPE)
+            emitter.send(setOf(ResponseBodyEmitter.DataWithMediaType(frameText, FRAME_MEDIA_TYPE)))
         } catch (failure: Exception) {
             unregister(userId, emitter)
             runCatching { emitter.complete() }

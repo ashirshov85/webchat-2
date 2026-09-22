@@ -3,7 +3,7 @@ package webchat.backend.realtime
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
-import org.springframework.http.MediaType
+import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import webchat.backend.config.ChatsProperties
 import java.io.IOException
@@ -160,10 +160,11 @@ class SseConnectionRegistryTest {
 
     /**
      * Captures the wire text: the registry sends every frame as ONE
-     * pre-rendered WHATWG string, so `recorded` is exactly the stream a
+     * pre-rendered WHATWG string through the verbatim `Set` overload of
+     * [ResponseBodyEmitter.send], so `recorded` is exactly the stream a
      * client would parse; [completed] mirrors the complete() cleanup calls.
      */
-    private class RecordingEmitter : SseEmitter(0L) {
+    private open class RecordingEmitter : SseEmitter(0L) {
         private val wire = StringBuffer()
 
         val recorded: String
@@ -175,11 +176,8 @@ class SseConnectionRegistryTest {
 
         fun heartbeatCount(): Int = wire.toString().split(HEARTBEAT_FRAME).size - 1
 
-        override fun send(
-            data: Any?,
-            mediaType: MediaType?,
-        ) {
-            wire.append(data.toString())
+        override fun send(items: Set<ResponseBodyEmitter.DataWithMediaType>) {
+            items.forEach { wire.append(it.data.toString()) }
         }
 
         override fun complete() {
@@ -197,10 +195,7 @@ class SseConnectionRegistryTest {
         var completed = false
             private set
 
-        override fun send(
-            data: Any?,
-            mediaType: MediaType?,
-        ): Unit = throw IOException("broken pipe")
+        override fun send(items: Set<ResponseBodyEmitter.DataWithMediaType>): Unit = throw IOException("broken pipe")
 
         override fun complete() {
             completed = true

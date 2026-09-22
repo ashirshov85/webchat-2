@@ -7,6 +7,7 @@ import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import java.nio.charset.StandardCharsets
 import java.util.UUID
@@ -54,7 +55,12 @@ class RealtimeController(
         emitter.onCompletion { connectionRegistry.unregister(userId, emitter) }
         emitter.onTimeout { emitter.complete() }
         emitter.onError { connectionRegistry.unregister(userId, emitter) }
-        emitter.send("retry: $RECONNECT_HINT_MILLIS\n\n", FRAME_MEDIA_TYPE)
+        // The Set overload of ResponseBodyEmitter writes items VERBATIM —
+        // the Object overloads of SseEmitter would wrap the text as `data:`
+        // lines (realtime-channel.md §2 spells the retry field, not data).
+        emitter.send(
+            setOf(ResponseBodyEmitter.DataWithMediaType("retry: $RECONNECT_HINT_MILLIS\n\n", FRAME_MEDIA_TYPE)),
+        )
         connectionRegistry.register(userId, emitter)
         return ResponseEntity
             .ok()
