@@ -60,6 +60,14 @@ function refreshOnce(refreshToken: string): Promise<TokenPair | null> {
   return inflightRefresh
 }
 
+export function refreshTokens(): Promise<TokenPair | null> {
+  const refreshToken = getRefreshToken()
+  if (refreshToken === null) {
+    return Promise.resolve(null)
+  }
+  return refreshOnce(refreshToken)
+}
+
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const response = await performRequest(path, init)
   if (response.status !== 401) {
