@@ -125,7 +125,7 @@ description: "Task list for feature implementation"
 
 ### Tests for User Story 3 (писать ПЕРВЫМИ)
 
-- [ ] T038 [P] [US3] `HistoryIT`: 120 сообщений → страницы по 50, `nextBefore` до исчерпания, пустая страница на границе без ошибок, `400 limit_out_of_range` (0 и 51), порядок стабилен между повторными загрузками, видимость per-user после удаления чата — в `backend/src/test/kotlin/webchat/backend/chats/HistoryIT.kt`
+- [X] T038 [P] [US3] `HistoryIT`: 120 сообщений → страницы по 50, `nextBefore` до исчерпания, пустая страница на границе без ошибок, `400 limit_out_of_range` (0 и 51), порядок стабилен между повторными загрузками, видимость per-user после удаления чата — в `backend/src/test/kotlin/webchat/backend/chats/HistoryIT.kt`
 
 ### Implementation for User Story 3
 
