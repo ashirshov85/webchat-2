@@ -144,7 +144,7 @@ description: "Task list for feature implementation"
 
 ### Tests for User Story 4 (писать ПЕРВЫМИ)
 
-- [ ] T041 [P] [US4] `ReadReceiptsIT`: `POST /read` двигает водяной знак, `204`; повторный/меньший `upToSeq` — без эффекта и без события (идемпотентность/монотонность US4-5); `upToSeq` больше seq последнего сообщения чата → `400 invalid_up_to_seq`, водяной знак не двигается; событие `chat.read` доставляется собеседнику в реальном времени; чтение загруженных страниц истории продвигает отметку — в `backend/src/test/kotlin/webchat/backend/chats/ReadReceiptsIT.kt`
+- [X] T041 [P] [US4] `ReadReceiptsIT`: `POST /read` двигает водяной знак, `204`; повторный/меньший `upToSeq` — без эффекта и без события (идемпотентность/монотонность US4-5); `upToSeq` больше seq последнего сообщения чата → `400 invalid_up_to_seq`, водяной знак не двигается; событие `chat.read` доставляется собеседнику в реальном времени; чтение загруженных страниц истории продвигает отметку — в `backend/src/test/kotlin/webchat/backend/chats/ReadReceiptsIT.kt`
 
 ### Implementation for User Story 4
 
