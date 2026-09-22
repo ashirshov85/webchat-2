@@ -1,12 +1,15 @@
 package webchat.backend.chats.api
 
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.ProblemDetail
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import webchat.backend.chats.domain.model.InvalidMessageTextException
 import webchat.backend.chats.domain.model.MessageTextViolation
 import webchat.backend.chats.domain.service.ChatNotFoundException
+import webchat.backend.chats.domain.service.FloodLimitException
 import webchat.backend.chats.domain.service.LimitOutOfRangeException
 import webchat.backend.chats.domain.service.MessageIdConflictException
 import webchat.backend.chats.domain.service.NotParticipantException
@@ -22,6 +25,7 @@ import webchat.backend.chats.domain.service.SelfForbiddenException
  * `errors: map<string, string[]>` — codes and field names only, never
  * chat contents or participant details.
  */
+@Suppress("TooManyFunctions") // one @ExceptionHandler per contract failure code — the №11–№17 table is the size driver
 @RestControllerAdvice
 class ChatsExceptionHandler {
     /** 422 (api-contract.md №11): a dialog of the caller with themselves (FR-001). */
@@ -98,6 +102,22 @@ class ChatsExceptionHandler {
         problem(HttpStatus.BAD_REQUEST, LIMIT_OUT_OF_RANGE_DETAIL)
             .apply { setProperty(ERRORS_PROPERTY, mapOf(LIMIT_FIELD to listOf(LIMIT_OUT_OF_RANGE_CODE))) }
 
+    /**
+     * 429 (api-contract.md №16): the FR-011 send flood limit — the
+     * per-user allowance is exhausted, `Retry-After` carries the integral
+     * seconds to the next available token and NOTHING was written. The
+     * submitted text is never echoed (constitution V).
+     */
+    @ExceptionHandler(FloodLimitException::class)
+    fun onFloodLimit(failure: FloodLimitException): ResponseEntity<ProblemDetail> =
+        ResponseEntity
+            .status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, failure.retryAfterSeconds.toString())
+            .body(
+                problem(HttpStatus.TOO_MANY_REQUESTS, FLOOD_LIMIT_DETAIL)
+                    .apply { setProperty(ERRORS_PROPERTY, mapOf(TEXT_FIELD to listOf(FLOOD_LIMIT_CODE))) },
+            )
+
     private fun problem(
         status: HttpStatus,
         detail: String,
@@ -124,6 +144,7 @@ class ChatsExceptionHandler {
         const val TEXT_TOO_LONG_CODE = "text_too_long"
         const val MESSAGE_ID_CONFLICT_CODE = "message_id_conflict"
         const val LIMIT_OUT_OF_RANGE_CODE = "limit_out_of_range"
+        const val FLOOD_LIMIT_CODE = "flood_limit"
         const val SELF_FORBIDDEN_DETAIL = "A dialog requires two distinct users"
         const val PEER_NOT_FOUND_DETAIL = "The requested peer user does not exist"
         const val CHAT_NOT_FOUND_DETAIL = "The requested chat does not exist"
@@ -133,5 +154,6 @@ class ChatsExceptionHandler {
         const val INVALID_CLIENT_MESSAGE_ID_DETAIL = "clientMessageId must be a UUID"
         const val MESSAGE_ID_CONFLICT_DETAIL = "the clientMessageId belongs to another stored message"
         const val LIMIT_OUT_OF_RANGE_DETAIL = "limit must be within 1..50"
+        const val FLOOD_LIMIT_DETAIL = "The message rate limit is exceeded; retry after the indicated interval"
     }
 }

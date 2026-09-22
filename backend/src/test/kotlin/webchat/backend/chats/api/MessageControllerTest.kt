@@ -1,9 +1,15 @@
 package webchat.backend.chats.api
 
+import io.github.bucket4j.BucketConfiguration
+import io.github.bucket4j.ConsumptionProbe
+import io.github.bucket4j.distributed.BucketProxy
+import io.github.bucket4j.distributed.proxy.ProxyManager
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.mockito.ArgumentMatchers
+import org.mockito.Mockito
 import org.springframework.http.HttpStatus
 import org.springframework.security.oauth2.jwt.Jwt
 import webchat.backend.auth.domain.model.User
@@ -30,6 +36,7 @@ import webchat.backend.config.ChatsProperties
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import java.util.function.Supplier
 
 /**
  * Unit-level verification of the T017 mandates (api-contract.md №15/№16):
@@ -160,6 +167,28 @@ class MessageControllerTest {
 
     private val repository = ScriptedMessageRepository()
 
+    /**
+     * T032: the flood gate always admits in this unit scope — the token
+     * bucket itself (Redis key family, drip, 429 rendering) is covered
+     * by FloodLimitIT (T030) and MessageServiceTest.
+     */
+    @Suppress("UNCHECKED_CAST") // the raw Mockito mock is the ProxyManager<ByteArray> seam
+    private val floodControl = Mockito.mock(ProxyManager::class.java) as ProxyManager<ByteArray>
+
+    init {
+        val admittingBucket = Mockito.mock(BucketProxy::class.java)
+        Mockito
+            .`when`(admittingBucket.tryConsumeAndReturnRemaining(ArgumentMatchers.anyLong()))
+            .thenReturn(ConsumptionProbe.consumed(Long.MAX_VALUE, 0L))
+        Mockito
+            .`when`(
+                floodControl.getProxy(
+                    ArgumentMatchers.any(ByteArray::class.java),
+                    ArgumentMatchers.any<Supplier<BucketConfiguration>>(),
+                ),
+            ).thenReturn(admittingBucket)
+    }
+
     private val controller =
         MessageController(
             messageService =
@@ -168,6 +197,7 @@ class MessageControllerTest {
                     messageRepository = repository,
                     realtimeEventPublisher = NoopRealtimePublisher,
                     chatsProperties = TEST_PROPERTIES,
+                    rateLimitProxyManager = floodControl,
                     meterRegistry = SimpleMeterRegistry(),
                 ),
             historyService =

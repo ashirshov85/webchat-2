@@ -1,9 +1,15 @@
 package webchat.backend.chats.domain.service
 
+import io.github.bucket4j.BucketConfiguration
+import io.github.bucket4j.ConsumptionProbe
+import io.github.bucket4j.distributed.BucketProxy
+import io.github.bucket4j.distributed.proxy.ProxyManager
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.mockito.ArgumentMatchers
+import org.mockito.Mockito
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.domain.model.Chat
@@ -23,6 +29,7 @@ import webchat.backend.config.ChatsProperties
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import java.util.function.Supplier
 
 /**
  * Unit-level mirror of the T014/T031 mandates (api-contract.md №16,
@@ -37,9 +44,14 @@ import java.util.UUID
  * `Existing` (200, FR-004 race leg — the empty `RETURNING` of parallel
  * retries) / `409 message_id_conflict`, and — only for an actual new
  * record — fans `message.created` out to BOTH participants strictly
- * AFTER the durable insert (FR-007). The PG transaction itself is owned
- * by the repository (JdbcMessageRepositoryIT of T012); the HTTP
- * problem+json rendering is owned by the api layer (T017,
+ * AFTER the durable insert (FR-007). The T032 flood bucket joins as the
+ * last gate before the INSERT: a drained bucket refuses the send with
+ * the ceil-of-refill-wait `Retry-After` and the
+ * `webchat_send_rejected_total{reason=flood}` counter, while the dedup
+ * fast-path stays ahead of it. The PG transaction itself is owned
+ * by the repository (JdbcMessageRepositoryIT of T012); the Redis bucket
+ * wiring — key family, drip, fail-open — by FloodLimitIT (T030); the
+ * HTTP problem+json rendering is owned by the api layer (T017,
  * MessageValidationIT/ChatAccessIT of T008/T008a).
  */
 class MessageServiceTest {
@@ -215,6 +227,43 @@ class MessageServiceTest {
         assertThat(repository.inserts).hasSize(1)
     }
 
+    @Test
+    fun `a drained flood bucket refuses the send before the insert and counts the rejection`() {
+        floodAnswer = ConsumptionProbe.rejected(0, NANOS_TO_WAIT, NANOS_TO_WAIT)
+
+        val exception =
+            assertThrows<FloodLimitException> {
+                service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+            }
+
+        assertThat(exception.code).isEqualTo(CODE_FLOOD_LIMIT)
+        assertThat(exception.retryAfterSeconds)
+            .overridingErrorMessage(
+                "Retry-After must be the ceil of the refill wait (openapi №16), got <%s>",
+                exception.retryAfterSeconds,
+            ).isEqualTo(EXPECTED_RETRY_AFTER_SECONDS)
+        assertThat(repository.inserts).isEmpty()
+        assertThat(publisher.messageCreated).isEmpty()
+        assertThat(meterRegistry.find(METRIC_SEND_REJECTED).counters().map { it.id.getTag("reason") to it.count() })
+            .overridingErrorMessage("the refusal must grow webchat_send_rejected_total{reason=flood}")
+            .containsExactly(REASON_FLOOD to 1.0)
+    }
+
+    @Test
+    fun `a drained flood bucket never penalizes the dedup fast-path retry`() {
+        // research.md 004 §7 ordering «дедуп → флуд»: with the bucket
+        // drained the recorded-id retry still converges to its row —
+        // the probe is never even consulted, no rejection sample lands.
+        repository.existingById = STORED
+        floodAnswer = ConsumptionProbe.rejected(0, NANOS_TO_WAIT, NANOS_TO_WAIT)
+
+        val result = service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+
+        assertThat(result).isEqualTo(MessageSendResult.Existing(STORED))
+        assertThat(repository.inserts).isEmpty()
+        assertThat(meterRegistry.find(METRIC_SEND_REJECTED).counters()).isEmpty()
+    }
+
     private val timeline = mutableListOf<String>()
 
     private val repository = ScriptedMessageRepository(MessageInsertResult.Inserted(STORED), timeline)
@@ -223,12 +272,38 @@ class MessageServiceTest {
 
     private val meterRegistry = SimpleMeterRegistry()
 
+    /**
+     * T032: the flood-bucket seam of the unit scope — every token probe
+     * answers with the current [floodAnswer] (`consumed` by default; the
+     * flood tests flip it to `rejected` to drain the bucket). The real
+     * Redis bucket is covered by FloodLimitIT (T030).
+     */
+    private var floodAnswer: ConsumptionProbe = ConsumptionProbe.consumed(Long.MAX_VALUE, 0L)
+
+    @Suppress("UNCHECKED_CAST") // the raw Mockito mock is the ProxyManager<ByteArray> seam
+    private val floodControl = Mockito.mock(ProxyManager::class.java) as ProxyManager<ByteArray>
+
+    init {
+        val admittingBucket = Mockito.mock(BucketProxy::class.java)
+        Mockito
+            .`when`(admittingBucket.tryConsumeAndReturnRemaining(ArgumentMatchers.anyLong()))
+            .thenAnswer { floodAnswer }
+        Mockito
+            .`when`(
+                floodControl.getProxy(
+                    ArgumentMatchers.any(ByteArray::class.java),
+                    ArgumentMatchers.any<Supplier<BucketConfiguration>>(),
+                ),
+            ).thenReturn(admittingBucket)
+    }
+
     private val service =
         MessageService(
             chatService = ChatService(NoopUserRepository, GateChatRepository),
             messageRepository = repository,
             realtimeEventPublisher = publisher,
             chatsProperties = TEST_PROPERTIES,
+            rateLimitProxyManager = floodControl,
             meterRegistry = meterRegistry,
         )
 
@@ -236,11 +311,20 @@ class MessageServiceTest {
         const val CODE_CHAT_NOT_FOUND = "chat_not_found"
         const val CODE_NOT_PARTICIPANT = "not_participant"
         const val CODE_MESSAGE_ID_CONFLICT = "message_id_conflict"
+        const val CODE_FLOOD_LIMIT = "flood_limit"
 
         /** T028: the SC-001 ack timer and its outcome tag values. */
         const val METRIC_ACK_SECONDS = "webchat_message_ack_seconds"
         const val OUTCOME_CREATED = "created"
         const val OUTCOME_EXISTING = "existing"
+
+        /** T032: the SC-008 rejection counter and its reason tag value. */
+        const val METRIC_SEND_REJECTED = "webchat_send_rejected_total"
+        const val REASON_FLOOD = "flood"
+
+        /** 1.5s of refill wait — the №16 Retry-After must ceil it to 2s. */
+        const val NANOS_TO_WAIT = 1_500_000_000L
+        const val EXPECTED_RETRY_AFTER_SECONDS = 2L
 
         const val VALID_TEXT = "привет"
         const val BLANKISH_TEXT = "  \t\n \n\t "
