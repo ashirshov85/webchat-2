@@ -63,7 +63,8 @@ export async function listMessages(
   if (options?.before !== undefined) query.set('before', String(options.before))
   if (options?.limit !== undefined) query.set('limit', String(options.limit))
   const queryString = query.toString()
-  const path = `/chats/${encodeURIComponent(chatId)}/messages${queryString === '' ? '' : `?${queryString}`}`
+  const queryPart = queryString === '' ? '' : `?${queryString}`
+  const path = `/chats/${encodeURIComponent(chatId)}/messages${queryPart}`
   const response = await authedRequest(path, 'GET')
   return (await response.json()) as MessagePage
 }
