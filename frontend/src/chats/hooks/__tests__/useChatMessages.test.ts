@@ -225,6 +225,71 @@ describe('useChatMessages convergence on SSE (re)connect (FR-009)', () => {
     expect(result.current.status).toBe('ready')
   })
 
+  it('keeps a single instance when the reconnection frame and the refetch deliver the same message', async () => {
+    const stream = installStream()
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)], 10))
+    const { result } = mountChatMessages('chat-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    let resolveRefetch: (value: MessagePage) => void = () => {}
+    mockedListMessages.mockReturnValueOnce(
+      new Promise<MessagePage>((resolve) => {
+        resolveRefetch = resolve
+      }),
+    )
+    act(() => {
+      stream.onOpen?.()
+    })
+    await waitFor(() => {
+      expect(mockedListMessages).toHaveBeenCalledTimes(2)
+    })
+
+    // The at-most-once channel may redeliver m-3 right after reconnect…
+    emitMessageCreated(stream, makeMessage('chat-1', 'm-3', 30))
+    expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'm-3'])
+
+    // …and the convergence refetch returns the same message again —
+    // exactly one instance, server `seq` order preserved (US2-5).
+    act(() => {
+      resolveRefetch(page([makeMessage('chat-1', 'm-3', 30), makeMessage('chat-1', 'm-1', 10)], 10))
+    })
+
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.seq)).toEqual([10, 30])
+    })
+    expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'm-3'])
+    expect(result.current.status).toBe('ready')
+  })
+
+  it('converges silently: status stays ready and rendered messages keep order and identity while the refetch is in flight', async () => {
+    const stream = installStream()
+    mockedListMessages.mockResolvedValueOnce(
+      page([makeMessage('chat-1', 'm-2', 20), makeMessage('chat-1', 'm-1', 10)], 10),
+    )
+    const { result } = mountChatMessages('chat-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    const renderedBefore = [...result.current.messages]
+
+    mockedListMessages.mockReturnValueOnce(new Promise<MessagePage>(() => {}))
+    act(() => {
+      stream.onOpen?.()
+    })
+    await waitFor(() => {
+      expect(mockedListMessages).toHaveBeenCalledTimes(2)
+    })
+
+    // No «loading» flash, no losses, no reordering, same object references —
+    // statuses and order of already rendered messages survive the reconnect.
+    expect(result.current.status).toBe('ready')
+    expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'm-2'])
+    expect(result.current.messages[0]).toBe(renderedBefore[0])
+    expect(result.current.messages[1]).toBe(renderedBefore[1])
+  })
+
   it('refetches again on every subsequent reconnection', async () => {
     const stream = installStream()
     mockedListMessages.mockResolvedValue(page([makeMessage('chat-1', 'm-1', 10)], 10))
