@@ -99,7 +99,7 @@ description: "Task list for feature implementation"
 
 ### Tests for User Story 2 (писать ПЕРВЫМИ)
 
-- [ ] T029 [P] [US2] `MessagingDeliveryIT`: дедуп по id (последовательный и параллельные ретраи одного id, двойной POST), `409 message_id_conflict` на чужой id, порядок `seq` у обоих участников и между загрузками, офлайн-получатель видит всё без потерь/дублей — в `backend/src/test/kotlin/webchat/backend/chats/MessagingDeliveryIT.kt` (SC-002/003)
+- [X] T029 [P] [US2] `MessagingDeliveryIT`: дедуп по id (последовательный и параллельные ретраи одного id, двойной POST), `409 message_id_conflict` на чужой id, порядок `seq` у обоих участников и между загрузками, офлайн-получатель видит всё без потерь/дублей — в `backend/src/test/kotlin/webchat/backend/chats/MessagingDeliveryIT.kt` (SC-002/003)
 - [ ] T030 [P] [US2] `FloodLimitIT`: 31-е сообщение за минуту → `429` + `Retry-After`, записи в БД нет; ретрай уже записанного сообщения НЕ штрафуется 429 (дедуп → флуд); повтор после окна → `201` — в `backend/src/test/kotlin/webchat/backend/chats/FloodLimitIT.kt`
 
 ### Implementation for User Story 2
