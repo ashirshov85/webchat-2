@@ -77,6 +77,128 @@ body {
   color: var(--muted);
 }
 
+/* Dialog window: message list + composer (feature 004, T026) */
+.messenger-dialog {
+  display: flex;
+  flex-direction: column;
+}
+
+.message-list {
+  list-style: none;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 160px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+
+.message {
+  max-width: 72%;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.message.incoming {
+  align-self: flex-start;
+}
+
+.message.outgoing {
+  align-self: flex-end;
+  color: #ffffff;
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.message-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-status {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  text-align: right;
+  opacity: 0.85;
+}
+
+.message-input {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.message-input-error {
+  flex-basis: 100%;
+  margin: 0 0 6px;
+}
+
+.message-input textarea {
+  flex: 1;
+  min-height: 44px;
+  padding: 8px 10px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.message-input textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.message-input button {
+  align-self: flex-end;
+}
+
+.error-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.error-banner-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.error-banner-dismiss {
+  padding: 0 8px;
+  font-weight: 400;
+  color: inherit;
+  background: none;
+  border: none;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 @media (max-width: 720px) {
   .messenger {
     grid-template-columns: 1fr;
