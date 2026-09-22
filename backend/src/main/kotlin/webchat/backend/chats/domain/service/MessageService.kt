@@ -42,11 +42,23 @@ sealed interface MessageSendResult {
 }
 
 /**
- * The send path of User Story 1 (T014): membership → FR-003 text
- * normalization → the exactly-once INSERT (`ON CONFLICT`, owned by
- * [MessageRepository.insert]) → `201` strictly after the PG commit →
- * `message.created` published to `rt:user:{sender}` AND
- * `rt:user:{recipient}` AFTER that commit (FR-004 basis, FR-007).
+ * The send path of the exactly-once core (data-model 004 §3 «Запись»):
+ *
+ *  0. the dedup fast-path (T031) — a lookup by the client UUID BEFORE the
+ *     membership gate, the limits and the locks: a retry of an
+ *     already-recorded message resolves to the SAME stored row (`200`),
+ *     so it can never be flood-penalized (T032) nor blocked (T054) — the
+ *     retry always converges (US2-1/2);
+ *  1. membership (FR-002, T014) → FR-003 text normalization → the
+ *     exactly-once INSERT (`ON CONFLICT`, owned by
+ *     [MessageRepository.insert]) → `201` strictly after the PG commit →
+ *     `message.created` published to `rt:user:{sender}` AND
+ *     `rt:user:{recipient}` AFTER that commit (FR-004 basis, FR-007).
+ *
+ * The race leg of the dedup (an empty `RETURNING` of parallel retries)
+ * stays owned by the repository: it SELECTs the winning row and reports
+ * [MessageInsertResult.Duplicate], mapped here to the same `200`/`409`
+ * rules as the fast-path.
  *
  * This service is deliberately NOT `@Transactional`:
  * [MessageRepository.insert] owns the single PG transaction (T012), and it
@@ -56,9 +68,9 @@ sealed interface MessageSendResult {
  * in a transaction would break the FR-005/FR-007 ordering guarantee.
  *
  * Later stories insert their gates into this path without restructuring
- * it: the dedup fast-path BEFORE limits and blocks (T031, research.md 004
- * §3 step 0), the blocking-pair refusals (T054) and the flood bucket
- * (T032) — all between the membership gate and the INSERT.
+ * it: the flood bucket (T032) and the blocking-pair refusals (T054) —
+ * both AFTER the dedup fast-path and between the membership gate and the
+ * INSERT.
  */
 @Service
 class MessageService(
@@ -77,6 +89,10 @@ class MessageService(
         rawText: String,
     ): MessageSendResult {
         val ack = Timer.start(meterRegistry)
+        resolveDedupFastPath(chatId, senderId, clientMessageId)?.let { recorded ->
+            ack.stop(ackTimer(OUTCOME_EXISTING))
+            return MessageSendResult.Existing(recorded)
+        }
         val chat = chatService.get(chatId, senderId)
         val text = MessageText.normalize(rawText, chatsProperties.message.maxLength)
         val outcome =
@@ -96,6 +112,30 @@ class MessageService(
                 MessageSendResult.Existing(existing)
             }
         }
+    }
+
+    /**
+     * data-model 004 §3 step 0 (research.md 004 §3): the dedup fast-path —
+     * the lookup by the client UUID runs BEFORE the membership gate, the
+     * limits and the locks, so a retry of an already-recorded message
+     * always converges to the same stored row (US2-1/2): the later flood
+     * bucket (T032) and blocking-pair refusals (T054) can never interfere
+     * with it.
+     *
+     * A found row is compared to the request by `chat_id`/`sender_id`
+     * ONLY — the draft text is never compared nor rewritten (the id, not
+     * the draft, is the deduplication key); a mismatch is the
+     * `409 message_id_conflict` of №16 (a foreign id). A miss returns
+     * `null` and the send continues down the gated path.
+     */
+    private fun resolveDedupFastPath(
+        chatId: UUID,
+        senderId: UUID,
+        clientMessageId: UUID,
+    ): Message? {
+        val recorded = messageRepository.findById(clientMessageId) ?: return null
+        if (recorded.chatId != chatId || recorded.senderId != senderId) throw MessageIdConflictException()
+        return recorded
     }
 
     /**

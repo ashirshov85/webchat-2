@@ -25,18 +25,22 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * Unit-level mirror of the T014 mandates (api-contract.md №16,
- * data-model 004 §3): the send path resolves membership through the same
- * FR-002 gate as every chats resource (`404 chat_not_found` →
- * `403 not_participant`), normalizes the text by the single FR-003 rule
- * (trim, non-empty, ≤ `chats.message.max-length`) BEFORE any write, maps
- * the exactly-once INSERT to `Created` (201) / `Existing` (200, FR-004
- * retry) / `409 message_id_conflict` (a foreign clientMessageId), and —
- * only for an actual new record — fans `message.created` out to BOTH
- * participants strictly AFTER the durable insert (FR-007). The PG
- * transaction itself is owned by the repository (JdbcMessageRepositoryIT
- * of T012); the HTTP problem+json rendering is owned by the api layer
- * (T017, MessageValidationIT/ChatAccessIT of T008/T008a).
+ * Unit-level mirror of the T014/T031 mandates (api-contract.md №16,
+ * data-model 004 §3): the send path resolves the dedup fast-path FIRST
+ * (T031 — a lookup by the client UUID before the membership gate, the
+ * limits and the locks: a recorded id converges to its stored row, a
+ * foreign one is refused `409 message_id_conflict`), then resolves
+ * membership through the same FR-002 gate as every chats resource
+ * (`404 chat_not_found` → `403 not_participant`), normalizes the text by
+ * the single FR-003 rule (trim, non-empty, ≤ `chats.message.max-length`)
+ * BEFORE any write, maps the exactly-once INSERT to `Created` (201) /
+ * `Existing` (200, FR-004 race leg — the empty `RETURNING` of parallel
+ * retries) / `409 message_id_conflict`, and — only for an actual new
+ * record — fans `message.created` out to BOTH participants strictly
+ * AFTER the durable insert (FR-007). The PG transaction itself is owned
+ * by the repository (JdbcMessageRepositoryIT of T012); the HTTP
+ * problem+json rendering is owned by the api layer (T017,
+ * MessageValidationIT/ChatAccessIT of T008/T008a).
  */
 class MessageServiceTest {
     @Test
@@ -47,6 +51,53 @@ class MessageServiceTest {
             }
 
         assertThat(exception.code).isEqualTo(CODE_CHAT_NOT_FOUND)
+        assertThat(repository.inserts).isEmpty()
+        assertThat(publisher.messageCreated).isEmpty()
+    }
+
+    @Test
+    fun `dedup fast-path returns the recorded row before the membership gate is reached`() {
+        // The recorded row lives in a chat the FR-002 fixture CANNOT
+        // resolve — only the step-0 lookup (data-model 004 §3, T031) can
+        // answer this send; a membership-first order would throw
+        // ChatNotFoundException instead of converging the retry.
+        val recorded = STORED.copy(chatId = UNKNOWN_CHAT, seq = 7)
+        repository.existingById = recorded
+
+        val result = service.send(UNKNOWN_CHAT, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+
+        assertThat(result).isEqualTo(MessageSendResult.Existing(recorded))
+        assertThat(repository.inserts).isEmpty()
+        assertThat(publisher.messageCreated).isEmpty()
+        assertThat(meterRegistry.find(METRIC_ACK_SECONDS).timers().map { it.id.getTag("outcome") to it.count() })
+            .overridingErrorMessage("the fast-path 200 retry must record the ack latency with outcome=existing")
+            .containsExactly(OUTCOME_EXISTING to 1L)
+    }
+
+    @Test
+    fun `dedup fast-path refuses a foreign recorded id with message_id_conflict`() {
+        repository.existingById = STORED.copy(senderId = BOB)
+
+        val exception =
+            assertThrows<MessageIdConflictException> {
+                service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+            }
+
+        assertThat(exception.code).isEqualTo(CODE_MESSAGE_ID_CONFLICT)
+        assertThat(repository.inserts).isEmpty()
+        assertThat(publisher.messageCreated).isEmpty()
+    }
+
+    @Test
+    fun `a retry whose edited draft became invalid still converges to the recorded row`() {
+        // research.md 004 §3 ordering: the fast-path lookup precedes the
+        // FR-003 validation — the id, not the draft, owns the outcome, so
+        // even a blank re-send answers with the stored `200` row.
+        repository.existingById = STORED
+
+        val result = service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, BLANKISH_TEXT)
+
+        assertThat(result).isEqualTo(MessageSendResult.Existing(STORED))
         assertThat(repository.inserts).isEmpty()
         assertThat(publisher.messageCreated).isEmpty()
     }
@@ -138,16 +189,18 @@ class MessageServiceTest {
     }
 
     @Test
-    fun `send records the ack latency for both the fresh and the retried record`() {
+    fun `send records the ack latency for the fresh record and both legs of the 200 retry`() {
         service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
         repository.outcome = MessageInsertResult.Duplicate(STORED)
+        service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+        repository.existingById = STORED
         service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
 
         val ackTimers = meterRegistry.find(METRIC_ACK_SECONDS).timers()
         assertThat(ackTimers.map { it.id.getTag("outcome") to it.count() })
             .containsExactlyInAnyOrder(
                 OUTCOME_CREATED to 1L,
-                OUTCOME_EXISTING to 1L,
+                OUTCOME_EXISTING to 2L,
             )
         assertThat(ackTimers.all { it.totalTime(java.util.concurrent.TimeUnit.NANOSECONDS) >= 0 }).isTrue()
     }
@@ -225,7 +278,10 @@ class MessageServiceTest {
     ) : MessageRepository {
         val inserts = mutableListOf<NewMessage>()
 
-        override fun findById(id: UUID): Message? = null
+        /** The T031 fast-path script: the row a `findById` lookup resolves (`null` — a miss). */
+        var existingById: Message? = null
+
+        override fun findById(id: UUID): Message? = existingById?.takeIf { it.id == id }
 
         override fun insert(message: NewMessage): MessageInsertResult {
             inserts += message
