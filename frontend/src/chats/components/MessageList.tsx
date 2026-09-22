@@ -26,6 +26,12 @@
  * freshly prepended older page keeps the viewport anchored to the same
  * newest content (no visual jump). An empty dialog renders the plain
  * empty state without errors.
+ *
+ * Read status (US4, T044, FR-010): outgoing messages with
+ * `seq ≤ peerReadUpToSeq` render «прочитано ✓✓», the rest stay
+ * «доставлено ✓». The watermark comes from ChatView and `chat.read`
+ * frames and is monotonic (US4-5) — a delivered message never loses
+ * its second check mark. Incoming messages never show marks.
  */
 import { useEffect, useRef } from 'react'
 import type { Message } from '../../api/chats'
@@ -59,6 +65,12 @@ export interface MessageListProps {
   readonly loadingOlder?: boolean
   /** Requests the next older page via `before=nextBefore` (US3). */
   readonly onLoadOlder?: () => void
+  /**
+   * Peer's read watermark of the open chat (US4): outgoing messages
+   * with `seq ≤ peerReadUpToSeq` render ✓✓. Defaults to 0 — nothing
+   * read yet, everything stays «доставлено ✓».
+   */
+  readonly peerReadUpToSeq?: number
 }
 
 export function MessageList({
@@ -71,6 +83,7 @@ export function MessageList({
   hasOlder = false,
   loadingOlder = false,
   onLoadOlder,
+  peerReadUpToSeq = 0,
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
@@ -127,10 +140,15 @@ export function MessageList({
       )}
       {messages.map((message) => {
         const outgoing = message.senderId === currentUserId
+        const read = outgoing && message.seq <= peerReadUpToSeq
         return (
           <li key={message.id} className={outgoing ? 'message outgoing' : 'message incoming'}>
             <p className="message-text">{message.text}</p>
-            {outgoing && <span className="message-status">доставлено ✓</span>}
+            {outgoing && (
+              <span className={read ? 'message-status message-status-read' : 'message-status'}>
+                {read ? 'прочитано ✓✓' : 'доставлено ✓'}
+              </span>
+            )}
           </li>
         )
       })}

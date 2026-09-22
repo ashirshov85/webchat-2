@@ -47,8 +47,17 @@ export function MessengerPage() {
     }
   }, [])
 
-  const { messages, status, error, reload, confirmMessage, hasOlder, loadingOlder, loadOlder } =
-    useChatMessages(activeChatId)
+  const {
+    messages,
+    status,
+    error,
+    reload,
+    confirmMessage,
+    hasOlder,
+    loadingOlder,
+    loadOlder,
+    peerReadUpToSeq,
+  } = useChatMessages(activeChatId)
 
   const handleConfirmed = useCallback(
     (message: Message) => {
@@ -110,6 +119,7 @@ export function MessengerPage() {
               hasOlder={hasOlder}
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlder}
+              peerReadUpToSeq={peerReadUpToSeq}
             />
             <MessageInput onSend={handleSend} disabled={currentUserId === null} />
           </>

@@ -55,6 +55,15 @@ export async function sendMessage(chatId: string, body: SendMessageRequest): Pro
   return (await response.json()) as Message
 }
 
+/**
+ * №17 `POST /chats/{chatId}/read`: advances the caller's read watermark
+ * (US4, FR-010). Idempotent and monotonic server-side; `204` — the
+ * mark is a background best-effort update with no response body.
+ */
+export async function markChatRead(chatId: string, upToSeq: number): Promise<void> {
+  await authedRequest(`/chats/${encodeURIComponent(chatId)}/read`, 'POST', { upToSeq })
+}
+
 export async function listMessages(
   chatId: string,
   options?: { before?: number; limit?: number },

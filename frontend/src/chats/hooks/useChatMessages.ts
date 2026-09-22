@@ -22,11 +22,27 @@
  * refetch of the latest page never re-opens already explored history.
  * When a page comes back without `nextBefore` (or empty — the boundary
  * answer), the history is exhausted and loading stops.
+ *
+ * Read receipts (US4, T044, FR-010): rendering messages of the open
+ * dialog advances the local read watermark — every change of the
+ * rendered window (initial page, realtime appends, prepended older
+ * pages) schedules `POST /read` up to the highest displayed incoming
+ * `seq`, throttled to ≤500 ms per request (comfortably inside the
+ * SC-007 ≤2 s budget). The mark is monotonic (only advances, seeded
+ * from `ChatView.myReadUpToSeq`) and best-effort: a failed POST rolls
+ * the local watermark back so the next displayed change retries.
+ * `peerReadUpToSeq` for the ✓✓ rendering starts from `ChatView` and
+ * advances monotonically on `chat.read` frames; a missed frame is
+ * compensated by the ChatView refetch on every SSE (re)connect
+ * (FR-009), so the status never regresses.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { listMessages } from '../../api/chats'
+import { getChat, listMessages, markChatRead } from '../../api/chats'
 import type { Message, MessagePage } from '../../api/chats'
 import { useRealtime } from './useRealtime'
+
+/** Read-mark throttle window (US4, T044): ≤1 POST /read per 500 ms (SC-007 ≤2 s). */
+const READ_RECEIPT_THROTTLE_MS = 500
 
 export type ChatMessagesStatus = 'loading' | 'ready' | 'error'
 
@@ -53,6 +69,13 @@ export interface UseChatMessagesResult {
    * user can retry by scrolling again.
    */
   readonly loadOlder: () => void
+  /**
+   * Peer's read watermark of the open chat (US4): outgoing messages
+   * with `seq ≤ peerReadUpToSeq` render ✓✓. Monotonic — starts from
+   * `ChatView.peerReadUpToSeq`, advances on `chat.read` frames and
+   * ChatView refetches, never regresses.
+   */
+  readonly peerReadUpToSeq: number
 }
 
 function isSameMessage(a: Message, b: Message): boolean {
@@ -111,6 +134,17 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
   const loadingOlderRef = useRef(false)
   /** Invalidates in-flight older-page responses on chat switch. */
   const epochRef = useRef(0)
+  /** Peer id of the open chat (from ChatView) — identifies incoming messages. */
+  const [peerUserId, setPeerUserId] = useState<string | null>(null)
+  /** Peer's read watermark for the ✓✓ rendering (US4) — monotonic. */
+  const [peerReadUpToSeq, setPeerReadUpToSeq] = useState(0)
+  /** Highest seq already marked read locally (monotonic, per open chat). */
+  const lastSentReadSeqRef = useRef(0)
+  /** Coalesced read-mark target waiting for the throttle window (US4). */
+  const pendingReadSeqRef = useRef(0)
+  /** Timestamp of the last POST /read — the ≤500 ms throttle anchor. */
+  const lastReadSentAtRef = useRef(0)
+  const readTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     setMessages([])
@@ -120,7 +154,24 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     setLoadingOlder(false)
     loadingOlderRef.current = false
     epochRef.current += 1
+    setPeerUserId(null)
+    setPeerReadUpToSeq(0)
+    if (readTimerRef.current !== null) {
+      clearTimeout(readTimerRef.current)
+      readTimerRef.current = null
+    }
+    pendingReadSeqRef.current = 0
+    lastSentReadSeqRef.current = 0
+    lastReadSentAtRef.current = 0
   }, [chatId])
+
+  useEffect(() => {
+    return () => {
+      if (readTimerRef.current !== null) {
+        clearTimeout(readTimerRef.current)
+      }
+    }
+  }, [])
 
   /**
    * Applies a latest-page fetch (initial load / onOpen convergence):
@@ -164,6 +215,89 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     }
   }, [chatId, refreshCount, applyLatestPage])
 
+  /**
+   * ChatView of the open chat (US4, T044): seeds `peerReadUpToSeq` for
+   * the ✓✓ rendering and `myReadUpToSeq` for the local read watermark.
+   * Refetched together with the history on every SSE (re)connect — a
+   * `chat.read` frame missed during the disconnect is compensated here
+   * (FR-009). Both watermarks only advance (monotonic, US4-5).
+   */
+  useEffect(() => {
+    if (chatId === null) {
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const view = await getChat(chatId)
+        if (cancelled) {
+          return
+        }
+        setPeerUserId(view.peer.id)
+        setPeerReadUpToSeq((previous) => Math.max(previous, view.peerReadUpToSeq))
+        lastSentReadSeqRef.current = Math.max(lastSentReadSeqRef.current, view.myReadUpToSeq)
+      } catch {
+        // Read marks and ✓✓ are background enhancements: the history
+        // request stays the single source of the dialog's error state.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [chatId, refreshCount])
+
+  /** Sends the coalesced read mark (best-effort, monotonic, ≤1 per 500 ms). */
+  const flushReadReceipt = useCallback((chatId: string) => {
+    const target = pendingReadSeqRef.current
+    if (target <= 0) {
+      return
+    }
+    pendingReadSeqRef.current = 0
+    lastReadSentAtRef.current = Date.now()
+    const previous = lastSentReadSeqRef.current
+    lastSentReadSeqRef.current = target
+    markChatRead(chatId, target).catch(() => {
+      // Roll the local watermark back so the next displayed change
+      // retries the advance (idempotent server-side, FR-010).
+      if (lastSentReadSeqRef.current === target) {
+        lastSentReadSeqRef.current = previous
+      }
+    })
+  }, [])
+
+  /**
+   * Read marks on display (US4, T044): every change of the rendered
+   * window (initial page, realtime appends, prepended older pages of
+   * T039) advances the watermark to the highest displayed incoming
+   * `seq` — throttled to ≤500 ms, coalescing rapid updates into the
+   * maximal target. Nothing is sent until the peer id is known and the
+   * mark actually advances beyond what the server already has.
+   */
+  useEffect(() => {
+    if (chatId === null || peerUserId === null) {
+      return
+    }
+    let target = 0
+    for (const message of messages) {
+      if (message.senderId === peerUserId && message.seq > target) {
+        target = message.seq
+      }
+    }
+    if (target <= lastSentReadSeqRef.current) {
+      return
+    }
+    pendingReadSeqRef.current = Math.max(pendingReadSeqRef.current, target)
+    const elapsed = Date.now() - lastReadSentAtRef.current
+    if (elapsed >= READ_RECEIPT_THROTTLE_MS) {
+      flushReadReceipt(chatId)
+      return
+    }
+    readTimerRef.current ??= setTimeout(() => {
+      readTimerRef.current = null
+      flushReadReceipt(chatId)
+    }, READ_RECEIPT_THROTTLE_MS - elapsed)
+  }, [chatId, peerUserId, messages, flushReadReceipt])
+
   useEffect(() => {
     if (chatId === null) {
       return
@@ -177,9 +311,16 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
       }
       setMessages((previous) => reconcileMessages(previous, [event.message]))
     })
+    const unsubscribeRead = realtime.onChatRead(chatId, (event) => {
+      if (event.chatId !== chatId) {
+        return
+      }
+      setPeerReadUpToSeq((previous) => Math.max(previous, event.readUpToSeq))
+    })
     return () => {
       unsubscribeOpen()
       unsubscribeCreated()
+      unsubscribeRead()
     }
   }, [chatId, realtime])
 
@@ -231,5 +372,6 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     hasOlder: oldestSeq !== null,
     loadingOlder,
     loadOlder,
+    peerReadUpToSeq,
   }
 }

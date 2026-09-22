@@ -1,16 +1,41 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { listMessages } from '../../../api/chats'
-import type { Message, MessagePage } from '../../../api/chats'
+import { getChat, listMessages, markChatRead } from '../../../api/chats'
+import type { ChatView, Message, MessagePage } from '../../../api/chats'
 import { useChatMessages } from '../useChatMessages'
 
 const sse = vi.hoisted(() => ({ streamUserEvents: vi.fn() }))
 
 vi.mock('../../../api/sse', () => sse)
 
-vi.mock('../../../api/chats', () => ({ listMessages: vi.fn() }))
+vi.mock('../../../api/chats', () => ({
+  listMessages: vi.fn(),
+  getChat: vi.fn(),
+  markChatRead: vi.fn(),
+}))
 
 const mockedListMessages = vi.mocked(listMessages)
+const mockedGetChat = vi.mocked(getChat)
+const mockedMarkChatRead = vi.mocked(markChatRead)
+
+const PEER_ID = '9a2c-9a2c-9a2c'
+
+function chatView(overrides: Partial<ChatView> = {}): ChatView {
+  return {
+    chatId: 'chat-1',
+    peer: {
+      id: PEER_ID,
+      username: 'peer',
+      email: 'peer@example.com',
+      status: 'active',
+      createdAt: '2026-09-01T00:00:00.000Z',
+    },
+    blockedByMe: false,
+    peerReadUpToSeq: 0,
+    myReadUpToSeq: 0,
+    ...overrides,
+  }
+}
 
 interface MockStream {
   onOpen: (() => void) | undefined
@@ -46,7 +71,7 @@ function makeMessage(chatId: string, id: string, seq: number, text = `text-${id}
   return {
     id,
     chatId,
-    senderId: '9a2c-9a2c-9a2c',
+    senderId: PEER_ID,
     text,
     seq,
     createdAt: `2026-09-20T12:00:${String(seq % 60).padStart(2, '0')}.000Z`,
@@ -75,6 +100,8 @@ function mountChatMessages(initialChatId: string | null) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedGetChat.mockResolvedValue(chatView())
+  mockedMarkChatRead.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
