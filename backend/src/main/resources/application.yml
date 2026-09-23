@@ -288,6 +288,22 @@ chats:
     # 004 realtime-channel.md: SSE `:ka` heartbeat every 15 s (T018)
     heartbeat: 15s
 
+delivery:
+  sync:
+    # 005 api-contract.md №26: messageLimit default/bound of POST /users/me/sync
+    message-page-size: 50
+    # 005 api-contract.md №26: chatLimit default/bound of POST /users/me/sync
+    chat-page-size: 20
+    # 005 api-contract.md №25: max elements per delivery-ack batch (atomic)
+    ack-batch-limit: 100
+  backpressure:
+    # 005 research.md §6 / quickstart §2: gradient/AIMD admission limiter
+    # on the send path (US4); stress checks lower max-limit/min-limit in a dev profile
+    enabled: true
+    min-limit: 4
+    max-limit: 64
+    latency-baseline: 50ms
+
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)
   observations:
