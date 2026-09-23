@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WebChat Public API
-  version: 0.4.0
+  version: 0.5.0
   description: >
     Публичный API веб-чата. Единственный источник истины публичного API;
     TypeScript-типы фронтенда генерируются из этого файла автоматически.
@@ -29,6 +29,20 @@ info:
     флуд-лимит отправки — 30 сообщений/мин на пользователя; лимит поиска
     пользователей — 30 запросов/мин на пользователя. Изменение —
     только additive (0.3.0 → 0.4.0, без BREAKING.md).
+
+    Фича 005 (delivery): endpoints №25–26 — подтверждение доставки
+    (delivery-ack: батчевое монотонное GREATEST-продвижение позиции
+    доставки, единственная операция, её двигающая) и догоняющая
+    синхронизация (sync: per-chat курсоры, дельты SyncChatDelta по
+    последней активности DESC); расширение №15 ascending-режимом after +
+    nextAfter (дозагрузка новее курсора, after+before → 400
+    mixed_cursors); №16 — новый временный отказ 503 server_busy +
+    Retry-After (backpressure, дедуп-фастпас до admission). Фиксированные
+    константы фичи: страница дельты/истории — 50 сообщений; чатов на
+    ответ sync — 20 (max 50); элементов ack-батча — 100. Все новые пути
+    требуют Bearer (/users/me/* — per-user, публичный перечень 002–003
+    не расширен). Изменение — только additive (0.4.0 → 0.5.0,
+    без BREAKING.md).
 tags:
   - name: auth
     description: Регистрация, вход, сессии, восстановление пароля
@@ -40,6 +54,8 @@ tags:
     description: 'Личные текстовые диалоги: создание, история, отправка, прочтение, удаление'
   - name: realtime
     description: Реалтайм-канал SSE — поток событий пользователя (message.created, chat.read)
+  - name: sync
+    description: 'Позиция доставки: подтверждение (delivery-ack) и догоняющая синхронизация пропущенного'
   - name: contacts
     description: 'Контакты пользователя, точный поиск пользователей, блокировки'
 security:
@@ -948,12 +964,20 @@ paths:
       tags: [chats]
       summary: Страница истории диалога (№15, Bearer)
       description: >
-        Сообщения по seq DESC (новее — раньше), ровно те, что seq < before
-        (курсор эксклюзивный); без before — последние видимые вызывающему
-        (seq > deleted_up_to_seq). limit 1–50, по умолчанию/максимум 50
-        (FR-008). nextBefore — seq самой старой записи страницы; отсутствует,
-        когда старее нет (пустая страница на границе — корректный ответ).
-        Порядок стабилен между повторными загрузками (seq).
+        Два взаимоисключающих режима. before (DESC, 004): сообщения по seq
+        DESC (новее — раньше), ровно те, что seq < before (курсор
+        эксклюзивный); без before — последние видимые вызывающему
+        (seq > deleted_up_to_seq); nextBefore — seq самой старой записи
+        страницы, отсутствует, когда старее нет. after (ascending, 005):
+        страницы (after, after+limit] по seq ASC — дозагрузка новее
+        курсора (догоняющая синхронизация); nextAfter — seq последней
+        записи страницы, отсутствует, когда новее нет. Пустая страница на
+        границе в обоих режимах — корректный ответ (без nextBefore/
+        nextAfter и без ошибок). limit 1–50, по умолчанию/максимум 50
+        (FR-008); after и before одновременно → 400 mixed_cursors.
+        Видимость — по deleted_up_to_seq вызывающего (per-user удаление
+        004 не восстанавливается). Порядок стабилен между повторными
+        загрузками (seq).
       security:
         - bearerAuth: []
       parameters:
@@ -972,6 +996,14 @@ paths:
             type: integer
             format: int64
             minimum: 1
+        - name: after
+          in: query
+          required: false
+          description: 'Эксклюзивный ascending-курсор: только записи seq > after, по seq ASC — дозагрузка новее курсора; одновременно с before → 400 mixed_cursors'
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
         - name: limit
           in: query
           required: false
@@ -983,13 +1015,13 @@ paths:
             default: 50
       responses:
         '200':
-          description: Страница истории (по seq DESC); пустая страница на границе — без nextBefore и без ошибок
+          description: Страница истории (по seq DESC в режиме before/без курсора, по seq ASC в режиме after); пустая страница на границе — без nextBefore/nextAfter и без ошибок
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/MessagePage'
         '400':
-          description: 'limit вне 1–50 (errors: {limit: [limit_out_of_range]})'
+          description: 'limit вне 1–50 (errors: {limit: [limit_out_of_range]}); after и before одновременно (errors: {after: [mixed_cursors]})'
           content:
             application/problem+json:
               schema:
@@ -1028,6 +1060,13 @@ paths:
         сообщения (дедуп-путь) не штрафуется. Блокировка пары (FR-020):
         отправитель блокирует получателя → 403 chat_blocked_by_you; получатель
         блокирует отправителя → 403 you_are_blocked; записи нет.
+        Backpressure (005, FR-009): при перегрузке пути отправки — поэтапная
+        деградация (сначала рост задержки, затем 503 server_busy +
+        Retry-After); порядок проверок — дедуп → admission (503) → membership
+        → валидация → флуд (429) → блокировки → INSERT: дедуп-фастпас стоит
+        раньше admission, повтор уже принятого сообщения тем же
+        clientMessageId никогда не получает 503; флуд-лимит действует под
+        пиком и не обходится повторами (FR-010).
       security:
         - bearerAuth: []
       parameters:
@@ -1092,6 +1131,18 @@ paths:
           headers:
             Retry-After:
               description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: 'Временный отказ при перегрузке пути отправки — backpressure (errors: {chat: [server_busy]}; FR-009) — записи нет; повтор тем же clientMessageId в момент Retry-After. Дедуп-фастпас выполняется до admission: повтор уже принятого сообщения никогда не получает 503 (200); принятые доставляются в приоритете и не теряются'
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды (≥ 1 — оценка рассасывания очереди)
               schema:
                 type: integer
                 minimum: 1
@@ -1475,6 +1526,115 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/delivery-ack:
+    post:
+      operationId: deliveryAck
+      tags: [sync]
+      summary: Подтверждение доставки сообщений (№25, Bearer)
+      description: >
+        Батчевое монотонное продвижение позиции доставки вызывающего
+        (delivered_up_to_seq, FR-001): GREATEST-обновление по каждому
+        элементу — повторное/меньшее upToSeq без эффекта, идемпотентно.
+        Весь батч атомарен (одна транзакция): отказ любого элемента —
+        весь батч отклоняется, частичных эффектов нет. Единственная
+        операция, двигающая позицию доставки: ни sync-ответ (№26), ни
+        SSE-кадр (№18) её не пишут; ack не порождает realtime-событий
+        (позиция — приватное состояние). Источники ack клиента:
+        применённые realtime-кадры (дебаунс-батчер, флаш ≤ 1 с),
+        применённые страницы №26/№15, точка обрезки truncatedUpToSeq.
+        Батч — 1–100 элементов.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliveryAckRequest'
+      responses:
+        '204':
+          description: Позиция доставки продвинута (или без эффекта при повторном/меньшем upToSeq — идемпотентно); весь батч применён одной транзакцией
+        '400':
+          description: 'upToSeq < 1 или больше seq последнего сообщения чата (errors: {upToSeq: [invalid_up_to_seq]}); не-UUID chatId (errors: {chatId: [invalid_uuid]}) — весь батч отклоняется, позиция не двигается'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: 'Чужой чат в батче — весь батч отклонён (errors: {chat: [not_participant]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Несуществующий чат в батче — весь батч отклонён (errors: {chat: [chat_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/sync:
+    post:
+      operationId: sync
+      tags: [sync]
+      summary: Догоняющая синхронизация пропущенных сообщений (№26, Bearer)
+      description: >
+        Возвращает чаты вызывающего с недоставленным (эффективный курсор
+        < максимальный видимый seq) — по последней активности DESC
+        (первыми чаты с самыми новыми сообщениями), до chatLimit;
+        moreChats — недоставленные чаты остались за пределами страницы.
+        cursors — карта клиентских курсоров: сервер применяет её как
+        нижнюю границу своей позиции (эффективный курсор =
+        max(клиентский, серверный)); чужие/несуществующие chatId в
+        cursors молча игнорируются (per-user операция — в отличие от
+        атомарного батча №25). Дельта чата: startAfterSeq — эффективный
+        курсор возобновления (после обрезки/ремонта клиент продвигает
+        локальный курсор до него); truncatedUpToSeq — точка обрезки
+        (сообщения ниже недоступны, не непрочитаны; позиция/курсор
+        закрепляются на ней ack'ом); messages — ascending
+        (startAfterSeq, …] ≤ messageLimit, только видимые, включая
+        исходящие пользователя; hasMore — хвост за пределами страницы
+        (продолжение — №15 after); peerReadUpToSeq — накопленные
+        оффлайн ✓✓ собственных сообщений; unreadCount — серверный
+        счётчик; lastSeq — chats.last_seq; desynced + serverUpToSeq —
+        per-chat ремонт «курсора из будущего» без ошибки запроса.
+        Операция не двигает позицию доставки (только ack №25);
+        консистентность — один снимок чтения: либо полный корректный
+        ответ, либо 5xx для повтора («частичный список как полный»
+        исключён). Порядок и границы — только по серверному seq; часы
+        клиента не участвуют.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncRequest'
+      responses:
+        '200':
+          description: Дельты чатов с недоставленным, по последней активности DESC; пустой список — доставлено всё (корректный ответ)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncResponse'
+        '400':
+          description: 'chatLimit/messageLimit вне 1–50 (errors: {chatLimit: [limit_out_of_range]} / {messageLimit: [limit_out_of_range]}); не-UUID chatId в cursors (errors: {chatId: [invalid_uuid]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   securitySchemes:
     bearerAuth:
@@ -1831,7 +1991,7 @@ components:
           type: integer
           format: int64
           minimum: 0
-          description: Входящие сообщения с seq > myReadUpToSeq (видимые вызывающему); при блокировке у блокирующего «замирает» (FR-020)
+          description: Серверно-авторитарный счётчик, ограничен позицией доставки — входящие видимые сообщения с GREATEST(last_read_seq, deleted_up_to_seq) < seq ≤ LEAST(last_seq, delivered_up_to_seq); realtime и дозагруженные синхронизацией сообщения увеличивают его одинаково (после ack доставки №25); ниже точки обрезки — недоступные, не непрочитанные (FR-007); при блокировке у блокирующего «замирает» (FR-020); «99+» — клиентский рендер, внутренний счёт точный
         blockedByMe:
           type: boolean
           description: Вызывающий блокирует собеседника — метка «заблокирован» в UI (FR-020)
@@ -1842,7 +2002,7 @@ components:
       properties:
         messages:
           type: array
-          description: Страница истории по seq DESC (новее — раньше); ровно те, что seq < before; пустая страница на границе — корректный ответ
+          description: 'Страница истории — по seq DESC (новее — раньше) в режиме before/без курсора: ровно те, что seq < before; по seq ASC в режиме after: ровно те, что seq > after; пустая страница на границе — корректный ответ'
           maxItems: 50
           items:
             $ref: '#/components/schemas/Message'
@@ -1851,6 +2011,11 @@ components:
           format: int64
           minimum: 1
           description: 'Курсор следующей страницы: seq самой старой записи этой страницы; отсутствует, когда старее нет (история исчерпана)'
+        nextAfter:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 'Курсор следующей ascending-страницы (только режим after): seq последней записи этой страницы; отсутствует, когда новее нет (история вперёд исчерпана); в DESC-режиме не возвращается'
     SendMessageRequest:
       type: object
       additionalProperties: false
@@ -1940,3 +2105,141 @@ components:
           description: 'Точное совпадение полного email ИЛИ полного логина без учёта регистра (FR-016): 0..1 элемент; пустой список — корректный ответ (совпадения нет)'
           items:
             $ref: '#/components/schemas/PublicUser'
+    DeliveryAckItem:
+      type: object
+      description: 'Элемент батча №25: подтверждение доставки по одному чату (chatId + upToSeq)'
+      additionalProperties: false
+      required: [chatId, upToSeq]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+          description: Диалог, по которому подтверждается доставка; членство проверяется по каждому элементу (чужой → 403, несуществующий → 404 — весь батч отклоняется)
+        upToSeq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Доставлено до seq включительно; 1 ≤ upToSeq ≤ seq последнего сообщения чата (иначе 400 invalid_up_to_seq); применяется монотонно (GREATEST) — повтор/меньшее без эффекта
+    DeliveryAckRequest:
+      type: object
+      description: 'Тело №25: батч подтверждений доставки (1–100 элементов), атомарен'
+      additionalProperties: false
+      required: [acks]
+      properties:
+        acks:
+          type: array
+          minItems: 1
+          maxItems: 100
+          description: Батч подтверждений доставки (1–100 элементов); атомарен — одна транзакция, отказ любого элемента отклоняет весь батч без частичных эффектов
+          items:
+            $ref: '#/components/schemas/DeliveryAckItem'
+    SyncCursor:
+      type: object
+      description: 'Клиентский курсор одного чата для №26: seq последнего подтверждённо полученного сообщения'
+      additionalProperties: false
+      required: [chatId, upToSeq]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+          description: Диалог курсора; чужие/несуществующие chatId молча игнорируются (per-user операция не падает из-за посторонних идентификаторов)
+        upToSeq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Локальный курсор клиента — seq последнего подтверждённо полученного сообщения; применяется сервером как нижняя граница своей позиции (эффективный курсор = max(клиентский, серверный)); «будущий» курсор ремонтируется per-chat (desynced + serverUpToSeq) без ошибки запроса
+    SyncRequest:
+      type: object
+      description: 'Тело №26: карта клиентских курсоров + лимиты страницы (chatLimit/messageLimit)'
+      additionalProperties: false
+      required: [cursors]
+      properties:
+        cursors:
+          type: array
+          description: Карта клиентских курсоров по чатам (per-chat карта в теле POST); дубликаты chatId не допускаются семантически — курсор один на чат
+          items:
+            $ref: '#/components/schemas/SyncCursor'
+        chatLimit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+          description: Максимум чатов (дельт) в ответе — 1–50, по умолчанию 20; вне диапазона → 400 limit_out_of_range
+        messageLimit:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 50
+          description: Максимум сообщений в дельте чата — 1–50, по умолчанию 50 (фиксированная константа фичи); вне диапазона → 400 limit_out_of_range
+    SyncChatDelta:
+      type: object
+      description: 'Дельта одного чата в №26: курсор возобновления, страница сообщений и серверные счётчики — вычислены в одном снимке чтения'
+      additionalProperties: false
+      required: [chatId, peer, blockedByMe, startAfterSeq, messages, hasMore, peerReadUpToSeq, unreadCount, lastSeq]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+          description: Диалог дельты
+        peer:
+          $ref: '#/components/schemas/PublicUser'
+          description: Собеседник (как №12)
+        blockedByMe:
+          type: boolean
+          description: Вызывающий блокирует собеседника — единственная проекция блокировок в API (004, без изменений)
+        startAfterSeq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Эффективный курсор возобновления (после обрезки/ремонта) — клиент продвигает локальный курсор до него до применения сообщений
+        truncatedUpToSeq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 'Точка обрезки (курсор ниже нижней границы видимости: per-user удаление 004, возврат чата новым входящим, окно активной истории): сообщения ниже не возвращаются и недоступны (не непрочитаны); присутствует только при обрезке; позиция доставки и курсор закрепляются на ней ack''ом (№25)'
+        messages:
+          type: array
+          maxItems: 50
+          description: Дельта сообщений по seq ASC (строго новее startAfterSeq), ≤ messageLimit; только видимые вызывающему (seq > deleted_up_to_seq), включая исходящие пользователя; дедупликация на клиенте — по message.id
+          items:
+            $ref: '#/components/schemas/Message'
+        hasMore:
+          type: boolean
+          description: В чате остались недоставленные сообщения сверх страницы — продолжение цикла B (№15 after) до исчерпания nextAfter
+        peerReadUpToSeq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Водяной знак прочтения собеседника — накопленные оффлайн ✓✓ собственных сообщений вызывающего (0 — ничего не прочитано)
+        unreadCount:
+          type: integer
+          format: int64
+          minimum: 0
+          description: 'Серверный счётчик непрочитанных: COUNT(входящих, seq > GREATEST(last_read_seq, deleted_up_to_seq), seq ≤ LEAST(last_seq, delivered_up_to_seq)); сообщения текущей страницы не входят до ack''а доставки — клиент учитывает отображённое оптимистично и сходится к серверному значению'
+        lastSeq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Текущий chats.last_seq — детект хвоста клиентом
+        desynced:
+          type: boolean
+          description: '«Курсор из будущего»: клиентский upToSeq противоречит серверным данным (например, восстановление из резервной копии); присутствует только при ремонте — всему запросу ошибки нет, остальные чаты обрабатываются штатно; сервер свою позицию доставки не откатывает'
+        serverUpToSeq:
+          type: integer
+          format: int64
+          minimum: 0
+          description: 'Фактическая серверная позиция доставки чата (возвращается с desynced: true) — клиент отматывает локальный курсор на неё и продолжает штатно'
+    SyncResponse:
+      type: object
+      description: 'Ответ №26: дельты чатов с недоставленным + признак оставшихся чатов'
+      additionalProperties: false
+      required: [chats, moreChats]
+      properties:
+        chats:
+          type: array
+          description: Дельты только чатов с недоставленным, по последней активности DESC (первыми — чаты с самыми новыми сообщениями), до chatLimit; пустой список — доставлено всё (корректный ответ)
+          items:
+            $ref: '#/components/schemas/SyncChatDelta'
+        moreChats:
+          type: boolean
+          description: Недоставленные чаты остались за пределами chatLimit — повтор №26 с обновлёнными курсорами (вычислено в том же снимке чтения)
