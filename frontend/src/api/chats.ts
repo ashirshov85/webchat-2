@@ -139,3 +139,34 @@ export async function addContact(userId: string): Promise<ContactView> {
 export async function removeContact(userId: string): Promise<void> {
   await authedRequest(`/contacts/${encodeURIComponent(userId)}`, 'DELETE')
 }
+
+/**
+ * №14 `DELETE /chats/{chatId}`: per-user removal (FR-021) — history is
+ * hidden behind the `deleted_up_to_seq = last_seq` watermark only for
+ * the caller (`hidden = true`), the peer keeps everything; idempotent
+ * `204`. A new incoming message returns the chat to the list WITHOUT
+ * the old history. The client drops its local outbox records of the
+ * chat together with the deletion (T060).
+ */
+export async function deleteChat(chatId: string): Promise<void> {
+  await authedRequest(`/chats/${encodeURIComponent(chatId)}`, 'DELETE')
+}
+
+/**
+ * №23 `PUT /users/{userId}/block`: one-way block owned by the blocker
+ * (FR-020). Idempotent `204`; while active both send directions are
+ * refused (`403 chat_blocked_by_you` / `403 you_are_blocked`), the
+ * blocker's badge freezes and their read marks are not published.
+ */
+export async function blockUser(userId: string): Promise<void> {
+  await authedRequest(`/users/${encodeURIComponent(userId)}/block`, 'PUT')
+}
+
+/**
+ * №24 `DELETE /users/{userId}/block`: removes the caller's block;
+ * idempotent `204` — sending, read marks, the badge and read events
+ * resume without losing history (FR-020).
+ */
+export async function unblockUser(userId: string): Promise<void> {
+  await authedRequest(`/users/${encodeURIComponent(userId)}/block`, 'DELETE')
+}

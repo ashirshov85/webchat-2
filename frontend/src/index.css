@@ -493,6 +493,85 @@ body {
   border: 0;
 }
 
+/* Dialog header + action menu (feature 004, T060): peer title, the
+   «заблокирован» mark and the delete/block confirmations. */
+.dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.dialog-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.dialog-menu {
+  position: relative;
+  margin-left: auto;
+}
+
+.dialog-menu-toggle {
+  font-size: 0.9rem;
+}
+
+.dialog-menu-items {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 10;
+  display: flex;
+  min-width: 220px;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 15%);
+}
+
+.dialog-menu-item {
+  text-align: left;
+  background: none;
+}
+
+.dialog-confirm {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.dialog-confirm-text {
+  margin: 0 0 10px;
+}
+
+.dialog-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.dialog-confirm-accept {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.dialog-action-error {
+  margin-bottom: 12px;
+}
+
+.dialog-action-error .error-banner {
+  margin: 0;
+}
+
+.panel-contacts {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 @media (max-width: 720px) {
   .messenger {
     grid-template-columns: 1fr;
