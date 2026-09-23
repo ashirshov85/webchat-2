@@ -155,6 +155,14 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
         return UUID.fromString(objectMapper.readTree(response.body)["chatId"].asText())
     }
 
+    /** Contract №12 GET /chats — raw response (the caller's dialog list). */
+    protected fun listChats(user: MessagingUser): ResponseEntity<String> =
+        exchangeWithAuth(
+            HttpMethod.GET,
+            "/api/v1/chats",
+            user,
+        )
+
     /** Contract №13 GET /chats/{chatId} — raw response. */
     protected fun getChat(
         user: MessagingUser,

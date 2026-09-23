@@ -412,9 +412,6 @@ class BlockingIT(
         userId: UUID,
     ): ResponseEntity<String> = exchange(user, HttpMethod.DELETE, "$USERS_PATH/$userId/block")
 
-    /** Contract №12 `GET /api/v1/chats` — raw response. */
-    private fun listChats(user: MessagingUser): ResponseEntity<String> = exchange(user, HttpMethod.GET, CHATS_PATH)
-
     /** Contract №21 `POST /api/v1/contacts` — raw response. */
     private fun addContact(
         user: MessagingUser,
@@ -600,7 +597,6 @@ class BlockingIT(
     private companion object {
         const val PROBLEM_JSON_MEDIA_TYPE = "application/problem+json"
         const val USERS_PATH = "/api/v1/users"
-        const val CHATS_PATH = "/api/v1/chats"
         const val CONTACTS_PATH = "/api/v1/contacts"
 
         const val CHAT_FIELD = "chat"

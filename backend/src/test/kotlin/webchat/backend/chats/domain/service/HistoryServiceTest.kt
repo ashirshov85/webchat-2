@@ -10,6 +10,7 @@ import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.port.ChatEnsureResult
+import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.MessageRepository
@@ -124,7 +125,14 @@ class HistoryServiceTest {
 
     private val service =
         HistoryService(
-            chatService = ChatService(NoopUserRepository, GateChatRepository, NoopParticipantRepository, NoopBlockRepository),
+            chatService =
+                ChatService(
+                    NoopUserRepository,
+                    GateChatRepository,
+                    ChatListRepository { emptyList() },
+                    NoopParticipantRepository,
+                    NoopBlockRepository,
+                ),
             messageRepository = repository,
             chatsProperties = TEST_PROPERTIES,
         )

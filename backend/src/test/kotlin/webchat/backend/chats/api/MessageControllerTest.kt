@@ -23,6 +23,7 @@ import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.model.MessageTextViolation
 import webchat.backend.chats.domain.port.ChatEnsureResult
+import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.MessageCreatedEvent
@@ -198,6 +199,16 @@ class MessageControllerTest {
     /** The №17 leg fixture: remembers every advance and always reports it applied. */
     private val participants = ScriptedParticipantRepository()
 
+    /** The T055 seam: №12 is outside the MessageController surface — an empty read. */
+    private fun chatService(participants: ScriptedParticipantRepository) =
+        ChatService(
+            NoopUserRepository,
+            GateChatRepository,
+            ChatListRepository { emptyList() },
+            participants,
+            NoopBlockRepository,
+        )
+
     /**
      * T032: the flood gate always admits in this unit scope — the token
      * bucket itself (Redis key family, drip, 429 rendering) is covered
@@ -224,7 +235,7 @@ class MessageControllerTest {
         MessageController(
             messageService =
                 MessageService(
-                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants, NoopBlockRepository),
+                    chatService = chatService(participants),
                     messageRepository = repository,
                     realtimeEventPublisher = NoopRealtimePublisher,
                     chatsProperties = TEST_PROPERTIES,
@@ -234,13 +245,13 @@ class MessageControllerTest {
                 ),
             historyService =
                 HistoryService(
-                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants, NoopBlockRepository),
+                    chatService = chatService(participants),
                     messageRepository = repository,
                     chatsProperties = TEST_PROPERTIES,
                 ),
             readService =
                 ReadService(
-                    chatService = ChatService(NoopUserRepository, GateChatRepository, participants, NoopBlockRepository),
+                    chatService = chatService(participants),
                     participantRepository = participants,
                     realtimeEventPublisher = NoopRealtimePublisher,
                     blockRepository = NoopBlockRepository,

@@ -6,8 +6,13 @@ import org.junit.jupiter.api.assertThrows
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.model.ChatParticipant
+import webchat.backend.chats.domain.model.ChatPeerSnapshot
+import webchat.backend.chats.domain.model.Message
+import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.port.ChatEnsureResult
+import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.contacts.domain.model.UserBlock
@@ -119,6 +124,19 @@ class ChatServiceTest {
         assertThat(service.blockedByMe(PAIR_CHAT, BOB)).isFalse
     }
 
+    /**
+     * T055: №12 is a pure aggregate read — the service delegates to the
+     * list repository VERBATIM (the sorting/exclusion/aggregates belong
+     * to the adapter) and holds no list-side veto of its own.
+     */
+    @Test
+    fun `listChats delegates the panel read to the list repository`() {
+        listRepository.entries = listOf(LIST_ENTRY)
+
+        assertThat(service.listChats(ALICE)).containsExactly(LIST_ENTRY)
+        assertThat(listRepository.listCalls).containsExactly(ALICE)
+    }
+
     private val repository = RecordingChatRepository()
 
     private val participants = MapParticipantRepository()
@@ -126,10 +144,14 @@ class ChatServiceTest {
     /** The T054 seam: the (blocker, blocked) pairs `blockedByMe` answers `true` for. */
     private val blocks = ScriptedBlockRepository()
 
+    /** The T055 seam: the №12 rows `listChats` delegates to. */
+    private val listRepository = ScriptedChatListRepository()
+
     private val service =
         ChatService(
             userRepository = MapUserRepository(ALICE, BOB),
             chatRepository = repository,
+            chatListRepository = listRepository,
             participantRepository = participants,
             blockRepository = blocks,
         )
@@ -151,6 +173,31 @@ class ChatServiceTest {
         /** T043 fixture marks: distinct per side, so a swap would not pass unnoticed. */
         const val ALICE_READ_SEQ = 3L
         const val BOB_READ_SEQ = 5L
+
+        /** T055 fixture: one №12 row with every projection populated. */
+        val LIST_ENTRY =
+            ChatListEntry(
+                chatId = PAIR_CHAT.id,
+                peer =
+                    ChatPeerSnapshot(
+                        id = BOB,
+                        username = "bob",
+                        email = "bob@example.com",
+                        status = "pending_email_confirmation",
+                        createdAt = CREATED_AT,
+                    ),
+                lastMessage =
+                    Message(
+                        id = UUID.fromString("00000000-0000-0000-0000-0000000000bb"),
+                        chatId = PAIR_CHAT.id,
+                        senderId = BOB,
+                        text = MessageText.normalize("the last visible message"),
+                        seq = 9,
+                        createdAt = CREATED_AT,
+                    ),
+                unreadCount = 2,
+                blockedByMe = false,
+            )
     }
 
     /** Remembers the ensure arguments — the refusals MUST precede any repository write. */
@@ -165,6 +212,17 @@ class ChatServiceTest {
         ): ChatEnsureResult {
             ensureCalls += callerId to peerId
             return ChatEnsureResult.Created(PAIR_CHAT)
+        }
+    }
+
+    /** The T055 seam: serves the scripted №12 rows and remembers the callers. */
+    private class ScriptedChatListRepository : ChatListRepository {
+        var entries: List<ChatListEntry> = emptyList()
+        val listCalls = mutableListOf<UUID>()
+
+        override fun listForUser(callerId: UUID): List<ChatListEntry> {
+            listCalls += callerId
+            return entries
         }
     }
 

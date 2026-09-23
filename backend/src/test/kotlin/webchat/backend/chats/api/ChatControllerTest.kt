@@ -10,8 +10,13 @@ import webchat.backend.auth.domain.model.UserStatus
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.api.dto.EnsureChatRequest
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.model.ChatParticipant
+import webchat.backend.chats.domain.model.ChatPeerSnapshot
+import webchat.backend.chats.domain.model.Message
+import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.port.ChatEnsureResult
+import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.service.ChatService
@@ -114,6 +119,69 @@ class ChatControllerTest {
             ).isFalse
     }
 
+    /**
+     * T055 (№12): the list re-shapes the aggregate rows into the contract
+     * `ChatListItem`s — the peer snapshot, the FULL-text last visible
+     * message and the badge travel verbatim; the caller is resolved from
+     * the token `sub` for the read.
+     */
+    @Test
+    fun `listChats maps the aggregate rows into contract items`() {
+        listRepository.entries = listOf(pairEntry(), emptyEntry())
+
+        val response = controller.listChats(tokenOf(ALICE))
+
+        assertThat(response.chats).hasSize(2)
+        val pairItem = response.chats[0]
+        assertThat(pairItem.chatId).isEqualTo(PAIR_CHAT.id)
+        assertThat(pairItem.peer.id).isEqualTo(BOB)
+        assertThat(pairItem.peer.username).isEqualTo("bob")
+        assertThat(pairItem.peer.email).isEqualTo("bob@example.com")
+        assertThat(pairItem.peer.status).isEqualTo("pending_email_confirmation")
+        assertThat(pairItem.peer.createdAt).isEqualTo(CREATED_AT)
+        assertThat(pairItem.lastMessage!!.id).isEqualTo(LAST_MESSAGE.id)
+        assertThat(pairItem.lastMessage.chatId).isEqualTo(PAIR_CHAT.id)
+        assertThat(pairItem.lastMessage.senderId).isEqualTo(BOB)
+        assertThat(pairItem.lastMessage.text).isEqualTo(LAST_MESSAGE.text.value)
+        assertThat(pairItem.lastMessage.seq).isEqualTo(LAST_MESSAGE.seq)
+        assertThat(pairItem.lastMessage.createdAt).isEqualTo(CREATED_AT)
+        assertThat(pairItem.unreadCount).isEqualTo(UNREAD_COUNT)
+        assertThat(pairItem.blockedByMe).isFalse
+        assertThat(listRepository.listCalls).containsExactly(ALICE)
+    }
+
+    /** №12 empty leg: a caller without dialogs gets an EMPTY array, not an absent field. */
+    @Test
+    fun `listChats answers an empty list for a caller without dialogs`() {
+        val response = controller.listChats(tokenOf(ALICE))
+
+        assertThat(response.chats).isEmpty()
+    }
+
+    /** №12 null leg: a chat without visible messages carries `lastMessage = null`. */
+    @Test
+    fun `listChats renders lastMessage null for a chat without visible messages`() {
+        listRepository.entries = listOf(emptyEntry())
+
+        val response = controller.listChats(tokenOf(ALICE))
+
+        assertThat(response.chats.single().lastMessage).isNull()
+    }
+
+    /**
+     * T055/FR-020: `blockedByMe` of the list item is the caller's OWN mark
+     * carried from the aggregate row — the same single direction as
+     * ChatView (T054).
+     */
+    @Test
+    fun `listChats carries the caller's own block mark only`() {
+        listRepository.entries = listOf(pairEntry().copy(blockedByMe = true))
+
+        val response = controller.listChats(tokenOf(ALICE))
+
+        assertThat(response.chats.single().blockedByMe).isTrue
+    }
+
     private fun webchat.backend.chats.api.dto.ChatView.assertPairView() {
         assertThat(chatId).isEqualTo(PAIR_CHAT.id)
         assertThat(peer.id).isEqualTo(BOB)
@@ -141,6 +209,9 @@ class ChatControllerTest {
 
     private val repository = ScriptedChatRepository()
 
+    /** The T055 seam: the №12 aggregate rows served to the controller. */
+    private val listRepository = ScriptedChatListRepository()
+
     /** The T054 seam: the (blocker, blocked) pairs the `blockedByMe` projection answers `true` for. */
     private val blocks = ScriptedBlockRepository()
 
@@ -150,20 +221,67 @@ class ChatControllerTest {
                 ChatService(
                     userRepository = MapUserRepository(),
                     chatRepository = repository,
+                    chatListRepository = listRepository,
                     participantRepository = MapParticipantRepository(),
                     blockRepository = blocks,
                 ),
             userRepository = MapUserRepository(),
         )
 
+    private fun pairEntry(): ChatListEntry =
+        ChatListEntry(
+            chatId = PAIR_CHAT.id,
+            peer =
+                ChatPeerSnapshot(
+                    id = BOB,
+                    username = "bob",
+                    email = "bob@example.com",
+                    status = "pending_email_confirmation",
+                    createdAt = CREATED_AT,
+                ),
+            lastMessage = LAST_MESSAGE,
+            unreadCount = UNREAD_COUNT,
+            blockedByMe = false,
+        )
+
+    private fun emptyEntry(): ChatListEntry =
+        ChatListEntry(
+            chatId = EMPTY_CHAT.id,
+            peer =
+                ChatPeerSnapshot(
+                    id = CAROL,
+                    username = "carol",
+                    email = "carol@example.com",
+                    status = "active",
+                    createdAt = CREATED_AT,
+                ),
+            lastMessage = null,
+            unreadCount = 0,
+            blockedByMe = false,
+        )
+
     private companion object {
         val ALICE = UUID.fromString("00000000-0000-0000-0000-000000000001")
         val BOB = UUID.fromString("00000000-0000-0000-0000-000000000002")
+        val CAROL = UUID.fromString("00000000-0000-0000-0000-000000000003")
         val CREATED_AT = Instant.parse("2026-01-01T00:00:00Z")
         val PAIR_CHAT = Chat.forPair(UUID.fromString("00000000-0000-0000-0000-0000000000aa"), ALICE, BOB, CREATED_AT)
+        val EMPTY_CHAT = Chat.forPair(UUID.fromString("00000000-0000-0000-0000-0000000000cc"), ALICE, CAROL, CREATED_AT)
 
         /** T043 fixture: BOB (the reader) has advanced his watermark; ALICE has no row yet. */
         const val BOB_READ_SEQ = 7L
+
+        /** T055 fixtures: the last visible message and the badge of the pair dialog. */
+        val LAST_MESSAGE =
+            Message(
+                id = UUID.fromString("00000000-0000-0000-0000-0000000000bb"),
+                chatId = PAIR_CHAT.id,
+                senderId = BOB,
+                text = MessageText.normalize("the last visible message — full text"),
+                seq = 9,
+                createdAt = CREATED_AT,
+            )
+        const val UNREAD_COUNT = 2L
     }
 
     /**
@@ -186,6 +304,17 @@ class ChatControllerTest {
             } else {
                 ChatEnsureResult.Existing(PAIR_CHAT)
             }
+        }
+    }
+
+    /** The T055 seam: serves the scripted №12 rows and remembers the callers. */
+    private class ScriptedChatListRepository : ChatListRepository {
+        var entries: List<ChatListEntry> = emptyList()
+        val listCalls = mutableListOf<UUID>()
+
+        override fun listForUser(callerId: UUID): List<ChatListEntry> {
+            listCalls += callerId
+            return entries
         }
     }
 

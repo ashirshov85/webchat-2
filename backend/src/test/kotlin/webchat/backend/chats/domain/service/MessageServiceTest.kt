@@ -19,6 +19,7 @@ import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.model.MessageTextViolation
 import webchat.backend.chats.domain.port.ChatEnsureResult
+import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.MessageCreatedEvent
@@ -399,7 +400,14 @@ class MessageServiceTest {
 
     private val service =
         MessageService(
-            chatService = ChatService(NoopUserRepository, GateChatRepository, NoopParticipantRepository, blocks),
+            chatService =
+                ChatService(
+                    NoopUserRepository,
+                    GateChatRepository,
+                    ChatListRepository { emptyList() },
+                    NoopParticipantRepository,
+                    blocks,
+                ),
             messageRepository = repository,
             realtimeEventPublisher = publisher,
             chatsProperties = TEST_PROPERTIES,

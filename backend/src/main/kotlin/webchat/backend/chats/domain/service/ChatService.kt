@@ -3,7 +3,9 @@ package webchat.backend.chats.domain.service
 import org.springframework.stereotype.Service
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.port.ChatEnsureResult
+import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.contacts.domain.port.BlockRepository
@@ -71,6 +73,13 @@ data class ReadWatermarks(
  * for a stranger (Carol), so the two are never distinguishable beyond
  * membership. List (№12) and the per-user delete (№14) join here in T055/T056.
  *
+ * List (№12, T055): [listChats] is a pure read — the WHOLE panel
+ * (participants + peer + block mark + aggregates + sorting) is ONE
+ * aggregate query owned by [ChatListRepository] (research.md 004 §8);
+ * the service holds no list-side business rules to enforce, so it only
+ * delegates — the method exists to keep the HTTP adapter thin like the
+ * rest of the controller surface.
+ *
  * The read fields of `ChatView` (T043): [readWatermarks] projects the two
  * per-user marks of the resolved dialog for №11/№13 — the FR-010 watermark
  * is advanced by `ReadService` (№17) and only READ here.
@@ -84,6 +93,7 @@ data class ReadWatermarks(
 class ChatService(
     private val userRepository: UserRepository,
     private val chatRepository: ChatRepository,
+    private val chatListRepository: ChatListRepository,
     private val participantRepository: ParticipantRepository,
     private val blockRepository: BlockRepository,
 ) {
@@ -104,6 +114,15 @@ class ChatService(
         if (!chat.involves(callerId)) throw NotParticipantException()
         return chat
     }
+
+    /**
+     * №12 (T055): the caller's dialog list — the one aggregate read of
+     * [ChatListRepository]; the repository owns the sorting (last visible
+     * message `createdAt` DESC NULLS LAST, `chat_id` tie-break), the §2
+     * exclusion of fully deleted dialogs and the aggregates, so this is a
+     * straight delegation with nothing to veto.
+     */
+    fun listChats(callerId: UUID): List<ChatListEntry> = chatListRepository.listForUser(callerId)
 
     /**
      * T043: `myReadUpToSeq`/`peerReadUpToSeq` of `ChatView` (№11/№13) —

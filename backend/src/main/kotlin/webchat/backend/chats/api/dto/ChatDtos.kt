@@ -48,3 +48,34 @@ data class ChatView(
     val peerReadUpToSeq: Long,
     val myReadUpToSeq: Long,
 )
+
+/**
+ * Contract №12 success item — `ChatListItem` (openapi.yaml 0.4.0): the
+ * dialog, the peer projection, the LAST VISIBLE message (`null` for a
+ * chat without visible messages — empty or fully deleted for the caller)
+ * with its FULL text (the ≤64-char cut is a client render), the unread
+ * badge count (exact number; «99+» is the client render) and the
+ * caller's own block mark.
+ *
+ * `blockedByMe` (T054/T055, FR-020) is the ONLY block projection of the
+ * list, exactly as in [ChatView]: no inverse «who blocked me» field —
+ * the blocked user learns about the block ONLY from the `403
+ * you_are_blocked` of his own send (research.md 004 §6).
+ */
+data class ChatListItemView(
+    val chatId: UUID,
+    val peer: ChatPeerView,
+    val lastMessage: MessageView?,
+    val unreadCount: Long,
+    val blockedByMe: Boolean,
+)
+
+/**
+ * Contract №12 success body — the inline `{chats: [ChatListItem]}` object
+ * of openapi.yaml 0.4.0: the caller's dialogs sorted by the last visible
+ * message (server-side, FR-014); an EMPTY array is a valid answer (a user
+ * without dialogs), so the field is always rendered.
+ */
+data class ChatsResponse(
+    val chats: List<ChatListItemView>,
+)
