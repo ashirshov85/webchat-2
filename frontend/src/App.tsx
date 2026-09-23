@@ -7,10 +7,39 @@ import { RegisterPage } from './auth/pages/RegisterPage'
 import { ResetPasswordPage } from './auth/pages/ResetPasswordPage'
 import { SetPasswordPage } from './auth/pages/SetPasswordPage'
 import { SsoCallbackPage } from './auth/pages/SsoCallbackPage'
+import { isSessionExpired } from './auth/session'
+import { MessengerPage } from './chats/pages/MessengerPage'
 import { SecurityPage } from './settings/pages/SecurityPage'
+
+/**
+ * Protected route (T025): a visitor without a refresh token (no
+ * session) is redirected to the login page; `returnTo` lets the SSO
+ * flow land the user back on the protected path after sign-in. While
+ * the redirect is pending nothing is rendered — the messenger never
+ * flashes for unauthenticated visitors.
+ */
+function ProtectedRoute({ children, pathname }: { children: ReactNode; pathname: string }) {
+  const authenticated = !isSessionExpired()
+  useEffect(() => {
+    if (!authenticated) {
+      window.location.assign(`/login?returnTo=${encodeURIComponent(pathname)}`)
+    }
+  }, [authenticated, pathname])
+  if (!authenticated) {
+    return null
+  }
+  return children
+}
 
 function renderRoute(pathname: string): ReactNode {
   switch (pathname) {
+    case '/':
+    case '/chat':
+      return (
+        <ProtectedRoute pathname={pathname}>
+          <MessengerPage />
+        </ProtectedRoute>
+      )
     case '/register':
       return <RegisterPage />
     case '/confirm-registration':

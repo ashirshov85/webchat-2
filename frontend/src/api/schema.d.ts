@@ -344,6 +344,222 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/chats/ensure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Открыть личный диалог с пользователем (№11, Bearer)
+         * @description Возвращает существующий диалог пары пользователей либо создаёт новый (201 — создан; 200 — уже существует). Повторное открытие существующего чата снимает hidden у вызывающего: чат возвращается в список; история, удалённая через №14, остаётся скрытой водяным знаком deleted_up_to_seq. Пара пользователей имеет ровно один диалог (idempotent ensure, FR-001).
+         */
+        post: operations["ensureChat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Список диалогов пользователя (№12, Bearer)
+         * @description ChatListItem одним запросом. Серверная сортировка: последнее видимое сообщение (входящее или исходящее) по убыванию createdAt; чаты без видимых сообщений — ниже; исключены только удалённые без новых сообщений (hidden ∧ last_seq ≤ deleted_up_to_seq). Новый входящий снимает hidden и возвращает чат в список (FR-021). Превью lastMessage.text — полный текст (обрезка ≤64 симв. — клиентский рендер).
+         */
+        get: operations["listChats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chats/{chatId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Диалог по идентификатору (№13, Bearer)
+         * @description ChatView пары с водяными знаками прочтения. Авторизация на уровне ресурса — membership диалога (FR-002): не-участник получает 403 not_participant на существующем чате; несуществующий — 404.
+         */
+        get: operations["getChat"];
+        put?: never;
+        post?: never;
+        /**
+         * Удаление диалога у себя (№14, Bearer)
+         * @description Per-user удаление (FR-021): история скрывается водяным знаком deleted_up_to_seq = last_seq и hidden = true только у удалившего; второй участник не затронут. Новый входящий снимает hidden и возвращает чат в список — без старой истории (она остаётся за водяным знаком). Повторный вызов — 204 (идемпотентно).
+         */
+        delete: operations["deleteChat"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chats/{chatId}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Страница истории диалога (№15, Bearer)
+         * @description Сообщения по seq DESC (новее — раньше), ровно те, что seq < before (курсор эксклюзивный); без before — последние видимые вызывающему (seq > deleted_up_to_seq). limit 1–50, по умолчанию/максимум 50 (FR-008). nextBefore — seq самой старой записи страницы; отсутствует, когда старее нет (пустая страница на границе — корректный ответ). Порядок стабилен между повторными загрузками (seq).
+         */
+        get: operations["listMessages"];
+        put?: never;
+        /**
+         * Отправка сообщения (№16, Bearer)
+         * @description Exactly-once запись (FR-004/FR-012): clientMessageId — клиентский UUID, ретраи тем же id дают 200 существующей записи без дубля; id, принадлежащий другой записи, — 409. Текст: trim начальных/конечных пробелов, непустой, ≤4096 символов после trim (FR-003). Валидный текст записывается с сохранением внутренних пробелов. 201 — записано; 200 — дедупликация (запись уже существует). Флуд-лимит — 30 сообщений/мин на пользователя (FR-011): 31-е новое сообщение в окне → 429 flood_limit + Retry-After (сек до доступного токена); ретрай уже записанного сообщения (дедуп-путь) не штрафуется. Блокировка пары (FR-020): отправитель блокирует получателя → 403 chat_blocked_by_you; получатель блокирует отправителя → 403 you_are_blocked; записи нет.
+         */
+        post: operations["sendMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chats/{chatId}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Отметить сообщения прочитанными (№17, Bearer)
+         * @description Двигает водяной знак прочтения вызывающего до upToSeq включительно (FR-010). Идемпотентно и монотонно: повторное/меньшее upToSeq не откатывает и не публикует событие. upToSeq больше seq последнего сообщения диалога → 400 invalid_up_to_seq, водяной знак не двигается. При действующей блокировке пары (FR-020): вызывающий — блокирующий → 204 без эффекта (водяной знак не двигается, событие не публикуется — «замирание»); вызывающий — заблокированный → 204, водяной знак двигается локально, событие блокирующему не публикуется.
+         */
+        post: operations["markRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/me/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Поток событий пользователя — SSE (№18, Bearer)
+         * @description Единый realtime-поток событий пользователя (FR-022, US6): мультиплекс всех диалогов; каждое устройство/сессия открывает свой поток. Канал строго server→client: отправка — REST №16 (подтверждение = HTTP-ответ). Подключение: Authorization Bearer (тот же access JWT, что и REST; токен в URL запрещён) + Accept: text/event-stream. Фрейминг WHATWG SSE: первая строка потока — retry: 3000 (подсказка реконнекта); heartbeat-комментарий :ka каждые 15 с. Кадры: event: message.created | chat.read, за которым одна data:-строка с JSON-полем одной строкой, UTF-8. Событие message.created (FR-007) публикуется обоим участникам после коммита записи: payload {chatId, message: Message}; отправитель рендерит свои исходящие с других устройств сразу «доставлено»; клиент дедуплицирует по message.id. Событие chat.read (FR-010): payload {chatId, readUpToSeq, byUserId} — собеседник прочитал до readUpToSeq включительно; монотонно (повторные/меньшие не публикуются). Канал at-most-once: при (пере)подключении клиент выполняет рефетч REST (№12/№15); порядок/дубли исключены серверным seq и дедупом по id. Неизвестные клиенту event:-типы обязаны игнорироваться (прямая совместимость, US6-3).
+         */
+        get: operations["streamUserEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Точный поиск пользователя по email или логину (№19, Bearer)
+         * @description Точное совпадение полного email ИЛИ полного логина, без учёта регистра (FR-016): query содержит @ → сравнение lower(email), иначе lower(username) — username не допускает @ (правило 002). Результат — 0..1 пользователь: пустой список — корректный ответ (совпадения нет, edge). Защита от перебора (FR-016): не более 30 запросов/мин на пользователя — 31-й запрос в окне → 429 flood_limit + Retry-After (сек до доступного токена), поиск не выполняется.
+         */
+        get: operations["searchUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Список контактов пользователя (№20, Bearer)
+         * @description Контакты вызывающего с серверной алфавитной сортировкой по выбранному полю без учёта регистра (FR-015): sort=login — по lower(username) (по умолчанию), sort=email — по lower(email). Пустой список — корректный ответ.
+         */
+        get: operations["listContacts"];
+        put?: never;
+        /**
+         * Добавить пользователя в контакты (№21, Bearer)
+         * @description Односторонняя запись в личный список контактов вызывающего (FR-016). 201 — контакт создан; 200 — уже добавлен, дубль не создаётся (edge). Добавление самого себя → 422 self_forbidden. Контакты не зависят от чатов и блокировок: удаление контакта (№22) не затрагивает единый диалог пары (FR-017); блокировка не затрагивает контакты (FR-020) — заблокированный может добавлять блокирующего в свои контакты.
+         */
+        post: operations["addContact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/contacts/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Удалить контакт (№22, Bearer)
+         * @description Удаляет пользователя из списка контактов вызывающего. Идемпотентно: несуществующий контакт — тоже 204. Удаление контакта — независимая операция: единый диалог пары и его история не затрагиваются, переписка остаётся доступной и продолжается (FR-017).
+         */
+        delete: operations["deleteContact"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/{userId}/block": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Заблокировать пользователя (№23, Bearer)
+         * @description Односторонняя блокировка, управляется блокирующим (FR-020). Идемпотентно: повторная блокировка — 204 без изменений (edge). Пока блок действует: отправка в диалоге пары запрещена в обе стороны без создания записей (№16 → 403 chat_blocked_by_you у блокирующего, 403 you_are_blocked у заблокированного — единственное явное уведомление заблокированного); прочтения блокирующего не двигают водяной знак и не публикуются, прочтения заблокированного двигают водяной знак локально без публикации (№17); бейдж непрочитанных у блокирующего «замирает» (№12). Контакты не затрагиваются. Единственная проекция блокировки в API — blockedByMe; поле «кто заблокировал меня» отсутствует. Разблокировка — №24.
+         */
+        put: operations["blockUser"];
+        post?: never;
+        /**
+         * Разблокировать пользователя (№24, Bearer)
+         * @description Снимает блокировку вызывающего с пользователя. Идемпотентно: разблокировка не заблокированного — тоже 204. Возвращает обычное поведение диалога — отправку, прочтения, бейдж и события прочтения (FR-010) — без потери истории (FR-020).
+         */
+        delete: operations["unblockUser"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -476,6 +692,142 @@ export interface components {
         IdentitiesResponse: {
             /** @description Привязки пользователя, упорядоченные по linkedAt */
             identities: components["schemas"]["Identity"][];
+        };
+        EnsureChatRequest: {
+            /**
+             * Format: uuid
+             * @description Собеседник; диалог с самим собой → 422 self_forbidden
+             */
+            peerUserId: string;
+        };
+        ChatView: {
+            /**
+             * Format: uuid
+             * @description Идентификатор диалога пары пользователей
+             */
+            chatId: string;
+            /** @description Собеседник (вторая сторона диалога) */
+            peer: components["schemas"]["PublicUser"];
+            /** @description Вызывающий блокирует собеседника (FR-020). Единственная проекция блокировок в API: поле «кто заблокировал меня» отсутствует — заблокированный узнаёт о блокировке только из 403 you_are_blocked при отправке */
+            blockedByMe: boolean;
+            /**
+             * Format: int64
+             * @description Водяной знак прочтения собеседника (0 — ничего не прочитано); для двойной галочки отправителя
+             */
+            peerReadUpToSeq: number;
+            /**
+             * Format: int64
+             * @description Водяной знак прочтения вызывающего (0 — ничего не прочитано)
+             */
+            myReadUpToSeq: number;
+        };
+        Message: {
+            /**
+             * Format: uuid
+             * @description = clientMessageId из №16: клиентский UUID, exactly-once дедупликация (FR-004)
+             */
+            id: string;
+            /** Format: uuid */
+            chatId: string;
+            /**
+             * Format: uuid
+             * @description Отправитель (участник диалога)
+             */
+            senderId: string;
+            /** @description Триммированный по краям текст (FR-003); внутренние пробелы сохраняются; ≤4096 символов после trim */
+            text: string;
+            /**
+             * Format: int64
+             * @description Монотонный порядок внутри диалога (уникален в рамках чата); основа курсорной пагинации №15
+             */
+            seq: number;
+            /** Format: date-time */
+            createdAt: string;
+        };
+        ChatListItem: {
+            /** Format: uuid */
+            chatId: string;
+            /** @description Собеседник */
+            peer: components["schemas"]["PublicUser"];
+            /** @description Последнее видимое вызывающему сообщение (входящее или исходящее); null — видимых сообщений нет (пустой или полностью удалённый у себя диалог) */
+            lastMessage: components["schemas"]["Message"] | null;
+            /**
+             * Format: int64
+             * @description Входящие сообщения с seq > myReadUpToSeq (видимые вызывающему); при блокировке у блокирующего «замирает» (FR-020)
+             */
+            unreadCount: number;
+            /** @description Вызывающий блокирует собеседника — метка «заблокирован» в UI (FR-020) */
+            blockedByMe: boolean;
+        };
+        MessagePage: {
+            /** @description Страница истории по seq DESC (новее — раньше); ровно те, что seq < before; пустая страница на границе — корректный ответ */
+            messages: components["schemas"]["Message"][];
+            /**
+             * Format: int64
+             * @description Курсор следующей страницы: seq самой старой записи этой страницы; отсутствует, когда старее нет (история исчерпана)
+             */
+            nextBefore?: number;
+        };
+        SendMessageRequest: {
+            /**
+             * Format: uuid
+             * @description Клиентский UUID сообщения; ретраи тем же id → 200 существующей записи (exactly-once, FR-004); принадлежность другой записи → 409
+             */
+            clientMessageId: string;
+            /** @description FR-003: trim начальных/конечных пробелов, непустой после trim (иначе 400 text_blank), ≤4096 символов после trim (иначе 400 text_too_long); внутренние пробелы сохраняются */
+            text: string;
+        };
+        ReadRequest: {
+            /**
+             * Format: int64
+             * @description Прочитано до seq включительно; 1 ≤ upToSeq ≤ seq последнего сообщения диалога (иначе 400 invalid_up_to_seq); идемпотентно и монотонно
+             */
+            upToSeq: number;
+        };
+        /** @description SSE-событие №18 message.created: новое сообщение записано и закоммичено (FR-007); публикуется обоим участникам — получателю для отображения, отправителю для остальных его устройств/сессий */
+        MessageCreatedEvent: {
+            /**
+             * Format: uuid
+             * @description Диалог события
+             */
+            chatId: string;
+            /** @description Та же схема, что в №16/№15; клиент дедуплицирует по message.id */
+            message: components["schemas"]["Message"];
+        };
+        /** @description SSE-событие №18 chat.read: собеседник просмотрел сообщения диалога до readUpToSeq включительно (FR-010); монотонно — публикуется только при продвижении водяного знака; при блокировке не публикуется ни в канал блокирующего, ни в канал заблокированного (FR-020) */
+        ChatReadEvent: {
+            /**
+             * Format: uuid
+             * @description Диалог
+             */
+            chatId: string;
+            /**
+             * Format: int64
+             * @description Новый водяной знак читавшего
+             */
+            readUpToSeq: number;
+            /**
+             * Format: uuid
+             * @description Кто прочитал
+             */
+            byUserId: string;
+        };
+        ContactView: {
+            /** @description Пользователь из списка контактов вызывающего */
+            user: components["schemas"]["PublicUser"];
+            /**
+             * Format: date-time
+             * @description Когда пользователь добавлен в контакты вызывающего
+             */
+            createdAt: string;
+        };
+        ContactsResponse: {
+            /** @description Контакты вызывающего: серверная алфавитная сортировка по выбранному полю без учёта регистра — lower(username) при sort=login, lower(email) при sort=email (FR-015); пустой список валиден */
+            contacts: components["schemas"]["ContactView"][];
+        };
+        UsersSearchResponse: {
+            /** @description Точное совпадение полного email ИЛИ полного логина без учёта регистра (FR-016): 0..1 элемент; пустой список — корректный ответ (совпадения нет) */
+            users: components["schemas"]["PublicUser"][];
         };
     };
     responses: never;
@@ -1216,6 +1568,720 @@ export interface operations {
             };
             /** @description Отвязка последнего способа входа запрещена (errors: {identity: [last_login_method]}; сначала задайте пароль) */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    ensureChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnsureChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Диалог уже существует — возвращён существующий ChatView (hidden снят у вызывающего) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatView"];
+                };
+            };
+            /** @description Диалог создан — ChatView */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatView"];
+                };
+            };
+            /** @description Невалидное тело (errors: {peerUserId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Собеседник не найден (errors: {peer: [peer_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Диалог с самим собой запрещён (errors: {peerUserId: [self_forbidden]}) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listChats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Диалоги пользователя, отсортированные по последнему видимому сообщению */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description По убыванию createdAt последнего видимого сообщения; пустой список валиден */
+                        chats: components["schemas"]["ChatListItem"][];
+                    };
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор диалога */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Диалог */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatView"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не участник диалога (errors: {chat: [not_participant]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Диалог не найден (errors: {chat: [chat_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteChat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор диалога */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description История скрыта у вызывающего (идемпотентно) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не участник диалога (errors: {chat: [not_participant]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Диалог не найден (errors: {chat: [chat_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listMessages: {
+        parameters: {
+            query?: {
+                /** @description Эксклюзивный курсор: только записи seq < before (seq самой старой записи предыдущей страницы) */
+                before?: number;
+                /** @description Размер страницы 1–50; по умолчанию 50 (фиксированный максимум — FR-008) */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Идентификатор диалога */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Страница истории (по seq DESC); пустая страница на границе — без nextBefore и без ошибок */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagePage"];
+                };
+            };
+            /** @description limit вне 1–50 (errors: {limit: [limit_out_of_range]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не участник диалога (errors: {chat: [not_participant]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Диалог не найден (errors: {chat: [chat_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    sendMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор диалога */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessageRequest"];
+            };
+        };
+        responses: {
+            /** @description Дедупликация — clientMessageId уже записан, возвращена существующая запись Message (дубля нет) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            /** @description Сообщение записано — Message */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Message"];
+                };
+            };
+            /** @description Валидация: text только из пробелов/переводов строк (errors: {text: [text_blank]}); длиннее 4096 символов после trim (errors: {text: [text_too_long]}); не-UUID clientMessageId (errors: {clientMessageId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не участник (errors: {chat: [not_participant]}); отправитель блокирует получателя (errors: {chat: [chat_blocked_by_you]}); получатель блокирует отправителя (errors: {chat: [you_are_blocked]}) — записи нет */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Диалог не найден (errors: {chat: [chat_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description clientMessageId принадлежит другой записи (errors: {clientMessageId: [message_id_conflict]}) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Флуд-лимит 30 сообщений/мин на пользователя (errors: {text: [flood_limit]}; FR-011) — записи нет */
+            429: {
+                headers: {
+                    /** @description Секунды до доступного токена */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    markRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор диалога */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Водяной знак продвинут (или без эффекта при повторном/меньшем upToSeq и при блокировке) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description upToSeq меньше 1 или больше seq последнего сообщения диалога (errors: {upToSeq: [invalid_up_to_seq]}) — водяной знак не двигается */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не участник диалога (errors: {chat: [not_participant]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Диалог не найден (errors: {chat: [chat_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    streamUserEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, события message.created и chat.read (фрейминг и payloads — в описании операции) */
+            200: {
+                headers: {
+                    /** @description no — отключение буферизации прокси (кадры доставляются немедленно, без агрегации за ingress) */
+                    "X-Accel-Buffering"?: "no";
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    searchUsers: {
+        parameters: {
+            query: {
+                /** @description Полный email или полный логин искомого пользователя; отсутствует, пустой или длиннее 254 символов → 400 query_missing */
+                query: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Результат точного поиска — 0..1 пользователь (пустой список — корректный ответ) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsersSearchResponse"];
+                };
+            };
+            /** @description query отсутствует, пустой или длиннее 254 символов (errors: {query: [query_missing]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Лимит поиска 30 запросов/мин на пользователя — защита от перебора (errors: {query: [flood_limit]}; FR-016); поиск не выполняется */
+            429: {
+                headers: {
+                    /** @description Секунды до доступного токена */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    listContacts: {
+        parameters: {
+            query?: {
+                /** @description Поле серверной алфавитной сортировки без учёта регистра; по умолчанию login; иное значение → 400 invalid_sort */
+                sort?: "login" | "email";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Контакты, отсортированные алфавитно по выбранному полю без учёта регистра */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactsResponse"];
+                };
+            };
+            /** @description sort не login и не email (errors: {sort: [invalid_sort]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    addContact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * Format: uuid
+                     * @description Добавляемый пользователь; добавление самого себя → 422 self_forbidden
+                     */
+                    userId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Контакт уже добавлен — возвращён существующий ContactView (дубль не создаётся) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactView"];
+                };
+            };
+            /** @description Контакт создан — ContactView */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactView"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Пользователь не найден (errors: {user: [user_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Добавление самого себя в контакты запрещено (errors: {userId: [self_forbidden]}) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteContact: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Удаляемый из контактов пользователь */
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Контакт удалён (идемпотентно; чат и история пары не затронуты) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    blockUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Блокируемый пользователь */
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Блокировка установлена (идемпотентно — повторная блокировка без изменений) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Пользователь не найден (errors: {user: [user_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Блокировка самого себя запрещена (errors: {userId: [self_forbidden]}) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    unblockUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Разблокируемый пользователь */
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Блокировка снята (идемпотентно); обычное поведение диалога возобновляется */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
