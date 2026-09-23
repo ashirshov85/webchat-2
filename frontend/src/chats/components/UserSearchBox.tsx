@@ -19,7 +19,7 @@
  * overwriting a newer search with an older one.
  */
 import { useCallback, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { SubmitEvent } from 'react'
 import { addContact, searchUsers } from '../../api/chats'
 import type { ContactView } from '../../api/chats'
 import type { PublicUser } from '../../api/auth'
@@ -40,7 +40,7 @@ export function UserSearchBox({ onContactAdded }: UserSearchBoxProps) {
   const searchSequence = useRef(0)
 
   const handleSearch = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
+    (event: SubmitEvent<HTMLFormElement>) => {
       event.preventDefault()
       const trimmed = query.trim()
       if (trimmed === '' || searching || adding) {

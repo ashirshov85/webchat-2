@@ -160,7 +160,7 @@ async function openStream(failures: number, signal: AbortSignal): Promise<Stream
     // The refresh request itself failed at the network level — a
     // transient condition retried on the usual backoff, never an
     // unhandled rejection that would kill the stream loop.
-    return signal.aborted ? { outcome: 'stop' } : retryAfter(failures + 1, signal)
+    return retryAfter(failures + 1, signal)
   }
   if (token === null || signal.aborted) {
     return { outcome: 'stop' }
@@ -172,27 +172,39 @@ async function openStream(failures: number, signal: AbortSignal): Promise<Stream
       signal,
     })
   } catch {
-    return signal.aborted ? { outcome: 'stop' } : retryAfter(failures + 1, signal)
+    return retryAfter(failures + 1, signal)
   }
   if (response.status === 401) {
-    await discardBody(response)
-    let refreshed: boolean
-    try {
-      refreshed = (await refreshTokens()) !== null
-    } catch {
-      // Same transient semantics as above: backoff, not a crash.
-      return signal.aborted ? { outcome: 'stop' } : retryAfter(failures + 1, signal)
-    }
-    if (!refreshed || signal.aborted) {
-      return { outcome: 'stop' }
-    }
-    return failures === 0 ? { outcome: 'retry-now' } : retryAfter(failures + 1, signal)
+    return reopenAfterUnauthorized(response, failures, signal)
   }
   if (!response.ok || response.body === null) {
     await discardBody(response)
     return retryAfter(failures + 1, signal)
   }
   return { outcome: 'connected', body: response.body }
+}
+
+/**
+ * 401 recovery: one silent re-auth, then reconnect — immediately
+ * after the very first failure, on backoff afterwards.
+ */
+async function reopenAfterUnauthorized(
+  response: Response,
+  failures: number,
+  signal: AbortSignal,
+): Promise<StreamAttempt> {
+  await discardBody(response)
+  let refreshed: boolean
+  try {
+    refreshed = (await refreshTokens()) !== null
+  } catch {
+    // Same transient semantics as above: backoff, not a crash.
+    return retryAfter(failures + 1, signal)
+  }
+  if (!refreshed || signal.aborted) {
+    return { outcome: 'stop' }
+  }
+  return failures === 0 ? { outcome: 'retry-now' } : retryAfter(failures + 1, signal)
 }
 
 async function runStream(

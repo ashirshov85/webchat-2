@@ -383,7 +383,7 @@ export function MessengerPage() {
             )}
 
             {confirmation !== null && pendingAction !== null && (
-              <div className="dialog-confirm" role="dialog" aria-label={confirmation.title}>
+              <dialog className="dialog-confirm" open aria-label={confirmation.title}>
                 <p className="dialog-confirm-text">{confirmation.text}</p>
                 <div className="dialog-confirm-actions">
                   <button
@@ -411,7 +411,7 @@ export function MessengerPage() {
                     Отмена
                   </button>
                 </div>
-              </div>
+              </dialog>
             )}
 
             {status === 'error' && <ErrorBanner error={error} onDismiss={reload} />}

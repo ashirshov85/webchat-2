@@ -108,7 +108,7 @@ export function ContactList({
 
   return (
     <div className="contact-list">
-      <div className="contact-sort" role="group" aria-label="Сортировка контактов">
+      <fieldset className="contact-sort" aria-label="Сортировка контактов">
         <button
           type="button"
           className={
@@ -137,7 +137,7 @@ export function ContactList({
         >
           По email
         </button>
-      </div>
+      </fieldset>
 
       {actionError !== null && (
         <div className="chat-panel-error">
