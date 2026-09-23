@@ -4,6 +4,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -69,6 +70,21 @@ class ChatController(
     ): ChatView {
         val callerId = callerId(accessToken)
         return view(chatService.get(chatId, callerId), callerId)
+    }
+
+    /**
+     * Contract №14 (T056, FR-021): the per-user delete — `204` with an
+     * empty body for a participant, ALWAYS `204` again on a repeat
+     * (idempotent); the refusals `404 chat_not_found`/`403
+     * not_participant` are the service gate shared with №13.
+     */
+    @DeleteMapping("/{chatId}")
+    fun deleteChat(
+        @PathVariable chatId: UUID,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Unit> {
+        chatService.delete(chatId, callerId(accessToken))
+        return ResponseEntity.noContent().build()
     }
 
     /**

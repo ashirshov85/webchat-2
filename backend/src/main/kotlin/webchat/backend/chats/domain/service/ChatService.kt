@@ -116,6 +116,25 @@ class ChatService(
     }
 
     /**
+     * №14 (T056, FR-021): the PER-USER deletion — resolves through the same
+     * `404 chat_not_found → 403 not_participant` gate as every chats
+     * resource, then delegates to the ATOMIC single-row UPDATE of
+     * [ParticipantRepository.deleteUpTo]: `deleted_up_to_seq = chats.last_seq`
+     * and `hidden = true` for the CALLER only, in one statement — the peer's
+     * row is never touched. Idempotent by construction: a repeated DELETE
+     * re-applies the same watermark (the `last_seq` snapshot has not moved)
+     * and maps to the same `204`.
+     */
+    fun delete(
+        chatId: UUID,
+        callerId: UUID,
+    ) {
+        val chat = chatRepository.findById(chatId) ?: throw ChatNotFoundException()
+        if (!chat.involves(callerId)) throw NotParticipantException()
+        participantRepository.deleteUpTo(chat.id, callerId, chat.lastSeq)
+    }
+
+    /**
      * №12 (T055): the caller's dialog list — the one aggregate read of
      * [ChatListRepository]; the repository owns the sorting (last visible
      * message `createdAt` DESC NULLS LAST, `chat_id` tie-break), the §2
