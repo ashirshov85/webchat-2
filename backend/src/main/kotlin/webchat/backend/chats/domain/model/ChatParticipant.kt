@@ -62,8 +62,8 @@ data class ChatParticipant(
      * answer and an SSE frame never advance it — only the client's ack
      * of an APPLIED page/frame does.
      */
-    fun advanceDeliveredUpTo(seq: Long): ChatParticipant? =
-        if (seq > deliveredUpToSeq) copy(deliveredUpToSeq = seq) else null
+    @Suppress("MaxLineLength") // ktlint function-signature requires the single-line body; 126 chars > detekt's 120
+    fun advanceDeliveredUpTo(seq: Long): ChatParticipant? = if (seq > deliveredUpToSeq) copy(deliveredUpToSeq = seq) else null
 
     /** Message visibility for this participant (FR-021 watermark). */
     fun isVisible(seq: Long): Boolean = seq > deletedUpToSeq

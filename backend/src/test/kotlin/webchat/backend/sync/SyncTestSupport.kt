@@ -164,6 +164,7 @@ abstract class SyncTestSupport : MessagingTestSupport() {
                     "SELECT id, seq FROM messages WHERE chat_id = ? AND id IN (${placeholders(rows.size)})",
                     { rs, _ -> UUID.fromString(rs.getString("id")) to rs.getLong("seq") },
                     chatId,
+                    *rows.map { it.id }.toTypedArray(),
                 ).toMap()
         return rows.map { row ->
             val seq =
