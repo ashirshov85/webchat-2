@@ -41,6 +41,19 @@ export async function ensureChat(body: EnsureChatRequest): Promise<ChatView> {
   return (await response.json()) as ChatView
 }
 
+/**
+ * №12 `GET /chats`: the caller's dialog list in one request — the
+ * server-side aggregates (peer, last visible message, unread badge,
+ * `blockedByMe`) already carry everything the «Чаты» panel renders
+ * (FR-013/014); ordering by the last visible message's `createdAt`
+ * DESC is server-owned, «99+» is a client-side render decision.
+ */
+export async function listChats(): Promise<ChatListItem[]> {
+  const response = await authedRequest('/chats', 'GET')
+  const body = (await response.json()) as { chats: ChatListItem[] }
+  return body.chats
+}
+
 export async function getChat(chatId: string): Promise<ChatView> {
   const response = await authedRequest(`/chats/${encodeURIComponent(chatId)}`, 'GET')
   return (await response.json()) as ChatView
