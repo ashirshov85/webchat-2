@@ -217,7 +217,7 @@ description: "Task list for feature implementation"
 - [X] T067 [P] Верификация наблюдаемости (SC-008): метрики `webchat_message_ack_seconds`, `webchat_realtime_push_seconds`, `webchat_message_dedup_total`, `webchat_send_rejected_total{reason=…}`, `webchat_search_rejected_total{reason=flood}`, `webchat_read_advanced_total` растут в сценариях quickstart §3.2/3.7/3.8 на `/actuator/prometheus`; warn-логи отклонений без текста сообщений (PII) — проверка по `backend/src/main/kotlin/webchat/backend/` (места реализации)
 - [X] T068 [P] Аудит безопасности/архитектуры: stateless-поды (состояние только PG/Redis), токен не в URL, membership на каждом ресурсе, отсутствие leakage-полей блокировки, секреты через env, наличие trace-спанов на новых endpoints (chats/contacts/realtime, экспорт OTLP) — ревью `backend/src/main/kotlin/webchat/backend/realtime/`, `chats/`, `contacts/`, `deploy/k8s/base/`
 - [X] T069 Сквозная ручная валидация по `specs/004-direct-messaging-core/quickstart.md` (все сценарии §3.1–§3.8) с фиксацией результатов; приёмка: чек-лист по каждому §3.x зафиксирован в PR
-- [ ] T070 Финальная уборка: линт/форматирование backend (`./gradlew check`) и frontend (`pnpm --dir frontend lint test`), удаление мёртвого кода, проверка сборки целиком; приёмка: обе команды зелёные, сборка монорепо проходит
+- [X] T070 Финальная уборка: линт/форматирование backend (`./gradlew check`) и frontend (`pnpm --dir frontend lint test`), удаление мёртвого кода, проверка сборки целиком; приёмка: обе команды зелёные, сборка монорепо проходит
 
 ---
 

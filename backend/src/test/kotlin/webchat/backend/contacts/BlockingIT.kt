@@ -315,8 +315,10 @@ class BlockingIT(
 
         val blockerView = getChat(alice, chatId)
         assertThat(blockerView.statusCode)
-            .overridingErrorMessage("the dialog must stay visible to the blocker (FR-020), got <%s>", blockerView.statusCode)
-            .isEqualTo(HttpStatus.OK)
+            .overridingErrorMessage(
+                "the dialog must stay visible to the blocker (FR-020), got <%s>",
+                blockerView.statusCode,
+            ).isEqualTo(HttpStatus.OK)
         assertChatViewProjection(blockerView, blockedByMe = true)
 
         val blockedView = getChat(bob, chatId)
@@ -391,8 +393,11 @@ class BlockingIT(
 
         val missing = blockUser(alice, UUID.randomUUID())
         assertThat(missing.statusCode)
-            .overridingErrorMessage("blocking an unknown user must be refused 404, got <%s>: %s", missing.statusCode, missing.body)
-            .isEqualTo(HttpStatus.NOT_FOUND)
+            .overridingErrorMessage(
+                "blocking an unknown user must be refused 404, got <%s>: %s",
+                missing.statusCode,
+                missing.body,
+            ).isEqualTo(HttpStatus.NOT_FOUND)
         assertProblem(missing, USER_FIELD, USER_NOT_FOUND)
 
         assertThat(unblockUser(alice, UUID.randomUUID()).statusCode)
@@ -422,7 +427,11 @@ class BlockingIT(
                 contentType = MediaType.APPLICATION_JSON
                 setBearerAuth(user.accessToken)
             }
-        return restTemplate.postForEntity(CONTACTS_PATH, HttpEntity(mapOf(USER_ID_FIELD to userId.toString()), headers), String::class.java)
+        return restTemplate.postForEntity(
+            CONTACTS_PATH,
+            HttpEntity(mapOf(USER_ID_FIELD to userId.toString()), headers),
+            String::class.java,
+        )
     }
 
     /** Contract №22 `DELETE /api/v1/contacts/{userId}` — raw response. */
@@ -432,7 +441,12 @@ class BlockingIT(
     ): ResponseEntity<String> = exchange(user, HttpMethod.DELETE, "$CONTACTS_PATH/$userId")
 
     /** Contract №20 `GET /api/v1/contacts` — raw response. */
-    private fun listContacts(user: MessagingUser): ResponseEntity<String> = exchange(user, HttpMethod.GET, CONTACTS_PATH)
+    private fun listContacts(user: MessagingUser): ResponseEntity<String> =
+        exchange(
+            user,
+            HttpMethod.GET,
+            CONTACTS_PATH,
+        )
 
     private fun exchange(
         user: MessagingUser,
@@ -452,8 +466,11 @@ class BlockingIT(
         code: String,
     ) {
         assertThat(response.statusCode)
-            .overridingErrorMessage("a blocked-pair send must be refused 403, got <%s>: %s", response.statusCode, response.body)
-            .isEqualTo(HttpStatus.FORBIDDEN)
+            .overridingErrorMessage(
+                "a blocked-pair send must be refused 403, got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.FORBIDDEN)
         assertProblem(response, CHAT_FIELD, code)
     }
 
@@ -464,8 +481,10 @@ class BlockingIT(
         code: String,
     ) {
         assertThat(response.headers.contentType?.toString())
-            .overridingErrorMessage("refusals must be RFC 9457 application/problem+json, got <%s>", response.headers.contentType)
-            .contains(PROBLEM_JSON_MEDIA_TYPE)
+            .overridingErrorMessage(
+                "refusals must be RFC 9457 application/problem+json, got <%s>",
+                response.headers.contentType,
+            ).contains(PROBLEM_JSON_MEDIA_TYPE)
         val codes =
             objectMapper
                 .readTree(response.body)["errors"]
@@ -516,8 +535,11 @@ class BlockingIT(
             .isEqualTo(HttpStatus.OK)
         val items = objectMapper.readTree(response.body)["chats"]
         assertThat(items.size())
-            .overridingErrorMessage("a fresh fixture pair must see exactly one dialog in №12, got <%s> in %s", items.size(), response.body)
-            .isEqualTo(SINGLE_CHAT)
+            .overridingErrorMessage(
+                "a fresh fixture pair must see exactly one dialog in №12, got <%s> in %s",
+                items.size(),
+                response.body,
+            ).isEqualTo(SINGLE_CHAT)
         val item = items[0]
         assertThat(UUID.fromString(item["chatId"].asText())).isEqualTo(chatId)
         return item
@@ -537,9 +559,8 @@ class BlockingIT(
     ) {
         val deadline = System.nanoTime() + quietPeriod.toNanos()
         val leaked = mutableListOf<String>()
-        while (true) {
+        while (System.nanoTime() < deadline) {
             val remaining = deadline - System.nanoTime()
-            if (remaining <= 0) break
             val frame = runCatching { stream.nextFrame(Duration.ofNanos(remaining)) }.getOrNull() ?: break
             if (frame.event != null && frame.event in forbidden) leaked += frame.event
         }

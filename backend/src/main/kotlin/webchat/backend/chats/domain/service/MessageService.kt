@@ -1,8 +1,5 @@
 package webchat.backend.chats.domain.service
 
-import io.github.bucket4j.Bandwidth
-import io.github.bucket4j.BucketConfiguration
-import io.github.bucket4j.distributed.proxy.ProxyManager
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
@@ -17,9 +14,6 @@ import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.config.ChatsProperties
-import webchat.backend.contacts.domain.port.BlockRepository
-import java.nio.charset.StandardCharsets
-import java.time.Duration
 import java.util.UUID
 
 /**
@@ -123,8 +117,7 @@ class MessageService(
     private val messageRepository: MessageRepository,
     private val realtimeEventPublisher: RealtimeEventPublisher,
     private val chatsProperties: ChatsProperties,
-    private val rateLimitProxyManager: ProxyManager<ByteArray>,
-    private val blockRepository: BlockRepository,
+    private val sendPolicyGate: SendPolicyGate,
     private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(MessageService::class.java)
@@ -143,8 +136,8 @@ class MessageService(
         }
         val chat = chatService.get(chatId, senderId)
         val text = MessageText.normalize(rawText, chatsProperties.message.maxLength)
-        enforceFloodLimit(senderId)
-        enforceBlockPair(chat, senderId)
+        sendPolicyGate.enforceFloodLimit(senderId)
+        sendPolicyGate.enforceBlockPair(chat, senderId)
         val outcome =
             messageRepository.insert(
                 NewMessage(id = clientMessageId, chatId = chat.id, senderId = senderId, text = text),
@@ -188,124 +181,6 @@ class MessageService(
         if (recorded.chatId != chatId || recorded.senderId != senderId) throw MessageIdConflictException()
         return recorded
     }
-
-    /**
-     * T032 (FR-011, research.md 004 §7): the per-user send flood bucket
-     * `rl:user:msgsend:{userId}` — `chats.rate-limit.messages-per-minute`
-     * tokens with the continuous 30/60s drip (greedy refill), state in
-     * Redis via the shared 002 Bucket4j+Lettuce [ProxyManager] so every
-     * replica and every device of the user draws from ONE bucket
-     * (constitution II). Runs strictly AFTER the dedup fast-path and the
-     * FR-003 text gate, strictly BEFORE the INSERT: only a send that will
-     * be recorded consumes a token, and a refused send writes nothing.
-     *
-     * The refusal is the `429 flood_limit` problem+json + `Retry-After`
-     * of №16 (ceil of the refill wait, ≥1s); the warn log carries the
-     * user id and the wait ONLY — never the message text (constitution
-     * V, SC-008) — and the `webchat_send_rejected_total{reason=flood}`
-     * counter grows. Redis unavailability fails OPEN (the 002 §7
-     * invariant): losing the ephemeral store may only reset the limit,
-     * never 5xx the send path.
-     */
-    @Suppress("TooGenericExceptionCaught") // the driver signals any outage by throwing
-    private fun enforceFloodLimit(senderId: UUID) {
-        val perMinute = chatsProperties.rateLimit.messagesPerMinute.toLong()
-        val key = "$MSGSEND_KEY_FAMILY$senderId"
-        val probe =
-            runCatching {
-                rateLimitProxyManager
-                    .getProxy(key.toByteArray(StandardCharsets.UTF_8)) { floodBucketConfiguration(perMinute) }
-                    .tryConsumeAndReturnRemaining(1)
-            }.onFailure { outage ->
-                log.warn("flood-limit bucket <{}> is unavailable, failing open: {}", key, outage.toString())
-            }.getOrNull() ?: return
-
-        if (probe.isConsumed) return
-
-        val retryAfterSeconds =
-            ((probe.nanosToWaitForRefill + NANOS_PER_SECOND - 1) / NANOS_PER_SECOND)
-                .coerceAtLeast(RETRY_AFTER_FLOOR_SECONDS)
-        log.warn(
-            "send refused by the flood limit (FR-011): user <{}> exhausted {} messages/minute, retry after {}s",
-            senderId,
-            perMinute,
-            retryAfterSeconds,
-        )
-        rejectedTotal(REASON_FLOOD).increment()
-        throw FloodLimitException(retryAfterSeconds)
-    }
-
-    /** research.md 004 §7: capacity N, greedy N/60s — the uniform drip, burst ≤ N then 1 per 2s. */
-    private fun floodBucketConfiguration(perMinute: Long): BucketConfiguration =
-        BucketConfiguration
-            .builder()
-            .addLimit(
-                Bandwidth
-                    .builder()
-                    .capacity(perMinute)
-                    .refillGreedy(perMinute, Duration.ofSeconds(REFILL_WINDOW_SECONDS))
-                    .build(),
-            ).build()
-
-    /**
-     * T054 (FR-020, research.md 004 §6): the blocking-pair gate — the
-     * block acts in BOTH directions, checked as two point lookups on the
-     * `(blocker_id, blocked_id)` PK pair STRICTLY BEFORE the INSERT (after
-     * the dedup fast-path and the flood bucket, per the path contract
-     * above):
-     *
-     *  * `exists(sender, recipient)` → the sender is the blocker —
-     *    `403 chat_blocked_by_you`;
-     *  * `exists(recipient, sender)` → the sender is the blocked one —
-     *    `403 you_are_blocked`, his ONLY notification of the block (the
-     *    API carries no inverse field).
-     *
-     * A refused send writes nothing, publishes nothing (neither stream
-     * may learn about the attempt — the Edge Case of BlockingIT) and is
-     * never flood-exempt: only the FR-004 dedup of an ALREADY recorded id
-     * passes a blocked pair, because it runs earlier. The warn logs carry
-     * ids ONLY — never the message text (constitution V, SC-008) — and
-     * the `webchat_send_rejected_total{reason=blocked_by_you|
-     * you_are_blocked}` counters grow.
-     */
-    private fun enforceBlockPair(
-        chat: Chat,
-        senderId: UUID,
-    ) {
-        val recipientId =
-            checkNotNull(chat.peerOf(senderId)) {
-                "the sender passed the membership gate, so the peer must resolve"
-            }
-        if (blockRepository.exists(senderId, recipientId)) {
-            log.warn(
-                "send refused: user <{}> blocks the peer of chat <{}> (FR-020 chat_blocked_by_you)",
-                senderId,
-                chat.id,
-            )
-            rejectedTotal(REASON_BLOCKED_BY_YOU).increment()
-            throw ChatBlockedByYouException()
-        }
-        if (blockRepository.exists(recipientId, senderId)) {
-            log.warn(
-                "send refused: user <{}> is blocked in chat <{}> (FR-020 you_are_blocked)",
-                senderId,
-                chat.id,
-            )
-            rejectedTotal(REASON_YOU_ARE_BLOCKED).increment()
-            throw YouAreBlockedException()
-        }
-    }
-
-    /**
-     * SC-008 (T032+T054): send-path refusals by reason — `flood` (FR-011)
-     * and the blocking-pair codes of FR-020.
-     */
-    private fun rejectedTotal(reason: String): Counter =
-        Counter
-            .builder(SEND_REJECTED_TOTAL)
-            .description("Send-path refusals by reason: flood limit (FR-011), blocking pair (FR-020, T054)")
-            .tag(TAG_REASON, reason)
-            .register(meterRegistry)
 
     /**
      * FR-007 fan-out to BOTH participants (realtime-channel.md §3.1): the
@@ -392,26 +267,6 @@ class MessageService(
         /** The two acked outcomes: the `201` fresh record and the `200` FR-004 retry. */
         const val OUTCOME_CREATED = "created"
         const val OUTCOME_EXISTING = "existing"
-
-        /** research.md 004 §7: the Redis key family of the FR-011 send bucket. */
-        const val MSGSEND_KEY_FAMILY = "rl:user:msgsend:"
-
-        /** research.md 004 §7: one window of the N-tokens-per-minute drip. */
-        const val REFILL_WINDOW_SECONDS = 60L
-
-        const val NANOS_PER_SECOND = 1_000_000_000L
-
-        /** openapi №16: `Retry-After` minimum 1. */
-        const val RETRY_AFTER_FLOOR_SECONDS = 1L
-
-        /** SC-008 (T032): send refusals by reason. */
-        const val SEND_REJECTED_TOTAL = "webchat_send_rejected_total"
-        const val TAG_REASON = "reason"
-        const val REASON_FLOOD = "flood"
-
-        /** SC-008 (T054, FR-020): the blocking-pair refusal reasons. */
-        const val REASON_BLOCKED_BY_YOU = "blocked_by_you"
-        const val REASON_YOU_ARE_BLOCKED = "you_are_blocked"
 
         /** SC-008 (T037, research.md 004 §11): dedup hits of the send path. */
         const val DEDUP_TOTAL = "webchat_message_dedup_total"

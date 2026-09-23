@@ -187,7 +187,8 @@ class ChatsExceptionHandler {
         const val PEER_NOT_FOUND_DETAIL = "The requested peer user does not exist"
         const val CHAT_NOT_FOUND_DETAIL = "The requested chat does not exist"
         const val NOT_PARTICIPANT_DETAIL = "The caller is not a participant of this chat"
-        const val CHAT_BLOCKED_BY_YOU_DETAIL = "You blocked this peer, so the dialog is closed for your messages (FR-020)"
+        const val CHAT_BLOCKED_BY_YOU_DETAIL =
+            "You blocked this peer, so the dialog is closed for your messages (FR-020)"
         const val YOU_ARE_BLOCKED_DETAIL = "The peer blocked you, so the dialog is closed for your messages (FR-020)"
         const val INVALID_PEER_USER_ID_DETAIL = "peerUserId must be a UUID"
         const val INVALID_MESSAGE_TEXT_DETAIL = "message text violates FR-003 (blank or over 4096 after trim)"

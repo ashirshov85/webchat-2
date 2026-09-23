@@ -38,7 +38,9 @@ import webchat.backend.chats.domain.service.InvalidUpToSeqException
 import webchat.backend.chats.domain.service.MessageIdConflictException
 import webchat.backend.chats.domain.service.MessageService
 import webchat.backend.chats.domain.service.ReadService
+import webchat.backend.chats.domain.service.SendPolicyGate
 import webchat.backend.config.ChatsProperties
+import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
 import java.time.Duration
@@ -239,8 +241,13 @@ class MessageControllerTest {
                     messageRepository = repository,
                     realtimeEventPublisher = NoopRealtimePublisher,
                     chatsProperties = TEST_PROPERTIES,
-                    rateLimitProxyManager = floodControl,
-                    blockRepository = NoopBlockRepository,
+                    sendPolicyGate =
+                        SendPolicyGate(
+                            chatsProperties = TEST_PROPERTIES,
+                            rateLimiter = UserRateLimiter(floodControl),
+                            blockRepository = NoopBlockRepository,
+                            meterRegistry = SimpleMeterRegistry(),
+                        ),
                     meterRegistry = SimpleMeterRegistry(),
                 ),
             historyService =

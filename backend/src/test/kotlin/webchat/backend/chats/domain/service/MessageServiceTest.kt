@@ -29,6 +29,7 @@ import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.config.ChatsProperties
+import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
 import java.time.Duration
@@ -411,8 +412,13 @@ class MessageServiceTest {
             messageRepository = repository,
             realtimeEventPublisher = publisher,
             chatsProperties = TEST_PROPERTIES,
-            rateLimitProxyManager = floodControl,
-            blockRepository = blocks,
+            sendPolicyGate =
+                SendPolicyGate(
+                    chatsProperties = TEST_PROPERTIES,
+                    rateLimiter = UserRateLimiter(floodControl),
+                    blockRepository = blocks,
+                    meterRegistry = meterRegistry,
+                ),
             meterRegistry = meterRegistry,
         )
 

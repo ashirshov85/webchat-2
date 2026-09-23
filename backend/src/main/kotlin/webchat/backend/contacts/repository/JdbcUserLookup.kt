@@ -23,7 +23,10 @@ import java.util.UUID
 class JdbcUserLookup(
     private val jdbcTemplate: JdbcTemplate,
 ) : UserLookupPort {
-    override fun findById(userId: UUID): UserProfile? = jdbcTemplate.query(FIND_BY_ID_SQL, ROW_MAPPER, userId).firstOrNull()
+    override fun findById(userId: UUID): UserProfile? =
+        jdbcTemplate
+            .query(FIND_BY_ID_SQL, ROW_MAPPER, userId)
+            .firstOrNull()
 
     override fun searchExact(query: String): UserProfile? {
         val normalized = query.lowercase()

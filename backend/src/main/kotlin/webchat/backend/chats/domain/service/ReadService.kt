@@ -95,12 +95,30 @@ class ReadService(
             }
         if (blockRepository.exists(callerId, peerId)) return
 
-        val advanced = participantRepository.advanceReadUpTo(chatId, callerId, upToSeq) ?: return
-        readAdvancedTotal().increment()
+        val advanced = participantRepository.advanceReadUpTo(chatId, callerId, upToSeq)
+        if (advanced != null) {
+            readAdvancedTotal().increment()
+            publishToPeerUnlessBlocked(peerId, callerId, chat.id, advanced.lastReadSeq)
+        }
+    }
+
+    /**
+     * The second FR-020 leg (T054): the caller IS blocked by the peer —
+     * his watermark already advanced locally (monotone, harmless: after
+     * an unblock the state is already correct), but the `chat.read` event
+     * is NOT delivered to the blocker — the blocked side's activity is
+     * never revealed.
+     */
+    private fun publishToPeerUnlessBlocked(
+        peerId: UUID,
+        callerId: UUID,
+        chatId: UUID,
+        readUpToSeq: Long,
+    ) {
         if (blockRepository.exists(peerId, callerId)) return
         publishIsolated(
             peerId,
-            ChatReadEvent(chatId = chat.id, readUpToSeq = advanced.lastReadSeq, byUserId = callerId),
+            ChatReadEvent(chatId = chatId, readUpToSeq = readUpToSeq, byUserId = callerId),
         )
     }
 
