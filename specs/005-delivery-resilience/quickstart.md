@@ -23,10 +23,10 @@ docker compose -f deploy/local/docker-compose.yml up -d   # PostgreSQL 17 :5432,
 pnpm --dir frontend dev                                    # SPA :5173, /api → :8080
 ```
 
-Новые настройки (значения по умолчанию совпадают с контрактом): `delivery.sync.message-page-size=50`,
-`delivery.sync.chat-page-size=20`, `delivery.sync.ack-batch-limit=100`,
-`delivery.backpressure.enabled=true`, `delivery.backpressure.min-limit`, `max-limit`,
-`latency-baseline` (для стресс-ручной проверки — заниженный `max-limit`). Прочее — как в 004.
+Новые настройки: sync/ack — значения контракта (`message-page-size=50`, `chat-page-size=20`,
+`ack-batch-limit=100`); backpressure — [research.md §6](./research.md): `enabled=true`,
+`min-limit=4`, `max-limit=64`, `latency-baseline=50ms` (для стресс-ручной проверки —
+заниженный `max-limit`). Прочее — как в 004.
 
 Далее: два браузера/приватных окна, мессенджер на `/`. DevTools → Network → **Offline** —
 основной инструмент разрывов; HTTP-примеры — с `Authorization: Bearer <accessToken>`.
