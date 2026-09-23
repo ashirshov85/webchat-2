@@ -88,6 +88,16 @@ describe('createSseParser frame parsing', () => {
     expect(crlf.events).toEqual([{ type: 'message.created', data: 'crlf' }])
     expect(cr.events).toEqual([{ type: 'message.created', data: 'cr' }])
   })
+
+  it('parses unknown event types like any other frame, preserving the type', () => {
+    // The parser stays schema-agnostic: filtering of frames this client
+    // does not know happens one layer up, in the connection dispatch.
+    const { events, parser } = collect()
+
+    pushSplit(parser, 'event: user.typing\ndata: {"chatId":"c-1"}\n\n')
+
+    expect(events).toEqual([{ type: 'user.typing', data: '{"chatId":"c-1"}' }])
+  })
 })
 
 describe('reconnectDelayMs client backoff', () => {
@@ -211,6 +221,36 @@ describe('streamUserEvents connection', () => {
     expect(created).toHaveBeenCalledTimes(1)
     expect(created).toHaveBeenCalledWith('{"chatId":"c-1"}')
     expect(future).not.toHaveBeenCalled()
+  })
+
+  it('ignores unknown event types without breaking the stream (US6-3 forward compatibility)', async () => {
+    const stream = sseStream()
+    fetchMock.mockReturnValueOnce(Promise.resolve(stream.response))
+    const created = vi.fn()
+    const read = vi.fn()
+
+    connection = streamUserEvents()
+    connection.subscribe('message.created', created)
+    connection.subscribe('chat.read', read)
+    await flush()
+
+    // A future server version may add new event types to the stream
+    // (contract changes are additive only). This client must skip the
+    // unknown frames and keep delivering the known ones that follow.
+    stream.send('retry: 3000\n\n')
+    stream.send('event: message.created\ndata: {"chatId":"c-1"}\n\n')
+    stream.send('event: user.typing\ndata: {"chatId":"c-1"}\n\n')
+    stream.send('event: message.reaction\ndata: {"chatId":"c-1","emoji":"ok"}\n\n')
+    stream.send(':ka\n\n')
+    stream.send('event: chat.read\ndata: {"chatId":"c-1","readUpToSeq":7}\n\n')
+    stream.send('event: message.created\ndata: {"chatId":"c-2"}\n\n')
+    await flush()
+
+    expect(created).toHaveBeenCalledTimes(2)
+    expect(created).toHaveBeenNthCalledWith(1, '{"chatId":"c-1"}')
+    expect(created).toHaveBeenNthCalledWith(2, '{"chatId":"c-2"}')
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(read).toHaveBeenCalledWith('{"chatId":"c-1","readUpToSeq":7}')
   })
 
   it('reconnects after a network drop on the client backoff, not the server retry hint', async () => {

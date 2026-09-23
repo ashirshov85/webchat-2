@@ -201,7 +201,7 @@ description: "Task list for feature implementation"
 
 ### Implementation for User Story 6
 
-- [ ] T063 [US6] Прямая совместимость SSE-клиента: неизвестные `event:`-типы обязаны игнорироваться (US6-3) + тест с неизвестным событием — в `frontend/src/api/sse.ts` и `frontend/src/api/__tests__/sse.test.ts`
+- [X] T063 [US6] Прямая совместимость SSE-клиента: неизвестные `event:`-типы обязаны игнорироваться (US6-3) + тест с неизвестным событием — в `frontend/src/api/sse.ts` и `frontend/src/api/__tests__/sse.test.ts`
 - [ ] T064 [US6] Контрактная конформанс-проверка: payload кадров SSE ассертится против `components.schemas.MessageCreatedEvent`/`ChatReadEvent` (расширение `RealtimeSseIT`); скрипт строго-по-контракту (ensure → подписка → отправка → приём → повторный id без дубля) по quickstart §3.6.2 — в `backend/src/test/kotlin/webchat/backend/realtime/RealtimeSseIT.kt`
 - [ ] T065 [US6] Контрактный конвейер: `vacuum lint` → `pnpm --dir frontend generate:api` без drift → `oasdiff` без breaking (additive minor 0.3.0 → 0.4.0); проверка инварианта состава — все новые пути аутентифицированы, публичный перечень 002–003 не расширен — по `contracts/openapi.yaml` (конвейер 001)
 
