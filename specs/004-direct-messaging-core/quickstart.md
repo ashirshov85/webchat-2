@@ -127,6 +127,12 @@ HTTP-примеры ниже — с `Authorization: Bearer <accessToken>` каж
   `webchat_message_ack_seconds`, `webchat_realtime_push_seconds`, `webchat_message_dedup_total`,
   `webchat_send_rejected_total{reason=…}` — растут в сценариях 3.2/3.7/3.8; warn-логи
   отклонённых отправок — в JSON-выводе backend (без текста сообщений).
-- Нагрузочный smoke (SC-001/005/008): `docker run --rm -i grafana/k6 run - < load/k6/messaging.smoke.js`
-  — профиль: пары VU, отправка+подтверждение, SSE-приём; критерий: p95 ≤ 2 с, флуд-ветка —
-  только `429`, без 5xx.
+- Нагрузочный smoke (SC-001/004/005/007, флуд-ветка): сначала `docker build -t webchat-k6
+  load/k6` — штатный образ `grafana/k6` не умеет читать `text/event-stream` (grafana/k6#746),
+  поэтому `load/k6/Dockerfile` собирает k6 с расширением `k6/x/sse`; затем
+  `docker run --rm -i --network host webchat-k6 run - < load/k6/messaging.smoke.js`
+  — профиль: 1 VU-пара (отправка+подтверждение, SSE-приём `message.created`/`chat.read`,
+  p95 ≤ 2 с), открытие диалога и страница истории p95 ≤ 3 с, флуд-ветка — только `429`
+  с `Retry-After`, без 5xx; пороги зафиксированы в шапке скрипта (SC-006 — расчётное
+  подтверждение, plan.md Constraints); прогон 5 мин, env `K6_BASE_URL`/`K6_MAILPIT_URL`
+  (нестандартные адреса) и `K6_SMOKE_DURATION` (сокращённые прогоны).
