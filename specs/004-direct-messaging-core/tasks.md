@@ -187,7 +187,7 @@ description: "Task list for feature implementation"
 - [X] T059 [P] [US5] `ContactList` (сортировка login/email переключаемая) и `UserSearchBox` (точный поиск, добавление, удаление контакта; клик по контакту → `ensureChat` → открыть диалог) — в `frontend/src/chats/components/ContactList.tsx`, `frontend/src/chats/components/UserSearchBox.tsx`
 - [X] T060 [US5] Действия панели: удаление чата (с purge outbox этого `chatId`, FR-021), блокировка/разблокировка пользователя, диалоговые меню — в `frontend/src/chats/pages/MessengerPage.tsx`, `frontend/src/chats/hooks/useOutbox.ts`; приёмка: UI-действия покрываются T061, `BlockingIT`/`ChatDeletionIT` остаются зелёными
 - [X] T061 [P] [US5] Frontend-тесты: переключение режимов, бейдж «99+», метка «заблокирован», сортировка контактов, поведение после удаления чата, появление чата от незнакомца по событию с неизвестным `chatId` (FR-019) — в `frontend/src/chats/components/__tests__/ChatListPanel.test.tsx`, `frontend/src/chats/components/__tests__/ContactList.test.tsx`, `frontend/src/chats/hooks/__tests__/useChatList.test.ts`
-- [ ] T062 [US5] Прогон `ContactsIT`, `BlockingIT`, `ChatDeletionIT` зелёными + ручная проверка quickstart §3.5/§3.7
+- [X] T062 [US5] Прогон `ContactsIT`, `BlockingIT`, `ChatDeletionIT` зелёными + ручная проверка quickstart §3.5/§3.7
 
 **Checkpoint**: Полноценный мессенджер: панель, контакты, блокировка, удаление чата (quickstart §3.5, §3.7)
 
