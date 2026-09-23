@@ -86,12 +86,12 @@ all-or-refusal, никогда «частичный список как полн
 переполнению очереди, повторы при временных отказах бессрочны (FR-005/FR-006/FR-009); сообщения ниже
 точки обрезки — недоступные, не непрочитанные (FR-003/FR-007); мультидевайс — вне объёма
 (Assumptions); нагрузочная валидация бюджетов 1M CCU / 100k msg/s в 005 — расчётная + профиль
-насыщения на достижимом масштабе, полнообъёмный прогон — платформенная cross-cutting-задача 014
+насыщения на достижимом масштабе (критерий валидности прогона: пик ≥ 5 000 msg/s, перегруженный режим ≥ 60 с — T042), полнообъёмный прогон — платформенная cross-cutting-задача 014
 (прецедент 004 plan.md Constraints, ROADMAP; фиксация в Complexity Tracking).
 
 **Scale/Scope**: 2 новых endpoints (№25 `POST /users/me/delivery-ack`, №26 `POST /users/me/sync`) +
 расширение №15 опциональным `after` (+`nextAfter`) + №16 новым `503 server_busy`; 1 миграция PG
-(V12, одна колонка + backfill); 0 новых таблиц/Redis-ключей; frontend: модуль `src/sync/`
+(V12: колонка + backfill + индекс `ix_chat_participants_user`); 0 новых таблиц/Redis-ключей; frontend: модуль `src/sync/`
 (курсоры/ack/pendingReads/useSync), эволюция outbox (лимит/вытеснение) и панели (индикация
 синхронизации); 1 новый k6-сценарий (+профиль насыщения в нём); 8 новых метрик (FR-014).
 
@@ -175,7 +175,8 @@ backend/src/main/kotlin/webchat/backend/
 backend/src/main/resources/
 ├── db/migration/
 │   └── V12__delivery_sync.sql                # chat_participants.delivered_up_to_seq (+CHECK, backfill
-│                                               #   GREATEST(last_read_seq, deleted_up_to_seq))
+│                                               #   GREATEST(last_read_seq, deleted_up_to_seq)
+│                                               #   + ix_chat_participants_user (user_id) — loadForSync)
 └── application.yml                           # + delivery.sync.*, delivery.backpressure.*
 
 backend/src/test/kotlin/webchat/backend/      # DeliveryAckIT, SyncIT (полнота/порядок/пагинация/обрезка/
