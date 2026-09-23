@@ -1,6 +1,7 @@
 package webchat.backend.chats.domain.port
 
 import webchat.backend.chats.domain.model.ChatParticipant
+import webchat.backend.chats.domain.model.UndeliveredChatPage
 import java.util.UUID
 
 /**
@@ -64,4 +65,58 @@ interface ParticipantRepository {
         userId: UUID,
         chatLastSeq: Long,
     ): ChatParticipant?
+
+    /**
+     * Ack №25 `POST /users/me/delivery-ack` (005, api-contract.md §2,
+     * data-model сущность 1, T012): the batch monotone GREATEST-advance
+     * of the CALLER's delivery position, one transaction over the whole
+     * batch — per entry, by the `(chat_id, user_id)` PK:
+     * `UPDATE … SET delivered_up_to_seq = GREATEST(delivered_up_to_seq, :upToSeq)
+     *  WHERE chat_id = :chatId AND user_id = :userId AND delivered_up_to_seq < :upToSeq`;
+     * rowcount 0 — no effect (a repeated or smaller value, idempotent —
+     * see [ChatParticipant.advanceDeliveredUpTo]). The caller has already
+     * validated the WHOLE batch (membership: чужой → `403`, несуществующий
+     * → `404`; `upToSeq ≤ chats.last_seq` → `400 invalid_up_to_seq`), so
+     * the port performs no partial effects; an empty batch performs no
+     * statements (the contract's `minItems 1` is the service's check).
+     * The delivery position moves ONLY through this operation (FR-001) —
+     * a №26 sync answer and an SSE frame never write it.
+     *
+     * The JDBC adapter (`JdbcParticipantRepository`, T010) provides the
+     * implementation; the default below only keeps the port evolution
+     * compilable until the adapter task lands.
+     */
+    fun advanceDelivered(
+        userId: UUID,
+        acks: Map<UUID, Long>,
+    ): Unit =
+        throw UnsupportedOperationException(
+            "advanceDelivered is provided by the JDBC adapter (T010, JdbcParticipantRepository)",
+        )
+
+    /**
+     * №26 `POST /users/me/sync` candidate read (005, sync-protocol.md §3,
+     * data-model сущность 2, T013): [userId]'s chats WITH a visible
+     * undelivered tail — `chats.last_seq > GREATEST(delivered_up_to_seq,
+     * deleted_up_to_seq)` (see [ChatParticipant.hasUndeliveredVisible]) —
+     * latest activity first: `chats.last_seq DESC`, tie-break
+     * `created_at DESC, chat_id`; up to [chatLimit] entries (already
+     * validated 1–50 by the caller) with [UndeliveredChatPage.moreChats]
+     * by the remainder, computed in the same read snapshot
+     * («частичный список как полный» исключён). The client cursors are
+     * folded in by the service (эффективный курсор =
+     * `max(клиентский, серверный)`); the read never moves the delivery
+     * position.
+     *
+     * The JDBC adapter (`JdbcParticipantRepository`, T010) provides the
+     * implementation; the default below only keeps the port evolution
+     * compilable until the adapter task lands.
+     */
+    fun loadForSync(
+        userId: UUID,
+        chatLimit: Int,
+    ): UndeliveredChatPage =
+        throw UnsupportedOperationException(
+            "loadForSync is provided by the JDBC adapter (T010, JdbcParticipantRepository)",
+        )
 }
