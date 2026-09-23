@@ -170,6 +170,139 @@ body {
   align-self: flex-end;
 }
 
+/* Left panel: «Чаты»/«Контакты» modes + chat list (feature 004, T058) */
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-panel-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.chat-panel-tab {
+  flex: 1;
+  padding: 6px 10px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.chat-panel-tab:hover:not(:disabled) {
+  color: var(--text);
+  background: none;
+}
+
+.chat-panel-tab[aria-selected='true'] {
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.chat-panel-section {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.chat-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.chat-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font: inherit;
+  font-weight: 400;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.chat-item:hover:not(:disabled) {
+  color: inherit;
+  background: var(--surface);
+  border-color: var(--accent);
+}
+
+.chat-item[aria-current='true'] {
+  border-color: var(--accent);
+}
+
+.chat-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chat-item-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-item-blocked {
+  flex-shrink: 0;
+  padding: 0 6px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.chat-item-badge {
+  flex-shrink: 0;
+  min-width: 22px;
+  margin-left: auto;
+  padding: 0 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: center;
+  color: #ffffff;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.chat-item-preview {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-item-preview-empty {
+  font-style: italic;
+}
+
+.chat-panel-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.chat-panel-error .error-banner {
+  margin: 0;
+  width: 100%;
+}
+
 .error-banner {
   display: flex;
   align-items: flex-start;
