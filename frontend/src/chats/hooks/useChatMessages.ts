@@ -44,10 +44,22 @@
  * messages at or below it are dropped and never restored (US1-5,
  * FR-007). The delta's `peerReadUpToSeq` advances the ✓✓ watermark
  * monotonically — offline read marks arrive with the catch-up.
+ *
+ * Offline read marks (feature 005, T034; sync-protocol.md §6): the
+ * read point records the per-chat watermark in pendingReads BEFORE
+ * each №17 attempt — bounded by the local delivery cursor, because
+ * offline reading applies only to previously synchronized messages
+ * (US3-7) — and removes it only after the `204`. A lost request or
+ * response therefore leaves the entry in place, and the useSync
+ * reconnect flush replays it through the idempotent, monotonic №17
+ * (server GREATEST): the server counter converges with what the user
+ * actually read while offline, and senders get their ✓✓ (US3-7).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getChat, listMessages, markChatRead } from '../../api/chats'
 import type { Message, MessagePage } from '../../api/chats'
+import { getCursor } from '../../sync/cursors'
+import { confirmPendingRead, recordPendingRead } from '../../sync/pendingReads'
 import { useRealtime } from './useRealtime'
 
 /** Read-mark throttle window (US4, T044): ≤1 POST /read per 500 ms (SC-007 ≤2 s). */
@@ -145,7 +157,10 @@ function reconcileMessages(existing: Message[], incoming: Message[]): Message[] 
   return [...byId.values()].sort((a, b) => a.seq - b.seq)
 }
 
-export function useChatMessages(chatId: string | null): UseChatMessagesResult {
+export function useChatMessages(
+  chatId: string | null,
+  userId: string | null = null,
+): UseChatMessagesResult {
   const realtime = useRealtime()
   const [messages, setMessages] = useState<Message[]>([])
   const [status, setStatus] = useState<ChatMessagesStatus>(() =>
@@ -275,24 +290,44 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     }
   }, [chatId, refreshCount])
 
-  /** Sends the coalesced read mark (best-effort, monotonic, ≤1 per 500 ms). */
-  const flushReadReceipt = useCallback((chatId: string) => {
-    const target = pendingReadSeqRef.current
-    if (target <= 0) {
-      return
-    }
-    pendingReadSeqRef.current = 0
-    lastReadSentAtRef.current = Date.now()
-    const previous = lastSentReadSeqRef.current
-    lastSentReadSeqRef.current = target
-    markChatRead(chatId, target).catch(() => {
-      // Roll the local watermark back so the next displayed change
-      // retries the advance (idempotent server-side, FR-010).
-      if (lastSentReadSeqRef.current === target) {
-        lastSentReadSeqRef.current = previous
+  /**
+   * Sends the coalesced read mark (best-effort, monotonic, ≤1 per 500 ms).
+   * T034 (§6): the offline watermark is recorded BEFORE the №17 attempt
+   * (clamped to the local delivery cursor — offline reading applies
+   * only to previously synchronized messages) and removed only after
+   * its `204`, so an offline read survives a lost request/response and
+   * replays on the useSync reconnect flush.
+   */
+  const flushReadReceipt = useCallback(
+    (chatId: string) => {
+      const target = pendingReadSeqRef.current
+      if (target <= 0) {
+        return
       }
-    })
-  }, [])
+      pendingReadSeqRef.current = 0
+      lastReadSentAtRef.current = Date.now()
+      const previous = lastSentReadSeqRef.current
+      lastSentReadSeqRef.current = target
+      if (userId !== null) {
+        recordPendingRead(userId, chatId, target, getCursor(userId, chatId))
+      }
+      void markChatRead(chatId, target)
+        .then(() => {
+          if (userId !== null) {
+            confirmPendingRead(userId, chatId, target)
+          }
+        })
+        .catch(() => {
+          // Roll the local watermark back so the next displayed change
+          // retries the advance (idempotent server-side, FR-010); the
+          // pendingReads entry stays for the reconnect flush (T034).
+          if (lastSentReadSeqRef.current === target) {
+            lastSentReadSeqRef.current = previous
+          }
+        })
+    },
+    [userId],
+  )
 
   /**
    * Read marks on display (US4, T044): every change of the rendered

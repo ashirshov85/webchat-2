@@ -2,6 +2,8 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
 import type { ChatView, Message, MessagePage } from '../../../api/chats'
+import { advanceCursor } from '../../../sync/cursors'
+import { getPendingRead } from '../../../sync/pendingReads'
 import { useChatMessages } from '../useChatMessages'
 
 const sse = vi.hoisted(() => ({ streamUserEvents: vi.fn() }))
@@ -90,8 +92,8 @@ function emitMessageCreated(stream: MockStream, message: Message): void {
 
 const mounted: Array<{ unmount(): void }> = []
 
-function mountChatMessages(initialChatId: string | null) {
-  const rendered = renderHook((chatId: string | null) => useChatMessages(chatId), {
+function mountChatMessages(initialChatId: string | null, userId: string | null = null) {
+  const rendered = renderHook((chatId: string | null) => useChatMessages(chatId, userId), {
     initialProps: initialChatId,
   })
   mounted.push(rendered)
@@ -102,6 +104,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockedGetChat.mockResolvedValue(chatView())
   mockedMarkChatRead.mockResolvedValue(undefined)
+  window.localStorage.clear()
 })
 
 afterEach(() => {
@@ -452,5 +455,81 @@ describe('useChatMessages chat switching', () => {
     })
 
     expect(rendered.result.current.messages.map((m) => m.id)).toEqual(['b-5'])
+  })
+})
+
+describe('useChatMessages offline read watermark (feature 005, T034, sync-protocol.md §6)', () => {
+  it('records the pending watermark BEFORE the №17 attempt and removes it only after the 204', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)]))
+    let resolveRead!: () => void
+    mockedMarkChatRead.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveRead = resolve
+      }),
+    )
+    const { result } = mountChatMessages('chat-1', 'user-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    // №17 is in flight — the watermark already sits in pendingReads
+    // (§6: запись ДО попытки), so a lost request/response replays on reconnect
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-1', 10)
+    })
+    expect(getPendingRead('user-1', 'chat-1')).toBe(10)
+
+    await act(async () => {
+      resolveRead()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(getPendingRead('user-1', 'chat-1')).toBe(0)
+    })
+  })
+
+  it('a failed №17 keeps the watermark pending for the reconnect flush', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)]))
+    mockedMarkChatRead.mockRejectedValue(new Error('offline'))
+    const { result } = mountChatMessages('chat-1', 'user-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-1', 10)
+    })
+    expect(getPendingRead('user-1', 'chat-1')).toBe(10)
+  })
+
+  it('clamps the offline watermark to the local delivery cursor (US3-7)', async () => {
+    installStream()
+    advanceCursor('user-1', 'chat-1', 6)
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)]))
+    let resolveRead!: () => void
+    mockedMarkChatRead.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveRead = resolve
+      }),
+    )
+    mountChatMessages('chat-1', 'user-1')
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-1', 10)
+    })
+
+    // №17 carries the actually displayed seq (10), but the offline
+    // watermark is bounded by the client's delivery position (6) —
+    // offline reading applies only to previously synchronized messages
+    expect(getPendingRead('user-1', 'chat-1')).toBe(6)
+
+    await act(async () => {
+      resolveRead()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(getPendingRead('user-1', 'chat-1')).toBe(0)
+    })
   })
 })

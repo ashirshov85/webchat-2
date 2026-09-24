@@ -27,8 +27,15 @@
  * exactly from there (US1-4): cursors are persisted per applied page,
  * so nothing is lost and a re-delivered page renders once.
  *
- * The `flushPendingReads` pre-step of §3.1 (offline read marks) is
- * wired into the loop by US3 (T034) — US1 ships the delivery core.
+ * The `flushPendingReads` pre-step of §3.1 (US3, T034; §6): offline
+ * read marks recorded by the dialog's read point (useChatMessages)
+ * are replayed through the idempotent №17 inside the single-flight
+ * cycle BEFORE loop A — the server unread counter and the senders' ✓✓
+ * converge with what the user actually read while disconnected. Each
+ * entry confirms (removal) only on its `204`; a failed replay stays
+ * pending for the next (re)open and never fails the catch-up itself
+ * (№17 is monotone server-side — a replay after a lost response is a
+ * no-op).
  *
  * Integration: mount once in MessengerPage (T023) — `onChatUpdate`
  * feeds the chat list and the open dialog, `syncing` drives the
@@ -37,7 +44,7 @@
  * through the same №25 batches.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { listMessagesAfter, sync } from '../../api/chats'
+import { listMessagesAfter, markChatRead, sync } from '../../api/chats'
 import type { Message } from '../../api/chats'
 import type { PublicUser } from '../../api/auth'
 import { useRealtime } from '../../chats/hooks/useRealtime'
@@ -45,6 +52,8 @@ import type { Unsubscribe } from '../../chats/hooks/useRealtime'
 import { getAckBatcher } from '../ack'
 import type { AckBatcher } from '../ack'
 import { advanceCursor, applySyncSelfHeal, getCursor, readSyncCursors } from '../cursors'
+import { confirmPendingRead, readPendingReads } from '../pendingReads'
+import type { PendingReadMap } from '../pendingReads'
 
 /** Contract defaults of №26 (api-contract.md §1) — the loop's page sizes. */
 export const SYNC_CHAT_LIMIT = 20
@@ -149,6 +158,29 @@ async function catchUpTail(
 }
 
 /**
+ * §3.1 pre-step (US3, T034; §6): every offline read recorded in
+ * pendingReads is replayed through the idempotent №17 BEFORE loop A
+ * starts — the server unread counter converges with what the user
+ * actually read while disconnected and senders get their ✓✓
+ * (`chat.read`). Each entry confirms (removal) only on its `204`; a
+ * failed №17 leaves it pending for the next (re)open — the flush is
+ * per-entry best-effort and never fails or blocks the catch-up (№17
+ * is monotone server-side, so a replay after a lost response is a
+ * no-op). Entries recorded after the flush snapshot went through the
+ * online read point and stay for the next reconnect.
+ */
+async function flushPendingReads(userId: string, pending: Readonly<PendingReadMap>): Promise<void> {
+  for (const [chatId, upToSeq] of Object.entries(pending)) {
+    try {
+      await markChatRead(chatId, upToSeq)
+      confirmPendingRead(userId, chatId, upToSeq)
+    } catch {
+      // stays pending; the next (re)open replays it (server GREATEST)
+    }
+  }
+}
+
+/**
  * The full §3.1 cycle: loop A (№26) with per-chat loop B (№15)
  * continuation, repeated while `moreChats`. Each applied page is
  * confirmed (ack + cursor) before the next request, so an abort at
@@ -162,6 +194,13 @@ async function runCatchUp(
   batcher: AckBatcher,
   emit: (update: SyncChatUpdate) => void,
 ): Promise<void> {
+  // The offline-read flush (§3.1 pre-step, T034) — the snapshot is
+  // taken synchronously, so an EMPTY map (the common case) leaves the
+  // №26 start immediate instead of deferring it a microtask hop.
+  const pending = readPendingReads(userId)
+  if (Object.keys(pending).length > 0) {
+    await flushPendingReads(userId, pending)
+  }
   for (;;) {
     const response = await sync(readSyncCursors(userId), SYNC_CHAT_LIMIT, SYNC_MESSAGE_LIMIT)
     if (response.chats.length === 0) {

@@ -1,10 +1,11 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { deliveryAck, listMessagesAfter, sync } from '../../../api/chats'
+import { deliveryAck, listMessagesAfter, markChatRead, sync } from '../../../api/chats'
 import type { Message, MessagePage, SyncChatDelta, SyncResponse } from '../../../api/chats'
 import type { PublicUser } from '../../../api/auth'
 import { getAckBatcher } from '../../ack'
 import { advanceCursor, getCursor } from '../../cursors'
+import { getPendingRead, readPendingReads, recordPendingRead } from '../../pendingReads'
 import { useSync } from '../useSync'
 import type { SyncChatUpdate, UseSyncResult } from '../useSync'
 
@@ -12,6 +13,7 @@ const api = vi.hoisted(() => ({
   sync: vi.fn(),
   listMessagesAfter: vi.fn(),
   deliveryAck: vi.fn(),
+  markChatRead: vi.fn(),
 }))
 
 vi.mock('../../../api/chats', () => api)
@@ -154,12 +156,14 @@ async function settle(): Promise<void> {
 const mockedSync = vi.mocked(sync)
 const mockedListAfter = vi.mocked(listMessagesAfter)
 const mockedDeliveryAck = vi.mocked(deliveryAck)
+const mockedMarkChatRead = vi.mocked(markChatRead)
 
 beforeEach(() => {
   vi.resetAllMocks()
   vi.useFakeTimers()
   window.localStorage.clear()
   mockedDeliveryAck.mockResolvedValue(undefined)
+  mockedMarkChatRead.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -570,5 +574,94 @@ describe('useSync — truncation never restores deleted history (US1-5)', () => 
     expect(received[0]?.messages).toEqual([])
     expect(getCursor(USER, CHAT_A)).toBe(42)
     expect(mockedDeliveryAck).toHaveBeenCalledWith([{ chatId: CHAT_A, upToSeq: 42 }])
+  })
+})
+
+describe('useSync — flushPendingReads pre-step (§3.1/§6, T034)', () => {
+  it('flushes every pending offline read via №17 BEFORE the №26 catch-up and confirms on 204', async () => {
+    recordPendingRead(USER, CHAT_A, 12)
+    recordPendingRead(USER, CHAT_B, 30)
+    mockedSync.mockResolvedValue(syncResponse([]))
+    const result = mountSync()
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    expect(mockedMarkChatRead).toHaveBeenCalledTimes(2)
+    expect(mockedMarkChatRead).toHaveBeenCalledWith(CHAT_A, 12)
+    expect(mockedMarkChatRead).toHaveBeenCalledWith(CHAT_B, 30)
+    // the flush precedes the catch-up: every №17 lands before the first №26
+    const firstRead = mockedMarkChatRead.mock.invocationCallOrder[0]
+    const firstSync = mockedSync.mock.invocationCallOrder[0]
+    expect(firstRead).toBeDefined()
+    expect(firstSync).toBeDefined()
+    expect(firstRead!).toBeLessThan(firstSync!)
+    expect(readPendingReads(USER)).toEqual({})
+  })
+
+  it('a failed №17 leaves the entry pending and never fails the catch-up cycle', async () => {
+    recordPendingRead(USER, CHAT_A, 12)
+    mockedMarkChatRead.mockRejectedValueOnce(new Error('timeout'))
+    mockedSync.mockResolvedValueOnce(
+      syncResponse([delta({ chatId: CHAT_A, messages: messages(CHAT_A, 1, 2), lastSeq: 2 })]),
+    )
+    const views = new DialogViews()
+    const result = mountSync()
+    subscribe(views, result)
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    expect(result.current.error).toBeNull()
+    expect(views.seqs(CHAT_A)).toEqual([1, 2])
+    expect(getPendingRead(USER, CHAT_A)).toBe(12)
+
+    // the next (re)open replays the same watermark — №17's server-side
+    // GREATEST makes the repeat safe and the 204 clears it
+    await act(async () => {
+      await result.current.syncNow()
+    })
+    expect(mockedMarkChatRead).toHaveBeenCalledWith(CHAT_A, 12)
+    expect(getPendingRead(USER, CHAT_A)).toBe(0)
+  })
+
+  it('a newer offline read recorded while the flush №17 is in flight stays pending', async () => {
+    recordPendingRead(USER, CHAT_A, 5)
+    let resolveRead!: () => void
+    mockedMarkChatRead.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveRead = resolve
+      }),
+    )
+    mockedSync.mockResolvedValue(syncResponse([]))
+    const result = mountSync()
+
+    let run!: Promise<void>
+    act(() => {
+      run = result.current.syncNow()
+    })
+    // the user keeps reading while the №17 for 5 is in flight
+    recordPendingRead(USER, CHAT_A, 9)
+    await act(async () => {
+      resolveRead()
+      await run
+    })
+
+    expect(mockedMarkChatRead).toHaveBeenCalledWith(CHAT_A, 5)
+    expect(getPendingRead(USER, CHAT_A)).toBe(9)
+  })
+
+  it('nothing pending — the cycle starts with №26 directly', async () => {
+    mockedSync.mockResolvedValue(syncResponse([]))
+    const result = mountSync()
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    expect(mockedMarkChatRead).not.toHaveBeenCalled()
+    expect(mockedSync).toHaveBeenCalledTimes(1)
   })
 })

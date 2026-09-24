@@ -159,7 +159,7 @@ export function MessengerPage() {
     loadOlder,
     peerReadUpToSeq,
     applySyncPage: applyDialogSync,
-  } = useChatMessages(activeChatId)
+  } = useChatMessages(activeChatId, currentUserId)
 
   // The §3.1 catch-up loop (feature 005): runs on every SSE (re)open,
   // its `syncing` drives the SyncIndicator below.
