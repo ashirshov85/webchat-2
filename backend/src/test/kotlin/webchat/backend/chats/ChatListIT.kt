@@ -7,12 +7,13 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
+import webchat.backend.sync.SyncTestSupport
 import java.util.UUID
 
 /**
  * T055 (tasks.md Phase 7, US5): the №12 `GET /api/v1/chats` dialog list —
  * ONE request per panel load (research.md 004 §8), each item a contract
- * `ChatListItem` shaped strictly by openapi.yaml 0.4.0:
+ * `ChatListItem` shaped strictly by openapi.yaml:
  *
  *  * server-side sorting: by `createdAt` of the LAST VISIBLE message
  *    descending (incoming OR outgoing — either lifts the dialog, FR-014),
@@ -22,9 +23,12 @@ import java.util.UUID
  *  * `lastMessage` is the newest message with `seq > deleted_up_to_seq`
  *    (the per-user visibility watermark, data-model 004 §2) with its FULL
  *    text (the ≤64-char cut is a client render); `null` for an empty chat;
- *  * `unreadCount` counts exactly the incoming visible messages above the
- *    caller's read watermark (`seq > last_read_seq AND seq >
- *    deleted_up_to_seq AND sender_id <> me` — data-model 004 §2);
+ *  * `unreadCount` counts exactly the incoming messages of the DELIVERED
+ *    visible tail — `sender_id <> me AND seq > GREATEST(last_read_seq,
+ *    deleted_up_to_seq) AND seq <= LEAST(chats.last_seq,
+ *    delivered_up_to_seq)` (data-model 005 сущность 3, T031/FR-007): the
+ *    badge grows ONLY by the delivery ack №25, so the fixtures ack the
+ *    received tail before asserting it;
  *  * the ONLY exclusion is the fully deleted dialog:
  *    `hidden AND deleted_up_to_seq >= chats.last_seq` — the peer's row is
  *    never touched (FR-021); a NEW incoming resets `hidden` on the write
@@ -41,12 +45,13 @@ import java.util.UUID
  * Anchored on the T002 fixtures over the real 001 flows, Testcontainers
  * PG+Redis, real HTTP, no mocks; every method registers its own users, so
  * nothing leaks between methods and the FR-011 flood bucket is never
- * crossed.
+ * crossed. The 005 №25 ack fixture rides the [SyncTestSupport] layer the
+ * badge now depends on (T031).
  */
 class ChatListIT(
     @Autowired private val objectMapper: ObjectMapper,
     @Autowired private val jdbcTemplate: JdbcTemplate,
-) : MessagingTestSupport() {
+) : SyncTestSupport() {
     /**
      * FR-014 sorting: the dialog with the NEWEST visible message comes
      * first regardless of which side sent it; the chat that never carried
@@ -129,9 +134,11 @@ class ChatListIT(
     }
 
     /**
-     * FR-014 badge: `unreadCount` counts exactly the VISIBLE INCOMING
-     * messages above the caller's read watermark — own messages never
-     * count, the №17 advance zeroes the badge (US4 watermark).
+     * FR-014 badge (005 T031 recut): `unreadCount` counts exactly the
+     * incoming messages of the DELIVERED visible tail — a received but
+     * UNACKED message does not count (the badge grows only by the ack
+     * №25, FR-007), own messages never count, and the №17 advance
+     * zeroes the badge (US4 watermark).
      */
     @Test
     fun `unreadCount counts only visible incoming messages above the read watermark`() {
@@ -140,7 +147,14 @@ class ChatListIT(
         val seqs = sendFrom(bob, chatId, UNREAD_PREFIX, UNREAD_MESSAGES)
 
         assertThat(unreadCountOf(chatListItemOf(alice, chatId)))
-            .overridingErrorMessage("every unread incoming message must count")
+            .overridingErrorMessage(
+                "an unacked incoming message is not unread yet — only the ack №25 grows the badge (FR-007)",
+            ).isZero()
+
+        assertThat(deliveryAck(alice, listOf(chatId to seqs.max())).statusCode)
+            .isEqualTo(HttpStatus.NO_CONTENT)
+        assertThat(unreadCountOf(chatListItemOf(alice, chatId)))
+            .overridingErrorMessage("every delivered unread incoming message must count")
             .isEqualTo(UNREAD_MESSAGES.toLong())
 
         sendMessageOk(alice, chatId, OWN_TEXT)
@@ -152,7 +166,7 @@ class ChatListIT(
             .isEqualTo(HttpStatus.NO_CONTENT)
         assertThat(unreadCountOf(chatListItemOf(alice, chatId)))
             .overridingErrorMessage("reading up to the last seq must zero the badge")
-            .isZero
+            .isZero()
     }
 
     /**
@@ -181,6 +195,10 @@ class ChatListIT(
         val newSeq = sendMessageOk(bob, chatId, newText)["seq"].asLong()
         assertThat(newSeq).isGreaterThan(oldSeqs.max())
 
+        assertThat(deliveryAck(alice, listOf(chatId to newSeq)).statusCode)
+            .overridingErrorMessage(
+                "the returned dialog's new incoming must ack-deliver before the badge may count it (T031)",
+            ).isEqualTo(HttpStatus.NO_CONTENT)
         val returned = chatListItemOf(alice, chatId)
         assertThat(lastMessageTextOf(returned))
             .overridingErrorMessage("the returned dialog shows ONLY the new message as lastMessage")

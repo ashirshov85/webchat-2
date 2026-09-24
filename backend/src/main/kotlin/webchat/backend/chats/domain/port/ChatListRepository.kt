@@ -13,7 +13,9 @@ import java.util.UUID
  * the caller's `user_blocks` mark, with the per-chat aggregates
  * (`lastMessage` by the max VISIBLE `seq`, `unreadCount`) computed
  * in-query — N+1 panel reads are the rejected alternative (research.md
- * 004 §8).
+ * 004 §8). Since 005 (T031, data-model сущность 3) the `unreadCount`
+ * aggregate carries the delivery-bounded server-authoritative formula —
+ * the same bounds [ParticipantRepository.countUnread] embodies for №26.
  */
 fun interface ChatListRepository {
     /**

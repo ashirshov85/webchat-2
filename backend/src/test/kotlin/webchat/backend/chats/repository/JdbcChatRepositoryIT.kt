@@ -92,8 +92,11 @@ class JdbcChatRepositoryIT : AbstractIntegrationTest() {
      * a `hidden` dialog WITH a visible tail stays in the list (the
      * FR-021 return until T012 resets the flag); `lastMessage` is the
      * newest message above the watermark; `unreadCount` counts exactly
-     * the incoming visible messages above the read watermark (own
-     * messages never count); `blockedByMe` is the caller's own mark.
+     * the incoming messages of the DELIVERED visible tail (005 T031,
+     * data-model сущность 3: `GREATEST(last_read, deleted) < seq ≤
+     * LEAST(chats.last_seq, delivered)` — the staged rows carry the
+     * delivery position the ack №25 would have written); `blockedByMe`
+     * is the caller's own mark.
      */
     @Test
     fun `listForUser excludes only fully deleted dialogs and aggregates per user`() {
@@ -113,8 +116,21 @@ class JdbcChatRepositoryIT : AbstractIntegrationTest() {
         advanceLastSeq(deletedChat.id, lastInsertedSeq(deletedChat.id))
         advanceLastSeq(blockedChat.id, lastInsertedSeq(blockedChat.id))
 
-        stagePerUserState(deletedChat.id, me, deletedUpToSeq = lastInsertedSeq(deletedChat.id), hidden = true)
-        stagePerUserState(aliveChat.id, me, deletedUpToSeq = 0, hidden = true) // hidden WITH a visible tail
+        stagePerUserState(
+            deletedChat.id,
+            me,
+            deletedUpToSeq = lastInsertedSeq(deletedChat.id),
+            hidden = true,
+            // the V12 backfill discipline: delivered = GREATEST(read, deleted)
+            deliveredUpToSeq = lastInsertedSeq(deletedChat.id),
+        )
+        stagePerUserState(
+            aliveChat.id,
+            me,
+            deletedUpToSeq = 0,
+            hidden = true, // hidden WITH a visible tail
+            deliveredUpToSeq = theirsSeq, // the ack №25 end state — the incoming tail counts (T031)
+        )
         jdbcTemplate.update(INSERT_BLOCK_SQL, me, blockedPeer)
 
         val entries = chatRepository.listForUser(me).associateBy { it.chatId }
@@ -132,8 +148,10 @@ class JdbcChatRepositoryIT : AbstractIntegrationTest() {
                 "lastMessage must be the peer's message — the newest visible, not the caller's own older one",
             ).isEqualTo(alivePeer)
         assertThat(alive.unreadCount)
-            .overridingErrorMessage("unreadCount must count incoming visible messages above the read watermark only")
-            .isEqualTo(1L)
+            .overridingErrorMessage(
+                "unreadCount must count the incoming messages of the delivered visible tail only " +
+                    "(T031: seq ≤ delivered)",
+            ).isEqualTo(1L)
 
         assertThat(entries.getValue(blockedChat.id).blockedByMe)
             .overridingErrorMessage("blockedByMe must carry the caller's own block mark (FR-020)")
@@ -188,16 +206,22 @@ class JdbcChatRepositoryIT : AbstractIntegrationTest() {
             chatId,
         ) ?: error("chat <$chatId> must carry messages")
 
-    /** Stages the exact №14 end state (or a partial one) on ONE participant row. */
+    /**
+     * Stages the exact №14 end state (or a partial one) on ONE participant
+     * row, including the delivery position the ack №25 would have written
+     * (005 T031 — the badge is delivery-bounded down in the list query).
+     */
     private fun stagePerUserState(
         chatId: UUID,
         userId: UUID,
         deletedUpToSeq: Long,
         hidden: Boolean,
+        deliveredUpToSeq: Long,
     ) {
         jdbcTemplate.update(
             STAGE_PARTICIPANT_SQL,
             deletedUpToSeq,
+            deliveredUpToSeq,
             hidden,
             chatId,
             userId,
@@ -234,7 +258,7 @@ class JdbcChatRepositoryIT : AbstractIntegrationTest() {
         val STAGE_PARTICIPANT_SQL =
             """
             UPDATE chat_participants
-            SET deleted_up_to_seq = ?, hidden = ?
+            SET deleted_up_to_seq = ?, delivered_up_to_seq = ?, hidden = ?
             WHERE chat_id = ? AND user_id = ?
             """.trimIndent()
 

@@ -118,16 +118,19 @@ interface ParticipantRepository {
 
     /**
      * The server-authoritative unread counter — data-model 005 сущность 3
-     * (FR-007, T013 — the ONE reusable calculator; T031 reuses it for the
-     * №12 list): `COUNT(messages WHERE chat_id = chat AND sender_id !=
-     * user AND seq > GREATEST(last_read_seq, deleted_up_to_seq) AND
-     * seq <= LEAST(chats.last_seq, delivered_up_to_seq))`. Delivery-bounded:
+     * (FR-007, T013 — the ONE reusable calculator): `COUNT(messages WHERE
+     * chat_id = chat AND sender_id != user AND seq >
+     * GREATEST(last_read_seq, deleted_up_to_seq) AND seq <=
+     * LEAST(chats.last_seq, delivered_up_to_seq))`. Delivery-bounded:
      * the badge counts only the CONFIRMED delivered tail (a №26 delta
      * page is not yet unread until the client acks it — the sync answer
      * never moves the position it is bounded by, FR-001) and
      * truncation-bounded: below the deletion watermark messages are
      * inaccessible, not unread (FR-003/US1-5). Derived per read — never
      * stored; a user without a participant row of the chat reads 0.
+     * T031: the №12 chat list mirrors the SAME bounds inside its ONE
+     * aggregate query (an N+1 of per-chat calls is the rejected
+     * alternative, research.md 004 §8) — one formula, no drift.
      */
     fun countUnread(
         userId: UUID,
