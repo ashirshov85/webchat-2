@@ -95,7 +95,7 @@ description: "Task list for feature implementation"
 ### Tests for User Story 2 (писать ПЕРВЫМИ)
 
 - [x] T024 [P] [US2] Frontend-тесты outbox-лимита: при 1000 записях новые принимаются с вытеснением старейших `sending` → `failed` + `errorCode='queue_overflow'`; `failed` не вытесняются; вытесненное повторно в очередь не принимается; ручной retry вытеснённого тем же ID работает — в `frontend/src/chats/__tests__/outbox.limit.test.ts` ([data-model.md](./data-model.md) сущность 4; edge «лимит очереди»)
-- [ ] T025 [P] [US2] Frontend-тесты `useOutbox` классификации: `503 server_busy` + `Retry-After` → запись остаётся `sending` + `retryAt` (как 429, FR-009); сеть/таймаут/5xx → `sending` + backoff 1с…30с бессрочно тем же ID; постоянные 4xx (400/403/404/409) → `failed` терминально (FR-006); FIFO per-chat при флаше (чат не ждёт чужой блокировки) — в `frontend/src/chats/hooks/__tests__/useOutbox.retry.test.ts` (503 мокается; E2E-эффект — после T041)
+- [x] T025 [P] [US2] Frontend-тесты `useOutbox` классификации: `503 server_busy` + `Retry-After` → запись остаётся `sending` + `retryAt` (как 429, FR-009); сеть/таймаут/5xx → `sending` + backoff 1с…30с бессрочно тем же ID; постоянные 4xx (400/403/404/409) → `failed` терминально (FR-006); FIFO per-chat при флаше (чат не ждёт чужой блокировки) — в `frontend/src/chats/hooks/__tests__/useOutbox.retry.test.ts` (503 мокается; E2E-эффект — после T041)
 
 ### Implementation for User Story 2
 
