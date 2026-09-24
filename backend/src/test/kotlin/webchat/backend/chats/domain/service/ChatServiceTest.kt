@@ -261,8 +261,14 @@ class ChatServiceTest {
 
         override fun loadForSync(
             userId: UUID,
+            clientCursors: Map<UUID, Long>,
             chatLimit: Int,
         ): UndeliveredChatPage = UndeliveredChatPage(emptyList(), moreChats = false)
+
+        override fun countUnread(
+            userId: UUID,
+            chatId: UUID,
+        ): Long = 0L
     }
 
     /** The auth port reused across features (sso does the same); existence only — the users table is the source. */

@@ -364,8 +364,14 @@ class ChatControllerTest {
 
         override fun loadForSync(
             userId: UUID,
+            clientCursors: Map<UUID, Long>,
             chatLimit: Int,
         ): UndeliveredChatPage = UndeliveredChatPage(emptyList(), moreChats = false)
+
+        override fun countUnread(
+            userId: UUID,
+            chatId: UUID,
+        ): Long = 0L
     }
 
     /** The T054 fixture: point lookups against the scripted [blockedPairs] (empty — no blocks). */

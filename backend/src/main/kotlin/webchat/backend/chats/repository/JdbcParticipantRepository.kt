@@ -80,26 +80,57 @@ class JdbcParticipantRepository(
     }
 
     /**
-     * T010 (№26, data-model 005 сущность 2): ONE read snapshot joining
-     * `chats` — the caller's dialogs with a visible undelivered tail
-     * (`hasUndeliveredVisible`: `chats.last_seq > GREATEST(delivered,
-     * deleted)`), latest activity first (`chats.last_seq DESC`, tie-break
-     * `created_at DESC, chat_id`), up to [chatLimit] entries with
-     * [UndeliveredChatPage.moreChats] computed by the remainder in the
-     * SAME query (fetching `chatLimit + 1` rows) — «частичный список как
-     * полный» исключён. The client cursors are folded in by the service
-     * (T013) as the effective cursor `max(client, server)`; this read
-     * never writes the delivery position (FR-001).
+     * T010/T013 (№26, data-model 005 сущность 2): ONE read snapshot
+     * joining `chats` — the caller's dialogs with a visible undelivered
+     * tail beyond the EFFECTIVE cursor. The client cursors fold into the
+     * candidacy bound through a `VALUES` join [k]: a sane cursor raises
+     * the bar (`COALESCE(k.cur, 0)` inside the GREATEST — a chat caught
+     * up by its client cursor is excluded entirely, foreign ids never
+     * match the caller's rows), while a cursor BEYOND the chat head (the
+     * «курсор из будущего» repair) falls back to the server position
+     * (`CASE WHEN k.cur > c.last_seq THEN me.delivered_up_to_seq`) so the
+     * desynced chat still delivers its backlog. Latest activity first
+     * (`chats.last_seq DESC`, tie-break `created_at DESC, chat_id`), up
+     * to [chatLimit] entries with [UndeliveredChatPage.moreChats]
+     * computed by the remainder in the SAME query (fetching
+     * `chatLimit + 1` rows) — cursor-aware pagination keeps «частичный
+     * список как полный» исключён. This read never writes the delivery
+     * position (FR-001).
      */
+    @Suppress("SpreadOperator") // the dynamic VALUES join makes the argument list per-cursor — a tiny one-off copy
     override fun loadForSync(
         userId: UUID,
+        clientCursors: Map<UUID, Long>,
         chatLimit: Int,
     ): UndeliveredChatPage {
         require(chatLimit >= 1) { "chatLimit must be positive (validated 1–50 by the caller)" }
-        val rows = jdbcTemplate.query(LOAD_FOR_SYNC_SQL, UNDELIVERED_ROW_MAPPER, userId, chatLimit + 1)
+        val rows =
+            if (clientCursors.isEmpty()) {
+                jdbcTemplate.query(LOAD_FOR_SYNC_SQL, UNDELIVERED_ROW_MAPPER, userId, chatLimit + 1)
+            } else {
+                jdbcTemplate.query(
+                    loadForSyncSql(clientCursors.size),
+                    UNDELIVERED_ROW_MAPPER,
+                    *loadForSyncArgs(userId, clientCursors, chatLimit),
+                )
+            }
         val moreChats = rows.size > chatLimit
         return UndeliveredChatPage(chats = rows.take(chatLimit), moreChats = moreChats)
     }
+
+    /**
+     * T013 (data-model 005 сущность 3, FR-007): the ONE reusable unread
+     * calculator — the exact contract formula as a single COUNT over the
+     * `(chat_id, seq)` index range, bounded below by
+     * `GREATEST(last_read_seq, deleted_up_to_seq)` (read + truncation)
+     * and above by `LEAST(chats.last_seq, delivered_up_to_seq)` (the
+     * confirmed delivery position). Pure read; a missing participant row
+     * counts 0.
+     */
+    override fun countUnread(
+        userId: UUID,
+        chatId: UUID,
+    ): Long = jdbcTemplate.queryForObject(COUNT_UNREAD_SQL, Long::class.java, userId, chatId, userId) ?: 0L
 
     private companion object {
         val ROW_MAPPER =
@@ -175,6 +206,58 @@ class JdbcParticipantRepository(
               AND c.last_seq > GREATEST(me.delivered_up_to_seq, me.deleted_up_to_seq)
             ORDER BY c.last_seq DESC, c.created_at DESC, c.id
             LIMIT ?
+            """.trimIndent()
+
+        /** T013: the cursor-folded candidacy bound of №26 (see [loadForSync]). */
+        private fun loadForSyncSql(cursorCount: Int): String =
+            """
+            SELECT me.chat_id,
+                   me.delivered_up_to_seq,
+                   me.deleted_up_to_seq,
+                   c.last_seq AS chat_last_seq
+            FROM chat_participants me
+            JOIN chats c ON c.id = me.chat_id
+            LEFT JOIN (VALUES ${cursorValues(cursorCount)}) AS k(chat_id, cur)
+              ON k.chat_id = me.chat_id
+            WHERE me.user_id = ?
+              AND c.last_seq > GREATEST(
+                    me.delivered_up_to_seq,
+                    me.deleted_up_to_seq,
+                    CASE WHEN k.cur > c.last_seq THEN me.delivered_up_to_seq ELSE COALESCE(k.cur, 0) END)
+            ORDER BY c.last_seq DESC, c.created_at DESC, c.id
+            LIMIT ?
+            """.trimIndent()
+
+        private const val CURSOR_ROW = "(?::uuid, ?::bigint)"
+
+        private fun cursorValues(cursorCount: Int): String = (1..cursorCount).joinToString(", ") { CURSOR_ROW }
+
+        private fun loadForSyncArgs(
+            userId: UUID,
+            clientCursors: Map<UUID, Long>,
+            chatLimit: Int,
+        ): Array<Any> =
+            buildList {
+                // The bind order follows the TEXTUAL placeholder order: the
+                // VALUES rows of the FROM clause come BEFORE `me.user_id = ?`.
+                clientCursors.forEach { (chatId, cursor) ->
+                    add(chatId)
+                    add(cursor)
+                }
+                add(userId)
+                add(chatLimit + 1)
+            }.toTypedArray()
+
+        val COUNT_UNREAD_SQL =
+            """
+            SELECT count(*)
+            FROM messages m
+            JOIN chats c ON c.id = m.chat_id
+            JOIN chat_participants me ON me.chat_id = m.chat_id AND me.user_id = ?
+            WHERE m.chat_id = ?
+              AND m.sender_id <> ?
+              AND m.seq > GREATEST(me.last_read_seq, me.deleted_up_to_seq)
+              AND m.seq <= LEAST(c.last_seq, me.delivered_up_to_seq)
             """.trimIndent()
     }
 }

@@ -89,20 +89,48 @@ interface ParticipantRepository {
 
     /**
      * №26 `POST /users/me/sync` candidate read (005, sync-protocol.md §3,
-     * data-model сущность 2, T013): [userId]'s chats WITH a visible
-     * undelivered tail — `chats.last_seq > GREATEST(delivered_up_to_seq,
-     * deleted_up_to_seq)` (see [ChatParticipant.hasUndeliveredVisible]) —
-     * latest activity first: `chats.last_seq DESC`, tie-break
+     * data-model сущность 2, T013): [userId]'s dialogs WITH a visible
+     * undelivered tail BEYOND THE EFFECTIVE CURSOR — the caller's
+     * [clientCursors] fold into the candidacy bound as `эффективный
+     * курсор = max(клиентский, серверный)`: `chats.last_seq >
+     * GREATEST(delivered_up_to_seq, deleted_up_to_seq, клиентский
+     * курсор)`, so a chat already caught up by its client cursor leaves
+     * the page ENTIRELY (a foreign/unknown chatId of the map never
+     * matches the caller's rows and rides along silently ignored —
+     * per-user operation). A cursor BEYOND the chat head (the «курсор из
+     * будущего» of sync-protocol.md §5) contributes NOTHING to the bound
+     * — the candidacy falls back to the server position instead of
+     * excluding the chat, and the service flags the desync repair.
+     * Latest activity first: `chats.last_seq DESC`, tie-break
      * `created_at DESC, chat_id`; up to [chatLimit] entries (already
      * validated 1–50 by the caller) with [UndeliveredChatPage.moreChats]
-     * by the remainder, computed in the same read snapshot
-     * («частичный список как полный» исключён). The client cursors are
-     * folded in by the service (эффективный курсор =
-     * `max(клиентский, серверный)`); the read never moves the delivery
-     * position.
+     * by the remainder — because the cursors fold INTO the query,
+     * pagination and `moreChats` stay cursor-aware in the same read
+     * snapshot («частичный список как полный» исключён, and a page of
+     * cursor-caught-up chats can never fake a complete answer). A pure
+     * READ: never moves the delivery position (FR-001).
      */
     fun loadForSync(
         userId: UUID,
+        clientCursors: Map<UUID, Long>,
         chatLimit: Int,
     ): UndeliveredChatPage
+
+    /**
+     * The server-authoritative unread counter — data-model 005 сущность 3
+     * (FR-007, T013 — the ONE reusable calculator; T031 reuses it for the
+     * №12 list): `COUNT(messages WHERE chat_id = chat AND sender_id !=
+     * user AND seq > GREATEST(last_read_seq, deleted_up_to_seq) AND
+     * seq <= LEAST(chats.last_seq, delivered_up_to_seq))`. Delivery-bounded:
+     * the badge counts only the CONFIRMED delivered tail (a №26 delta
+     * page is not yet unread until the client acks it — the sync answer
+     * never moves the position it is bounded by, FR-001) and
+     * truncation-bounded: below the deletion watermark messages are
+     * inaccessible, not unread (FR-003/US1-5). Derived per read — never
+     * stored; a user without a participant row of the chat reads 0.
+     */
+    fun countUnread(
+        userId: UUID,
+        chatId: UUID,
+    ): Long
 }

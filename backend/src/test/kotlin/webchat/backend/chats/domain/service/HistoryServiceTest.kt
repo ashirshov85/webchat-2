@@ -174,6 +174,13 @@ class HistoryServiceTest {
             calls += PageCall(chatId, viewerId, before, limit)
             return page
         }
+
+        override fun findVisiblePageAfter(
+            chatId: UUID,
+            viewerId: UUID,
+            after: Long,
+            limit: Int,
+        ): List<Message> = error("the №15 before-mode never walks the ascending page")
     }
 
     /** The FR-002 gate fixture: only the ensured pair chat resolves, `ensure` is never reached by a history read. */
@@ -215,8 +222,14 @@ class HistoryServiceTest {
 
         override fun loadForSync(
             userId: UUID,
+            clientCursors: Map<UUID, Long>,
             chatLimit: Int,
         ): UndeliveredChatPage = UndeliveredChatPage(emptyList(), moreChats = false)
+
+        override fun countUnread(
+            userId: UUID,
+            chatId: UUID,
+        ): Long = 0L
     }
 
     /** The auth port stands unused here — the history path reads membership, not user rows. */

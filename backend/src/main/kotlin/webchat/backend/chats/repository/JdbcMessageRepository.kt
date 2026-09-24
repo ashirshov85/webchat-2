@@ -70,6 +70,20 @@ class JdbcMessageRepository(
         }
 
     /**
+     * T013 (sync-protocol.md 005 §2/§4): the ascending catch-up window —
+     * the same per-user visibility join as the DESC page, flipped to
+     * `seq ASC` with the exclusive `after` bound; the №26 deltas and the
+     * №15 `?after=` mode (T015) replay the backlog through it page by
+     * page until exhaustion.
+     */
+    override fun findVisiblePageAfter(
+        chatId: UUID,
+        viewerId: UUID,
+        after: Long,
+        limit: Int,
+    ): List<Message> = jdbcTemplate.query(PAGE_AFTER_SQL, ROW_MAPPER, viewerId, chatId, after, limit)
+
+    /**
      * The empty-`RETURNING` race resolution (research.md 004 §3): the
      * conflicting row is already committed, so the same READ COMMITTED
      * transaction sees it — `error` marks the impossible-by-construction
@@ -130,6 +144,16 @@ class JdbcMessageRepository(
             JOIN chat_participants p ON p.chat_id = m.chat_id AND p.user_id = ?
             WHERE m.chat_id = ? AND m.seq > p.deleted_up_to_seq${if (cursor) " AND m.seq < ?" else ""}
             ORDER BY m.seq DESC
+            LIMIT ?
+            """.trimIndent()
+
+        val PAGE_AFTER_SQL =
+            """
+            SELECT m.id, m.chat_id, m.sender_id, m.text, m.seq, m.created_at
+            FROM messages m
+            JOIN chat_participants p ON p.chat_id = m.chat_id AND p.user_id = ?
+            WHERE m.chat_id = ? AND m.seq > ? AND m.seq > p.deleted_up_to_seq
+            ORDER BY m.seq ASC
             LIMIT ?
             """.trimIndent()
     }

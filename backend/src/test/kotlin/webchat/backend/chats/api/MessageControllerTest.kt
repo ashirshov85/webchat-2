@@ -304,6 +304,13 @@ class MessageControllerTest {
             pageCalls += PageCall(chatId, viewerId, before, limit)
             return page
         }
+
+        override fun findVisiblePageAfter(
+            chatId: UUID,
+            viewerId: UUID,
+            after: Long,
+            limit: Int,
+        ): List<Message> = error("the №15 before-mode never walks the ascending page")
     }
 
     /** The №17 watermark sink (T042): an always-applied advance, remembering every call. */
@@ -345,8 +352,14 @@ class MessageControllerTest {
 
         override fun loadForSync(
             userId: UUID,
+            clientCursors: Map<UUID, Long>,
             chatLimit: Int,
         ): UndeliveredChatPage = UndeliveredChatPage(emptyList(), moreChats = false)
+
+        override fun countUnread(
+            userId: UUID,
+            chatId: UUID,
+        ): Long = 0L
     }
 
     /** The realtime leg is irrelevant to the HTTP mapping — a silent sink keeps the unit surface narrow. */

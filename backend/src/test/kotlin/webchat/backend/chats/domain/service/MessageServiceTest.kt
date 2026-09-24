@@ -502,6 +502,13 @@ class MessageServiceTest {
             before: Long?,
             limit: Int,
         ): List<Message> = emptyList()
+
+        override fun findVisiblePageAfter(
+            chatId: UUID,
+            viewerId: UUID,
+            after: Long,
+            limit: Int,
+        ): List<Message> = error("the send path never walks the ascending page")
     }
 
     /** Records the fan-out targets in the shared [timeline]; [failFor] simulates a dead channel. */
@@ -565,8 +572,14 @@ class MessageServiceTest {
 
         override fun loadForSync(
             userId: UUID,
+            clientCursors: Map<UUID, Long>,
             chatLimit: Int,
         ): UndeliveredChatPage = UndeliveredChatPage(emptyList(), moreChats = false)
+
+        override fun countUnread(
+            userId: UUID,
+            chatId: UUID,
+        ): Long = 0L
     }
 
     /** The auth port stands unused here — the send path reads membership, not user rows. */

@@ -28,7 +28,13 @@ import java.util.UUID
  *  * the page order is the latest activity first — `chats.last_seq
  *    DESC`, tie-break `created_at DESC, chat_id` — with `moreChats` by
  *    the remainder in the same read snapshot, and an ack that reaches
- *    the chat head drops the chat from the next page.
+ *    the chat head drops the chat from the next page;
+ *  * the T013 client-cursor fold: a cursor AT the chat head excludes
+ *    the chat from the candidacy (cursor-aware pagination — a page of
+ *    caught-up chats can never fake a complete answer), a cursor BEYOND
+ *    the head (the «курсор из будущего» repair) falls back to the server
+ *    position instead of excluding the chat, and a foreign chatId of
+ *    the map never matches the caller's rows (silently ignored).
  *
  * The HTTP-level T007/T008 stay RED until the №25/№26 routes of
  * T012–T014 land (their TDD note); this IT pins the same repository
@@ -138,7 +144,7 @@ class JdbcParticipantRepositoryIT : AbstractIntegrationTest() {
         jdbcTemplate.update(STAGE_CREATED_AT_SQL, Timestamp.from(T1), tiedOlderChat.id)
         jdbcTemplate.update(STAGE_CREATED_AT_SQL, Timestamp.from(T2), tiedNewerChat.id)
 
-        val page = participantRepository.loadForSync(me, FULL_CHAT_LIMIT)
+        val page = participantRepository.loadForSync(me, emptyMap(), FULL_CHAT_LIMIT)
 
         assertThat(page.chats.map { it.chatId })
             .overridingErrorMessage(
@@ -185,7 +191,7 @@ class JdbcParticipantRepositoryIT : AbstractIntegrationTest() {
             ),
         )
 
-        val firstPage = participantRepository.loadForSync(me, TWO_CHAT_LIMIT)
+        val firstPage = participantRepository.loadForSync(me, emptyMap(), TWO_CHAT_LIMIT)
         assertThat(firstPage.chats.map { it.chatId })
             .overridingErrorMessage("chatLimit=2 must keep the two newest undelivered dialogs")
             .containsExactly(newestChat.id, middleChat.id)
@@ -193,17 +199,60 @@ class JdbcParticipantRepositoryIT : AbstractIntegrationTest() {
             .overridingErrorMessage("a left-behind undelivered chat must surface as moreChats=true")
             .isTrue
 
-        val single = participantRepository.loadForSync(me, ONE_CHAT_LIMIT)
+        val single = participantRepository.loadForSync(me, emptyMap(), ONE_CHAT_LIMIT)
         assertThat(single.chats.map { it.chatId }).containsExactly(newestChat.id)
         assertThat(single.moreChats).isTrue
 
         participantRepository.advanceDelivered(me, mapOf(newestChat.id to NEWEST_HEAD))
-        val secondPage = participantRepository.loadForSync(me, TWO_CHAT_LIMIT)
+        val secondPage = participantRepository.loadForSync(me, emptyMap(), TWO_CHAT_LIMIT)
         assertThat(secondPage.chats.map { it.chatId })
             .overridingErrorMessage(
                 "an ack reaching the chat head drops it from the next page — the remainder pages on",
             ).containsExactly(middleChat.id, oldestChat.id)
         assertThat(secondPage.moreChats).isFalse
+    }
+
+    @Test
+    fun `loadForSync folds client cursors into the candidacy bound`() {
+        val me = newUser()
+        val newestPeer = newUser()
+        val olderPeer = newUser()
+        val stranger = newUser()
+        val strangerPeer = newUser()
+        val newestChat = chatRepository.ensure(me, newestPeer).chat
+        val olderChat = chatRepository.ensure(me, olderPeer).chat
+        val foreignChat = chatRepository.ensure(stranger, strangerPeer).chat
+        stageHeads(
+            mapOf(
+                newestChat.id to NEWEST_HEAD,
+                olderChat.id to OLDEST_HEAD,
+                foreignChat.id to MIDDLE_HEAD,
+            ),
+        )
+
+        val page =
+            participantRepository.loadForSync(
+                me,
+                mapOf(
+                    // a cursor AT the head catches the newest dialog up — it leaves the page entirely.
+                    newestChat.id to NEWEST_HEAD,
+                    // a cursor BEYOND the head (backup-restore repair) falls back to the server position.
+                    olderChat.id to OLDEST_HEAD + FOLD_FUTURE_STEP,
+                    // a chat the caller never joined rides along silently ignored.
+                    foreignChat.id to MIDDLE_HEAD,
+                ),
+                ONE_CHAT_LIMIT,
+            )
+
+        assertThat(page.chats.map { it.chatId })
+            .overridingErrorMessage(
+                "the cursor fold must keep only the chat with a server-side undelivered tail — the head-caught " +
+                    "newest dialog excluded, the future cursor ignored, the foreign id silent, got <%s>",
+                page.chats,
+            ).containsExactly(olderChat.id)
+        assertThat(page.moreChats)
+            .overridingErrorMessage("cursor-aware pagination must compute moreChats over the EFFECTIVE candidates")
+            .isFalse
     }
 
     private fun newUser(): UUID {
@@ -314,5 +363,8 @@ class JdbcParticipantRepositoryIT : AbstractIntegrationTest() {
         const val NEWEST_HEAD = 30L
         const val MIDDLE_HEAD = 20L
         const val OLDEST_HEAD = 10L
+
+        /** T013 fold: a client cursor this far beyond the head is the «future cursor» repair. */
+        const val FOLD_FUTURE_STEP = 10L
     }
 }
