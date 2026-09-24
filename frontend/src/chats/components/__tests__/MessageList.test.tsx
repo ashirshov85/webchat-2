@@ -1,8 +1,10 @@
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
 import type { ChatView, Message, MessagePage } from '../../../api/chats'
 import { useChatMessages } from '../../hooks/useChatMessages'
+import type { SyncPageUpdate } from '../../hooks/useChatMessages'
 import { MessageList } from '../MessageList'
 
 const sse = vi.hoisted(() => ({ streamUserEvents: vi.fn() }))
@@ -319,6 +321,136 @@ describe('MessageList read status via chat.read (US4, T045)', () => {
     emitChatRead(stream, 'chat-2', 2)
 
     expect(statusTexts(container)).toEqual(['доставлено ✓'])
+  })
+})
+
+describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', () => {
+  /**
+   * Wires MessageList to the real hook and replays applied catch-up
+   * pages exactly like MessengerPage does (T036): every new `update`
+   * object is one §3.1 delta / №15 page of the catch-up loop.
+   */
+  function SyncDialogWindow({
+    chatId,
+    currentUserId,
+    update,
+  }: {
+    chatId: string
+    currentUserId: string
+    update: SyncPageUpdate | null
+  }) {
+    const { messages, peerReadUpToSeq, applySyncPage } = useChatMessages(chatId)
+    const appliedRef = useRef<SyncPageUpdate | null>(null)
+    useEffect(() => {
+      if (update !== null && update !== appliedRef.current) {
+        appliedRef.current = update
+        applySyncPage(update)
+      }
+    }, [update, applySyncPage])
+    return (
+      <MessageList
+        messages={messages}
+        currentUserId={currentUserId}
+        peerReadUpToSeq={peerReadUpToSeq}
+      />
+    )
+  }
+
+  it('actualizes ✓→✓✓ of own messages from a reconnect delta without a page reload', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValueOnce(
+      dialogPage([
+        dialogMessage('in-1', 1, PEER),
+        dialogMessage('out-1', 2, ME),
+        dialogMessage('out-2', 3, ME),
+      ]),
+    )
+    const { container, rerender } = render(
+      <SyncDialogWindow chatId="chat-1" currentUserId={ME} update={null} />,
+    )
+
+    await waitFor(() => {
+      expect(statusTexts(container)).toEqual([null, 'доставлено ✓', 'доставлено ✓'])
+    })
+
+    // The peer read up to seq 2 while the user was offline; the §3.1
+    // catch-up delta carries the fresh watermark — the statuses of
+    // already rendered messages flip in place (US3-8).
+    rerender(
+      <SyncDialogWindow
+        chatId="chat-1"
+        currentUserId={ME}
+        update={{ chatId: 'chat-1', messages: [], peerReadUpToSeq: 2 }}
+      />,
+    )
+
+    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓', 'доставлено ✓'])
+  })
+
+  it('applies each status event once: a repeated identical delta keeps the statuses stable (quickstart §3.2)', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValueOnce(
+      dialogPage([dialogMessage('out-1', 2, ME), dialogMessage('out-2', 3, ME)]),
+    )
+    const { container, rerender } = render(
+      <SyncDialogWindow chatId="chat-1" currentUserId={ME} update={null} />,
+    )
+
+    await waitFor(() => {
+      expect(statusTexts(container)).toEqual(['доставлено ✓', 'доставлено ✓'])
+    })
+
+    rerender(
+      <SyncDialogWindow
+        chatId="chat-1"
+        currentUserId={ME}
+        update={{ chatId: 'chat-1', messages: [], peerReadUpToSeq: 3 }}
+      />,
+    )
+    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+
+    // A repeated №26 with the same cursors redelivers the same
+    // watermark — every message renders once, no doubled statuses.
+    rerender(
+      <SyncDialogWindow
+        chatId="chat-1"
+        currentUserId={ME}
+        update={{ chatId: 'chat-1', messages: [], peerReadUpToSeq: 3 }}
+      />,
+    )
+
+    expect(container.querySelectorAll('.message')).toHaveLength(2)
+    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+  })
+
+  it('renders own delta messages that were read while offline straight as ✓✓ (FR-003 status catch-up)', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValueOnce(dialogPage([dialogMessage('in-1', 1, PEER)]))
+    const { container, rerender } = render(
+      <SyncDialogWindow chatId="chat-1" currentUserId={ME} update={null} />,
+    )
+
+    await waitFor(() => {
+      expect(statusTexts(container)).toEqual([null])
+    })
+
+    // Sent from another device while offline AND already read by the
+    // peer: the message and its «прочитано» status arrive in the same
+    // delta (актуальные «доставлено»/«прочитано», US3-8).
+    rerender(
+      <SyncDialogWindow
+        chatId="chat-1"
+        currentUserId={ME}
+        update={{
+          chatId: 'chat-1',
+          messages: [dialogMessage('out-1', 2, ME)],
+          peerReadUpToSeq: 2,
+        }}
+      />,
+    )
+
+    expect(renderedTexts(container)).toEqual(['text-in-1', 'text-out-1'])
+    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓'])
   })
 })
 
