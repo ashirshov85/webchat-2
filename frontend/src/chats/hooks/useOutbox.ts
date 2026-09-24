@@ -11,14 +11,20 @@
  * maps to a terminal `failed` state.
  *
  * Retry policy: network/timeout/5xx/401 → auto retry with exponential
- * backoff 1s…30s; 429 flood → stay `sending` with
+ * backoff 1s…30s; 429 flood and 503 `server_busy` (feature 005, T027,
+ * FR-009 — uniform handling) → stay `sending` with
  * `retryAt = now + Retry-After` (UI countdown, FR-011); other 4xx
  * (400/403/404/409/422 — validation, blocking, id conflict) → terminal
  * `failed` («не отправлено») with auto retries stopped; the user can
  * retry manually with the same id or delete the record locally.
- * All `sending` records are flushed on mount/login; `failed` ones
- * wait for a manual action. Chat deletion purges its records
- * (FR-021, T060 wires the UI action).
+ * All `sending` records are flushed on mount/login (FIFO per chat —
+ * sync-protocol.md §7: a chat never waits on another chat's lock); a
+ * persisted `retryAt` is honoured by the flush scheduler, so restarts
+ * never bypass the 30/min flood window with early retries (FR-010).
+ * Temporary failures retry indefinitely by the same id — no time-based
+ * escalation to `failed` (FR-009). `failed` ones wait for a manual
+ * action. Chat deletion purges its records (FR-021, T060 wires the UI
+ * action).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ApiProblem } from '../../api/auth'
@@ -68,7 +74,7 @@ export interface UseOutboxResult {
 }
 
 type SendOutcome =
-  | { readonly kind: 'flood'; readonly retryAfterSec?: number }
+  | { readonly kind: 'deferred'; readonly retryAfterSec?: number }
   | { readonly kind: 'transient' }
   | { readonly kind: 'terminal'; readonly errorCode: string }
 
@@ -91,8 +97,12 @@ function classifyFailure(cause: unknown): SendOutcome {
   if (!isApiProblem(cause)) {
     return { kind: 'transient' }
   }
-  if (cause.status === 429) {
-    return { kind: 'flood', retryAfterSec: cause.retryAfterSec }
+  // 429 `flood_limit` (004) and 503 `server_busy` (005, №16
+  // backpressure) are deferrals: retryAt = now + Retry-After, the
+  // record stays `sending` and the same id is retried at the deadline
+  // (FR-009/FR-010 — retries never bypass the server's window).
+  if (cause.status === 429 || cause.status === 503) {
+    return { kind: 'deferred', retryAfterSec: cause.retryAfterSec }
   }
   if (cause.status === 401 || cause.status >= 500) {
     return { kind: 'transient' }
@@ -172,7 +182,7 @@ export function useOutbox(userId: string | null, options?: UseOutboxOptions): Us
       retries.current.set(record.clientMessageId, retry + 1)
       let delayMs: number
       let retryAt: number | undefined
-      if (outcome.kind === 'flood') {
+      if (outcome.kind === 'deferred') {
         const seconds =
           outcome.retryAfterSec !== undefined && outcome.retryAfterSec > 0
             ? outcome.retryAfterSec
@@ -234,7 +244,11 @@ export function useOutbox(userId: string | null, options?: UseOutboxOptions): Us
   }, [attempt])
 
   // Flush at start/login: every `sending` record is retried with the
-  // same id immediately; `failed` ones wait for a manual retry (US2-7).
+  // same id (array walk = FIFO per chat, sync-protocol.md §7 — one
+  // chat's Retry-After lock never delays another chat); a persisted
+  // `retryAt` is respected, so the flush never fires inside the
+  // server's 30/min window (FR-010); `failed` ones wait for a manual
+  // retry (US2-7).
   useEffect(() => {
     userIdRef.current = userId
     for (const timer of timers.current.values()) {
@@ -250,7 +264,8 @@ export function useOutbox(userId: string | null, options?: UseOutboxOptions): Us
     setRecords(stored)
     for (const record of stored) {
       if (record.state === 'sending') {
-        schedule(record.clientMessageId, 0)
+        const delayMs = record.retryAt === undefined ? 0 : Math.max(0, record.retryAt - Date.now())
+        schedule(record.clientMessageId, delayMs)
       }
     }
   }, [userId, schedule])
