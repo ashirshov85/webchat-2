@@ -417,3 +417,269 @@ describe('useChatList convergence and actions', () => {
     expect(result.current.chats[1]?.unreadCount).toBe(1)
   })
 })
+
+describe('useChatList sync unread convergence (US3, T035, FR-007)', () => {
+  it('anchors the badge to the №26 counter plus the page incoming — the server counter is pre-ack (US3-2)', async () => {
+    installStream()
+    mockedListChats.mockResolvedValue([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+        unreadCount: 2,
+      }),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-1',
+        messages: [
+          makeMessage('chat-1', 'a-2', 11, PEER_A, '2026-09-20T12:00:01.000Z'),
+          makeMessage('chat-1', 'm-1', 12, ME, '2026-09-20T12:00:02.000Z'),
+          makeMessage('chat-1', 'a-3', 13, PEER_A, '2026-09-20T12:00:03.000Z'),
+        ],
+        unreadCount: 2,
+      })
+    })
+
+    const chat = result.current.chats.find((item) => item.chatId === 'chat-1')
+    expect(chat?.unreadCount).toBe(4)
+    expect(chat?.lastMessage?.id).toBe('a-3')
+  })
+
+  it('adds №15 continuation pages incoming exactly once — repeated pages change nothing (paginated catch-up, US3-2)', async () => {
+    installStream()
+    mockedListChats.mockResolvedValue([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+        unreadCount: 1,
+      }),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    const continuation = [
+      makeMessage('chat-1', 'a-4', 14, PEER_A, '2026-09-20T12:00:04.000Z'),
+      makeMessage('chat-1', 'm-2', 15, ME, '2026-09-20T12:00:05.000Z'),
+      makeMessage('chat-1', 'a-5', 16, PEER_A, '2026-09-20T12:00:06.000Z'),
+    ]
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-1',
+        messages: [
+          makeMessage('chat-1', 'a-2', 11, PEER_A, '2026-09-20T12:00:01.000Z'),
+          makeMessage('chat-1', 'a-3', 12, PEER_A, '2026-09-20T12:00:02.000Z'),
+        ],
+        unreadCount: 1,
+      })
+    })
+    expect(result.current.chats[0]?.unreadCount).toBe(3)
+    act(() => {
+      result.current.applySyncUpdate({ chatId: 'chat-1', messages: continuation })
+    })
+    expect(result.current.chats[0]?.unreadCount).toBe(5)
+
+    act(() => {
+      result.current.applySyncUpdate({ chatId: 'chat-1', messages: continuation })
+    })
+    expect(result.current.chats[0]?.unreadCount).toBe(5)
+  })
+
+  it('counts a realtime-raced message once when the continuation page re-carries it (safe race, US1-3)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+      }),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitMessageCreated(stream, makeMessage('chat-1', 'r-1', 16, PEER_A, '2026-09-20T12:00:06.000Z'))
+    expect(result.current.chats[0]?.unreadCount).toBe(1)
+
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-1',
+        messages: [
+          makeMessage('chat-1', 'r-1', 16, PEER_A, '2026-09-20T12:00:06.000Z'),
+          makeMessage('chat-1', 'r-2', 17, PEER_A, '2026-09-20T12:00:07.000Z'),
+        ],
+      })
+    })
+    expect(result.current.chats[0]?.unreadCount).toBe(2)
+  })
+
+  it('converges DOWN to the server counter — offline reads flushed before №26 show up in it (US3-7)', async () => {
+    installStream()
+    mockedListChats.mockResolvedValue([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+        unreadCount: 9,
+      }),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-1',
+        messages: [makeMessage('chat-1', 'a-2', 11, PEER_A, '2026-09-20T12:00:01.000Z')],
+        unreadCount: 1,
+      })
+    })
+
+    expect(result.current.chats[0]?.unreadCount).toBe(2)
+  })
+
+  it('materializes an unknown chat with the server counter plus the page incoming (US1-6/US3-2)', async () => {
+    installStream()
+    mockedListChats.mockResolvedValue([chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-2',
+        peer: peer(PEER_B, 'bob'),
+        messages: [
+          makeMessage('chat-2', 'b-1', 1, PEER_B, '2026-09-20T12:00:01.000Z'),
+          makeMessage('chat-2', 'b-2', 2, PEER_B, '2026-09-20T12:00:02.000Z'),
+          makeMessage('chat-2', 'm-1', 3, ME, '2026-09-20T12:00:03.000Z'),
+        ],
+        unreadCount: 3,
+      })
+    })
+
+    const materialized = result.current.chats.find((item) => item.chatId === 'chat-2')
+    expect(materialized?.unreadCount).toBe(5)
+    expect(materialized?.lastMessage?.id).toBe('m-1')
+  })
+
+  it('never counts truncated history: a truncation-cycle badge derives from the counter and the page only (US1-5/FR-007)', async () => {
+    installStream()
+    mockedListChats.mockResolvedValue([chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-1',
+        peer: peer(PEER_A, 'alice'),
+        messages: [makeMessage('chat-1', 'a-9', 43, PEER_A, '2026-09-20T12:00:01.000Z')],
+        unreadCount: 0,
+      })
+    })
+
+    expect(result.current.chats[0]?.unreadCount).toBe(1)
+  })
+})
+
+describe('useChatList blocked badge freeze (US3-5, FR-020 of 004)', () => {
+  function blockedChatItem(): ChatListItem {
+    return chatItem({
+      blockedByMe: true,
+      unreadCount: 3,
+      lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+    })
+  }
+
+  it('skips realtime increments while blocked — the preview still follows the frame', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([blockedChatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitMessageCreated(
+      stream,
+      makeMessage('chat-1', 'a-2', 20, PEER_A, '2026-09-20T12:00:00.000Z', 'под блокировкой'),
+    )
+
+    const chat = result.current.chats.find((item) => item.chatId === 'chat-1')
+    expect(chat?.unreadCount).toBe(3)
+    expect(chat?.lastMessage?.id).toBe('a-2')
+  })
+
+  it('keeps the badge through markChatReadLocally and own chat.read while blocked', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([blockedChatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    act(() => {
+      result.current.markChatReadLocally('chat-1')
+    })
+    expect(result.current.chats[0]?.unreadCount).toBe(3)
+
+    emitChatRead(stream, { chatId: 'chat-1', readUpToSeq: 20, byUserId: ME })
+    expect(result.current.chats[0]?.unreadCount).toBe(3)
+  })
+
+  it('ignores sync delta counters while blocked', async () => {
+    installStream()
+    mockedListChats.mockResolvedValue([blockedChatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-1',
+        messages: [makeMessage('chat-1', 'a-3', 30, PEER_A, '2026-09-20T12:00:01.000Z')],
+        unreadCount: 7,
+      })
+    })
+
+    const chat = result.current.chats.find((item) => item.chatId === 'chat-1')
+    expect(chat?.unreadCount).toBe(3)
+    expect(chat?.lastMessage?.id).toBe('a-3')
+  })
+
+  it('preserves the frozen value across №12 refetches while the block persists and converges after unblock', async () => {
+    installStream()
+    mockedListChats.mockResolvedValueOnce([blockedChatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    mockedListChats.mockResolvedValueOnce([chatItem({ blockedByMe: true, unreadCount: 8 })])
+    act(() => {
+      result.current.reload()
+    })
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(result.current.chats[0]?.unreadCount).toBe(3)
+    })
+
+    mockedListChats.mockResolvedValueOnce([chatItem({ blockedByMe: false, unreadCount: 8 })])
+    act(() => {
+      result.current.reload()
+    })
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(3)
+    })
+    await waitFor(() => {
+      expect(result.current.chats[0]?.unreadCount).toBe(8)
+    })
+  })
+})
