@@ -140,7 +140,7 @@ description: "Task list for feature implementation"
 
 ### Tests for User Story 4 (писать ПЕРВЫМИ)
 
-- [ ] T038 [P] [US4] `BackpressureIT`: порядок проверок дедуп → admission → membership → валидация → флуд (ретрай принятого тем же ID — `200`, никогда 503/429); shed → `503` problem+json `errors:{chat:[server_busy]}` + `Retry-After` ≥ 1 с; AIMD-восстановление лимита после спада (gauge `webchat_backpressure_limit` возвращается к базе); флуд-токены не сгорают на shed'ах — после спада лимит 30/мин действует и не обходится повторами (FR-010); при `delivery.backpressure.enabled=false` путь отправки не меняется — в `backend/src/test/kotlin/webchat/backend/backpressure/BackpressureIT.kt` ([data-model.md](./data-model.md) сущность 6; SC-005/006/007)
+- [x] T038 [P] [US4] `BackpressureIT`: порядок проверок дедуп → admission → membership → валидация → флуд (ретрай принятого тем же ID — `200`, никогда 503/429); shed → `503` problem+json `errors:{chat:[server_busy]}` + `Retry-After` ≥ 1 с; AIMD-восстановление лимита после спада (gauge `webchat_backpressure_limit` возвращается к базе); флуд-токены не сгорают на shed'ах — после спада лимит 30/мин действует и не обходится повторами (FR-010); при `delivery.backpressure.enabled=false` путь отправки не меняется — в `backend/src/test/kotlin/webchat/backend/backpressure/BackpressureIT.kt` ([data-model.md](./data-model.md) сущность 6; SC-005/006/007)
 
 ### Implementation for User Story 4
 
