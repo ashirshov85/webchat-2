@@ -19,9 +19,9 @@ export function SyncIndicator({ syncing }: SyncIndicatorProps) {
     return null
   }
   return (
-    <div className="sync-indicator" role="status">
+    <output className="sync-indicator">
       <span className="sync-indicator-dot" aria-hidden="true" />
-      Синхронизация сообщений…
-    </div>
+      <span>Синхронизация сообщений…</span>
+    </output>
   )
 }

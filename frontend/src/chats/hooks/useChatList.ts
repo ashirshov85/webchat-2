@@ -172,7 +172,7 @@ function resetUnread(chats: ChatListItem[], chatId: string): ChatListItem[] {
  * previous reference when nothing changed — idempotent render.
  */
 function applySyncDelta(chats: ChatListItem[], update: SyncChatListUpdate): ChatListItem[] {
-  const tail = update.messages.length > 0 ? update.messages[update.messages.length - 1] : undefined
+  const tail = update.messages.at(-1)
   const index = chats.findIndex((item) => item.chatId === update.chatId)
   const current = index === -1 ? undefined : chats[index]
   if (current === undefined) {
