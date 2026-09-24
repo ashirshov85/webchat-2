@@ -54,14 +54,22 @@ data class ReadRequest(
 )
 
 /**
- * Contract №15 success body — `MessagePage` (openapi.yaml 0.4.0):
- * [messages] ordered `seq DESC` and the EXCLUSIVE cursor [nextBefore] —
- * the `seq` of the oldest row of THIS page, ABSENT at exhaustion (an
- * empty boundary page is a correct answer, US3-4; FR-008) — hence the
- * NON_NULL inclusion: the cursor is omitted from the payload, never
- * rendered as an explicit `null`.
+ * Contract №15 success body — `MessagePage` (openapi.yaml; 0.5.0
+ * additive): [messages] ordered `seq DESC` (the `before`/default regime
+ * of 004) with the EXCLUSIVE cursor [nextBefore] — the `seq` of the
+ * oldest row of THIS page, ABSENT at exhaustion (an empty boundary page
+ * is a correct answer, US3-4; FR-008).
+ *
+ * 005 §2 (T015, additive-optional): the ascending `after` regime fills
+ * the mirror cursor [nextAfter] instead — the `seq` of the LAST row of
+ * the page, ABSENT when nothing newer exists (the catch-up loop of
+ * sync-protocol.md §4 stops on the missing cursor, never on an error).
+ * The cursors are mode-specific and NEVER coexist in one answer — hence
+ * the NON_NULL inclusion: each cursor is omitted from the payload of the
+ * other regime, never rendered as an explicit `null`.
  */
 data class MessagePageView(
     val messages: List<MessageView>,
     @JsonInclude(JsonInclude.Include.NON_NULL) val nextBefore: Long? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val nextAfter: Long? = null,
 )

@@ -43,7 +43,7 @@ class HistoryServiceTest {
     fun `history resolves an unknown chat to chat_not_found`() {
         val exception =
             assertThrows<ChatNotFoundException> {
-                service.history(UNKNOWN_CHAT, ALICE, before = null, limit = null)
+                service.history(UNKNOWN_CHAT, ALICE, before = null, after = null, limit = null)
             }
 
         assertThat(exception.code).isEqualTo(CODE_CHAT_NOT_FOUND)
@@ -54,7 +54,7 @@ class HistoryServiceTest {
     fun `history refuses a stranger of the dialog with not_participant`() {
         val exception =
             assertThrows<NotParticipantException> {
-                service.history(CHAT_ID, CAROL, before = null, limit = null)
+                service.history(CHAT_ID, CAROL, before = null, after = null, limit = null)
             }
 
         assertThat(exception.code).isEqualTo(CODE_NOT_PARTICIPANT)
@@ -66,7 +66,7 @@ class HistoryServiceTest {
         for (bad in intArrayOf(0, -1, PAGE_SIZE + 1)) {
             val exception =
                 assertThrows<LimitOutOfRangeException> {
-                    service.history(CHAT_ID, ALICE, before = null, limit = bad)
+                    service.history(CHAT_ID, ALICE, before = null, after = null, limit = bad)
                 }
 
             assertThat(exception.code).isEqualTo(CODE_LIMIT_OUT_OF_RANGE)
@@ -77,7 +77,7 @@ class HistoryServiceTest {
 
     @Test
     fun `history defaults the absent limit to the contract page size`() {
-        val result = service.history(CHAT_ID, ALICE, before = null, limit = null)
+        val result = service.history(CHAT_ID, ALICE, before = null, after = null, limit = null)
 
         assertThat(result.nextBefore).isNull()
         assertThat(repository.calls).containsExactly(PageCall(CHAT_ID, ALICE, before = null, limit = PAGE_SIZE))
@@ -87,7 +87,7 @@ class HistoryServiceTest {
     fun `history passes the exclusive before cursor to the visibility query`() {
         repository.page = listOf(message(seq = 42), message(seq = 40))
 
-        service.history(CHAT_ID, ALICE, before = 43, limit = null)
+        service.history(CHAT_ID, ALICE, before = 43, after = null, limit = null)
 
         assertThat(repository.calls).containsExactly(PageCall(CHAT_ID, ALICE, before = 43, limit = PAGE_SIZE))
     }
@@ -96,7 +96,7 @@ class HistoryServiceTest {
     fun `history derives nextBefore from the oldest row of a full page`() {
         repository.page = (PAGE_SIZE.toLong() downTo 1L).map(::message)
 
-        val result = service.history(CHAT_ID, ALICE, before = (PAGE_SIZE + 1).toLong(), limit = null)
+        val result = service.history(CHAT_ID, ALICE, before = (PAGE_SIZE + 1).toLong(), after = null, limit = null)
 
         assertThat(result.messages).hasSize(PAGE_SIZE)
         assertThat(result.nextBefore).isEqualTo(1)
@@ -106,7 +106,7 @@ class HistoryServiceTest {
     fun `history omits nextBefore when the page is short`() {
         repository.page = listOf(message(seq = 9), message(seq = 8), message(seq = 7))
 
-        val result = service.history(CHAT_ID, ALICE, before = 10, limit = null)
+        val result = service.history(CHAT_ID, ALICE, before = 10, after = null, limit = null)
 
         assertThat(result.messages).hasSize(3)
         assertThat(result.nextBefore).isNull()
@@ -116,10 +116,79 @@ class HistoryServiceTest {
     fun `history omits nextBefore on the empty boundary page without failing`() {
         repository.page = emptyList()
 
-        val result = service.history(CHAT_ID, ALICE, before = 1, limit = null)
+        val result = service.history(CHAT_ID, ALICE, before = 1, after = null, limit = null)
 
         assertThat(result.messages).isEmpty()
         assertThat(result.nextBefore).isNull()
+    }
+
+    @Test
+    fun `history rejects after together with before with mixed_cursors before any read`() {
+        val exception =
+            assertThrows<MixedCursorsException> {
+                service.history(CHAT_ID, ALICE, before = 43, after = 42, limit = null)
+            }
+
+        assertThat(exception.code).isEqualTo(CODE_MIXED_CURSORS)
+        assertThat(repository.calls).isEmpty()
+        assertThat(repository.afterCalls).isEmpty()
+    }
+
+    @Test
+    fun `history rejects a limit outside the contract bounds inside the after mode before any read`() {
+        for (bad in intArrayOf(0, -1, PAGE_SIZE + 1)) {
+            val exception =
+                assertThrows<LimitOutOfRangeException> {
+                    service.history(CHAT_ID, ALICE, before = null, after = 0, limit = bad)
+                }
+
+            assertThat(exception.code).isEqualTo(CODE_LIMIT_OUT_OF_RANGE)
+        }
+
+        assertThat(repository.calls).isEmpty()
+        assertThat(repository.afterCalls).isEmpty()
+    }
+
+    @Test
+    fun `history passes the exclusive after cursor to the ascending visibility query`() {
+        repository.afterPage = listOf(message(seq = 43), message(seq = 44))
+
+        val result = service.history(CHAT_ID, ALICE, before = null, after = 42, limit = 2)
+
+        assertThat(result.nextBefore)
+            .overridingErrorMessage("an after-mode page must never carry the DESC cursor nextBefore")
+            .isNull()
+        assertThat(repository.calls).isEmpty()
+        assertThat(repository.afterCalls).containsExactly(AfterPageCall(CHAT_ID, ALICE, after = 42, limit = 2))
+    }
+
+    @Test
+    fun `history derives nextAfter from the newest row of a full ascending page`() {
+        repository.afterPage = (1L..PAGE_SIZE.toLong()).map(::message)
+
+        val result = service.history(CHAT_ID, ALICE, before = null, after = 0, limit = null)
+
+        assertThat(result.messages).hasSize(PAGE_SIZE)
+        assertThat(result.nextAfter).isEqualTo(PAGE_SIZE.toLong())
+        assertThat(result.nextBefore).isNull()
+    }
+
+    @Test
+    fun `history omits nextAfter on the short ascending tail page without failing`() {
+        repository.afterPage = listOf(message(seq = 8), message(seq = 9))
+
+        val result = service.history(CHAT_ID, ALICE, before = null, after = 7, limit = null)
+
+        assertThat(result.messages).hasSize(2)
+        assertThat(result.nextAfter).isNull()
+    }
+
+    @Test
+    fun `history omits nextAfter on the empty ascending boundary page without failing`() {
+        val result = service.history(CHAT_ID, ALICE, before = null, after = 9, limit = null)
+
+        assertThat(result.messages).isEmpty()
+        assertThat(result.nextAfter).isNull()
     }
 
     private val repository = ScriptedPageRepository()
@@ -155,11 +224,20 @@ class HistoryServiceTest {
         val limit: Int,
     )
 
-    /** Answers every page request from [page], remembering the exact call for cursor/default assertions. */
+    private data class AfterPageCall(
+        val chatId: UUID,
+        val viewerId: UUID,
+        val after: Long,
+        val limit: Int,
+    )
+
+    /** Answers every page request from [page]/[afterPage], remembering the exact call for cursor/default assertions. */
     private class ScriptedPageRepository(
         var page: List<Message> = emptyList(),
+        var afterPage: List<Message> = emptyList(),
     ) : MessageRepository {
         val calls = mutableListOf<PageCall>()
+        val afterCalls = mutableListOf<AfterPageCall>()
 
         override fun findById(id: UUID): Message? = null
 
@@ -180,7 +258,10 @@ class HistoryServiceTest {
             viewerId: UUID,
             after: Long,
             limit: Int,
-        ): List<Message> = error("the №15 before-mode never walks the ascending page")
+        ): List<Message> {
+            afterCalls += AfterPageCall(chatId, viewerId, after, limit)
+            return afterPage
+        }
     }
 
     /** The FR-002 gate fixture: only the ensured pair chat resolves, `ensure` is never reached by a history read. */
@@ -267,6 +348,7 @@ class HistoryServiceTest {
         const val CODE_CHAT_NOT_FOUND = "chat_not_found"
         const val CODE_NOT_PARTICIPANT = "not_participant"
         const val CODE_LIMIT_OUT_OF_RANGE = "limit_out_of_range"
+        const val CODE_MIXED_CURSORS = "mixed_cursors"
 
         const val PAGE_SIZE = 50
         const val TEST_CAP = 8

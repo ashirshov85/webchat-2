@@ -135,7 +135,7 @@ class MessageControllerTest {
     fun `list answers the page with the exclusive nextBefore cursor`() {
         repository.page = listOf(STORED.copy(seq = 42), STORED.copy(seq = 40))
 
-        val view = controller.list(CHAT_ID, before = 43, limit = 2, accessToken = tokenOf(ALICE))
+        val view = controller.list(CHAT_ID, before = 43, after = null, limit = 2, accessToken = tokenOf(ALICE))
 
         assertThat(view.messages).hasSize(2)
         assertThat(view.messages[0].seq).isEqualTo(42)
@@ -148,7 +148,7 @@ class MessageControllerTest {
     fun `list omits nextBefore at exhaustion`() {
         repository.page = listOf(STORED.copy(seq = 2), STORED.copy(seq = 1))
 
-        val view = controller.list(CHAT_ID, before = null, limit = null, accessToken = tokenOf(ALICE))
+        val view = controller.list(CHAT_ID, before = null, after = null, limit = null, accessToken = tokenOf(ALICE))
 
         assertThat(view.nextBefore).isNull()
         assertThat(repository.pageCalls).containsExactly(PageCall(CHAT_ID, ALICE, before = null, limit = PAGE_SIZE))
@@ -158,9 +158,26 @@ class MessageControllerTest {
     fun `list projects every row with the same Message shape as the send answer`() {
         repository.page = listOf(STORED)
 
-        val view = controller.list(CHAT_ID, before = null, limit = null, accessToken = tokenOf(ALICE))
+        val view = controller.list(CHAT_ID, before = null, after = null, limit = null, accessToken = tokenOf(ALICE))
 
         view.messages.single().assertStoredView()
+    }
+
+    @Test
+    fun `list answers the ascending page with nextAfter and no nextBefore`() {
+        repository.afterPage = listOf(STORED.copy(seq = 4), STORED.copy(seq = 5))
+
+        val view = controller.list(CHAT_ID, before = null, after = 3, limit = 2, accessToken = tokenOf(ALICE))
+
+        assertThat(view.messages).hasSize(2)
+        assertThat(view.messages[0].seq).isEqualTo(4)
+        assertThat(view.messages[1].seq).isEqualTo(5)
+        assertThat(view.nextAfter).isEqualTo(5)
+        assertThat(view.nextBefore)
+            .overridingErrorMessage("an after-mode page must never carry the DESC cursor nextBefore")
+            .isNull()
+        assertThat(repository.pageCalls).isEmpty()
+        assertThat(repository.afterPageCalls).containsExactly(AfterPageCall(CHAT_ID, ALICE, after = 3, limit = 2))
     }
 
     @Test
@@ -274,19 +291,28 @@ class MessageControllerTest {
         val limit: Int,
     )
 
+    private data class AfterPageCall(
+        val chatId: UUID,
+        val viewerId: UUID,
+        val after: Long,
+        val limit: Int,
+    )
+
     private data class AdvanceCall(
         val chatId: UUID,
         val userId: UUID,
         val upToSeq: Long,
     )
 
-    /** Serves both the №16 write ([outcome]) and the №15 page ([page]), remembering every call. */
+    /** Serves both the №16 write ([outcome]) and the №15 page ([page]/[afterPage]), remembering every call. */
     private class ScriptedMessageRepository(
         var outcome: MessageInsertResult = MessageInsertResult.Inserted(STORED),
         var page: List<Message> = emptyList(),
+        var afterPage: List<Message> = emptyList(),
     ) : MessageRepository {
         val inserts = mutableListOf<NewMessage>()
         val pageCalls = mutableListOf<PageCall>()
+        val afterPageCalls = mutableListOf<AfterPageCall>()
 
         override fun findById(id: UUID): Message? = null
 
@@ -310,7 +336,10 @@ class MessageControllerTest {
             viewerId: UUID,
             after: Long,
             limit: Int,
-        ): List<Message> = error("the №15 before-mode never walks the ascending page")
+        ): List<Message> {
+            afterPageCalls += AfterPageCall(chatId, viewerId, after, limit)
+            return afterPage
+        }
     }
 
     /** The №17 watermark sink (T042): an always-applied advance, remembering every call. */

@@ -14,6 +14,7 @@ import webchat.backend.chats.domain.service.FloodLimitException
 import webchat.backend.chats.domain.service.InvalidUpToSeqException
 import webchat.backend.chats.domain.service.LimitOutOfRangeException
 import webchat.backend.chats.domain.service.MessageIdConflictException
+import webchat.backend.chats.domain.service.MixedCursorsException
 import webchat.backend.chats.domain.service.NotParticipantException
 import webchat.backend.chats.domain.service.PeerNotFoundException
 import webchat.backend.chats.domain.service.SelfForbiddenException
@@ -127,6 +128,17 @@ class ChatsExceptionHandler {
             .apply { setProperty(ERRORS_PROPERTY, mapOf(LIMIT_FIELD to listOf(LIMIT_OUT_OF_RANGE_CODE))) }
 
     /**
+     * 400 (api-contract.md 005 §2): the two №15 cursors arrived together
+     * — `after` AND `before`. One page may never mix the two walk
+     * directions (an ambiguous walk could skip or duplicate rows), so
+     * the refusal is explicit: `errors: {after: [mixed_cursors]}`.
+     */
+    @ExceptionHandler(MixedCursorsException::class)
+    fun onMixedCursors(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, MIXED_CURSORS_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(AFTER_FIELD to listOf(MIXED_CURSORS_CODE))) }
+
+    /**
      * 400 (api-contract.md №17): `upToSeq` outside the FR-010 bound
      * `1..seq of the last message of the dialog` (or absent) — the
      * watermark does not move.
@@ -169,6 +181,7 @@ class ChatsExceptionHandler {
         const val TEXT_FIELD = "text"
         const val CLIENT_MESSAGE_ID_FIELD = "clientMessageId"
         const val LIMIT_FIELD = "limit"
+        const val AFTER_FIELD = "after"
         const val UP_TO_SEQ_FIELD = "upToSeq"
         const val SELF_FORBIDDEN_CODE = "self_forbidden"
         const val PEER_NOT_FOUND_CODE = "peer_not_found"
@@ -181,6 +194,7 @@ class ChatsExceptionHandler {
         const val TEXT_TOO_LONG_CODE = "text_too_long"
         const val MESSAGE_ID_CONFLICT_CODE = "message_id_conflict"
         const val LIMIT_OUT_OF_RANGE_CODE = "limit_out_of_range"
+        const val MIXED_CURSORS_CODE = "mixed_cursors"
         const val INVALID_UP_TO_SEQ_CODE = "invalid_up_to_seq"
         const val FLOOD_LIMIT_CODE = "flood_limit"
         const val SELF_FORBIDDEN_DETAIL = "A dialog requires two distinct users"
@@ -195,6 +209,7 @@ class ChatsExceptionHandler {
         const val INVALID_CLIENT_MESSAGE_ID_DETAIL = "clientMessageId must be a UUID"
         const val MESSAGE_ID_CONFLICT_DETAIL = "the clientMessageId belongs to another stored message"
         const val LIMIT_OUT_OF_RANGE_DETAIL = "limit must be within 1..50"
+        const val MIXED_CURSORS_DETAIL = "the after and before cursors are mutually exclusive"
         const val INVALID_UP_TO_SEQ_DETAIL = "upToSeq must be within 1..seq of the last message of the dialog"
         const val FLOOD_LIMIT_DETAIL = "The message rate limit is exceeded; retry after the indicated interval"
     }

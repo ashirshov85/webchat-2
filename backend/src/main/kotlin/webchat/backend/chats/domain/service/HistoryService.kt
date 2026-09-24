@@ -18,14 +18,32 @@ class LimitOutOfRangeException : RuntimeException("limit must be within 1..chats
 }
 
 /**
+ * 400 (api-contract.md 005 §2): the two №15 cursors arrived together —
+ * `after` AND `before` in one request. The two walk directions are
+ * mutually exclusive (an ambiguous page could skip or duplicate rows),
+ * so the refusal is explicit rather than a silently-prioritized
+ * direction; the code is carried for the problem+json rendering of the
+ * api layer (`errors: {after: [mixed_cursors]}`).
+ */
+class MixedCursorsException : RuntimeException("after and before are mutually exclusive cursors") {
+    val code: String = "mixed_cursors"
+}
+
+/**
  * The №15 answer of User Story 1 (T015): [messages] ordered `seq DESC` —
  * exactly as the visibility query returns them — and [nextBefore], the
  * EXCLUSIVE cursor of the next older page, absent at exhaustion. The api
  * layer (T017) maps this to the contract `MessagePage`.
+ *
+ * 005 §2 additive extension: the ascending `after` mode fills the
+ * mirror cursor [nextAfter] instead — the seq of the LAST (newest) row
+ * of its page — while [nextBefore] stays null; the two cursors are
+ * mode-specific and never coexist in one answer.
  */
 data class HistoryPage(
     val messages: List<Message>,
-    val nextBefore: Long?,
+    val nextBefore: Long? = null,
+    val nextAfter: Long? = null,
 )
 
 /**
@@ -48,6 +66,17 @@ data class HistoryPage(
  * The visible set behind a deletion watermark is a contiguous suffix
  * (data-model 004 §2), so a short page can never be followed by more
  * rows — the `size == limit` check is exact.
+ *
+ * 005 §2 (T015, additive): the EXCLUSIVE `after` cursor (`int64 ≥ 0`)
+ * flips the read into the ascending catch-up mode — the replay window
+ * `(after, after+limit]` by `seq ASC` through
+ * [MessageRepository.findVisiblePageAfter] (sync-protocol.md §4, the
+ * cycle-B fetch of the catch-up synchronization). The SAME membership
+ * gate, visibility rule and limit bound apply; `nextAfter` mirrors the
+ * `nextBefore` derivation on the newest row of a full page, an empty or
+ * short page at the head is a CLEAN answer (the sync loop stops on the
+ * missing cursor, never on an error), and the two cursors together are
+ * the [MixedCursorsException] refusal.
  */
 @Service
 class HistoryService(
@@ -59,14 +88,27 @@ class HistoryService(
         chatId: UUID,
         viewerId: UUID,
         before: Long?,
+        after: Long?,
         limit: Int?,
     ): HistoryPage {
         chatService.get(chatId, viewerId)
+        if (before != null && after != null) throw MixedCursorsException()
         val pageSize = chatsProperties.message.pageSize
         val effectiveLimit = limit ?: pageSize
         if (effectiveLimit !in 1..pageSize) throw LimitOutOfRangeException()
-        val messages = messageRepository.findVisiblePage(chatId, viewerId, before, effectiveLimit)
-        val nextBefore = if (messages.size == effectiveLimit) messages.last().seq else null
-        return HistoryPage(messages = messages, nextBefore = nextBefore)
+        return if (after != null) {
+            val messages = messageRepository.findVisiblePageAfter(chatId, viewerId, after, effectiveLimit)
+            HistoryPage(
+                messages = messages,
+                nextBefore = null,
+                nextAfter = if (messages.size == effectiveLimit) messages.last().seq else null,
+            )
+        } else {
+            val messages = messageRepository.findVisiblePage(chatId, viewerId, before, effectiveLimit)
+            HistoryPage(
+                messages = messages,
+                nextBefore = if (messages.size == effectiveLimit) messages.last().seq else null,
+            )
+        }
     }
 }
