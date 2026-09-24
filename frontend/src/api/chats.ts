@@ -15,6 +15,18 @@ export type Message = components['schemas']['Message']
 
 export type MessagePage = components['schemas']['MessagePage']
 
+export type DeliveryAckItem = components['schemas']['DeliveryAckItem']
+
+export type DeliveryAckRequest = components['schemas']['DeliveryAckRequest']
+
+export type SyncCursor = components['schemas']['SyncCursor']
+
+export type SyncRequest = components['schemas']['SyncRequest']
+
+export type SyncChatDelta = components['schemas']['SyncChatDelta']
+
+export type SyncResponse = components['schemas']['SyncResponse']
+
 export type SendMessageRequest = components['schemas']['SendMessageRequest']
 
 export type ReadRequest = components['schemas']['ReadRequest']
@@ -92,6 +104,57 @@ export async function listMessages(
   const path = `/chats/${encodeURIComponent(chatId)}/messages${queryPart}`
   const response = await authedRequest(path, 'GET')
   return (await response.json()) as MessagePage
+}
+
+/**
+ * №15 `GET /chats/{chatId}/messages?after=` (005): ascending catch-up
+ * page `(after, after+limit]` by `seq ASC` — `nextAfter` is the last
+ * record's `seq` and is absent when nothing newer remains; an empty
+ * page on the boundary is a valid «caught up» response
+ * (sync-protocol.md §4).
+ */
+export async function listMessagesAfter(
+  chatId: string,
+  after: number,
+  limit?: number,
+): Promise<MessagePage> {
+  const query = new URLSearchParams({ after: String(after) })
+  if (limit !== undefined) query.set('limit', String(limit))
+  const path = `/chats/${encodeURIComponent(chatId)}/messages?${query.toString()}`
+  const response = await authedRequest(path, 'GET')
+  return (await response.json()) as MessagePage
+}
+
+/**
+ * №25 `POST /users/me/delivery-ack`: the only mover of the caller's
+ * delivery position (FR-001) — batched monotonic (GREATEST) advance,
+ * atomic (any rejected item rejects the whole batch without partial
+ * effects); `204` with no body, safe to retry idempotently
+ * (sync-protocol.md §2).
+ */
+export async function deliveryAck(acks: DeliveryAckItem[]): Promise<void> {
+  const body: DeliveryAckRequest = { acks }
+  await authedRequest('/users/me/delivery-ack', 'POST', body)
+}
+
+/**
+ * №26 `POST /users/me/sync`: catch-up delta for chats with undelivered
+ * messages (US1) — client cursors act as the lower bound of the server
+ * position; the response carries per-chat pages, server counters and
+ * self-heal hints (`truncatedUpToSeq`, `desynced`/`serverUpToSeq`),
+ * computed in a single read snapshot (sync-protocol.md §3). The
+ * operation itself never moves the delivery position (only №25 does).
+ * Unspecified limits fall back to the contract defaults (20 chats /
+ * 50 messages — api-contract.md §1).
+ */
+export async function sync(
+  cursors: SyncCursor[],
+  chatLimit: number = 20,
+  messageLimit: number = 50,
+): Promise<SyncResponse> {
+  const body: SyncRequest = { cursors, chatLimit, messageLimit }
+  const response = await authedRequest('/users/me/sync', 'POST', body)
+  return (await response.json()) as SyncResponse
 }
 
 /** №20 `sort` parameter: the alphabetical ordering is server-owned (FR-015). */
