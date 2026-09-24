@@ -116,7 +116,7 @@ description: "Task list for feature implementation"
 
 ### Tests for User Story 3 (писать ПЕРВЫМИ)
 
-- [ ] T030 [P] [US3] `UnreadConvergenceIT`: формула `unread = COUNT(входящих, seq > GREATEST(last_read, deleted), seq ≤ LEAST(last_seq, delivered))` — рост только по ack доставки (realtime и sync одинаково, US3-1/US3-2), прочтение №17 → уменьшение на фактически прочитанное (включая постраничное, US3-6), сообщения ниже `truncatedUpToSeq` не входят (US1-5/FR-007), чтение во время дозагрузки — счётчик не уходит в минус и не задваивается (edge), флаш отложенного «прочитано» через №17 → сходимость серверного счётчика и ✓✓ у отправителя (US3-7) — в `backend/src/test/kotlin/webchat/backend/sync/UnreadConvergenceIT.kt` ([data-model.md](./data-model.md) сущность 3; SC-003)
+- [x] T030 [P] [US3] `UnreadConvergenceIT`: формула `unread = COUNT(входящих, seq > GREATEST(last_read, deleted), seq ≤ LEAST(last_seq, delivered))` — рост только по ack доставки (realtime и sync одинаково, US3-1/US3-2), прочтение №17 → уменьшение на фактически прочитанное (включая постраничное, US3-6), сообщения ниже `truncatedUpToSeq` не входят (US1-5/FR-007), чтение во время дозагрузки — счётчик не уходит в минус и не задваивается (edge), флаш отложенного «прочитано» через №17 → сходимость серверного счётчика и ✓✓ у отправителя (US3-7) — в `backend/src/test/kotlin/webchat/backend/sync/UnreadConvergenceIT.kt` ([data-model.md](./data-model.md) сущность 3; SC-003)
 
 ### Implementation for User Story 3
 
