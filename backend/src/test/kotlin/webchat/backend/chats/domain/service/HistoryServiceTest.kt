@@ -9,6 +9,7 @@ import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
+import webchat.backend.chats.domain.model.UndeliveredChatPage
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
@@ -205,6 +206,17 @@ class HistoryServiceTest {
             userId: UUID,
             chatLastSeq: Long,
         ): ChatParticipant? = null
+
+        /** 005 legs are outside the №15 surface — empty by contract default. */
+        override fun advanceDelivered(
+            userId: UUID,
+            acks: Map<UUID, Long>,
+        ) = Unit
+
+        override fun loadForSync(
+            userId: UUID,
+            chatLimit: Int,
+        ): UndeliveredChatPage = UndeliveredChatPage(emptyList(), moreChats = false)
     }
 
     /** The auth port stands unused here — the history path reads membership, not user rows. */

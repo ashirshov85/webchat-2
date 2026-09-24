@@ -81,18 +81,11 @@ interface ParticipantRepository {
      * statements (the contract's `minItems 1` is the service's check).
      * The delivery position moves ONLY through this operation (FR-001) —
      * a №26 sync answer and an SSE frame never write it.
-     *
-     * The JDBC adapter (`JdbcParticipantRepository`, T010) provides the
-     * implementation; the default below only keeps the port evolution
-     * compilable until the adapter task lands.
      */
     fun advanceDelivered(
         userId: UUID,
         acks: Map<UUID, Long>,
-    ): Unit =
-        throw UnsupportedOperationException(
-            "advanceDelivered is provided by the JDBC adapter (T010, JdbcParticipantRepository)",
-        )
+    )
 
     /**
      * №26 `POST /users/me/sync` candidate read (005, sync-protocol.md §3,
@@ -107,16 +100,9 @@ interface ParticipantRepository {
      * folded in by the service (эффективный курсор =
      * `max(клиентский, серверный)`); the read never moves the delivery
      * position.
-     *
-     * The JDBC adapter (`JdbcParticipantRepository`, T010) provides the
-     * implementation; the default below only keeps the port evolution
-     * compilable until the adapter task lands.
      */
     fun loadForSync(
         userId: UUID,
         chatLimit: Int,
-    ): UndeliveredChatPage =
-        throw UnsupportedOperationException(
-            "loadForSync is provided by the JDBC adapter (T010, JdbcParticipantRepository)",
-        )
+    ): UndeliveredChatPage
 }

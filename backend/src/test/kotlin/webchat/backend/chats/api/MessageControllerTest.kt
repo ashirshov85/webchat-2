@@ -22,6 +22,7 @@ import webchat.backend.chats.domain.model.InvalidMessageTextException
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.model.MessageTextViolation
+import webchat.backend.chats.domain.model.UndeliveredChatPage
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatReadEvent
@@ -335,6 +336,17 @@ class MessageControllerTest {
             userId: UUID,
             chatLastSeq: Long,
         ): ChatParticipant? = null
+
+        /** 005 legs are outside the №15–№17 surface — empty by contract default. */
+        override fun advanceDelivered(
+            userId: UUID,
+            acks: Map<UUID, Long>,
+        ) = Unit
+
+        override fun loadForSync(
+            userId: UUID,
+            chatLimit: Int,
+        ): UndeliveredChatPage = UndeliveredChatPage(emptyList(), moreChats = false)
     }
 
     /** The realtime leg is irrelevant to the HTTP mapping — a silent sink keeps the unit surface narrow. */
