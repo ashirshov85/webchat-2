@@ -690,3 +690,44 @@ a {
 p {
   overflow-wrap: break-word;
 }
+
+/* Catch-up sync indicator (feature 005, T020): overrides the shared
+   [role='status'] block above — a fleeting progress hint, muted and
+   compact, not a success notification */
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+
+.sync-indicator-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: sync-indicator-pulse 1s ease-in-out infinite;
+}
+
+@keyframes sync-indicator-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sync-indicator-dot {
+    animation: none;
+  }
+}
