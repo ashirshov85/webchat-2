@@ -357,6 +357,10 @@ class BackpressureIT : BackpressureSendSupport() {
         repeat(SPIKE_ROUNDS) { round ->
             val stall = ChatRowStall(chatId)
             val volley = (1..SATURATION_SENDS).map { fireAsyncSend(bob, chatId, "$SPIKE_BLOCKER_TEXT-$round-$it") }
+            // T041 fixup: only the PARKED (admitted) futures can commit with
+            // 201 after the release — a shed future has already answered its
+            // one-shot 503 above and can never become a 201.
+            val parked: List<Future<ResponseEntity<String>>>
             try {
                 val split = splitAtDeadline(volley, shedWindow())
                 assertThat(split.completed.size)
@@ -367,11 +371,12 @@ class BackpressureIT : BackpressureSendSupport() {
                         bpDeliveryProperties.backpressure.maxLimit,
                     ).isGreaterThanOrEqualTo(MIN_SHEDS_PER_ROUND)
                 split.completed.forEach(::assertServerBusyShed)
+                parked = split.pending
                 Thread.sleep(SPIKE_HOLD_MILLIS)
             } finally {
                 stall.close()
             }
-            volley.forEach { future ->
+            parked.forEach { future ->
                 assertThat(future.get(JOIN_TIMEOUT_SECONDS, TimeUnit.SECONDS).statusCode)
                     .overridingErrorMessage(
                         "an admitted send of the spike round must commit with 201 after the release",
@@ -412,7 +417,10 @@ class BackpressureIT : BackpressureSendSupport() {
         val rejectionsBefore = admissionRejectionsTotal()
         val outcome = saturatedOrderingProbes(chatId, alice, bob, carol, recordedId)
 
-        outcome.volley.forEach { future ->
+        // T041 fixup: only the PARKED (admitted) futures can commit with 201
+        // once the stall releases — the shed futures have already answered
+        // their one-shot 503 inside the probe leg.
+        outcome.parked.forEach { future ->
             val accepted = future.get(JOIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             assertThat(accepted.statusCode)
                 .overridingErrorMessage(
@@ -447,7 +455,7 @@ class BackpressureIT : BackpressureSendSupport() {
     private data class OrderingOutcome(
         val sheds: Int,
         val admitted: Int,
-        val volley: List<Future<ResponseEntity<String>>>,
+        val parked: List<Future<ResponseEntity<String>>>,
     )
 
     /**
@@ -503,7 +511,7 @@ class BackpressureIT : BackpressureSendSupport() {
             assertServerBusyShed(sendMessage(alice, chatId, ORDER_FRESH_MEMBER_TEXT))
             assertServerBusyShed(sendMessage(carol, chatId, ORDER_STRANGER_TEXT))
             assertServerBusyShed(sendMessage(bob, chatId, ORDER_BLANK_TEXT))
-            return OrderingOutcome(sheds = split.completed.size, admitted = split.pending.size, volley = volley)
+            return OrderingOutcome(sheds = split.completed.size, admitted = split.pending.size, parked = split.pending)
         } finally {
             stall.close()
         }

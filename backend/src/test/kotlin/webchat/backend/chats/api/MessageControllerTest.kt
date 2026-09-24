@@ -14,6 +14,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.security.oauth2.jwt.Jwt
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.backpressure.NoopSendAdmissionGate
 import webchat.backend.chats.api.dto.ReadRequest
 import webchat.backend.chats.api.dto.SendMessageRequest
 import webchat.backend.chats.domain.model.Chat
@@ -266,6 +267,7 @@ class MessageControllerTest {
                             blockRepository = NoopBlockRepository,
                             meterRegistry = SimpleMeterRegistry(),
                         ),
+                    sendAdmissionGate = NoopSendAdmissionGate(),
                     meterRegistry = SimpleMeterRegistry(),
                 ),
             historyService =

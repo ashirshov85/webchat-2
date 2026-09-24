@@ -5,6 +5,9 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import webchat.backend.backpressure.AdmissionDecision
+import webchat.backend.backpressure.AdmissionLease
+import webchat.backend.backpressure.SendAdmissionGate
 import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
@@ -35,6 +38,23 @@ class FloodLimitException(
     val retryAfterSeconds: Long,
 ) : RuntimeException("the per-user send flood limit is exhausted") {
     val code: String = "flood_limit"
+}
+
+/**
+ * 503 (api-contract.md 005 §3, FR-009/FR-013, T041): the per-instance
+ * admission control SHED this send attempt — the path is loaded beyond
+ * its adaptive limit. [retryAfterSeconds] is the integral drain estimate
+ * of research.md 005 §6 (`ceil(in-flight × EWMA / max(limit, 1))`,
+ * floored at 1), rendered by the api layer as the `Retry-After` header
+ * of the `503 server_busy` problem+json. A shed writes NOTHING and burns
+ * no flood token (FR-010) — the system signal stays ahead of the
+ * personal limit, and the shed send retries idempotently by the same
+ * `clientMessageId` (US4: the client parks it in the transparent queue).
+ */
+class ServerBusyException(
+    val retryAfterSeconds: Long,
+) : RuntimeException("the send path is overloaded beyond its admission limit") {
+    val code: String = "server_busy"
 }
 
 /**
@@ -81,6 +101,17 @@ sealed interface MessageSendResult {
  *     already-recorded message resolves to the SAME stored row (`200`),
  *     so it can never be flood-penalized (T032) nor blocked (T054) — the
  *     retry always converges (US2-1/2);
+ *  0b. the admission gate (T041; api-contract.md 005 §3, FR-009/FR-013) —
+ *     STRICTLY after the dedup fast-path and BEFORE the membership,
+ *     validation and flood legs: a retry of an already recorded id has
+ *     already resolved through the dedup and never reaches the gate, so
+ *     it can never be shed; a shed ([AdmissionDecision.Shed] →
+ *     [ServerBusyException] → `503 server_busy` + `Retry-After`) writes
+ *     nothing and burns no flood token (FR-010), and an admitted send
+ *     holds its in-flight lease ([AdmissionDecision.Admitted.lease]) for
+ *     the synchronous send leg — settled exactly once via `use`, with
+ *     [webchat.backend.backpressure.AdmissionLease.acked] feeding the
+ *     `201`/`200` hold into the limiter's latency signal only;
  *  1. membership (FR-002, T014) → FR-003 text normalization → the
  *     per-user flood bucket (FR-011, T032: `rl:user:msgsend:{userId}`,
  *     30 tokens/min in Redis — AFTER the dedup, BEFORE the INSERT, so a
@@ -109,15 +140,23 @@ sealed interface MessageSendResult {
  * already recorded message resolves through the dedup FIRST and is never
  * blocked (FR-020 edge), while every fresh send into a blocked pair is
  * refused before any record with `403 chat_blocked_by_you` /
- * `403 you_are_blocked` and publishes nothing into either stream.
+ * `403 you_are_blocked` and publishes nothing into either stream. The
+ * admission gate (T041) joins the same way `SendPolicyGate` did in 004 —
+ * injected from the outside (DIP, plan.md VIII), one port call on the
+ * path. The delivery legs BEYOND the gate stay ungated («принятые
+ * доставляются в приоритете», US4-4): the realtime fan-out below and the
+ * №26 pull synchronization run without admission — overload may only
+ * slow ACCEPTANCE, never the delivery of accepted messages.
  */
 @Service
+@Suppress("LongParameterList") // the №16 path collaborators, one per leg (T041 adds the admission gate port)
 class MessageService(
     private val chatService: ChatService,
     private val messageRepository: MessageRepository,
     private val realtimeEventPublisher: RealtimeEventPublisher,
     private val chatsProperties: ChatsProperties,
     private val sendPolicyGate: SendPolicyGate,
+    private val sendAdmissionGate: SendAdmissionGate,
     private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(MessageService::class.java)
@@ -134,6 +173,59 @@ class MessageService(
             ack.stop(ackTimer(OUTCOME_EXISTING))
             return MessageSendResult.Existing(recorded)
         }
+        // T041 (api-contract.md 005 §3): the admission gate joins the path
+        // exactly here — AFTER the dedup fast-path (a retry never reaches
+        // it, FR-009), BEFORE membership/validation/flood (a shed is the
+        // system signal outranking every per-request refusal). The lease
+        // settles exactly once via `use` on every outcome, and only the
+        // durable `201`/`200` outcomes feed it a latency sample (acked).
+        return when (val decision = sendAdmissionGate.admit(chatId, senderId)) {
+            is AdmissionDecision.Shed -> throw shedRefusal(chatId, senderId, decision.retryAfterSeconds)
+            is AdmissionDecision.Admitted ->
+                decision.lease.use { lease ->
+                    executeAdmittedSend(ack, lease, chatId, senderId, clientMessageId, rawText)
+                }
+        }
+    }
+
+    /**
+     * T041 (SC-005): the warn carrier of a shed — ids only, never the
+     * message text (constitution V, the PII minimization of 004); the
+     * refusal itself leaves to the api layer as the typed
+     * [ServerBusyException] rendered `503 server_busy` + `Retry-After`.
+     */
+    private fun shedRefusal(
+        chatId: UUID,
+        senderId: UUID,
+        retryAfterSeconds: Long,
+    ): ServerBusyException {
+        log.warn(
+            "send admission shed: chat <{}>, sender <{}>, retry after <{}> s " +
+                "(503 server_busy, SC-005; no row written, no flood token burned)",
+            chatId,
+            senderId,
+            retryAfterSeconds,
+        )
+        return ServerBusyException(retryAfterSeconds)
+    }
+
+    /**
+     * The gated remainder of the №16 path (steps 1+ of the class doc):
+     * membership → normalization → flood → blocking pair → INSERT → the
+     * post-commit fan-out. The [webchat.backend.backpressure.AdmissionLease]
+     * settles at the `use` of the caller on EVERY outcome; only the durable
+     * `201 Created` / `200 Existing` settles mark [AdmissionLease.acked] —
+     * a typed refusal thrown here releases its slot WITHOUT a latency
+     * sample (a fast 4xx/429 never measured the PG-commit leg).
+     */
+    private fun executeAdmittedSend(
+        ack: Timer.Sample,
+        lease: AdmissionLease,
+        chatId: UUID,
+        senderId: UUID,
+        clientMessageId: UUID,
+        rawText: String,
+    ): MessageSendResult {
         val chat = chatService.get(chatId, senderId)
         val text = MessageText.normalize(rawText, chatsProperties.message.maxLength)
         sendPolicyGate.enforceFloodLimit(senderId)
@@ -146,13 +238,17 @@ class MessageService(
             is MessageInsertResult.Inserted -> {
                 publishCreated(chat, outcome.message)
                 ack.stop(ackTimer(OUTCOME_CREATED))
+                lease.acked()
                 MessageSendResult.Created(outcome.message)
             }
             is MessageInsertResult.Duplicate -> {
                 val existing = outcome.existing
-                if (existing.chatId != chat.id || existing.senderId != senderId) throw MessageIdConflictException()
+                if (existing.chatId != chat.id || existing.senderId != senderId) {
+                    throw MessageIdConflictException()
+                }
                 dedupTotal().increment()
                 ack.stop(ackTimer(OUTCOME_EXISTING))
+                lease.acked()
                 MessageSendResult.Existing(existing)
             }
         }

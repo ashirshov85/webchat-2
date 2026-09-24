@@ -18,6 +18,7 @@ import webchat.backend.chats.domain.service.MixedCursorsException
 import webchat.backend.chats.domain.service.NotParticipantException
 import webchat.backend.chats.domain.service.PeerNotFoundException
 import webchat.backend.chats.domain.service.SelfForbiddenException
+import webchat.backend.chats.domain.service.ServerBusyException
 import webchat.backend.chats.domain.service.YouAreBlockedException
 
 /**
@@ -164,6 +165,23 @@ class ChatsExceptionHandler {
                     .apply { setProperty(ERRORS_PROPERTY, mapOf(TEXT_FIELD to listOf(FLOOD_LIMIT_CODE))) },
             )
 
+    /**
+     * 503 (api-contract.md 005 §3, FR-009/FR-013, T041): the admission
+     * control of the send path shed this attempt — an EXPLICIT temporary
+     * refusal (SC-005: never a silent one) with the integral `Retry-After`
+     * seconds; NOTHING was written and no flood token burned (FR-010).
+     * The submitted text is never echoed (constitution V).
+     */
+    @ExceptionHandler(ServerBusyException::class)
+    fun onServerBusy(failure: ServerBusyException): ResponseEntity<ProblemDetail> =
+        ResponseEntity
+            .status(HttpStatus.SERVICE_UNAVAILABLE)
+            .header(HttpHeaders.RETRY_AFTER, failure.retryAfterSeconds.toString())
+            .body(
+                problem(HttpStatus.SERVICE_UNAVAILABLE, SERVER_BUSY_DETAIL)
+                    .apply { setProperty(ERRORS_PROPERTY, mapOf(CHAT_FIELD to listOf(SERVER_BUSY_CODE))) },
+            )
+
     private fun problem(
         status: HttpStatus,
         detail: String,
@@ -197,6 +215,7 @@ class ChatsExceptionHandler {
         const val MIXED_CURSORS_CODE = "mixed_cursors"
         const val INVALID_UP_TO_SEQ_CODE = "invalid_up_to_seq"
         const val FLOOD_LIMIT_CODE = "flood_limit"
+        const val SERVER_BUSY_CODE = "server_busy"
         const val SELF_FORBIDDEN_DETAIL = "A dialog requires two distinct users"
         const val PEER_NOT_FOUND_DETAIL = "The requested peer user does not exist"
         const val CHAT_NOT_FOUND_DETAIL = "The requested chat does not exist"
@@ -212,5 +231,7 @@ class ChatsExceptionHandler {
         const val MIXED_CURSORS_DETAIL = "the after and before cursors are mutually exclusive"
         const val INVALID_UP_TO_SEQ_DETAIL = "upToSeq must be within 1..seq of the last message of the dialog"
         const val FLOOD_LIMIT_DETAIL = "The message rate limit is exceeded; retry after the indicated interval"
+        const val SERVER_BUSY_DETAIL =
+            "The send path is temporarily overloaded; retry after the indicated interval (server_busy)"
     }
 }

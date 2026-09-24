@@ -54,8 +54,13 @@ class MessageController(
      * Contract №16: the idempotent send — `201 Message` when a fresh
      * record is stored, `200 Message` when the `clientMessageId` is
      * already recorded (FR-004: the same row returned, never a
-     * duplicate). The flood (`429`) and blocking-pair (`403`) gates join
-     * this path in later stories (T032/T054) without changing the map.
+     * duplicate). The blocking-pair (`403`) and flood (`429`) gates and
+     * the T041 admission shed — `503 server_busy` + `Retry-After` with
+     * `errors: {chat: [server_busy]}` (the typed
+     * [webchat.backend.chats.domain.service.ServerBusyException], rendered by
+     * [ChatsExceptionHandler]) — leave here as typed exceptions; the №16
+     * check order dedup → admission → membership → validation → flood is
+     * owned by [MessageService] (api-contract.md 005 §3, BackpressureIT).
      */
     @PostMapping("/messages")
     fun send(
