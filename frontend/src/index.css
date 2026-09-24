@@ -731,3 +731,32 @@ p {
     animation: none;
   }
 }
+
+/* Queue-overflow notification banner (feature 005, T028): overrides
+   the shared [role='status'] block above — a warning about evicted
+   outbox records (FR-005), not a success notification. */
+.queue-overflow-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  color: var(--danger);
+  background: var(--danger-bg);
+  font-size: 0.85rem;
+}
+
+.queue-overflow-banner-text {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.queue-overflow-banner-dismiss {
+  padding: 0 8px;
+  font-weight: 400;
+  color: inherit;
+  background: none;
+  border: none;
+}

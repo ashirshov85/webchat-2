@@ -41,6 +41,12 @@
  * `message.created` frame acks its `seq` and advances the local
  * cursor — realtime and catch-up move the delivery position alike.
  * The SyncIndicator (T020) lights up in the panel while a cycle runs.
+ *
+ * US2 queue overflow (feature 005, T028, FR-005): the panel-level
+ * QueueOverflowBanner listens to the outbox eviction events of T026 —
+ * it spans all chats (the outbox storage is per-user), so it lives
+ * here and not inside a dialog; the evicted records themselves render
+ * «не отправлено (переполнение очереди)» in their dialogs (T028).
  */
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentUser } from '../../api/auth'
@@ -55,6 +61,7 @@ import { ContactList } from '../components/ContactList'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { MessageInput } from '../components/MessageInput'
 import { MessageList } from '../components/MessageList'
+import { QueueOverflowBanner } from '../components/QueueOverflowBanner'
 import { SyncIndicator } from '../components/SyncIndicator'
 import { UserSearchBox } from '../components/UserSearchBox'
 import { useChatList } from '../hooks/useChatList'
@@ -362,6 +369,7 @@ export function MessengerPage() {
   return (
     <div className="messenger">
       <aside className="messenger-panel" aria-label="Чаты и контакты">
+        <QueueOverflowBanner userId={currentUserId} />
         <SyncIndicator syncing={syncing} />
         <ChatListPanel
           chats={chats}

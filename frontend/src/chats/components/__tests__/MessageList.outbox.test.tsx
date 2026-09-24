@@ -177,3 +177,51 @@ describe('MessageList outbox convergence', () => {
     expect(incoming?.querySelectorAll('button')).toHaveLength(0)
   })
 })
+
+describe('MessageList evicted-record reason (T028, FR-005)', () => {
+  it('renders the queue-overflow reason on an evicted record with the manual actions', () => {
+    render(
+      <MessageList
+        messages={[]}
+        currentUserId={ME}
+        outbox={[outboxRecord({ errorCode: 'queue_overflow' })]}
+      />,
+    )
+
+    expect(screen.getByText('не отправлено (переполнение очереди)')).toBeVisible()
+    expect(screen.queryByText('не отправлено')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Повторить' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Удалить' })).toBeVisible()
+  })
+
+  it('keeps the plain «не отправлено» for server-side terminal failures', () => {
+    render(
+      <MessageList
+        messages={[]}
+        currentUserId={ME}
+        outbox={[
+          outboxRecord({ clientMessageId: 'cm-blocked', errorCode: 'you_are_blocked' }),
+          outboxRecord({ clientMessageId: 'cm-evicted', errorCode: 'queue_overflow' }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('не отправлено')).toBeVisible()
+    expect(screen.getByText('не отправлено (переполнение очереди)')).toBeVisible()
+  })
+
+  it('does not leak the eviction reason onto sending records', () => {
+    render(
+      <MessageList
+        messages={[]}
+        currentUserId={ME}
+        outbox={[
+          outboxRecord({ clientMessageId: 'cm-live', state: 'sending', errorCode: undefined }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('отправляется')).toBeVisible()
+    expect(screen.queryByText(/переполнение очереди/)).toBeNull()
+  })
+})
