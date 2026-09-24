@@ -16,12 +16,13 @@ import java.util.Base64
 @Suppress("UtilityClassWithPublicConstructor")
 abstract class AbstractIntegrationTest {
     companion object {
-        @ServiceConnection
         val postgres: PostgreSQLContainer<*> =
             PostgreSQLContainer(DockerImageName.parse("postgres:17"))
                 .withDatabaseName("webchat")
                 .withUsername("webchat")
                 .withPassword("webchat")
+                .withInitScript("webchat_it_init.sql")
+                .apply { start() }
 
         @ServiceConnection
         val redis: GenericContainer<*> =
@@ -30,7 +31,23 @@ abstract class AbstractIntegrationTest {
 
         @DynamicPropertySource
         @JvmStatic
-        fun authTestProperties(registry: DynamicPropertyRegistry) {
+        fun integrationTestProperties(registry: DynamicPropertyRegistry) {
+            // The app pool logs in as the dedicated NON-superuser role the
+            // container init script creates (webchat_it_init.sql), NOT the
+            // Testcontainers bootstrap superuser: superusers bypass
+            // row-level security even under FORCE, and the RLS-based
+            // per-chat fault injection of SyncIT (T008, all-or-refusal)
+            // must reach the app sessions. PG 15+ forbids demoting the
+            // bootstrap superuser, so the app role is separate from the
+            // start; Flyway creates and owns every schema object through
+            // this same login (as production-like as it gets). The
+            // ConnectionDetails beans of @ServiceConnection would override
+            // these properties, so postgres is wired explicitly — and
+            // eagerly started above, since without @ServiceConnection
+            // nothing else starts it before the lazy suppliers resolve.
+            registry.add("spring.datasource.url") { postgres.jdbcUrl }
+            registry.add("spring.datasource.username") { APP_DB_ROLE }
+            registry.add("spring.datasource.password") { APP_DB_ROLE }
             registry.add("auth.ip-hash-pepper") { "it-test-pepper" }
             registry.add("auth.jwt.keys") { TEST_JWT_KEYS }
             registry.add("auth.jwt.active-kid") { TEST_JWT_KID }
@@ -51,6 +68,9 @@ abstract class AbstractIntegrationTest {
         // mint specially-crafted tokens (expired, wrong `typ`) that must pass
         // the signature gate and hit the deeper verification branches.
         internal const val TEST_JWT_KID = "it-test"
+
+        /** The non-superuser app login created by webchat_it_init.sql (T008 fault-injection prerequisite). */
+        internal const val APP_DB_ROLE = "webchat_app"
 
         internal val TEST_JWT_KEYS: String by lazy {
             val keyPair =

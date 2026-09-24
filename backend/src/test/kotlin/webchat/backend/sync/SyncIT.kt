@@ -529,8 +529,8 @@ class SyncIT(
             .overridingErrorMessage("the replay order must follow server seq, whatever the timestamps say")
             .containsExactlyElementsOf(seqs)
         val createdAt = messages.map { OffsetDateTime.parse(it["createdAt"].asText()).toInstant() }
-        createdAt.zipWithNext().forEach { (later, earlier) ->
-            assertThat(later.isBefore(earlier))
+        createdAt.zipWithNext().forEach { (current, next) ->
+            assertThat(next.isBefore(current))
                 .overridingErrorMessage("createdAt must run strictly backwards while seq runs forwards")
                 .isTrue()
         }
@@ -598,6 +598,12 @@ class SyncIT(
      * passes every other row, wired as a FOR SELECT row-level-security
      * policy (FORCEd so the table owner is covered too). Everything is
      * reverted in `finally` — the surrounding scenario data stays intact.
+     *
+     * The app pool connects as the NON-superuser `webchat_app` (created
+     * by webchat_it_init.sql through AbstractIntegrationTest) and OWNS
+     * the schema objects, so the FORCEd policy covers its sessions —
+     * the injection would silently no-op against the Testcontainers
+     * bootstrap superuser, who bypasses RLS unconditionally.
      */
     private fun withPoisonedChatReads(
         chatId: UUID,
