@@ -26,6 +26,16 @@
  * `message.id` already is the rendered preview changes nothing (the
  * badge was counted before), and refetches replace the local state
  * wholesale, so the server stays the single source of truth.
+ *
+ * Catch-up deltas (feature 005, T023): `applySyncUpdate` merges the
+ * №26/№15 pages useSync applied — a known chat's preview/position move
+ * to the page tail (dedup: only a strictly newer `seq` replaces the
+ * preview), and a chat unknown to the list materializes from the
+ * delta's metadata (peer, badge) — US1-6's «новый чат появляется со
+ * всей перепиской»: the row shows up at once and the №12 refetch of
+ * the next (re)connect converges the aggregate. The unread badge
+ * itself stays with the realtime/refetch paths — its server-
+ * authoritative convergence over delivered positions is US3 (T035).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listChats } from '../../api/chats'
@@ -33,6 +43,22 @@ import type { ChatListItem, Message } from '../../api/chats'
 import { useRealtime } from './useRealtime'
 
 export type ChatListStatus = 'loading' | 'ready' | 'error'
+
+/**
+ * One applied catch-up page handed to the list (feature 005, T023):
+ * №26 delta pages carry the chat metadata (`peer`, `blockedByMe`,
+ * server counters), №15 continuation pages carry only the tail.
+ */
+export interface SyncChatListUpdate {
+  readonly chatId: string
+  readonly messages: Message[]
+  readonly peer?: PublicUserLike
+  readonly blockedByMe?: boolean
+  readonly unreadCount?: number
+}
+
+/** Structural `peer` of the delta (№12 projection — id/username/…). */
+type PublicUserLike = ChatListItem['peer']
 
 export interface UseChatListResult {
   /** Chats sorted by the last visible message (FR-014): newest first, messageless last. */
@@ -47,6 +73,14 @@ export interface UseChatListResult {
    * the user reads; wired into the panel by T058/T060.
    */
   readonly markChatReadLocally: (chatId: string) => void
+  /**
+   * Merges an applied catch-up page into the list (feature 005,
+   * T023): preview/position of a known chat follow the page tail
+   * (idempotent — only a strictly newer `seq` replaces anything), an
+   * unknown chat materializes as a row (US1-6). The unread badge is
+   * left to its owners (realtime +1, №12 refetch; T035 converges it).
+   */
+  readonly applySyncUpdate: (update: SyncChatListUpdate) => void
 }
 
 /**
@@ -129,6 +163,46 @@ function resetUnread(chats: ChatListItem[], chatId: string): ChatListItem[] {
   const next = [...chats]
   next[index] = { ...current, unreadCount: 0 }
   return next
+}
+
+/**
+ * Applies one catch-up page to the list (feature 005, T023): known
+ * chats move their preview to a strictly newer page tail; unknown
+ * chats materialize from the №26 delta metadata (US1-6). Returns the
+ * previous reference when nothing changed — idempotent render.
+ */
+function applySyncDelta(chats: ChatListItem[], update: SyncChatListUpdate): ChatListItem[] {
+  const tail = update.messages.length > 0 ? update.messages[update.messages.length - 1] : undefined
+  const index = chats.findIndex((item) => item.chatId === update.chatId)
+  const current = index === -1 ? undefined : chats[index]
+  if (current === undefined) {
+    // №15 continuation pages of a chat the list never saw cannot
+    // materialize a row (no peer) — the №26 delta of the same cycle
+    // always precedes them, so dropping is safe.
+    if (update.peer === undefined || tail === undefined) {
+      return chats
+    }
+    const created: ChatListItem = {
+      chatId: update.chatId,
+      peer: update.peer,
+      lastMessage: tail,
+      unreadCount: update.unreadCount ?? 0,
+      blockedByMe: update.blockedByMe ?? false,
+    }
+    return sortChatListItems([...chats, created])
+  }
+  const lastMessage =
+    tail !== undefined && (current.lastMessage === null || tail.seq > current.lastMessage.seq)
+      ? tail
+      : current.lastMessage
+  const blockedByMe = update.blockedByMe ?? current.blockedByMe
+  const updated: ChatListItem = { ...current, lastMessage, blockedByMe }
+  if (isSameListItem(current, updated)) {
+    return chats
+  }
+  const next = [...chats]
+  next[index] = updated
+  return sortChatListItems(next)
 }
 
 export function useChatList(currentUserId: string | null): UseChatListResult {
@@ -220,11 +294,19 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
     [applyChats],
   )
 
+  const applySyncUpdate = useCallback(
+    (update: SyncChatListUpdate) => {
+      applyChats((previous) => applySyncDelta(previous, update))
+    },
+    [applyChats],
+  )
+
   return {
     chats,
     status,
     error,
     reload,
     markChatReadLocally,
+    applySyncUpdate,
   }
 }

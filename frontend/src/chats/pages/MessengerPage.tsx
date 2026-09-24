@@ -29,21 +29,38 @@
  * The unread badge of the open dialog resets locally (FR-014) as its
  * messages render — the same display events that advance the read
  * watermark inside useChatMessages (T044).
+ *
+ * Delivery-resilience integration (feature 005, T023): `useSync`
+ * mounts the §3.1 catch-up loop on every SSE (re)open — its applied
+ * pages feed this page through `onChatUpdate`: the chat list adopts
+ * previews/positions and materializes new chats (US1-6), the open
+ * dialog merges pages with the usual dedup-by-id `seq`-order
+ * reconcile (US1-3), and truncation drops deleted history (US1-5).
+ * Applied realtime frames confirm through the same shared №25
+ * batcher as the pages (sync-protocol.md §2): every applied
+ * `message.created` frame acks its `seq` and advances the local
+ * cursor — realtime and catch-up move the delivery position alike.
+ * The SyncIndicator (T020) lights up in the panel while a cycle runs.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
 import { blockUser, deleteChat, getChat, unblockUser } from '../../api/chats'
 import type { Message } from '../../api/chats'
+import { getAckBatcher } from '../../sync/ack'
+import { advanceCursor } from '../../sync/cursors'
+import { useSync } from '../../sync/hooks/useSync'
 import { ChatListPanel } from '../components/ChatListPanel'
 import { ContactList } from '../components/ContactList'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { MessageInput } from '../components/MessageInput'
 import { MessageList } from '../components/MessageList'
+import { SyncIndicator } from '../components/SyncIndicator'
 import { UserSearchBox } from '../components/UserSearchBox'
 import { useChatList } from '../hooks/useChatList'
 import { useChatMessages } from '../hooks/useChatMessages'
 import { useOutbox } from '../hooks/useOutbox'
+import { useRealtime } from '../hooks/useRealtime'
 
 /** The open dialog: everything the header actions need (T060). */
 interface ActiveChat {
@@ -119,6 +136,7 @@ export function MessengerPage() {
     error: chatListError,
     reload: reloadChatList,
     markChatReadLocally,
+    applySyncUpdate: applyChatListSync,
   } = useChatList(currentUserId)
 
   const activeChatId = activeChat?.chatId ?? null
@@ -133,7 +151,13 @@ export function MessengerPage() {
     loadingOlder,
     loadOlder,
     peerReadUpToSeq,
+    applySyncPage: applyDialogSync,
   } = useChatMessages(activeChatId)
+
+  // The §3.1 catch-up loop (feature 005): runs on every SSE (re)open,
+  // its `syncing` drives the SyncIndicator below.
+  const { syncing, onChatUpdate } = useSync(currentUserId)
+  const realtime = useRealtime()
 
   const handleConfirmed = useCallback(
     (message: Message) => {
@@ -149,6 +173,33 @@ export function MessengerPage() {
     setMenuOpen(false)
     setPendingAction(null)
   }, [activeChatId])
+
+  // Applied catch-up pages (feature 005, T023): the list adopts
+  // previews/positions and materializes new chats (US1-6), the open
+  // dialog merges the page idempotently (dedup by `message.id`, order
+  // by `seq`, US1-3) — `applyDialogSync` ignores other chats by
+  // itself, so no activeChatId filter is needed here.
+  useEffect(() => {
+    return onChatUpdate((update) => {
+      applyChatListSync(update)
+      applyDialogSync(update)
+    })
+  }, [onChatUpdate, applyChatListSync, applyDialogSync])
+
+  // Applied realtime frames confirm through the same shared №25
+  // batcher as the catch-up pages (sync-protocol.md §2): the frame's
+  // `seq` acks its chat and the local cursor echoes it — realtime and
+  // sync move the delivery position alike (US1-1).
+  useEffect(() => {
+    if (currentUserId === null) {
+      return
+    }
+    const batcher = getAckBatcher(currentUserId)
+    return realtime.onMessageCreated(null, (event) => {
+      batcher.ack(event.chatId, event.message.seq)
+      advanceCursor(currentUserId, event.chatId, event.message.seq)
+    })
+  }, [currentUserId, realtime])
 
   // Keep the header's `blockedByMe` in step with the №12 aggregate:
   // every list refetch (block actions, SSE reconnects) reconciles the
@@ -311,6 +362,7 @@ export function MessengerPage() {
   return (
     <div className="messenger">
       <aside className="messenger-panel" aria-label="Чаты и контакты">
+        <SyncIndicator syncing={syncing} />
         <ChatListPanel
           chats={chats}
           status={chatListStatus}

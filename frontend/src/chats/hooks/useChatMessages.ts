@@ -35,6 +35,15 @@
  * advances monotonically on `chat.read` frames; a missed frame is
  * compensated by the ChatView refetch on every SSE (re)connect
  * (FR-009), so the status never regresses.
+ *
+ * Catch-up pages (feature 005, T023): `applySyncPage` merges the
+ * №26/№15 pages useSync applied — the same dedup-by-id reconcile in
+ * stable `seq` order, so a page racing a realtime frame of the same
+ * message renders once (US1-3). A `truncatedUpToSeq` page is the
+ * server's word that history below the point stays deleted: rendered
+ * messages at or below it are dropped and never restored (US1-5,
+ * FR-007). The delta's `peerReadUpToSeq` advances the ✓✓ watermark
+ * monotonically — offline read marks arrive with the catch-up.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getChat, listMessages, markChatRead } from '../../api/chats'
@@ -45,6 +54,19 @@ import { useRealtime } from './useRealtime'
 const READ_RECEIPT_THROTTLE_MS = 500
 
 export type ChatMessagesStatus = 'loading' | 'ready' | 'error'
+
+/**
+ * One applied catch-up page of the open chat (feature 005, T023):
+ * `messages` ascending by `seq` from a №26 delta or a №15 `after`
+ * page; `truncatedUpToSeq`/`peerReadUpToSeq` only when the delta
+ * carried them (sync-protocol.md §3).
+ */
+export interface SyncPageUpdate {
+  readonly chatId: string
+  readonly messages: Message[]
+  readonly truncatedUpToSeq?: number
+  readonly peerReadUpToSeq?: number
+}
 
 export interface UseChatMessagesResult {
   /** Messages of the open chat in ascending `seq` order (oldest first). */
@@ -76,6 +98,13 @@ export interface UseChatMessagesResult {
    * ChatView refetches, never regresses.
    */
   readonly peerReadUpToSeq: number
+  /**
+   * Merges an applied catch-up page of THIS chat into the rendered
+   * window (feature 005, T023): dedup by `message.id`, stable `seq`
+   * order, drop at/below `truncatedUpToSeq`, monotonic ✓✓ watermark.
+   * Pages of other chats are ignored — each dialog consumes its own.
+   */
+  readonly applySyncPage: (update: SyncPageUpdate) => void
 }
 
 function isSameMessage(a: Message, b: Message): boolean {
@@ -332,6 +361,27 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     setMessages((previous) => reconcileMessages(previous, [message]))
   }, [])
 
+  const applySyncPage = useCallback(
+    (update: SyncPageUpdate) => {
+      if (update.chatId !== chatId) {
+        return
+      }
+      const truncatedUpToSeq = update.truncatedUpToSeq
+      if (truncatedUpToSeq !== undefined) {
+        // US1-5/FR-007: everything at/below the truncation point is
+        // deleted for this user — the server's word outranks any stale
+        // local copy of the history.
+        setMessages((previous) => previous.filter((message) => message.seq > truncatedUpToSeq))
+      }
+      setMessages((previous) => reconcileMessages(previous, update.messages))
+      const peerReadUpToSeq = update.peerReadUpToSeq
+      if (peerReadUpToSeq !== undefined) {
+        setPeerReadUpToSeq((previous) => Math.max(previous, peerReadUpToSeq))
+      }
+    },
+    [chatId],
+  )
+
   const loadOlder = useCallback(() => {
     if (chatId === null || oldestSeq === null || loadingOlderRef.current) {
       return
@@ -373,5 +423,6 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     loadingOlder,
     loadOlder,
     peerReadUpToSeq,
+    applySyncPage,
   }
 }
