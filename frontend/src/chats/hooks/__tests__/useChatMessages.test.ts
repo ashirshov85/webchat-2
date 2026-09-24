@@ -377,6 +377,42 @@ describe('useChatMessages convergence on SSE (re)connect (FR-009)', () => {
   })
 })
 
+describe('useChatMessages parallel queue and realtime sends after reconnect (quickstart §3.3.6, T029)', () => {
+  it('interleaves outbox-confirmed and realtime messages by server seq — no losses, no duplicates', async () => {
+    const stream = installStream()
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)], 10))
+    const { result } = mountChatMessages('chat-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    // Bob is back online: his queued sends were accepted at seq 20/21
+    // while Alice's realtime frames (seq 19/22) race into the same
+    // dialog, and the own SSE stream redelivers Bob's confirmed
+    // message. The dialog keeps the actual server acceptance order
+    // (seq), every message exactly once (edge «одновременная
+    // отправка», spec 005).
+    act(() => {
+      result.current.confirmMessage({ ...makeMessage('chat-1', 'bob-1', 20), senderId: 'me-1' })
+    })
+    emitMessageCreated(stream, makeMessage('chat-1', 'alice-1', 19))
+    act(() => {
+      result.current.confirmMessage({ ...makeMessage('chat-1', 'bob-2', 21), senderId: 'me-1' })
+    })
+    emitMessageCreated(stream, makeMessage('chat-1', 'alice-2', 22))
+    emitMessageCreated(stream, { ...makeMessage('chat-1', 'bob-1', 20), senderId: 'me-1' })
+
+    expect(result.current.messages.map((message) => message.seq)).toEqual([10, 19, 20, 21, 22])
+    expect(result.current.messages.map((message) => message.id)).toEqual([
+      'm-1',
+      'alice-1',
+      'bob-1',
+      'bob-2',
+      'alice-2',
+    ])
+  })
+})
+
 describe('useChatMessages chat switching', () => {
   it('resets and loads the newly opened chat', async () => {
     installStream()

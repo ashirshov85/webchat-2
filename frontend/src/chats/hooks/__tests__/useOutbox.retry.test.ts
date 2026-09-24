@@ -70,10 +70,14 @@ const flood = (retryAfterSec: number): Record<string, unknown> => ({
   retryAfterSec,
 })
 
+type ConfirmedCallback = NonNullable<Parameters<typeof useOutbox>[1]>['onConfirmed']
+
 const mounted: Array<{ unmount(): void }> = []
 
-function mountOutbox(userId: string | null) {
-  const rendered = renderHook(() => useOutbox(userId))
+function mountOutbox(userId: string | null, onConfirmed?: ConfirmedCallback) {
+  const rendered = renderHook(() =>
+    useOutbox(userId, onConfirmed === undefined ? undefined : { onConfirmed }),
+  )
   mounted.push(rendered)
   return rendered
 }
@@ -327,6 +331,82 @@ describe('useOutbox permanent 4xx failures are terminal (FR-006, US2)', () => {
 
     await advance(60000)
     expect(mockedSend).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('useOutbox quickstart §3.3 offline-queue validation (T029, US2 — SC-002)', () => {
+  it('§3.3.1: the queue survives a restart while still offline, then delivers every message exactly once in send order', async () => {
+    const confirmed: Message[] = []
+    const onConfirmed: ConfirmedCallback = (message) => {
+      confirmed.push(message)
+    }
+    mockedSend.mockRejectedValue(new TypeError('offline'))
+    const first = mountOutbox(USER, onConfirmed)
+
+    // Bob Offline: three sends are stored `sending`, first attempts fail.
+    const id1 = enqueueValid(first.result, 'chat-1', 'one')
+    const id2 = enqueueValid(first.result, 'chat-1', 'two')
+    const id3 = enqueueValid(first.result, 'chat-1', 'three')
+    await advance(0)
+    expect(sentIds()).toEqual([id1, id2, id3])
+    expect(readOutbox(USER)).toHaveLength(3)
+
+    // Close the tab and reopen the app with the network still down:
+    // the queue is intact (localStorage), all records keep `sending`.
+    first.unmount()
+    const second = mountOutbox(USER, onConfirmed)
+    expect(second.result.current.records.map((record) => record.clientMessageId)).toEqual([
+      id1,
+      id2,
+      id3,
+    ])
+    expect(second.result.current.records.every((record) => record.state === 'sending')).toBe(true)
+    await advance(0)
+    expect(sentIds()).toEqual([id1, id2, id3, id1, id2, id3])
+    expect(readOutbox(USER)).toHaveLength(3)
+
+    // Network restored: the FIFO flush (enqueue order = server
+    // acceptance order) confirms every id exactly once — statuses ✓,
+    // no duplicates, nothing lost (SC-002).
+    mockedSend
+      .mockResolvedValueOnce(makeMessage('chat-1', id1, 11, 'one'))
+      .mockResolvedValueOnce(makeMessage('chat-1', id2, 12, 'two'))
+      .mockResolvedValueOnce(makeMessage('chat-1', id3, 13, 'three'))
+    await advance(1000)
+    expect(sentIds()).toEqual([id1, id2, id3, id1, id2, id3, id1, id2, id3])
+    expect(confirmed.map((message) => message.seq)).toEqual([11, 12, 13])
+    expect(second.result.current.records).toEqual([])
+    expect(readOutbox(USER)).toEqual([])
+
+    await advance(60000)
+    expect(mockedSend).toHaveBeenCalledTimes(9)
+  })
+
+  it('§3.3.2: a lost acknowledgement converges on retry by the same id — one confirmed instance (dedup)', async () => {
+    const onConfirmed = vi.fn<NonNullable<ConfirmedCallback>>()
+    const { result } = mountOutbox(USER, onConfirmed)
+    const clientMessageId = enqueueValid(result, 'chat-1', 'did you get it?')
+    // The first request reached the server (accepted at seq 42) but
+    // the response was lost on a network blip; the retry by the SAME
+    // clientMessageId hits the 004 server dedup (200 + the same
+    // Message) — the dialog confirms exactly one instance.
+    const serverCopy = makeMessage('chat-1', clientMessageId, 42, 'did you get it?')
+    mockedSend
+      .mockRejectedValueOnce(new TypeError('network blip'))
+      .mockResolvedValueOnce(serverCopy)
+
+    await advance(0)
+    expect(result.current.records[0]?.state).toBe('sending')
+    expect(result.current.records[0]?.retryAt).toBeUndefined()
+    expect(onConfirmed).not.toHaveBeenCalled()
+
+    await advance(1000)
+    expect(sentIds()).toEqual([clientMessageId, clientMessageId])
+    expect(result.current.records).toEqual([])
+    expect(readOutbox(USER)).toEqual([])
+    expect(onConfirmed).toHaveBeenCalledOnce()
+    expect(onConfirmed.mock.calls[0]?.[0]).toBe(serverCopy)
+    expect(onConfirmed.mock.calls[0]?.[1].clientMessageId).toBe(clientMessageId)
   })
 })
 
