@@ -11,6 +11,11 @@
  *
  * Written test-first (constitution VI): must fail until T026 lands
  * the eviction in `outbox.ts`.
+ *
+ * Storage invariant (FR-005): at most OUTBOX_LIMIT ACTIVE records are
+ * queued; an evicted record stays stored and visible in the dialog as
+ * `failed`/`queue_overflow` — so right after an eviction the array
+ * holds OUTBOX_LIMIT active records PLUS the evicted one(s).
  */
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -81,7 +86,8 @@ describe('outbox storage limit (FR-005, US2 queue-limit edge)', () => {
     addOutboxRecord(USER, record('m-new', 'sending'))
 
     const records = readOutbox(USER)
-    expect(records).toHaveLength(OUTBOX_LIMIT)
+    // 1000 active records + the evicted m-0001 staying visible (FR-005).
+    expect(records).toHaveLength(OUTBOX_LIMIT + 1)
     expect(records[0]).toMatchObject({
       clientMessageId: 'm-0001',
       state: 'failed',
@@ -99,7 +105,8 @@ describe('outbox storage limit (FR-005, US2 queue-limit edge)', () => {
     addOutboxRecord(USER, record('s-new', 'sending'))
 
     const records = readOutbox(USER)
-    expect(records).toHaveLength(OUTBOX_LIMIT)
+    // 1000 active records + the evicted s-0001 staying visible (FR-005).
+    expect(records).toHaveLength(OUTBOX_LIMIT + 1)
     expect(records[0]).toMatchObject({
       clientMessageId: 'old-failed',
       state: 'failed',
@@ -130,7 +137,8 @@ describe('outbox storage limit (FR-005, US2 queue-limit edge)', () => {
       state: 'failed',
       errorCode: 'queue_overflow',
     })
-    expect(records).toHaveLength(OUTBOX_LIMIT)
+    // The evicted record stays stored/visible beyond the active cap (FR-005).
+    expect(records).toHaveLength(OUTBOX_LIMIT + 1)
   })
 
   it('manual retry of an evicted record by the same id re-queues it (idempotency preserved)', () => {
@@ -221,7 +229,8 @@ describe('useOutbox eviction at the storage limit (FR-005, US2)', () => {
 
     // One record above the limit: the oldest `sending` is evicted, failed ones are skipped.
     const secondExtra = enqueueValid(result, 'chat-1', 'extra two')
-    expect(result.current.records).toHaveLength(OUTBOX_LIMIT)
+    // 1000 active records + the evicted victim staying visible (FR-005).
+    expect(result.current.records).toHaveLength(OUTBOX_LIMIT + 1)
     expect(findRecord(result.current.records, 'victim')).toMatchObject({
       state: 'failed',
       errorCode: 'queue_overflow',
@@ -231,8 +240,8 @@ describe('useOutbox eviction at the storage limit (FR-005, US2)', () => {
     expect(
       result.current.records.filter((entry) => entry.errorCode === 'you_are_blocked'),
     ).toHaveLength(OUTBOX_LIMIT - 2)
-    // Eviction is persisted — the queue stays at the limit across reloads.
-    expect(readOutbox(USER)).toHaveLength(OUTBOX_LIMIT)
+    // Eviction is persisted — the active queue stays at the limit across reloads.
+    expect(readOutbox(USER)).toHaveLength(OUTBOX_LIMIT + 1)
     expect(findRecord(readOutbox(USER), 'victim')).toMatchObject({
       state: 'failed',
       errorCode: 'queue_overflow',
@@ -256,6 +265,7 @@ describe('useOutbox eviction at the storage limit (FR-005, US2)', () => {
       text: victim.text,
     })
     expect(findRecord(result.current.records, 'victim')).toBeUndefined()
-    expect(result.current.records).toHaveLength(OUTBOX_LIMIT - 1)
+    // 1000 stored minus the confirmed victim.
+    expect(result.current.records).toHaveLength(OUTBOX_LIMIT)
   })
 })

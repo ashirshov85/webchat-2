@@ -9,6 +9,16 @@
  * errorCode?, retryAt?}`. Array order doubles as creation order —
  * outbox messages render after server messages (research.md §10).
  *
+ * Feature 005 (T026, FR-005): the queue is capped at OUTBOX_LIMIT
+ * records per account. Above the limit new records are still accepted
+ * while the OLDEST `sending` record (start of the array) is evicted to
+ * terminal `failed` + `errorCode='queue_overflow'` IN PLACE — it stays
+ * visible in the dialog (auto-retries stop; the hook only retries
+ * `sending` records), and a listener event fires for the overflow
+ * banner (T028). `failed` records are never evicted; an evicted record
+ * is not re-accepted into the queue automatically (manual retry by the
+ * same id stays allowed — FR-004 idempotency).
+ *
  * This module is pure persistence; retries/validation/purge triggers
  * belong to the `useOutbox` hook (T034). Storage failures (quota,
  * security settings) degrade silently to a no-op outbox.
@@ -28,6 +38,48 @@ export interface OutboxRecord {
 }
 
 export type OutboxRecordPatch = Partial<Pick<OutboxRecord, 'state' | 'errorCode' | 'retryAt'>>
+
+/** FR-005 (spec 005): fixed storage limit of the offline queue per account. */
+export const OUTBOX_LIMIT = 1000
+
+/** Client-local error code of an evicted record (data-model entity 4). */
+export const QUEUE_OVERFLOW_ERROR_CODE = 'queue_overflow'
+
+/** Fired when enqueue evicts records at the storage limit (FR-005 banner, T028). */
+export interface OutboxOverflowEvent {
+  readonly userId: string
+  readonly evicted: readonly OutboxRecord[]
+}
+
+export type OutboxOverflowListener = (event: OutboxOverflowEvent) => void
+
+const overflowListeners = new Set<OutboxOverflowListener>()
+
+/** Subscribes to queue-overflow evictions; returns an unsubscribe function. */
+export function onOutboxOverflow(listener: OutboxOverflowListener): () => void {
+  overflowListeners.add(listener)
+  return () => {
+    overflowListeners.delete(listener)
+  }
+}
+
+function notifyOverflow(userId: string, evicted: readonly OutboxRecord[]): void {
+  if (evicted.length === 0) {
+    return
+  }
+  for (const listener of [...overflowListeners]) {
+    try {
+      listener({ userId, evicted })
+    } catch {
+      // a broken listener must never break enqueue
+    }
+  }
+}
+
+/** An evicted record: terminal `failed` by the client, not by the server. */
+function isEvicted(record: OutboxRecord): boolean {
+  return record.state === 'failed' && record.errorCode === QUEUE_OVERFLOW_ERROR_CODE
+}
 
 export function outboxStorageKey(userId: string): string {
   return `webchat.chats.outbox.${userId}`
@@ -81,9 +133,43 @@ function writeOutbox(userId: string, records: OutboxRecord[]): void {
 }
 
 /**
+ * Enforces the storage limit in place: while more than OUTBOX_LIMIT
+ * active (non-evicted) records are stored, the oldest `sending` record
+ * is evicted — converted to terminal `failed` + `queue_overflow` at its
+ * array position (stays visible in the dialog, FR-005). `failed`
+ * records are never evicted; the loop stops when no `sending` victim
+ * remains. Returns the evicted records (empty when nothing changed).
+ */
+function evictForLimit(records: OutboxRecord[]): OutboxRecord[] {
+  const evicted: OutboxRecord[] = []
+  const countActive = (): number => records.filter((record) => !isEvicted(record)).length
+  while (countActive() > OUTBOX_LIMIT) {
+    const victimIndex = records.findIndex((record) => record.state === 'sending')
+    const victim = victimIndex === -1 ? undefined : records[victimIndex]
+    if (victim === undefined) {
+      break
+    }
+    const failedRecord: OutboxRecord = {
+      clientMessageId: victim.clientMessageId,
+      chatId: victim.chatId,
+      text: victim.text,
+      state: 'failed',
+      errorCode: QUEUE_OVERFLOW_ERROR_CODE,
+    }
+    records[victimIndex] = failedRecord
+    evicted.push(failedRecord)
+  }
+  return evicted
+}
+
+/**
  * Adds a record; an existing entry with the same `clientMessageId` is
  * replaced in place (never duplicated — same-id retries stay a single
- * instance, FR-004/FR-012).
+ * instance, FR-004/FR-012), EXCEPT an evicted record: it is never
+ * re-accepted into the queue automatically (FR-005); manual retry by
+ * the same id goes through `updateOutboxRecord`. When the queue is
+ * above the limit, the oldest `sending` records are evicted (see
+ * `evictForLimit`) and listeners of `onOutboxOverflow` are notified.
  */
 export function addOutboxRecord(userId: string, record: OutboxRecord): OutboxRecord[] {
   const records = readOutbox(userId)
@@ -91,9 +177,15 @@ export function addOutboxRecord(userId: string, record: OutboxRecord): OutboxRec
   if (index === -1) {
     records.push(record)
   } else {
+    const existing = records[index]
+    if (existing !== undefined && isEvicted(existing)) {
+      return records
+    }
     records[index] = record
   }
+  const evicted = evictForLimit(records)
   writeOutbox(userId, records)
+  notifyOverflow(userId, evicted)
   return records
 }
 
