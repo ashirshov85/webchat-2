@@ -38,12 +38,12 @@ const mockedSend = vi.mocked(sendMessage)
 
 const USER = 'user-retry'
 
-function makeMessage(chatId: string, id: string, seq: number): Message {
+function makeMessage(chatId: string, id: string, seq: number, text: string = 'confirmed'): Message {
   return {
     id,
     chatId,
     senderId: '9a2c-9a2c-9a2c',
-    text: 'confirmed',
+    text,
     seq,
     createdAt: '2026-09-23T12:00:00.000Z',
   }
