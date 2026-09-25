@@ -23,10 +23,27 @@ docker compose -f deploy/local/docker-compose.yml up -d   # PostgreSQL 17 :5432,
 pnpm --dir frontend dev                                    # SPA :5173, /api → :8080
 ```
 
+Обязательные переменные окружения backend (секреты — только env/K8s Secrets, SC-005; без них
+`bootRun` падает на старте — fail-fast): `AUTH_IP_HASH_PEPPER` (любая dev-строка),
+`AUTH_JWT_KEYS` (kid → P-256 PKCS#8 PEM, raw или Base64-of-PEM) и `AUTH_JWT_ACTIVE_KID`.
+Dev-ключ одной командой:
+
+```bash
+openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt | base64 -w0
+# → export AUTH_JWT_KEYS='dev-005=<строка-base64>' AUTH_JWT_ACTIVE_KID=dev-005 AUTH_IP_HASH_PEPPER=dev
+```
+
+`SPRING_DATASOURCE_*`, `SPRING_DATA_REDIS_*`, `SPRING_MAIL_*` имеют dev-умолчания, совпадающие
+с `deploy/local/docker-compose.yml`. Для быстрого прогона достаточно core-сервисов:
+`docker compose -f deploy/local/docker-compose.yml up -d postgres redis mailpit`
+(SonarQube из того же файла не нужен quickstart-сценариям).
+
 Новые настройки: sync/ack — значения контракта (`message-page-size=50`, `chat-page-size=20`,
 `ack-batch-limit=100`); backpressure — [research.md §6](./research.md): `enabled=true`,
 `min-limit=4`, `max-limit=64`, `latency-baseline=50ms` (для стресс-ручной проверки —
-заниженный `max-limit`). Прочее — как в 004.
+заниженный `max-limit`, например через
+`SPRING_APPLICATION_JSON='{"delivery":{"backpressure":{"max-limit":2,"min-limit":1}}}'`).
+Прочее — как в 004.
 
 Далее: два браузера/приватных окна, мессенджер на `/`. DevTools → Network → **Offline** —
 основной инструмент разрывов; HTTP-примеры — с `Authorization: Bearer <accessToken>`.
@@ -66,6 +83,9 @@ curl -s -X POST http://localhost:8080/api/v1/users/me/delivery-ack \
    `truncatedUpToSeq`; старая история не восстановилась; непрочитанные = только новые.
 2. Курсор «из будущего» (ручная имитация backup-ремонта): sync с `upToSeq: 999999` → ответ не
    ошибка: `desynced: true` + `serverUpToSeq` по чату, клиент отматывает и продолжает.
+   Примечание (прогон T046): флаг возникает только у чата-кандидата с недоставленной головой
+   (`last_seq > GREATEST(delivered, deleted)`); полностью ack'нутый чат с курсором из будущего
+   в ответ №26 просто не попадает (недоставленного нет) — пустой ответ штатный, ошибки нет.
 
 ### 3.3 Оффлайн-очередь исходящих (US2) — SC-002
 
@@ -147,3 +167,41 @@ curl -s -X POST http://localhost:8080/api/v1/users/me/delivery-ack \
     масштабированной инфраструктуре (лестница 004 research §12); параметры и пороги готовы,
     прогон закреплён за платформенной фичей 014 (ROADMAP) — обоснование в
     [plan.md](./plan.md) Complexity Tracking.
+
+## 5. Результаты полного прогона (T046, 2026-09-25)
+
+Стенд: `docker compose` (postgres/redis/mailpit healthy), `bootRun` :8080 (JDK 21),
+vite :5173; пользователи alice/bob/carol. Браузерные шаги (индикатор, бейджи, localStorage,
+UI-дедуп) подтверждены frontend- suite: **29 файлов / 324 теста зелёные**; HTTP-уровень
+прогнан curl-контуром целиком.
+
+| Сценарий | Ключевые наблюдения | Статус |
+|---|---|---|
+| §3.1.1 | ровно 10 сообщений, ascending seq, по одному разу | PASS |
+| §3.1.2 | автоматика `SyncIT`/`useSync.test` (T008/T022) | PASS |
+| §3.1.3 | повтор №26 теми же курсорами → побайтно идентичный payload | PASS |
+| §3.1.4 | 220 сообщений (2 чата), дозагрузка 0.36 с (бюджет ≤ 10 с), чаты по активности DESC | PASS |
+| §3.1.5 | №25 → 204, повтор → 204; после ack №26 пуст | PASS |
+| §3.2.1 | `truncatedUpToSeq` в дельте; история ниже точки недоступна (№15), unread = только новые | PASS |
+| §3.2.2 | `desynced:true` + `serverUpToSeq`, ошибки запроса нет (см. примечание в §3.2.2) | PASS |
+| §3.3.2 | 201 → ретрай тем же ID → 200, у получателя 1 экземпляр | PASS |
+| §3.3.3 | PUT block → №16 403 `you_are_blocked`; unblock → 204 | PASS |
+| §3.3.4/3.3.1/3.3.6 | outbox-лимит/pерсистентность/FIFO — T024/T025 зелёные | PASS |
+| §3.3.5 | 31-е в минуту → 429 + `Retry-After: 1` (`flood_limit`) | PASS |
+| §3.4.1–3.4.5 | unread растёт по ack, №17 — ровно на прочитанное (32→4), идемпотентен; `peerReadUpToSeq` в дельте (✓✓ за оффлайн); блокировка — заморозка бейджа | PASS |
+| §3.5.1 | max-limit=2: 8 параллельных → 2×201 + 6×503 `server_busy` + `Retry-After: 1`; ретрай принятого тем же ID под нагрузкой → 200; AIMD: gauge 1.31 → 2.0 после спада | PASS |
+| §3.5.2 | `BackpressureIT` зелёный (T041/T043) | PASS |
+| §3.5.3 | 429 ровно на 31-м INSERT'е в окне; разделение shed/флуд — порядок дедуп→admission→флуд (BackpressureIT) | PASS |
+| §3.6.1 | №26 → №25 → №15-after до исчерпания → №26 → `moreChats: false` | PASS |
+| §3.6.2 | `after`+`before` → 400 `mixed_cursors`; `nextAfter` отсутствует на исчерпании; пустая страница за головой → 200 | PASS |
+| §3.6.3 | `vacuum lint` exit 0; drift-проверка пуста; `oasdiff breaking` — без breaking (additive 0.5.0) | PASS |
+| §4 метрики | все 8 метрик фичи на `/actuator/prometheus`, растут в сценариях (truncated/desynced = 1 после §3.2) | PASS |
+
+Расхождения, исправленные этим прогоном:
+1. **§2**: задокументированы обязательные env (`AUTH_IP_HASH_PEPPER`, `AUTH_JWT_KEYS`,
+   `AUTH_JWT_ACTIVE_KID`) + dev-генерация ключа (без них `bootRun` падает fail-fast; в списке
+   002 переменная `AUTH_IP_HASH_PEPPER` отсутствовала).
+2. **§2**: добавлен вариант запуска core-сервисов (без SonarQube) и параметризация заниженного
+   `max-limit` через `SPRING_APPLICATION_JSON` для §3.5.
+3. **§3.2.2**: примечание о штатном пустом ответе для полностью ack'нутого чата (флаг
+   `desynced` — только у чата-кандидата с недоставленной головой).
