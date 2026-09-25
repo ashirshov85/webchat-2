@@ -85,12 +85,18 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
 
     /**
      * Registers and logs in a fresh user (US1 fixture basis). Every call
-     * produces a unique username/email/source IP, so callers never collide on
-     * unique rows or the register/login Redis buckets (5/1h per IP, 10/1m per
-     * IP — application.yml auth.ratelimit). The optional [email] override
-     * (T047) keeps the username random while pinning the address — the
-     * case-insensitive sort fixtures need an email order that differs from
-     * the username order.
+     * produces a unique username/email AND a unique fixture source IP from
+     * the dedicated 203.0.114.0/24 block, so callers never collide on
+     * unique rows or the register/login Redis buckets (5/1h per IP, 10/1m
+     * per IP — application.yml auth.ratelimit). The dedicated block matters
+     * for the full `gradlew check` run: the generic per-request rotator
+     * below spans 203.0.113.149–.252, which overlaps the SSO suites' owned
+     * TEST-NET-3 blocks (SsoResilienceIT .180+, SsoOauth2FlowIT .220+)
+     * that also spend real register buckets against the shared static
+     * Redis — a fixture landing there mid-suite got 429. The optional
+     * [email] override (T047) keeps the username random while pinning the
+     * address — the case-insensitive sort fixtures need an email order
+     * that differs from the username order.
      */
     protected fun messagingUser(
         label: String,
@@ -98,13 +104,24 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
     ): MessagingUser {
         val username = "$label-${UUID.randomUUID().toString().substring(0, UUID_SUFFIX_LENGTH)}"
         val userEmail = email ?: "$username@example.com"
+        val sourceIp = fixtureSourceIp()
 
-        val registration = postJson(REGISTER_PATH, mapOf("username" to username, "email" to userEmail))
+        val registration =
+            postJson(
+                REGISTER_PATH,
+                mapOf("username" to username, "email" to userEmail),
+                sourceIp = sourceIp,
+            )
         assertThat(registration.statusCode)
             .overridingErrorMessage("registration of fixture user <%s> must be accepted", username)
             .isEqualTo(HttpStatus.ACCEPTED)
 
-        val confirmation = postJson(CONFIRM_PATH, mapOf("token" to extractVerificationToken(userEmail)))
+        val confirmation =
+            postJson(
+                CONFIRM_PATH,
+                mapOf("token" to extractVerificationToken(userEmail)),
+                sourceIp = sourceIp,
+            )
         assertThat(confirmation.statusCode)
             .overridingErrorMessage("email confirmation for fixture user <%s> must succeed", username)
             .isEqualTo(HttpStatus.OK)
@@ -118,12 +135,13 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
                     "password" to FIXTURE_PASSWORD,
                     "confirmPassword" to FIXTURE_PASSWORD,
                 ),
+                sourceIp = sourceIp,
             )
         assertThat(passwordSetup.statusCode)
             .overridingErrorMessage("password setup for fixture user <%s> must succeed", username)
             .isEqualTo(HttpStatus.NO_CONTENT)
 
-        return loginUser(username)
+        return loginUser(username, sourceIp)
     }
 
     /** US1 fixture: the two dialog participants of one personal chat. */
@@ -239,8 +257,16 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
     /** Contract №18: opens the user event stream and starts buffering its frames. */
     protected fun openUserEvents(user: MessagingUser): UserEventsStream = UserEventsStream(port, user, objectMapper)
 
-    private fun loginUser(username: String): MessagingUser {
-        val response = postJson(LOGIN_PATH, mapOf("identifier" to username, "password" to FIXTURE_PASSWORD))
+    private fun loginUser(
+        username: String,
+        sourceIp: String,
+    ): MessagingUser {
+        val response =
+            postJson(
+                LOGIN_PATH,
+                mapOf("identifier" to username, "password" to FIXTURE_PASSWORD),
+                sourceIp = sourceIp,
+            )
         assertThat(response.statusCode)
             .overridingErrorMessage("fixture user <%s> must log in", username)
             .isEqualTo(HttpStatus.OK)
@@ -278,11 +304,12 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
         path: String,
         payload: Map<String, Any>,
         authenticated: MessagingUser? = null,
+        sourceIp: String? = null,
     ): ResponseEntity<String> {
         val headers =
             HttpHeaders().apply {
                 contentType = MediaType.APPLICATION_JSON
-                set(X_FORWARDED_FOR_HEADER, uniqueSourceIp())
+                set(X_FORWARDED_FOR_HEADER, sourceIp ?: uniqueSourceIp())
                 authenticated?.let { setBearerAuth(it.accessToken) }
             }
         return restTemplate.postForEntity(path, HttpEntity(payload, headers), String::class.java)
@@ -473,6 +500,18 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
         const val SOURCE_IP_LAST_OCTET_BASE = 149L
         const val SOURCE_IP_LAST_OCTET_SPAN = 104L
         val sourceIpCounter = AtomicLong()
+
+        // Dedicated 203.0.114.0/24 block for fixture ACCOUNT lifecycles
+        // (register/confirm/password/login): never overlaps the generic
+        // rotator above nor the SSO suites' 203.0.113.x blocks, so the
+        // shared-Redis register buckets of the full run cannot collide.
+        const val FIXTURE_IP_PREFIX = "203.0.114."
+        const val FIXTURE_IP_LAST_OCTET_SPAN = 254L
+        val fixtureIpCounter = AtomicLong()
+
+        fun fixtureSourceIp(): String =
+            FIXTURE_IP_PREFIX +
+                (1L + fixtureIpCounter.incrementAndGet() % FIXTURE_IP_LAST_OCTET_SPAN)
 
         fun uniqueSourceIp(): String {
             val lastOctet = SOURCE_IP_LAST_OCTET_BASE + sourceIpCounter.incrementAndGet() % SOURCE_IP_LAST_OCTET_SPAN

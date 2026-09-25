@@ -22,6 +22,17 @@ abstract class AbstractIntegrationTest {
                 .withUsername("webchat")
                 .withPassword("webchat")
                 .withInitScript("webchat_it_init.sql")
+                // A full `gradlew check` run caches many distinct Spring
+                // contexts (each IT class with unique test properties gets
+                // its own), and every cached context keeps a Hikari pool
+                // (10 connections by default) open against this single
+                // shared container. The default max_connections=100 is
+                // exhausted near the end of the run, killing context
+                // startup with "remaining connection slots are reserved
+                // for roles with the SUPERUSER attribute" (the app role
+                // is NON-superuser, see webchat_it_init.sql). Test-only
+                // infrastructure knob; production pools are unchanged.
+                .withCommand("postgres", "-c", "max_connections=400")
                 .apply { start() }
 
         @ServiceConnection

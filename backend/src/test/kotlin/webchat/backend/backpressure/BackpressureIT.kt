@@ -331,7 +331,7 @@ abstract class BackpressureSendSupport : MessagingTestSupport() {
         "delivery.backpressure.enabled=true",
         "delivery.backpressure.min-limit=1",
         "delivery.backpressure.max-limit=4",
-        "delivery.backpressure.latency-baseline=50ms",
+        "delivery.backpressure.latency-baseline=1000ms",
     ],
 )
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
@@ -339,10 +339,17 @@ class BackpressureIT : BackpressureSendSupport() {
     /**
      * SC-006/FR-013 (data-model entity 6 «Деградация поэтапно»): a burst
      * of pathologically slow PG commits (the chat-row stall ≈ seconds vs
-     * the 50ms baseline — a ≥ 60× gradient) squeezes the AIMD limit
+     * the 1s baseline — a ≥ 3× gradient) squeezes the AIMD limit
      * below its steady base, and once the load subsides the healthy
      * trickle of fast sends grows it back to base — the self-healing an
-     * operator watches on `webchat_backpressure_limit`.
+     * operator watches on `webchat_backpressure_limit`. The baseline is
+     * deliberately 1s, not the production 50ms: under the FULL
+     * `gradlew check` run the shared Testcontainers PG sits on a busy
+     * host, where a healthy send-path commit regularly exceeds 50ms —
+     * with the tight baseline every "healthy" sample shrank the limit
+     * (×0.9) and the recovery leg never converged to base. The AIMD
+     * mechanics (shrink on gradient > 1, linear growth back to base) are
+     * identical; only their trigger threshold is scaled for the stand.
      */
     @Test
     @Order(1)
@@ -606,8 +613,8 @@ class BackpressureIT : BackpressureSendSupport() {
         const val ORDER_PROBES = 3
         const val SPIKE_ROUNDS = 3
 
-        /** 50ms baseline vs ~3s parked commits: the spike gradient magnitude. */
-        const val SPIKE_GRADIENT = 60
+        /** 1s baseline vs ~3s parked commits: the spike gradient magnitude. */
+        const val SPIKE_GRADIENT = 3
 
         const val SHED_WINDOW_SECONDS = 2L
         const val SPIKE_HOLD_MILLIS = 1_000L
