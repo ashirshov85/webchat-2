@@ -201,6 +201,9 @@ backend/src/main/resources/
 
 backend/src/test/kotlin/webchat/backend/      # GroupLifecycleIT, GroupPrivacyIT, GroupReadStatusIT,
                                                 #   GroupRealtimeIT, GroupLimitsIT, GroupAdminLogIT,
+                                                #   GroupRepositoryIT + unit-срезы Phase 2
+                                                #   (GroupChatModelTest, GroupMetricsTest,
+                                                #   GroupMembershipGateTest/GroupsExceptionHandlerTest),
                                                 #   эволюция ChatListIT/SyncIT (group-элементы)
 
 frontend/src/

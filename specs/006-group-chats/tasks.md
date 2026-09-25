@@ -29,7 +29,7 @@ description: "Task list for feature implementation: групповые чаты 
 **Purpose**: API-контракт 0.6.0 (конституция IV), миграция БД, конфигурация лимитов
 
 - [ ] T001 Обновить публичный контракт до 0.6.0 (additive minor) в `contracts/openapi.yaml`: операции №27–№35 (tag `groups`), схемы `CreateGroupRequest`/`UpdateGroupRequest`/`AddMembersRequest`/`SetMemberRoleRequest`/`TransferOwnershipRequest`/`GroupMember`/`GroupView`/`Group*Event`; optional-поля `type`/`title`/`memberCount`/`myRole`/`othersReadUpToSeq` и nullable `peer`/`blockedByMe`/`peerReadUpToSeq` у `ChatListItem`/`ChatView`/`SyncChatDelta`; +6 `event:`-типов у №18; константы 200/64/256/50/30/5с — по contracts/api-contract.md
-- [ ] T002 Прогнать контрактный конвейер: `vacuum lint -e contracts/openapi.yaml` (0 ошибок), `oasdiff breaking <base> contracts/openapi.yaml` (без breaking), регенерация типов `pnpm --dir frontend generate:api` → закоммитить `frontend/src/api/schema.d.ts` (drift-free, типы `Group*`) (depends T001)
+- [ ] T002 Прогнать контрактный конвейер: `vacuum lint -e contracts/openapi.yaml` (0 ошибок); база сравнения — `git show origin/main:contracts/openapi.yaml > /tmp/openapi-base.yaml` (ожидается 0.5.0) → `oasdiff breaking --fail-on ERR /tmp/openapi-base.yaml contracts/openapi.yaml` (без ERR; конвенция ci.yml); регенерация типов `pnpm --dir frontend generate:api` → закоммитить `frontend/src/api/schema.d.ts` (drift-free, типы `Group*`) (depends T001)
 - [ ] T003 [P] Создать миграцию `backend/src/main/resources/db/migration/V14__group_chats.sql` по data-model.md §Миграция: `chats` + `kind`/`title`/`description` (nullable пара `user_low_id`/`user_high_id`, shape-CHECK, title/description-CHECK), `chat_participants` + `role`/`state` (CHECK-и), частичный уникальный индекс `ux_chat_participants_owner`, индекс `ix_chat_participants_chat_active`, таблица `group_admin_log` (без FK на `chats`) + индекс `(group_id, created_at)`
 - [ ] T004 [P] Создать `backend/src/main/kotlin/webchat/backend/config/GroupsProperties.kt` (`@ConfigurationProperties("groups")`: `max-members=200`, `title-max-length=64`, `description-max-length=256`) и добавить `groups.*` в `backend/src/main/resources/application.yml`
 
@@ -43,7 +43,14 @@ description: "Task list for feature implementation: групповые чаты 
 
 **⚠️ CRITICAL**: Работа над stories не начинается до завершения фазы
 
-**Тестовое покрытие Phase 2** (конституция VI, трассировка): T005/T006 → T018/T018a; T007/T012/T013 → T018/T040/T049/T059/T060; T008/T011 → T018/T018a/T031/T061; T009/T014 → T030/T054; T010 → T054/T068; T015 → T034/T054/T056; T016/T017 → T018/T022. DoD задачи Phase 2: компиляция + чистый линт; финальная приёмка — зелёные IT указанных задач при закрытии соответствующей story.
+**Тестовое покрытие Phase 2** (конституция VI, трассировка): T005/T006 → T005a/T018/T018a; T007/T012/T013 → T012a/T018/T040/T049/T059/T060; T008/T011 → T012a/T018/T018a/T031/T061; T009/T014 → T012a/T030/T054; T010 → T010a/T054/T068; T015 → T015a/T034/T054/T056; T016/T017 → T015a/T018/T022. DoD задачи Phase 2: компиляция + чистый линт + зелёные тесты примыкающей тест-задачи (T005a/T010a/T012a/T015a — пишутся ПЕРВЫМИ, красными); сценарная приёмка — зелёные IT stories при закрытии соответствующей user story.
+
+### Tests for Phase 2 (писать ПЕРВЫМИ — красные)
+
+- [ ] T005a [P] Написать `backend/src/test/kotlin/webchat/backend/groups/domain/model/GroupChatModelTest.kt` (JUnit 5, без контейнеров): `GroupTitle` (trim, 1–64; пусто/65 → invalid), `GroupDescription` (≤256; 257 → invalid), `MemberRole`/`MembershipState` (covers T005; валидация T016)
+- [ ] T010a [P] Написать `backend/src/test/kotlin/webchat/backend/groups/GroupMetricsTest.kt` (JUnit 5 + Micrometer `SimpleMeterRegistry`): счётчики/таймер/гистограмма регистрируются и растут (covers T010)
+- [ ] T012a [P] Написать `backend/src/test/kotlin/webchat/backend/GroupRepositoryIT.kt` (JUnit 5 + Testcontainers PG+Redis): тонкий срез адаптеров — create (chats+participants в одной tx), `activeMembers`/`countActive`, `addMember`/`reactivate` (инициализация и сохранение водяных знаков), `removeMember` (rowcount), MIN-водяные знаки, append-only журнал, hard-delete; post-commit публикация `RedisRealtimePublisher` в `rt:user:{id}` (подписка в Testcontainers Redis) (covers T011–T014)
+- [ ] T015a [P] Написать `backend/src/test/kotlin/webchat/backend/groups/domain/service/GroupMembershipGateTest.kt` + `GroupsExceptionHandlerTest.kt` (JUnit 5, fake-порты): гейт — не-участник/несуществующая → `404 group_not_found` + инкремент `webchat_group_authz_denials_total`; маппинг problem-кодов (covers T015, T017)
 
 - [ ] T005 [P] Создать доменную модель групп в `backend/src/main/kotlin/webchat/backend/groups/domain/model/GroupChat.kt`: kind-проекция `chats` (`title`/`description`/`lastSeq`), enum `MemberRole` (owner/admin/member), enum `MembershipState` (active/removed), value-объекты `GroupTitle` (trim, 1–64) и `GroupDescription` (≤256) с валидацией FR-001
 - [ ] T006 [P] Эволюционировать модели чатов: `backend/src/main/kotlin/webchat/backend/chats/domain/model/Chat.kt` (+`kind`/`title`/`description`; `involves()` — только для direct) и `backend/src/main/kotlin/webchat/backend/chats/domain/model/ChatParticipant.kt` (+`role`/`state`)
@@ -82,7 +89,7 @@ description: "Task list for feature implementation: групповые чаты 
 - [ ] T022 [US1] Реализовать `backend/src/main/kotlin/webchat/backend/groups/api/GroupController.kt`: №27 `POST /api/v1/groups`, №28 `GET /api/v1/groups/{chatId}`, №31 `POST /api/v1/groups/{chatId}/members` (коды/тела — api-contract.md §2; member → `403 forbidden_role`) (depends T021, T017)
 - [ ] T023 [US1] Эволюционировать №12: group-поля `ChatListItem` (`type:'group'`, `title`, `memberCount`, `myRole`, `peer`/`blockedByMe` = null) в `backend/src/main/kotlin/webchat/backend/chats/api/dto/` + проекция списка в `ChatService` (единый список, FR-014)
 - [ ] T024 [US1] Эволюционировать №13: group-вариант `ChatView` (`type`, `title`, `description`, `myRole`, `myReadUpToSeq`, `othersReadUpToSeq`, `memberCount`) в `backend/src/main/kotlin/webchat/backend/chats/api/dto/` + `ChatService`/`ChatController` (depends T023)
-- [ ] T025 [P] [US1] Создать `frontend/src/api/groups.ts`: `createGroup`/`getGroup`/`addMembers` (типы — из `schema.d.ts` 0.6.0)
+- [ ] T025 [P] [US1] Создать `frontend/src/api/groups.ts`: `createGroup`/`getGroup`/`addMembers` (типы — из `schema.d.ts` 0.6.0); остальные функции контракта добавляются в US3/US4/US6 (T044a/T052a/T065a)
 - [ ] T026 [P] [US1] Создать компоненты `frontend/src/groups/components/CreateGroupDialog.tsx` (название/описание + валидация 64/256) и `frontend/src/groups/components/AddMembersPicker.tsx` (мультивыбор из контактов добавляющего, FR-001/FR-002) (depends T025)
 - [ ] T027 [US1] Реализовать `frontend/src/groups/hooks/useGroupRealtime.ts`: идемпотентный редьюсер событий, стартово `group.member.added` → добавить/обновить группу в «Чатах» (FR-015, контракт realtime-group-events.md §3.2)
 - [ ] T028 [US1] Эволюционировать `frontend/src/chats/hooks/useChatList.ts`, `frontend/src/chats/components/ChatListItem.tsx`, `frontend/src/chats/components/ChatListPanel.tsx`: единый список direct+group (сортировка 004), аватар/название группы, memberCount, бейдж 99+, поиск по названию (FR-014)
@@ -134,7 +141,8 @@ description: "Task list for feature implementation: групповые чаты 
 - [ ] T042 [US3] Расширить `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupRolePolicy.kt` до полной иерархии FR-003/FR-004: owner — всё; admin — добавление, исключение только member, метаданные; роли/передача — только owner; owner-инвариант
 - [ ] T043 [US3] Реализовать в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt`: `setRole` (№34: только active-цели, не себе), `transferOwnership` (№35: одна tx demote THEN promote — частичный индекс не нарушается), `kick` (№32: иерархия до UPDATE, rowcount-конкуренция, журнал `admin_granted`/`admin_revoked`/`ownership_transferred`/`member_removed`, post-commit `group.role.changed` ×2 при передаче, `group.you_removed {reason:'kicked'}` + `group.member.removed`) (depends T042)
 - [ ] T044 [US3] Реализовать endpoint'ы в `backend/src/main/kotlin/webchat/backend/groups/api/GroupController.kt`: №32 `DELETE /groups/{chatId}/members/{userId}`, №34 `PUT /groups/{chatId}/members/{userId}/role`, №35 `POST /groups/{chatId}/owner` (коды — api-contract.md §2) (depends T043)
-- [ ] T045 [P] [US3] Создать `frontend/src/groups/components/MemberList.tsx`: состав с ролями, действия kick/admin/transfer с видимостью по `myRole` (иерархия FR-004)
+- [ ] T044a [P] [US3] Расширить `frontend/src/api/groups.ts`: `kickMember` (№32), `setMemberRole` (№34), `transferOwnership` (№35) — типы из `schema.d.ts` 0.6.0 (depends T002, T025)
+- [ ] T045 [P] [US3] Создать `frontend/src/groups/components/MemberList.tsx`: состав с ролями, действия kick/admin/transfer с видимостью по `myRole` (иерархия FR-004) (depends T044a)
 - [ ] T046 [US3] Создать `frontend/src/groups/components/GroupInfoPanel.tsx`: заголовок (title/члены), состав (MemberList), входы AddMembersPicker/LeaveDeleteControls (placeholder до US6) (depends T045)
 - [ ] T047 [US3] Создать `frontend/src/groups/hooks/useGroupMembers.ts`: состав/роли по №28 + локальный мьютекс конкурирующих действий состава
 - [ ] T048 [US3] Расширить `frontend/src/groups/hooks/useGroupRealtime.ts`: `group.role.changed` (два кадра передачи — идемпотентно), `group.member.removed`, `group.you_removed {reason:'kicked'}` → локальное удаление группы, последующие события игнорируются (realtime-group-events.md §1 гонка порядка) (depends T041, T047)
@@ -158,7 +166,8 @@ description: "Task list for feature implementation: групповые чаты 
 
 - [ ] T051 [US4] Реализовать `update` в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` (№29: гейт роли owner/admin, валидация FR-001, атомарный UPDATE «последняя подтверждённая», журнал, post-commit `group.updated`)
 - [ ] T052 [US4] Реализовать №29 `PATCH /api/v1/groups/{chatId}` в `backend/src/main/kotlin/webchat/backend/groups/api/GroupController.kt` (depends T051)
-- [ ] T053 [US4] Реализовать UI переименования в `frontend/src/groups/components/GroupInfoPanel.tsx` + обработчик `group.updated` в `frontend/src/groups/hooks/useGroupRealtime.ts` (обновление title в списке «Чатов» и заголовке) (depends T050)
+- [ ] T052a [P] [US4] Расширить `frontend/src/api/groups.ts`: `updateGroup` (№29 PATCH) — типы из `schema.d.ts` 0.6.0 (depends T002, T025)
+- [ ] T053 [US4] Реализовать UI переименования в `frontend/src/groups/components/GroupInfoPanel.tsx` + обработчик `group.updated` в `frontend/src/groups/hooks/useGroupRealtime.ts` (обновление title в списке «Чатов» и заголовке) (depends T050, T052a)
 
 **Checkpoint**: US1–US4 независимо работоспособны: метаданные управляются и распространяются realtime
 
@@ -203,7 +212,8 @@ description: "Task list for feature implementation: групповые чаты 
 - [ ] T063 [US6] Реализовать `leave` в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` (№33: owner → `403 owner_must_transfer`; единый UPDATE state='removed' role='member', rowcount-идемпотентность конкуренции; журнал `member_left`; post-commit `group.you_removed {reason:'left'}` + `group.member.removed` остальным)
 - [ ] T064 [US6] Реализовать `delete` в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` (№30: только owner; снимок активных до удаления; hard-delete tx — CASCADE по FK; журнал `group_deleted` без содержимого; post-commit `group.deleted` всем бывшим) (depends T012, T013)
 - [ ] T065 [US6] Реализовать endpoint'ы в `backend/src/main/kotlin/webchat/backend/groups/api/GroupController.kt`: №33 `DELETE /api/v1/groups/{chatId}/membership`, №30 `DELETE /api/v1/groups/{chatId}` (повторно → `404`) (depends T063, T064)
-- [ ] T066 [US6] Создать `frontend/src/groups/components/LeaveDeleteControls.tsx` (выход для не-owner, удаление для owner, подсказки `owner_must_transfer`) + обработчик `group.deleted` в `frontend/src/groups/hooks/useGroupRealtime.ts` + закрытие окон в `frontend/src/chats/pages/MessengerPage.tsx` (depends T062)
+- [ ] T065a [P] [US6] Расширить `frontend/src/api/groups.ts`: `leaveGroup` (№33), `deleteGroup` (№30) — типы из `schema.d.ts` 0.6.0 (depends T002, T025)
+- [ ] T066 [US6] Создать `frontend/src/groups/components/LeaveDeleteControls.tsx` (выход для не-owner, удаление для owner, подсказки `owner_must_transfer`) + обработчик `group.deleted` в `frontend/src/groups/hooks/useGroupRealtime.ts` + закрытие окон в `frontend/src/chats/pages/MessengerPage.tsx` (depends T062, T065a)
 
 **Checkpoint**: Все user stories (US1–US6) независимо работоспособны; полный жизненный цикл группы реализован
 
