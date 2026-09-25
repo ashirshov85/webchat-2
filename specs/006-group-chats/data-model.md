@@ -77,8 +77,8 @@ OR (kind='group' AND user_low_id IS NULL AND user_high_id IS NULL)`. Сущес�
 - **№27 создание**: tx = `INSERT chats (kind='group', title, description)` + `INSERT participant
   (creator, role='owner', state='active')` + начальный состав из контактов (каждый: `INSERT` с
   инициализацией §выше, проверка `user_contacts` пары (creator, userId)) + журнал `group_created` +
-  `member_added`×N. Post-commit: `group.member.added` каждому добавленному (группа появляется в
-  «Чатах», US1-2).
+  `member_added`×N. Post-commit: `group.member.added` всем активным — создателю и добавленным
+  (§Сущность 5; группа появляется в «Чатах», US1-2).
 - **№31 добавление**: tx = `SELECT … FOR UPDATE` строки `chats` (сериализация конкурентных
   добавлений) → `count(active) + batch ≤ 200` иначе `422 group_full` → для каждого userId: контакт
   добавляющего (`422 not_in_contacts`, весь batch атомарен), self → `400 self_forbidden`;

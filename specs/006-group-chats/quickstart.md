@@ -151,7 +151,7 @@ curl -s -X POST http://localhost:8080/api/v1/groups \
 ```bash
 docker run --rm -i --network host webchat-k6 run - < load/k6/group-chats.js
 # env: K6_BASE_URL, K6_MAILPIT_URL, K6_GROUP_SIZE (default 10), K6_MESSAGE_RPS
-# Сценарии: A — создание+участники ≤1 мин (SC-005); B — переписка, «отправлено→доставлено» p95 ≤ 2 с
+# Сценарии: A — создание+участники p90 ≤60 с (SC-005); B — переписка, «отправлено→доставлено» p95 ≤ 2 с
 # (SC-001); C — изменения состава/ролей/метаданных ≤ 2 с (SC-004); D — authz-отказы (SC-003);
 # E — smoke группы 200 участников (K6_GROUP_SIZE=200): 0 дублей, порядок seq, you_removed ≤ 5 с
 # (SC-006/SC-007). Полнообъёмные пиковые бюджеты — платформенная фича 016 (ROADMAP).
