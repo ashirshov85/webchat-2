@@ -148,7 +148,7 @@ backend/src/main/kotlin/webchat/backend/
 │   │   ├── GroupsExceptionHandler.kt         # problem+json: group_not_found/forbidden_role/
 │   │   │                                     #   role_hierarchy_violation/not_in_contacts/group_full/…
 │   │   └── dto/                              # CreateGroupRequest/GroupView/GroupMember/
-│   │                                         #   AddMembersRequest/SetRoleRequest/TransferRequest
+│   │                                         #   AddMembersRequest/SetMemberRoleRequest/TransferOwnershipRequest
 │   ├── domain/
 │   │   ├── model/GroupChat.kt                # kind-проекция chats (title/description/lastSeq);
 │   │   │                                     #   GroupTitle/GroupDescription (валидация FR-001)
