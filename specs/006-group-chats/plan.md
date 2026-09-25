@@ -145,7 +145,7 @@ backend/src/main/kotlin/webchat/backend/
 │   ├── api/
 │   │   ├── GroupController.kt                # №27–№35 /api/v1/groups…
 │   │   ├── GroupsExceptionHandler.kt         # problem+json: group_not_found/forbidden_role/
-│   │   │                                     #   role_hierarchy/not_in_contacts/group_full/…
+│   │   │                                     #   role_hierarchy_violation/not_in_contacts/group_full/…
 │   │   └── dto/                              # CreateGroupRequest/GroupView/GroupMember/
 │   │                                         #   AddMembersRequest/SetRoleRequest/TransferRequest
 │   ├── domain/
@@ -221,8 +221,10 @@ frontend/src/
 │       ├── useGroup.ts                       # №28 + оптимистичные обновления по событиям
 │       ├── useGroupMembers.ts                # состав/роли, локальный мьютекс конкурирующих действий
 │       └── useGroupRealtime.ts               # редьюсер событий группы (идемпотентный, FR-015):
-│                                               #   updated/member.added/member.removed/role.changed/
-│                                               #   you_removed/deleted → состояние списка «Чаты»
+│                                               #   group.updated/group.member.added/
+│                                               #   group.member.removed/group.role.changed/
+│                                               #   group.you_removed/group.deleted → состояние
+│                                               #   списка «Чаты»
 ├── chats/
 │   ├── components/
 │   │   ├── ChatListItem.tsx                  # type-aware: аватар/название группы, memberCount,

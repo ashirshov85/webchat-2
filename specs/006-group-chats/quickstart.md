@@ -144,7 +144,7 @@ curl -s -X POST http://localhost:8080/api/v1/groups \
   `GroupReadStatusIT`, `GroupRealtimeIT`, `GroupLimitsIT`, `GroupAdminLogIT`, эволюция
   ChatList/Sync-тестов (group-элементы).
 - Frontend: `pnpm --dir frontend test` — useGroup/useGroupMembers/useGroupRealtime (идемпотентные
-  события, you_removed/deleted), единый список (type-дискриминация, поиск по названию), ✓✓ по
+  события, group.you_removed/group.deleted), единый список (type-дискриминация, поиск по названию), ✓✓ по
   othersReadUpToSeq; `pnpm --dir frontend lint && pnpm --dir frontend typecheck`.
 - Нагрузочные (сначала `docker build -t webchat-k6 load/k6`):
 
