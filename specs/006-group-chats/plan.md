@@ -285,7 +285,7 @@ group-поля DTO, fanout-ноги); `realtime/` получает только 
 гарантирует инвариант «ровно один owner» на уровне хранилища; water-mark-семантика повторного
 добавления — `state`-колонка (выход/исключение ≠ удаление строки). contracts/api-contract.md +
 contracts/realtime-group-events.md — additive к публичному контракту (minor 0.6.0): новые №27–№35,
-optional-поля `type`/`title`/`memberCount`/`myRole`/`othersReadUpToSeq` у №12/№13/№26, новые
+optional-поля `type`/`title`/`memberCount`/`myRole`/`othersReadUpToSeq` у №12/№13 и `type`/`title`/`memberCount`/`othersReadUpToSeq` у №26 (`myRole` в дельте не передаётся — сходится через №12/№28, api-contract.md §3), новые
 `event:`-типы №18 (неизвестные игнорируются — прямая совместимость 004); nullable-переход `peer`/`blockedByMe` у №12 и `peer`/`blockedByMe`/`peerReadUpToSeq` у №13/№26 — единственное формальное изменение обязательности полей, обосновано и
 помечено в research.md §5 / api-contract.md §4 (для существующих потребителей semver-minor-совместимо: старые клиенты
 групп не запрашивают). quickstart.md проверяем без ручных правок артефактов; наблюдаемость — журнал +
