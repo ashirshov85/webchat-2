@@ -710,6 +710,7 @@ export function disconnectProfile(data) {
 
   // Final convergence: with the acked cursors nothing may be pending and the
   // whole run audit must be exactly-once / ordered (SC-001).
+  refreshIfNeeded(bob)
   const finalCheck = http.post(
     SYNC_ENDPOINT,
     JSON.stringify({ cursors: cursorList(cursors), chatLimit: 50, messageLimit: 50 }),
@@ -869,6 +870,11 @@ function bulkCatchUpRound({ round, bob, senders, chats, audit, cursors, messages
   // Refill the flood buckets before the first round (the phases above spent
   // tokens; 29 fresh tokens per sender need ~58 s of drip).
   if (round === 1) sleep(ROUND_SLEEP_S)
+
+  // Access tokens live 5 min while the rounds span ~10 min — refresh every
+  // session (receiver + senders) before it sends/syncs with an expired one.
+  refreshIfNeeded(bob)
+  for (const sender of senders) refreshIfNeeded(sender)
 
   const plan = distributeMessages(messages, senders.length, FLOOD_SAFE_BURST)
   const roundIds = []
@@ -1220,21 +1226,24 @@ function probeRound({ round, receiver, senders, chats, audit, cursors, deadline,
 
 export function handleSummary(data) {
   const metrics = data.metrics
-  const accepted = metrics.msg_accepted_total ? metrics.msg_accepted_total.count : 0
-  const rejectedBusy = metrics['msg_rejected_total{kind:server_busy}']
-    ? metrics['msg_rejected_total{kind:server_busy}'].count
-    : 0
-  const rejectedFlood = metrics['msg_rejected_total{kind:flood_limit}']
-    ? metrics['msg_rejected_total{kind:flood_limit}'].count
-    : 0
+  // k6 v2 lists declared-but-never-fired counters without `.count` — read
+  // defensively so a perfect run prints explicit zeros, not `undefined`.
+  const countOf = name => {
+    const metric = metrics[name]
+    if (!metric) return 0
+    return metric.count ?? (metric.values ? metric.values.count : undefined) ?? 0
+  }
+  const accepted = countOf('msg_accepted_total')
+  const rejectedBusy = countOf('msg_rejected_total{kind:server_busy}')
+  const rejectedFlood = countOf('msg_rejected_total{kind:flood_limit}')
   const lines = [`=== 005 delivery-resilience (${PROFILE} profile) ===`]
 
   if (PROFILE === 'disconnect') {
     const catchup = metrics.catchup_200_ms ? metrics.catchup_200_ms.values : null
     lines.push(`accepted sends: ${accepted}`)
     if (catchup) lines.push(`catch-up of 200 (p95): ${catchup['p(95)'] !== undefined ? catchup['p(95)'] : catchup.max} ms (budget <= 10000)`)
-    lines.push(`wire re-deliveries deduped by id: ${metrics.wire_redelivery_total ? metrics.wire_redelivery_total.count : 0}`)
-    lines.push(`audit: losses=${metrics.audit_losses_total ? metrics.audit_losses_total.count : 0}, doubles=${metrics.audit_duplicates_total ? metrics.audit_duplicates_total.count : 0}, order violations=${metrics.audit_order_violations_total ? metrics.audit_order_violations_total.count : 0}`)
+    lines.push(`wire re-deliveries deduped by id: ${countOf('wire_redelivery_total')}`)
+    lines.push(`audit: losses=${countOf('audit_losses_total')}, doubles=${countOf('audit_duplicates_total')}, order violations=${countOf('audit_order_violations_total')}`)
   } else {
     const activeWindowS = (RAMP_MS + HOLD_MS) / 1000
     const sustained = Math.round(accepted / activeWindowS)
@@ -1246,7 +1255,7 @@ export function handleSummary(data) {
     const catchup = metrics.catchup_overloaded_ms ? metrics.catchup_overloaded_ms.values : null
     lines.push(`target ${TARGET_RPS} msg/s (ramp ${formatDuration(RAMP_MS)}, hold ${formatDuration(HOLD_MS)}, recovery window ${formatDuration(RECOVERY_MS)}), pairs ${SATURATION_PAIRS}`)
     lines.push(`accepted: ${accepted} (~${sustained} msg/s over ramp+hold; flood ceiling of this stand: ~${Math.floor(SATURATION_PAIRS / 2)} msg/s)`)
-    lines.push(`rejections: 503 server_busy=${rejectedBusy}, 429 flood_limit=${rejectedFlood}, silent=${metrics.silent_failures_total ? metrics.silent_failures_total.count : 0}, missing Retry-After=${metrics.missing_retry_after_total ? metrics.missing_retry_after_total.count : 0}`)
+    lines.push(`rejections: 503 server_busy=${rejectedBusy}, 429 flood_limit=${rejectedFlood}, silent=${countOf('silent_failures_total')}, missing Retry-After=${countOf('missing_retry_after_total')}`)
     if (firstShed !== null) lines.push(`first shed signal after ~${firstShed.toFixed(1)} s`)
     if (overload) lines.push(`overloaded regime: ${overload.max !== undefined ? overload.max.toFixed(1) : '?'} s (005 validity bar: >= 60)`)
     if (steady) lines.push(`delivery steady p99: ${steady['p(99)'] !== undefined ? steady['p(99)'] : steady.max} ms (budget 500)`)
@@ -1256,7 +1265,7 @@ export function handleSummary(data) {
     if (STRICT_VALIDATION) {
       lines.push(`strict validity: peak accepted flow ~${sustained} msg/s (bar >= 5000; raise K6_TARGET_RPS/K6_SATURATION_PAIRS if below)`)
     }
-    lines.push(`audit: losses=${metrics.audit_losses_total ? metrics.audit_losses_total.count : 0}, doubles=${metrics.audit_duplicates_total ? metrics.audit_duplicates_total.count : 0}, order violations=${metrics.audit_order_violations_total ? metrics.audit_order_violations_total.count : 0}`)
+    lines.push(`audit: losses=${countOf('audit_losses_total')}, doubles=${countOf('audit_duplicates_total')}, order violations=${countOf('audit_order_violations_total')}`)
   }
 
   return { stdout: `\n${lines.join('\n')}\n` }
