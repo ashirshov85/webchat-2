@@ -3,6 +3,7 @@ package webchat.backend.sync.domain.service
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
@@ -89,6 +90,8 @@ class SyncService(
     private val deliveryProperties: DeliveryProperties,
     private val meterRegistry: MeterRegistry,
 ) {
+    private val log = LoggerFactory.getLogger(SyncService::class.java)
+
     /**
      * Contract №26: `200 SyncResponse` — the deltas of ONLY the chats
      * with undelivered content beyond the effective cursor, latest
@@ -141,6 +144,27 @@ class SyncService(
             if (desynced) candidate.deliveredUpToSeq else maxOf(clientCursor, candidate.deliveredUpToSeq)
         val startAfter = maxOf(effective, candidate.deletedUpToSeq)
         val truncatedUpToSeq = (startAfter > effective).takeIf { it }?.let { startAfter }
+
+        // research.md §8 (T045): the repair records of a №26 sweep — INFO,
+        // chat id and the point only, never the message text (the PII
+        // minimization of 004): the truncation floor and the future-cursor
+        // rewind are the two operator-visible «почему история не с нуля»
+        // phenomena of quickstart §3.2.
+        truncatedUpToSeq?.let { floor ->
+            log.info(
+                "sync delta truncated: chat <{}>, visibility floor <{}> - messages below are inaccessible, " +
+                    "not unread (US1-5/FR-007)",
+                candidate.chatId,
+                floor,
+            )
+        }
+        if (desynced) {
+            log.info(
+                "sync future-cursor repair: chat <{}>, serverUpToSeq <{}> - the delivery position never rewinds",
+                candidate.chatId,
+                candidate.deliveredUpToSeq,
+            )
+        }
 
         val messages = messageRepository.findVisiblePageAfter(candidate.chatId, callerId, startAfter, messageLimit)
         val pageHead = messages.lastOrNull()?.seq ?: startAfter

@@ -119,6 +119,10 @@ const REFRESH_ENDPOINT = `${API_BASE}/auth/refresh`
 const EVENTS_ENDPOINT = `${API_BASE}/users/me/events`
 const SYNC_ENDPOINT = `${API_BASE}/users/me/sync`
 const DELIVERY_ACK_ENDPOINT = `${API_BASE}/users/me/delivery-ack`
+// permitAll (SecurityConfig): the server-side observability surface of FR-014
+const PROMETHEUS_ENDPOINT = `${BASE_URL}/actuator/prometheus`
+// T045: the 004 rate-limiting meter the saturation profile audits server-side
+const FLOOD_METER = 'webchat_send_rejected_total'
 
 // Flood limit is 30 msg/min per user with a burst capacity of 30 (004 §7);
 // 29 back-to-back fresh sends fit the burst, retries by the same id are free
@@ -187,6 +191,46 @@ const recoveryTailMs = new Trend('recovery_tail_ms')
 const overloadedDurationS = new Trend('overloaded_duration_s')
 const auditTimeToFirstShedS = new Trend('audit_time_to_first_shed_s')
 const probeStarvedRounds = new Counter('probe_starved_rounds_total')
+
+// T045 (FR-014): the server-side observability audit of the saturation
+// profile — the 004 flood counter `webchat_send_rejected_total{reason=flood}`
+// must be PRESENT on /actuator/prometheus and GROW over the run (teardown
+// compares its scrapes against the setup baseline and reports through these).
+const serverFloodRejectionsDelta = new Counter('server_flood_rejections_delta_total')
+const serverFloodMeterPresent = new Counter('server_flood_meter_present')
+
+// --------------------------------------------- server observability scrape ---
+
+// One /actuator/prometheus exposition: { meters: {name: true}, samples: [...] }.
+// Parsed exactly like an operator's scraper: HELP headers name the meters,
+// sample lines carry the labelled series values.
+function scrapePrometheus() {
+  const response = http.get(PROMETHEUS_ENDPOINT, { tags: { op: 'prometheus_scrape' } })
+  if (response.status !== 200) return null
+  const exposition = response.body || ''
+  const meters = {}
+  const samples = []
+  for (const line of exposition.split('\n')) {
+    if (line.startsWith('# HELP ')) {
+      meters[line.slice('# HELP '.length).split(' ')[0]] = true
+    } else if (!line.startsWith('#')) {
+      const match = line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?\s+([0-9.eE+-]+)$/)
+      if (match) samples.push({ name: match[1], labels: match[2] || '', value: parseFloat(match[3]) })
+    }
+  }
+  return { meters, samples }
+}
+
+// The value of one labelled sample (`labelsFragment` e.g. 'reason="flood"'),
+// or null when the series is absent (a lazily-registered counter before its
+// first increment).
+function sampleValue(scrape, name, labelsFragment) {
+  if (!scrape) return null
+  const sample = scrape.samples.find(
+    s => s.name === name && (!labelsFragment || s.labels.includes(labelsFragment)),
+  )
+  return sample ? sample.value : null
+}
 
 // -------------------------------------------------------------- constants ---
 
@@ -661,10 +705,16 @@ export function setup() {
   // i.e. after setup) line up with the VU clocks.
   const startedAt = Date.now()
   const bulkEndAt = startedAt + RAMP_MS + HOLD_MS
+
+  // T045 (FR-014): the observability baseline of the saturation run — the
+  // server flood counter before the load; teardown compares against it.
+  const prometheusBefore = scrapePrometheus()
+
   return {
     profile: PROFILE,
     seedPassword,
     startedAt,
+    prometheusBefore,
     pairs,
     pairCount: SATURATION_PAIRS,
     auditPair,
@@ -679,6 +729,37 @@ export function setup() {
       tailStartAt: bulkEndAt + RECOVERY_MS - 70_000,
       strict: STRICT_VALIDATION,
     },
+  }
+}
+
+// T045 (FR-014): the saturation run must leave its mark on the SERVER side
+// too — the 004 rate-limiting meter `webchat_send_rejected_total{reason=flood}`
+// present on /actuator/prometheus and grown over the run (a valid saturation
+// overload necessarily drives the 30/minute per-user buckets into 429).
+export function teardown(data) {
+  if (!data || data.profile !== 'saturation') return
+  const before = data.prometheusBefore
+  const after = scrapePrometheus()
+  if (!after) {
+    check(null, {
+      'FR-014 server observability: /actuator/prometheus is scrapable after the run': () => false,
+    })
+    return
+  }
+  if (before) {
+    const present = !!after.meters[FLOOD_METER]
+    if (present) serverFloodMeterPresent.add(1)
+    const floodBefore = sampleValue(before, FLOOD_METER, 'reason="flood"') || 0
+    const floodAfter = sampleValue(after, FLOOD_METER, 'reason="flood"') || 0
+    if (floodAfter > floodBefore) serverFloodRejectionsDelta.add(floodAfter - floodBefore)
+    check(
+      { present, floodBefore, floodAfter },
+      {
+        [`FR-014 server ${FLOOD_METER} present on /actuator/prometheus`]: s => s.present,
+        [`FR-014 server ${FLOOD_METER}{reason=flood} grew over the run (${floodBefore} -> ${floodAfter})`]: s =>
+          s.floodAfter > s.floodBefore,
+      },
+    )
   }
 }
 
@@ -1256,6 +1337,7 @@ export function handleSummary(data) {
     lines.push(`target ${TARGET_RPS} msg/s (ramp ${formatDuration(RAMP_MS)}, hold ${formatDuration(HOLD_MS)}, recovery window ${formatDuration(RECOVERY_MS)}), pairs ${SATURATION_PAIRS}`)
     lines.push(`accepted: ${accepted} (~${sustained} msg/s over ramp+hold; flood ceiling of this stand: ~${Math.floor(SATURATION_PAIRS / 2)} msg/s)`)
     lines.push(`rejections: 503 server_busy=${rejectedBusy}, 429 flood_limit=${rejectedFlood}, silent=${countOf('silent_failures_total')}, missing Retry-After=${countOf('missing_retry_after_total')}`)
+    lines.push(`server FR-014 observability (T045): flood meter present=${countOf('server_flood_meter_present')}/1, server-side flood rejections over the run=${countOf('server_flood_rejections_delta_total')}`)
     if (firstShed !== null) lines.push(`first shed signal after ~${firstShed.toFixed(1)} s`)
     if (overload) lines.push(`overloaded regime: ${overload.max !== undefined ? overload.max.toFixed(1) : '?'} s (005 validity bar: >= 60)`)
     if (steady) lines.push(`delivery steady p99: ${steady['p(99)'] !== undefined ? steady['p(99)'] : steady.max} ms (budget 500)`)
