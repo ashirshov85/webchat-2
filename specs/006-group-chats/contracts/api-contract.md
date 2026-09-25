@@ -32,7 +32,7 @@ group_not_found` — существование группы не раскрыв
 | 28 | `GET /groups/{chatId}` | — | `200` `GroupView` (состав с ролями ≤200) | `400` `invalid_uuid`; `401`; `404` `group_not_found` (в т.ч. для direct-чатов и чужих) |
 | 29 | `PATCH /groups/{chatId}` | `{title?, description?}` (валидация как №27; хотя бы одно поле) | `200` `GroupView`; участникам — `group.updated` | `400` валидация \| `empty_patch`; `401`; `404` `group_not_found`; `403` `forbidden_role` (member не управляет метаданными) |
 | 30 | `DELETE /groups/{chatId}` | — | `204` — hard-delete: история/членства/водяные знаки/счётчики стёрты; бывшим участникам — `group.deleted`; в журнале — факт удаления без содержимого | `400` `invalid_uuid`; `401`; `404`; `403` `not_group_owner` |
-| 31 | `POST /groups/{chatId}/members` | `{userIds: uuid[] 1–199, уникальны}` — из контактов ДОБАВЛЯЮЩЕГО | `200` `{members: [GroupMember]}` — текущий активный состав после операции; идемпотентно для уже активных (дубля не создаёт); добавленным — группа сразу видна в «Чатах» (событие) | `400` `invalid_user_ids` \| `self_forbidden`; `401`; `404`; `403` `forbidden_role`; `422` `not_in_contacts` (атомарно: весь batch) \| `group_full` (активных + batch > 200) |
+| 31 | `POST /groups/{chatId}/members` | `{userIds: uuid[] 1–199, уникальны}` — из контактов ДОБАВЛЯЮЩЕГО | `200` `{members: [GroupMember]}` — текущий активный состав после операции; идемпотентно для уже активных (дубля не создаёт); добавленным — группа сразу видна в «Чатах» (событие) | `400` `invalid_user_ids` \| `self_forbidden`; `401`; `404`; `403` `forbidden_role`; `422` `not_in_contacts` (атомарно: весь batch); `409` `group_full` (активных + batch > 200 — конфликт вместимости) |
 | 32 | `DELETE /groups/{chatId}/members/{userId}` | — (исключение) | `204`; исключённому — `group.you_removed` (финальное событие группы), остальным — `group.member.removed`; сообщения исключённого остаются в истории | `400` `invalid_uuid` \| `self_forbidden` (userId = вызывающий — выход только через №33; проверяется до иерархии ролей); `401`; `404`; `403` `forbidden_role` (member) \| `role_hierarchy_violation` (admin исключает admin/owner); `409` `target_not_member` (не активный участник) |
 | 33 | `DELETE /groups/{chatId}/membership` | — (самостоятельный выход) | `204`; устройствам вышедшего — `group.you_removed {reason:'left'}`, остальным — `group.member.removed`; сообщения остаются; водяные знаки сохранены (повторное добавление FR-002) | `400` `invalid_uuid`; `401`; `404`; `403` `owner_must_transfer` (owner сначала передаёт владение или удаляет группу); повторный выход → `404` (членства нет) |
 | 34 | `PUT /groups/{chatId}/members/{userId}/role` | `{role: 'admin'\|'member'}` (назначение/снятие admin) | `200` `GroupMember`; всем — `group.role.changed` | `400` `invalid_role` \| `self_forbidden` (owner себе); `401`; `404`; `403` `not_group_owner`; `409` `target_not_member` |
@@ -42,6 +42,9 @@ group_not_found` — существование группы не раскрыв
 (объект исчез — штатная сходимость, edge «исключение×выход»: одна операция применяется, вторая
 видит `409 target_not_member`/`404`).
 
+№27 при исчерпании вместимости (заниженный `groups.max-members`) отвечает тем же `409 group_full`;
+штатно начальный состав ≤199 + создатель ≤ 200 — ошибка недостижима.
+
 ## 3. Расширения существующих операций (additive)
 
 | # | Операция | Изменение |
@@ -50,7 +53,8 @@ group_not_found` — существование группы не раскрыв
 | 13 | `GET /chats/{chatId}` | Group-вариант ответа: `type:'group', title, description, myRole, myReadUpToSeq, othersReadUpToSeq` (MIN водяных знаков остальных активных; 0 при одиночной группе — ✓✓ не выставляется), `memberCount`; direct-ответ — без изменений |
 | 15/16/17 | история/отправка/прочтение | Контракт без изменений: `chatId` группы валиден; membership-гейт сервера проверяет active-строку (не-участнику `404 chat_not_found`/`403 not_participant` — семантика 004); флуд/admission/дедуп — 004/005; блокировки 004 на группы не действуют |
 | 18 | `GET /users/me/events` | +6 `event:`-типов: `group.updated`, `group.member.added`, `group.member.removed`, `group.role.changed`, `group.you_removed`, `group.deleted` — схемы и семантика в [realtime-group-events.md](./realtime-group-events.md); неизвестные типы игнорируются клиентом (прямая совместимость 004) |
-| 25/26 | ack/sync | Контракт без изменений; server: №26 отбирает только active-членства (исключённому дельты не приходят), group-дельта несёт `type:'group'`, `title`, `memberCount`, `othersReadUpToSeq` (вместо `peer`/`peerReadUpToSeq`/`blockedByMe` = null); `startAfterSeq`/`truncatedUpToSeq`/`unreadCount` — 005 без изменений |
+| 25 | ack | Контракт без изменений; server: элемент батча с chatId группы требует active-членства вызывающего — удалённое членство (state='removed') трактуется как не-участник → `403 not_participant`, весь батч отклоняется (all-or-refusal 005, FR-008); клиент после `group.you_removed`/`group.deleted` исключает группу из отложенных ack-батчей (realtime-group-events.md §5) |
+| 26 | sync | Контракт без изменений; server: отбирает только active-членства (исключённому дельты не приходят), group-дельта несёт `type:'group'`, `title`, `memberCount`, `othersReadUpToSeq` (вместо `peer`/`peerReadUpToSeq`/`blockedByMe` = null); `startAfterSeq`/`truncatedUpToSeq`/`unreadCount` — 005 без изменений |
 
 ## 4. Схемы (components.schemas)
 
