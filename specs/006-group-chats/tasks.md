@@ -169,12 +169,12 @@ description: "Task list for feature implementation: групповые чаты 
 
 ### Tests for User Story 5 (писать ПЕРВЫМИ)
 
-- [ ] T054 [P] [US5] Написать `backend/src/test/kotlin/webchat/backend/GroupPrivacyIT.kt`: полная матрица «каждая операция (№15/№16/№17 с chatId группы, №26 sync, №28/№29/№31/№32/№33/№34/№35, SSE) × не-участник/несуществующая/исключённый» → единый `404 group_not_found` (SC-003); после `you_removed` события группы не приходят ≤5 с (SC-006); метрика `webchat_group_authz_denials_total` растёт
+- [ ] T054 [P] [US5] Написать `backend/src/test/kotlin/webchat/backend/GroupPrivacyIT.kt`: полная матрица «операция × не-участник/несуществующая/исключённый»: пути 004 (№15/№16/№17 с chatId группы, №26 sync, SSE-канал №18) → `404 chat_not_found`/`403 not_participant` (семантика 004, api-contract.md §3 — существование не раскрывается); операции groups (№28/№29/№31/№32/№34/№35) → единый `404 group_not_found` (api-contract.md §1) (SC-003; cases №33/№30 — в US6, T059); после `you_removed` события группы не приходят ≤5 с (SC-006); метрика `webchat_group_authz_denials_total` растёт
 - [ ] T055 [P] [US5] Написать frontend-тесты: после `group.you_removed`/`group.deleted` группа удаляется из «Чатов» без поллинга, последующие события группы игнорируются (идемпотентная сходимость, FR-015)
 
 ### Implementation for User Story 5
 
-- [ ] T056 [US5] Провести гейт единообразно по всем операциям №27–№35 в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` и `GroupController.kt` (через `GroupMembershipGate`, T015): проверка до различения ролей, инкремент метрики отказов (depends T015, T022, T044)
+- [ ] T056 [US5] Провести гейт единообразно по операциям №27–№35, реализованным к US5 (№27/№28/№29/№31/№32/№34/№35; гейт №30/№33 добавляется в US6), в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` и `GroupController.kt` (через `GroupMembershipGate`, T015): проверка до различения ролей, инкремент метрики отказов (depends T015, T022, T044)
 - [ ] T057 [US5] Проверить недоступность групп для не-участников во всех путях перечисления/поиска (поиск пользователей №№ фич 002–004, контакты, sync №26 — активные членства только) — точечные правки в `backend/src/main/kotlin/webchat/backend/sync/domain/service/SyncService.kt` и ревизия списков; публичного каталога не добавлять (FR-009)
 - [ ] T058 [US5] Реализовать клиентские правила приватности (realtime-group-events.md §5): после `group.you_removed`/`group.deleted` — удаление группы из состояния `frontend/src/chats/` (useChatList/useGroupRealtime), игнорирование последующих событий группы, закрытие окна группы в `frontend/src/chats/pages/MessengerPage.tsx` без «зависших» состояний (depends T055)
 
@@ -190,7 +190,7 @@ description: "Task list for feature implementation: групповые чаты 
 
 ### Tests for User Story 6 (писать ПЕРВЫМИ)
 
-- [ ] T059 [P] [US6] Расширить `backend/src/test/kotlin/webchat/backend/GroupLifecycleIT.kt` (leave/delete slice): №33 owner → `403 owner_must_transfer`, после передачи — выход штатно; сообщения вышедшего остаются с атрибуцией; №30 hard-delete: `chats`/`messages`/`chat_participants` пусты (SQL-проверка), бывшим — `group.deleted`
+- [ ] T059 [P] [US6] Расширить `backend/src/test/kotlin/webchat/backend/GroupLifecycleIT.kt` (leave/delete slice): №33 owner → `403 owner_must_transfer`, после передачи — выход штатно; сообщения вышедшего остаются с атрибуцией; №30 hard-delete: `chats`/`messages`/`chat_participants` пусты (SQL-проверка), бывшим — `group.deleted`; расширить матрицу `GroupPrivacyIT.kt` (замыкание SC-003): №33/№30 × не-участник/несуществующая/исключённый → `404 group_not_found`; повторные №33/№30 → `404`
 - [ ] T060 [P] [US6] Написать `backend/src/test/kotlin/webchat/backend/GroupAdminLogIT.kt`: хронология журнала соответствует сценариям (10 действий); записи переживают hard-delete (`group_deleted` без содержимого, FR-006/FR-017)
 - [ ] T061 [P] [US6] Расширить тесты граничных условий: `backend/src/test/kotlin/webchat/backend/GroupReadStatusIT.kt` — повторное добавление: водяной знак сохранён, счётчик за период отсутствия (FR-002), непрочитавший вышел — ✓✓ достижимо; `backend/src/test/kotlin/webchat/backend/GroupLimitsIT.kt` — конкуренция «исключение×выход» сходится без дублей (edge)
 - [ ] T062 [P] [US6] Написать frontend-тесты: `frontend/src/groups/components/__tests__/LeaveDeleteControls.test.tsx` (видимость по роли, подсказки ошибок), обработка `group.deleted` (удаление из «Чатов», закрытие окон — edge)
