@@ -174,7 +174,7 @@ identities:
   (drift-check в CI: `git diff --exit-code -- frontend/src/api/schema.d.ts`).
 - SPA-маршруты: `/login` (кнопки провайдеров из §1), `/sso/callback` (обмен §4),
   `/settings/security` (§5–7).
-- Встраиваемый виджет (фича 013) использует те же endpoints — отдельных
+- Встраиваемый виджет (фича 015) использует те же endpoints — отдельных
   механизмов не создаётся (Assumption spec).
 
 ## Проверки контракта (CI)

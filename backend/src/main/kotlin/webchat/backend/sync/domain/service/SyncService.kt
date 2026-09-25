@@ -62,7 +62,7 @@ data class ClientCursor(
  *     resumes from it, while the other chats sync normally;
  *  3. the truncation — sync-protocol.md §5: the effective lower bound
  *     `GREATEST(delivered, deleted_up_to_seq)` (the 12-month history
- *     window leg waits for archival 009); a resume point below the floor
+ *     window leg waits for archival 012); a resume point below the floor
  *     surfaces `truncatedUpToSeq` with `startAfterSeq` pinned to the
  *     floor — messages below are inaccessible, not unread (US1-5), and
  *     the position itself moves only when the client acks the point;

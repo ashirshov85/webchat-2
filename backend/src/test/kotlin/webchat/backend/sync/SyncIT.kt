@@ -30,7 +30,7 @@ import java.util.UUID
  *    newest dialog first;
  *  * truncation (§5): a cursor below the per-user visibility floor
  *    (`deleted_up_to_seq` — the exact №14 end state; the 12-month
- *    history-window leg waits for archival 009) surfaces
+ *    history-window leg waits for archival 012) surfaces
  *    `truncatedUpToSeq` with `startAfterSeq` pinned to the floor, and
  *    messages below never return (US1-5);
  *  * the future-cursor repair (§5): a client `upToSeq` beyond the chat
@@ -323,7 +323,7 @@ class SyncIT(
 
     /**
      * sync-protocol.md §5 truncation, the `deleted_up_to_seq` branch
-     * (the 12-month window leg is untestable until archival 009): a
+     * (the 12-month window leg is untestable until archival 012): a
      * cursor below the per-user visibility floor — the exact №14 end
      * state — makes the delta carry `truncatedUpToSeq` with
      * `startAfterSeq` pinned to the floor; messages below are
