@@ -135,7 +135,7 @@ Redis Streams с replay — отклонено: дублирует pull-синх
 
 | Путь | Изменение |
 |---|---|
-| №12 `GET /chats` | список включает группы (единый список FR-014): сортировка по `lastMessage.createdAt` unchanged; элементы получают `type`, group-поля `title`/`memberCount`/`myRole`; `peer`/`blockedByMe` у group-элементов `null` (nullable — единственное формальное изменение обязательности; для существующих потребителей semver-minor-совместимо: группы в их запросах не появляются до использования фичи) |
+| №12 `GET /chats` | список включает группы (единый список FR-014): сортировка по `lastMessage.createdAt` unchanged; элементы получают `type`, group-поля `title`/`memberCount`/`myRole`; `peer`/`blockedByMe` у group-элементов `null`, у №13/№26 — также `peerReadUpToSeq` (nullable-переход — единственное формальное изменение обязательности; для существующих потребителей semver-minor-совместимо: группы в их запросах не появляются до использования фичи) |
 | №13 `GET /chats/{id}` | group-вариант ответа: `type:'group'`, `title`, `description`, `myRole`, `myReadUpToSeq`, `othersReadUpToSeq` (§3), `memberCount`; гейт — active-строка |
 | №15 история / №16 отправка | без изменений контракта; серверный гейт для `kind='group'` — active-строка вместо `involves()`; блокировки 004 НЕ применяются к группам (Assumptions); fanout §4 |
 | №17 `POST /read` | без изменений контракта; группа: событие всем активным, кроме читавшего |
@@ -144,7 +144,7 @@ Redis Streams с replay — отклонено: дублирует pull-синх
 | Outbox/курсоры/флуд/admission | без изменений (chatId-агностичны); клиентские ошибки 403/404/422 групп — терминальные, маппинг как в 004 |
 
 **Обоснование**: периметр изменений — только гейт членства и проекции; все долговременные гарантии
-(exactly-once, порядок, курсоры) наследуются хранилищем (§1). Nullable `peer` помечен в
+(exactly-once, порядок, курсоры) наследуются хранилищем (§1). Nullable-переход `peer`/`blockedByMe`/`peerReadUpToSeq` помечен в
 api-contract.md; oasdiff-прогон в quickstart подтверждает отсутствие breaking по правилам
 конвейера 001 (расширение nullable + optional-поля = minor).
 
