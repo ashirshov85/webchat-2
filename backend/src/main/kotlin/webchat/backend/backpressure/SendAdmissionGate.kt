@@ -34,7 +34,7 @@ import java.util.UUID
  * path depends on this port alone, the limiter is wired from the outside
  * exactly the way `SendPolicyGate` was in 004.
  */
-interface SendAdmissionGate {
+fun interface SendAdmissionGate {
     /**
      * Judges one №16 send attempt against the instance's admission budget.
      * [chatId]/[senderId] identify the attempt for the observability

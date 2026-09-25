@@ -67,7 +67,7 @@ function notifyOverflow(userId: string, evicted: readonly OutboxRecord[]): void 
   if (evicted.length === 0) {
     return
   }
-  for (const listener of [...overflowListeners]) {
+  for (const listener of overflowListeners) {
     try {
       listener({ userId, evicted })
     } catch {

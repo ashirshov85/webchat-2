@@ -40,12 +40,12 @@ export function QueueOverflowBanner({ userId }: QueueOverflowBannerProps) {
     return null
   }
   return (
-    <div className="queue-overflow-banner" role="status">
-      <p className="queue-overflow-banner-text">
+    <output className="queue-overflow-banner">
+      <span className="queue-overflow-banner-text">
         Оффлайн-очередь переполнена: вытеснено сообщений — {evictedCount}. Вытесненные отмечены «не
         отправлено (переполнение очереди)» и не отправляются автоматически — повторите отправку
         вручную.
-      </p>
+      </span>
       <button
         type="button"
         className="queue-overflow-banner-dismiss"
@@ -56,6 +56,6 @@ export function QueueOverflowBanner({ userId }: QueueOverflowBannerProps) {
       >
         ×
       </button>
-    </div>
+    </output>
   )
 }

@@ -304,6 +304,24 @@ function applySyncDelta(
   return sortChatListItems(next)
 }
 
+/**
+ * Merges one №12 refetch into the previous list: a STILL-blocked chat
+ * keeps the frozen badge (T035/US3-5, FR-020 «не растёт и не
+ * сбрасывается до разблокировки») — the moment of blocking is the value
+ * the user saw; a just-blocked or unblocked chat adopts the server
+ * value (the unblock refetch converges it).
+ */
+function mergeRefetchedChats(items: ChatListItem[], previous: ChatListItem[]): ChatListItem[] {
+  const merged = items.map((item) => {
+    if (!item.blockedByMe) {
+      return item
+    }
+    const local = previous.find((entry) => entry.chatId === item.chatId)
+    return local?.blockedByMe ? { ...item, unreadCount: local.unreadCount } : item
+  })
+  return sortChatListItems(merged)
+}
+
 export function useChatList(currentUserId: string | null): UseChatListResult {
   const realtime = useRealtime()
   const [chats, setChats] = useState<ChatListItem[]>([])
@@ -354,23 +372,7 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
         }
         setError(null)
         setStatus('ready')
-        applyChats((previous) => {
-          // T035/US3-5: a refetch of a STILL-blocked chat keeps the
-          // frozen badge (FR-020 «не растёт и не сбрасывается до
-          // разблокировки») — the moment of blocking is the value the
-          // user saw; a just-blocked or unblocked chat adopts the
-          // server value (the unblock refetch converges it).
-          const merged = items.map((item) => {
-            if (!item.blockedByMe) {
-              return item
-            }
-            const local = previous.find((entry) => entry.chatId === item.chatId)
-            return local !== undefined && local.blockedByMe
-              ? { ...item, unreadCount: local.unreadCount }
-              : item
-          })
-          return sortChatListItems(merged)
-        })
+        applyChats((previous) => mergeRefetchedChats(items, previous))
       } catch (cause) {
         if (cancelled) {
           return
