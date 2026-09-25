@@ -12,12 +12,14 @@ import org.mockito.ArgumentMatchers
 import org.mockito.Mockito
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.backpressure.NoopSendAdmissionGate
 import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.InvalidMessageTextException
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.model.MessageTextViolation
+import webchat.backend.chats.domain.model.UndeliveredChatPage
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatReadEvent
@@ -419,6 +421,7 @@ class MessageServiceTest {
                     blockRepository = blocks,
                     meterRegistry = meterRegistry,
                 ),
+            sendAdmissionGate = NoopSendAdmissionGate(),
             meterRegistry = meterRegistry,
         )
 
@@ -501,6 +504,13 @@ class MessageServiceTest {
             before: Long?,
             limit: Int,
         ): List<Message> = emptyList()
+
+        override fun findVisiblePageAfter(
+            chatId: UUID,
+            viewerId: UUID,
+            after: Long,
+            limit: Int,
+        ): List<Message> = error("the send path never walks the ascending page")
     }
 
     /** Records the fan-out targets in the shared [timeline]; [failFor] simulates a dead channel. */
@@ -555,6 +565,23 @@ class MessageServiceTest {
             userId: UUID,
             chatLastSeq: Long,
         ): ChatParticipant? = null
+
+        /** 005 legs are outside the №16 surface — empty by contract default. */
+        override fun advanceDelivered(
+            userId: UUID,
+            acks: Map<UUID, Long>,
+        ) = Unit
+
+        override fun loadForSync(
+            userId: UUID,
+            clientCursors: Map<UUID, Long>,
+            chatLimit: Int,
+        ): UndeliveredChatPage = UndeliveredChatPage(emptyList(), moreChats = false)
+
+        override fun countUnread(
+            userId: UUID,
+            chatId: UUID,
+        ): Long = 0L
     }
 
     /** The auth port stands unused here — the send path reads membership, not user rows. */

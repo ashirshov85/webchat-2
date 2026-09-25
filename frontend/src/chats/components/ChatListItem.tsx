@@ -10,9 +10,14 @@
  * to 64 code points with an ellipsis. `null` lastMessage (an empty or
  * fully deleted-for-me dialog) renders the muted «Нет сообщений» line.
  *
- * Badge (FR-014): numeric counter, «99+» above ninety-nine — it is a
- * render decision over the exact server count and never affects the
- * ordering (positions are owned by useChatList sorting).
+ * Badge (FR-014; feature 005 T035, FR-007/FR-008): the counter is
+ * server-authoritative and delivery-bounded — useChatList maintains it
+ * as an optimistic cache over №12, №26 sync deltas and realtime frames,
+ * converging to the server value. «99+» above ninety-nine is a RENDER
+ * decision over the exact count: the internal `unreadCount` stays
+ * exact (US3-4) and never affects the ordering (positions are owned by
+ * useChatList sorting). While the chat is blocked the displayed value
+ * is whatever useChatList froze at the block moment (US3-5).
  *
  * Blocked mark (FR-020): only the blocker sees «заблокирован» —
  * `blockedByMe` is the single block projection the API exposes, so

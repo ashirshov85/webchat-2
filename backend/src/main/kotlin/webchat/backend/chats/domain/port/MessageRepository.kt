@@ -87,4 +87,21 @@ interface MessageRepository {
         before: Long?,
         limit: Int,
     ): List<Message>
+
+    /**
+     * Ascending catch-up page (005, sync-protocol.md §2/§4): the strictly
+     * ascending replay window `(after, …]` the catch-up synchronization
+     * walks — chat messages VISIBLE to the viewer (`seq >
+     * viewer.deleted_up_to_seq`, FR-021) with the EXCLUSIVE [after]
+     * cursor (`seq > after`, `int64 ≥ 0`), ordered `seq ASC`, at most
+     * [limit] rows. Serves the №26 delta pages of `SyncService` (T013)
+     * and the №15 `?after=` mode (T015 — `nextAfter` derivation is the
+     * caller's; an empty page at the boundary is a correct answer).
+     */
+    fun findVisiblePageAfter(
+        chatId: UUID,
+        viewerId: UUID,
+        after: Long,
+        limit: Int,
+    ): List<Message>
 }

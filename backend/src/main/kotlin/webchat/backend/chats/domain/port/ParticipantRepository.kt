@@ -1,6 +1,7 @@
 package webchat.backend.chats.domain.port
 
 import webchat.backend.chats.domain.model.ChatParticipant
+import webchat.backend.chats.domain.model.UndeliveredChatPage
 import java.util.UUID
 
 /**
@@ -64,4 +65,75 @@ interface ParticipantRepository {
         userId: UUID,
         chatLastSeq: Long,
     ): ChatParticipant?
+
+    /**
+     * Ack №25 `POST /users/me/delivery-ack` (005, api-contract.md §2,
+     * data-model сущность 1, T012): the batch monotone GREATEST-advance
+     * of the CALLER's delivery position, one transaction over the whole
+     * batch — per entry, by the `(chat_id, user_id)` PK:
+     * `UPDATE … SET delivered_up_to_seq = GREATEST(delivered_up_to_seq, :upToSeq)
+     *  WHERE chat_id = :chatId AND user_id = :userId AND delivered_up_to_seq < :upToSeq`;
+     * rowcount 0 — no effect (a repeated or smaller value, idempotent —
+     * see [ChatParticipant.advanceDeliveredUpTo]). The caller has already
+     * validated the WHOLE batch (membership: чужой → `403`, несуществующий
+     * → `404`; `upToSeq ≤ chats.last_seq` → `400 invalid_up_to_seq`), so
+     * the port performs no partial effects; an empty batch performs no
+     * statements (the contract's `minItems 1` is the service's check).
+     * The delivery position moves ONLY through this operation (FR-001) —
+     * a №26 sync answer and an SSE frame never write it.
+     */
+    fun advanceDelivered(
+        userId: UUID,
+        acks: Map<UUID, Long>,
+    )
+
+    /**
+     * №26 `POST /users/me/sync` candidate read (005, sync-protocol.md §3,
+     * data-model сущность 2, T013): [userId]'s dialogs WITH a visible
+     * undelivered tail BEYOND THE EFFECTIVE CURSOR — the caller's
+     * [clientCursors] fold into the candidacy bound as `эффективный
+     * курсор = max(клиентский, серверный)`: `chats.last_seq >
+     * GREATEST(delivered_up_to_seq, deleted_up_to_seq, клиентский
+     * курсор)`, so a chat already caught up by its client cursor leaves
+     * the page ENTIRELY (a foreign/unknown chatId of the map never
+     * matches the caller's rows and rides along silently ignored —
+     * per-user operation). A cursor BEYOND the chat head (the «курсор из
+     * будущего» of sync-protocol.md §5) contributes NOTHING to the bound
+     * — the candidacy falls back to the server position instead of
+     * excluding the chat, and the service flags the desync repair.
+     * Latest activity first: `chats.last_seq DESC`, tie-break
+     * `created_at DESC, chat_id`; up to [chatLimit] entries (already
+     * validated 1–50 by the caller) with [UndeliveredChatPage.moreChats]
+     * by the remainder — because the cursors fold INTO the query,
+     * pagination and `moreChats` stay cursor-aware in the same read
+     * snapshot («частичный список как полный» исключён, and a page of
+     * cursor-caught-up chats can never fake a complete answer). A pure
+     * READ: never moves the delivery position (FR-001).
+     */
+    fun loadForSync(
+        userId: UUID,
+        clientCursors: Map<UUID, Long>,
+        chatLimit: Int,
+    ): UndeliveredChatPage
+
+    /**
+     * The server-authoritative unread counter — data-model 005 сущность 3
+     * (FR-007, T013 — the ONE reusable calculator): `COUNT(messages WHERE
+     * chat_id = chat AND sender_id != user AND seq >
+     * GREATEST(last_read_seq, deleted_up_to_seq) AND seq <=
+     * LEAST(chats.last_seq, delivered_up_to_seq))`. Delivery-bounded:
+     * the badge counts only the CONFIRMED delivered tail (a №26 delta
+     * page is not yet unread until the client acks it — the sync answer
+     * never moves the position it is bounded by, FR-001) and
+     * truncation-bounded: below the deletion watermark messages are
+     * inaccessible, not unread (FR-003/US1-5). Derived per read — never
+     * stored; a user without a participant row of the chat reads 0.
+     * T031: the №12 chat list mirrors the SAME bounds inside its ONE
+     * aggregate query (an N+1 of per-chat calls is the rejected
+     * alternative, research.md 004 §8) — one formula, no drift.
+     */
+    fun countUnread(
+        userId: UUID,
+        chatId: UUID,
+    ): Long
 }

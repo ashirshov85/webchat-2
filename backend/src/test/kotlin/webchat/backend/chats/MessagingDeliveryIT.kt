@@ -92,8 +92,13 @@ class MessagingDeliveryIT(
 
     /**
      * SC-002 race shape: parallel POSTs of one `clientMessageId` — the PG
-     * `ON CONFLICT` write gives exactly one `201`; every racing attempt
-     * observes the committed row and answers `200` with the identical body.
+     * `ON CONFLICT` write gives exactly one `201`. Contract 0.5.0 (US4)
+     * admits `503 server_busy` for attempts that race AHEAD of the winning
+     * insert: the dedup fast-path lookup precedes admission, but until the
+     * single row is committed every concurrent attempt still looks fresh,
+     * so the admission gate may legitimately shed some of them. Exactly-once
+     * is unaffected: one `201`, identical `200`s, one stored row — and the
+     * post-commit retry is 200 only, never shed (BackpressureIT T038).
      */
     @Test
     fun `parallel retries of one clientMessageId store exactly one record`() {
@@ -106,9 +111,10 @@ class MessagingDeliveryIT(
         val statuses = responses.map { it.statusCode }
         assertThat(statuses)
             .overridingErrorMessage(
-                "parallel retries of one id must answer only 200/201 (exactly-once, SC-002), got: %s",
+                "parallel retries of one id must answer 200/201 (or 503 for attempts shed " +
+                    "before the winning insert — contract 0.5.0 US4), got: %s",
                 statuses,
-            ).containsOnly(HttpStatus.CREATED, HttpStatus.OK)
+            ).isSubsetOf(HttpStatus.CREATED, HttpStatus.OK, HttpStatus.SERVICE_UNAVAILABLE)
         val created = responses.filter { it.statusCode == HttpStatus.CREATED }
         assertThat(created)
             .overridingErrorMessage(
@@ -118,14 +124,16 @@ class MessagingDeliveryIT(
             ).hasSize(1)
 
         val inserted = objectMapper.readTree(created.single().body)
-        responses.forEach { response ->
-            assertThat(objectMapper.readTree(response.body))
-                .overridingErrorMessage(
-                    "every parallel retry must observe the SAME stored record, got <%s> vs the inserted <%s>",
-                    response.body,
-                    created.single().body,
-                ).isEqualTo(inserted)
-        }
+        responses
+            .filter { it.statusCode == HttpStatus.OK }
+            .forEach { response ->
+                assertThat(objectMapper.readTree(response.body))
+                    .overridingErrorMessage(
+                        "every parallel retry must observe the SAME stored record, got <%s> vs the inserted <%s>",
+                        response.body,
+                        created.single().body,
+                    ).isEqualTo(inserted)
+            }
 
         val history = historyAscending(bob, chatId)
         assertThat(history.map { it["id"].asText() })
@@ -136,6 +144,20 @@ class MessagingDeliveryIT(
         assertThat(history.single()["seq"].asLong())
             .overridingErrorMessage("the surviving record must be the one every retry observed")
             .isEqualTo(inserted["seq"].asLong())
+
+        // Once the row is committed, the SAME id retries through the dedup
+        // fast-path BEFORE the admission gate: a plain 200, never a 503 —
+        // the US4 guarantee that retries converge "without penalties".
+        val postCommitRetry = sendMessage(alice, chatId, RETRY_REPLACEMENT_TEXT, clientMessageId)
+        assertThat(postCommitRetry.statusCode)
+            .overridingErrorMessage(
+                "a retry of a COMMITTED clientMessageId must answer 200 (FR-004/US4), never shed, got <%s>: %s",
+                postCommitRetry.statusCode,
+                postCommitRetry.body,
+            ).isEqualTo(HttpStatus.OK)
+        assertThat(objectMapper.readTree(postCommitRetry.body))
+            .overridingErrorMessage("the post-commit retry must observe the same stored record")
+            .isEqualTo(inserted)
     }
 
     /**

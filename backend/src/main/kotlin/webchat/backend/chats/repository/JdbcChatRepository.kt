@@ -74,8 +74,19 @@ class JdbcChatRepository(
      * caller's own `user_blocks` mark and both per-chat aggregates:
      * `lastMessage` via a LATERAL top-1 by the max VISIBLE `seq`
      * (`seq > deleted_up_to_seq` — the per-user watermark of data-model
-     * 004 §2) and `unreadCount` as the count of incoming visible messages
-     * above the read watermark. The peer of a two-participant dialog is
+     * 004 §2) and `unreadCount` by the server-authoritative formula of
+     * data-model 005 сущность 3 (T031, FR-007) — the SAME bounds the ONE
+     * reusable calculator `JdbcParticipantRepository.countUnread` (T013)
+     * embodies for the №26 deltas, inlined here as a correlated COUNT so
+     * the panel stays the single aggregate query (an N+1 of per-chat
+     * `countUnread` calls is the rejected alternative, research.md 004
+     * §8): incoming `sender_id <> me` with
+     * `seq > GREATEST(last_read_seq, deleted_up_to_seq)` and
+     * `seq <= LEAST(chats.last_seq, delivered_up_to_seq)` — the badge
+     * carries only the CONFIRMED delivered tail (a realtime frame and a
+     * №26 page do not count until the ack №25 moves the position), and
+     * below the deletion watermark messages are inaccessible, not
+     * unread (US1-5). The peer of a two-participant dialog is
      * the CASE-flipped side of the canonical pair. Sorting is
      * `last_message_at DESC NULLS LAST` (either direction lifts the
      * dialog, FR-014; empty dialogs keep their place below, FR-018) with
@@ -173,9 +184,9 @@ class JdbcChatRepository(
                 (SELECT count(*)
                    FROM messages um
                   WHERE um.chat_id = c.id
-                    AND um.seq > me.last_read_seq
-                    AND um.seq > me.deleted_up_to_seq
-                    AND um.sender_id <> me.user_id) AS unread_count,
+                    AND um.sender_id <> me.user_id
+                    AND um.seq > GREATEST(me.last_read_seq, me.deleted_up_to_seq)
+                    AND um.seq <= LEAST(c.last_seq, me.delivered_up_to_seq)) AS unread_count,
                 EXISTS (SELECT 1
                           FROM user_blocks ub
                          WHERE ub.blocker_id = me.user_id

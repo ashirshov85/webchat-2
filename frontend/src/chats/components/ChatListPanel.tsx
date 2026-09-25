@@ -15,9 +15,12 @@
  * `onReload` — the same path SSE reconnects use), empty (a first
  * incoming from a stranger lands here automatically, FR-019) and the
  * list itself. Rows (ChatListItem) render the preview, the unread
- * badge («99+») and the «заблокирован» mark (FR-014/020); clicking a
- * row opens the pair dialog via `onSelectChat`, the open one is
- * highlighted by `activeChatId`.
+ * badge («99+», exact internal count — the optimistic cache of the
+ * server-authoritative counter that useChatList converges over №12,
+ * №26 sync deltas and realtime frames, feature 005 T035) and the
+ * «заблокирован» mark (FR-014/020); clicking a row opens the pair
+ * dialog via `onSelectChat`, the open one is highlighted by
+ * `activeChatId`.
  */
 import { useState } from 'react'
 import type { ReactNode } from 'react'

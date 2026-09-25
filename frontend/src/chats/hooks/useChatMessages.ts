@@ -35,16 +35,50 @@
  * advances monotonically on `chat.read` frames; a missed frame is
  * compensated by the ChatView refetch on every SSE (re)connect
  * (FR-009), so the status never regresses.
+ *
+ * Catch-up pages (feature 005, T023): `applySyncPage` merges the
+ * №26/№15 pages useSync applied — the same dedup-by-id reconcile in
+ * stable `seq` order, so a page racing a realtime frame of the same
+ * message renders once (US1-3). A `truncatedUpToSeq` page is the
+ * server's word that history below the point stays deleted: rendered
+ * messages at or below it are dropped and never restored (US1-5,
+ * FR-007). The delta's `peerReadUpToSeq` advances the ✓✓ watermark
+ * monotonically — offline read marks arrive with the catch-up.
+ *
+ * Offline read marks (feature 005, T034; sync-protocol.md §6): the
+ * read point records the per-chat watermark in pendingReads BEFORE
+ * each №17 attempt — bounded by the local delivery cursor, because
+ * offline reading applies only to previously synchronized messages
+ * (US3-7) — and removes it only after the `204`. A lost request or
+ * response therefore leaves the entry in place, and the useSync
+ * reconnect flush replays it through the idempotent, monotonic №17
+ * (server GREATEST): the server counter converges with what the user
+ * actually read while offline, and senders get their ✓✓ (US3-7).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getChat, listMessages, markChatRead } from '../../api/chats'
 import type { Message, MessagePage } from '../../api/chats'
+import { getCursor } from '../../sync/cursors'
+import { confirmPendingRead, recordPendingRead } from '../../sync/pendingReads'
 import { useRealtime } from './useRealtime'
 
 /** Read-mark throttle window (US4, T044): ≤1 POST /read per 500 ms (SC-007 ≤2 s). */
 const READ_RECEIPT_THROTTLE_MS = 500
 
 export type ChatMessagesStatus = 'loading' | 'ready' | 'error'
+
+/**
+ * One applied catch-up page of the open chat (feature 005, T023):
+ * `messages` ascending by `seq` from a №26 delta or a №15 `after`
+ * page; `truncatedUpToSeq`/`peerReadUpToSeq` only when the delta
+ * carried them (sync-protocol.md §3).
+ */
+export interface SyncPageUpdate {
+  readonly chatId: string
+  readonly messages: Message[]
+  readonly truncatedUpToSeq?: number
+  readonly peerReadUpToSeq?: number
+}
 
 export interface UseChatMessagesResult {
   /** Messages of the open chat in ascending `seq` order (oldest first). */
@@ -76,6 +110,13 @@ export interface UseChatMessagesResult {
    * ChatView refetches, never regresses.
    */
   readonly peerReadUpToSeq: number
+  /**
+   * Merges an applied catch-up page of THIS chat into the rendered
+   * window (feature 005, T023): dedup by `message.id`, stable `seq`
+   * order, drop at/below `truncatedUpToSeq`, monotonic ✓✓ watermark.
+   * Pages of other chats are ignored — each dialog consumes its own.
+   */
+  readonly applySyncPage: (update: SyncPageUpdate) => void
 }
 
 function isSameMessage(a: Message, b: Message): boolean {
@@ -116,7 +157,10 @@ function reconcileMessages(existing: Message[], incoming: Message[]): Message[] 
   return [...byId.values()].sort((a, b) => a.seq - b.seq)
 }
 
-export function useChatMessages(chatId: string | null): UseChatMessagesResult {
+export function useChatMessages(
+  chatId: string | null,
+  userId: string | null = null,
+): UseChatMessagesResult {
   const realtime = useRealtime()
   const [messages, setMessages] = useState<Message[]>([])
   const [status, setStatus] = useState<ChatMessagesStatus>(() =>
@@ -246,24 +290,44 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     }
   }, [chatId, refreshCount])
 
-  /** Sends the coalesced read mark (best-effort, monotonic, ≤1 per 500 ms). */
-  const flushReadReceipt = useCallback((chatId: string) => {
-    const target = pendingReadSeqRef.current
-    if (target <= 0) {
-      return
-    }
-    pendingReadSeqRef.current = 0
-    lastReadSentAtRef.current = Date.now()
-    const previous = lastSentReadSeqRef.current
-    lastSentReadSeqRef.current = target
-    markChatRead(chatId, target).catch(() => {
-      // Roll the local watermark back so the next displayed change
-      // retries the advance (idempotent server-side, FR-010).
-      if (lastSentReadSeqRef.current === target) {
-        lastSentReadSeqRef.current = previous
+  /**
+   * Sends the coalesced read mark (best-effort, monotonic, ≤1 per 500 ms).
+   * T034 (§6): the offline watermark is recorded BEFORE the №17 attempt
+   * (clamped to the local delivery cursor — offline reading applies
+   * only to previously synchronized messages) and removed only after
+   * its `204`, so an offline read survives a lost request/response and
+   * replays on the useSync reconnect flush.
+   */
+  const flushReadReceipt = useCallback(
+    (chatId: string) => {
+      const target = pendingReadSeqRef.current
+      if (target <= 0) {
+        return
       }
-    })
-  }, [])
+      pendingReadSeqRef.current = 0
+      lastReadSentAtRef.current = Date.now()
+      const previous = lastSentReadSeqRef.current
+      lastSentReadSeqRef.current = target
+      if (userId !== null) {
+        recordPendingRead(userId, chatId, target, getCursor(userId, chatId))
+      }
+      void markChatRead(chatId, target)
+        .then(() => {
+          if (userId !== null) {
+            confirmPendingRead(userId, chatId, target)
+          }
+        })
+        .catch(() => {
+          // Roll the local watermark back so the next displayed change
+          // retries the advance (idempotent server-side, FR-010); the
+          // pendingReads entry stays for the reconnect flush (T034).
+          if (lastSentReadSeqRef.current === target) {
+            lastSentReadSeqRef.current = previous
+          }
+        })
+    },
+    [userId],
+  )
 
   /**
    * Read marks on display (US4, T044): every change of the rendered
@@ -332,6 +396,27 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     setMessages((previous) => reconcileMessages(previous, [message]))
   }, [])
 
+  const applySyncPage = useCallback(
+    (update: SyncPageUpdate) => {
+      if (update.chatId !== chatId) {
+        return
+      }
+      const truncatedUpToSeq = update.truncatedUpToSeq
+      if (truncatedUpToSeq !== undefined) {
+        // US1-5/FR-007: everything at/below the truncation point is
+        // deleted for this user — the server's word outranks any stale
+        // local copy of the history.
+        setMessages((previous) => previous.filter((message) => message.seq > truncatedUpToSeq))
+      }
+      setMessages((previous) => reconcileMessages(previous, update.messages))
+      const peerReadUpToSeq = update.peerReadUpToSeq
+      if (peerReadUpToSeq !== undefined) {
+        setPeerReadUpToSeq((previous) => Math.max(previous, peerReadUpToSeq))
+      }
+    },
+    [chatId],
+  )
+
   const loadOlder = useCallback(() => {
     if (chatId === null || oldestSeq === null || loadingOlderRef.current) {
       return
@@ -373,5 +458,6 @@ export function useChatMessages(chatId: string | null): UseChatMessagesResult {
     loadingOlder,
     loadOlder,
     peerReadUpToSeq,
+    applySyncPage,
   }
 }

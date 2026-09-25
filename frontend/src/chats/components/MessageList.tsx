@@ -15,7 +15,12 @@
  * passed via `outbox` and render after the server messages in creation
  * order (research.md §10). `sending` renders «отправляется», terminal
  * `failed` renders «не отправлено» with the manual actions — retry
- * with the same id and local deletion. A record acknowledged by the
+ * with the same id and local deletion. An evicted record (US2, T028,
+ * FR-005 — `errorCode='queue_overflow'`, T026) renders the eviction
+ * reason «не отправлено (переполнение очереди)» instead of the plain
+ * label, so the user sees WHY the message will never leave on its
+ * own; the actions stay the same — manual retry by the same id is
+ * still allowed (idempotency preserved). A record acknowledged by the
  * server (201/200 — its id is already among `messages`) is skipped:
  * the confirmed copy renders «доставлено ✓» instead. Outgoing from
  * another device arrives as a regular server message via the own SSE
@@ -35,6 +40,7 @@
  */
 import { useEffect, useRef } from 'react'
 import type { Message } from '../../api/chats'
+import { QUEUE_OVERFLOW_ERROR_CODE } from '../outbox'
 import type { OutboxRecord } from '../outbox'
 
 /** Distance from the top (px) that triggers an older-page request. */
@@ -163,7 +169,11 @@ export function MessageList({
           <p className="message-text">{entry.text}</p>
           {entry.state === 'failed' ? (
             <>
-              <span className="message-status message-status-failed">не отправлено</span>
+              <span className="message-status message-status-failed">
+                {entry.errorCode === QUEUE_OVERFLOW_ERROR_CODE
+                  ? 'не отправлено (переполнение очереди)'
+                  : 'не отправлено'}
+              </span>
               <span className="message-actions">
                 <button
                   type="button"

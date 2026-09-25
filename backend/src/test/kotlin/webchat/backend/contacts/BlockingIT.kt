@@ -13,7 +13,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.jdbc.core.JdbcTemplate
-import webchat.backend.chats.MessagingTestSupport
+import webchat.backend.sync.SyncTestSupport
 import java.time.Duration
 import java.util.UUID
 
@@ -62,14 +62,17 @@ import java.util.UUID
  * login, №11 ensure, №15 history, №16 send, №17 read, №18 SSE),
  * Testcontainers PG+Redis, real HTTP and the real Redis pub/sub fanout —
  * no mocks; every method registers its own pair, so the per-user Redis
- * buckets never leak between methods.
+ * buckets never leak between methods. The 005 №25 ack fixture rides the
+ * [SyncTestSupport] layer (T031): the badge the block freezes is the
+ * delivery-bounded counter of data-model 005 сущность 3, so the fixtures
+ * ack the received tail before freezing it.
  */
 @Suppress("TooManyFunctions") // one helper per contract leg of FR-020
 class BlockingIT(
     @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val objectMapper: ObjectMapper,
     @Autowired private val jdbcTemplate: JdbcTemplate,
-) : MessagingTestSupport() {
+) : SyncTestSupport() {
     /** Realtime legs must arrive well inside this CI-tolerant budget (SC-005/SC-007). */
     private val deliveryBudget: Duration = Duration.ofSeconds(5)
 
@@ -188,8 +191,12 @@ class BlockingIT(
         val chatId = ensureChatOk(alice, bob.id)
         val lastSeq = sendFrom(bob, chatId, BADGE_TEXT_PREFIX, BADGE_MESSAGES).last()
 
+        // T031: the badge grows only by the ack №25 — deliver the received
+        // tail BEFORE the block so the frozen value is the badge proper.
+        assertThat(deliveryAck(alice, listOf(chatId to lastSeq)).statusCode)
+            .isEqualTo(HttpStatus.NO_CONTENT)
         assertThat(unreadCount(alice, chatId))
-            .overridingErrorMessage("before the block the badge must count the unread incoming messages")
+            .overridingErrorMessage("before the block the badge must count the delivered unread incoming messages")
             .isEqualTo(BADGE_MESSAGES.toLong())
 
         assertThat(blockUser(alice, bob.id).statusCode).isEqualTo(HttpStatus.NO_CONTENT)

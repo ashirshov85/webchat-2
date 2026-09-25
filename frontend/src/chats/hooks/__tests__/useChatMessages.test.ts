@@ -2,6 +2,8 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
 import type { ChatView, Message, MessagePage } from '../../../api/chats'
+import { advanceCursor } from '../../../sync/cursors'
+import { getPendingRead } from '../../../sync/pendingReads'
 import { useChatMessages } from '../useChatMessages'
 
 const sse = vi.hoisted(() => ({ streamUserEvents: vi.fn() }))
@@ -90,8 +92,8 @@ function emitMessageCreated(stream: MockStream, message: Message): void {
 
 const mounted: Array<{ unmount(): void }> = []
 
-function mountChatMessages(initialChatId: string | null) {
-  const rendered = renderHook((chatId: string | null) => useChatMessages(chatId), {
+function mountChatMessages(initialChatId: string | null, userId: string | null = null) {
+  const rendered = renderHook((chatId: string | null) => useChatMessages(chatId, userId), {
     initialProps: initialChatId,
   })
   mounted.push(rendered)
@@ -102,6 +104,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   mockedGetChat.mockResolvedValue(chatView())
   mockedMarkChatRead.mockResolvedValue(undefined)
+  window.localStorage.clear()
 })
 
 afterEach(() => {
@@ -377,6 +380,42 @@ describe('useChatMessages convergence on SSE (re)connect (FR-009)', () => {
   })
 })
 
+describe('useChatMessages parallel queue and realtime sends after reconnect (quickstart §3.3.6, T029)', () => {
+  it('interleaves outbox-confirmed and realtime messages by server seq — no losses, no duplicates', async () => {
+    const stream = installStream()
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)], 10))
+    const { result } = mountChatMessages('chat-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    // Bob is back online: his queued sends were accepted at seq 20/21
+    // while Alice's realtime frames (seq 19/22) race into the same
+    // dialog, and the own SSE stream redelivers Bob's confirmed
+    // message. The dialog keeps the actual server acceptance order
+    // (seq), every message exactly once (edge «одновременная
+    // отправка», spec 005).
+    act(() => {
+      result.current.confirmMessage({ ...makeMessage('chat-1', 'bob-1', 20), senderId: 'me-1' })
+    })
+    emitMessageCreated(stream, makeMessage('chat-1', 'alice-1', 19))
+    act(() => {
+      result.current.confirmMessage({ ...makeMessage('chat-1', 'bob-2', 21), senderId: 'me-1' })
+    })
+    emitMessageCreated(stream, makeMessage('chat-1', 'alice-2', 22))
+    emitMessageCreated(stream, { ...makeMessage('chat-1', 'bob-1', 20), senderId: 'me-1' })
+
+    expect(result.current.messages.map((message) => message.seq)).toEqual([10, 19, 20, 21, 22])
+    expect(result.current.messages.map((message) => message.id)).toEqual([
+      'm-1',
+      'alice-1',
+      'bob-1',
+      'bob-2',
+      'alice-2',
+    ])
+  })
+})
+
 describe('useChatMessages chat switching', () => {
   it('resets and loads the newly opened chat', async () => {
     installStream()
@@ -416,5 +455,188 @@ describe('useChatMessages chat switching', () => {
     })
 
     expect(rendered.result.current.messages.map((m) => m.id)).toEqual(['b-5'])
+  })
+})
+
+describe('useChatMessages ✓✓ watermark from sync deltas (feature 005, T036, US3-8)', () => {
+  function own(id: string, seq: number): Message {
+    return { ...makeMessage('chat-1', id, seq), senderId: 'me-1' }
+  }
+
+  async function mountReady() {
+    mockedListMessages.mockResolvedValueOnce(page([own('m-1', 10), own('m-2', 20)]))
+    const rendered = mountChatMessages('chat-1')
+    await waitFor(() => {
+      expect(rendered.result.current.status).toBe('ready')
+    })
+    return rendered
+  }
+
+  it('actualizes own message statuses after reconnect: the delta peerReadUpToSeq advances the watermark without any reload', async () => {
+    installStream()
+    const { result } = await mountReady()
+    expect(result.current.peerReadUpToSeq).toBe(0)
+
+    // The peer read up to seq 10 while the user was offline — the
+    // §3.1 catch-up delta carries the fresh watermark (US3-8,
+    // FR-003: statuses of own messages arrive with the catch-up).
+    act(() => {
+      result.current.applySyncPage({ chatId: 'chat-1', messages: [], peerReadUpToSeq: 10 })
+    })
+
+    expect(result.current.peerReadUpToSeq).toBe(10)
+  })
+
+  it('applies each status event once: a repeated identical delta is a no-op (quickstart §3.2)', async () => {
+    installStream()
+    const { result } = await mountReady()
+
+    act(() => {
+      result.current.applySyncPage({ chatId: 'chat-1', messages: [], peerReadUpToSeq: 10 })
+    })
+    const messagesAfterFirst = result.current.messages
+    expect(result.current.peerReadUpToSeq).toBe(10)
+
+    // A repeated №26 with the same cursors redelivers the same
+    // watermark — nothing doubles, nothing re-renders.
+    act(() => {
+      result.current.applySyncPage({ chatId: 'chat-1', messages: [], peerReadUpToSeq: 10 })
+    })
+
+    expect(result.current.peerReadUpToSeq).toBe(10)
+    expect(result.current.messages).toBe(messagesAfterFirst)
+  })
+
+  it('never regresses the watermark on a stale smaller delta (monotonic)', async () => {
+    installStream()
+    const { result } = await mountReady()
+
+    act(() => {
+      result.current.applySyncPage({ chatId: 'chat-1', messages: [], peerReadUpToSeq: 20 })
+    })
+    act(() => {
+      result.current.applySyncPage({ chatId: 'chat-1', messages: [], peerReadUpToSeq: 10 })
+    })
+
+    expect(result.current.peerReadUpToSeq).toBe(20)
+  })
+
+  it('leaves the watermark untouched when the page carries none (№15 continuation pages)', async () => {
+    installStream()
+    const { result } = await mountReady()
+
+    act(() => {
+      result.current.applySyncPage({ chatId: 'chat-1', messages: [own('m-3', 30)] })
+    })
+
+    expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'm-2', 'm-3'])
+    expect(result.current.peerReadUpToSeq).toBe(0)
+  })
+
+  it("ignores the watermark of other chats' pages", async () => {
+    installStream()
+    const { result } = await mountReady()
+
+    act(() => {
+      result.current.applySyncPage({ chatId: 'chat-2', messages: [], peerReadUpToSeq: 99 })
+    })
+
+    expect(result.current.peerReadUpToSeq).toBe(0)
+    expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'm-2'])
+  })
+
+  it('merges own outgoing delta messages together with the watermark — offline-read ones land straight in ✓✓ scope', async () => {
+    installStream()
+    const { result } = await mountReady()
+
+    // Sent from another device while offline AND already read by the
+    // peer: the delta message and its «прочитано» status arrive in the
+    // same page (актуальные «доставлено»/«прочитано», US3-8).
+    act(() => {
+      result.current.applySyncPage({
+        chatId: 'chat-1',
+        messages: [own('m-3', 30)],
+        peerReadUpToSeq: 30,
+      })
+    })
+
+    expect(result.current.messages.map((m) => m.id)).toEqual(['m-1', 'm-2', 'm-3'])
+    expect(result.current.peerReadUpToSeq).toBe(30)
+  })
+})
+
+describe('useChatMessages offline read watermark (feature 005, T034, sync-protocol.md §6)', () => {
+  it('records the pending watermark BEFORE the №17 attempt and removes it only after the 204', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)]))
+    let resolveRead!: () => void
+    mockedMarkChatRead.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveRead = resolve
+      }),
+    )
+    const { result } = mountChatMessages('chat-1', 'user-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    // №17 is in flight — the watermark already sits in pendingReads
+    // (§6: запись ДО попытки), so a lost request/response replays on reconnect
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-1', 10)
+    })
+    expect(getPendingRead('user-1', 'chat-1')).toBe(10)
+
+    await act(async () => {
+      resolveRead()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(getPendingRead('user-1', 'chat-1')).toBe(0)
+    })
+  })
+
+  it('a failed №17 keeps the watermark pending for the reconnect flush', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)]))
+    mockedMarkChatRead.mockRejectedValue(new Error('offline'))
+    const { result } = mountChatMessages('chat-1', 'user-1')
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-1', 10)
+    })
+    expect(getPendingRead('user-1', 'chat-1')).toBe(10)
+  })
+
+  it('clamps the offline watermark to the local delivery cursor (US3-7)', async () => {
+    installStream()
+    advanceCursor('user-1', 'chat-1', 6)
+    mockedListMessages.mockResolvedValueOnce(page([makeMessage('chat-1', 'm-1', 10)]))
+    let resolveRead!: () => void
+    mockedMarkChatRead.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveRead = resolve
+      }),
+    )
+    mountChatMessages('chat-1', 'user-1')
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-1', 10)
+    })
+
+    // №17 carries the actually displayed seq (10), but the offline
+    // watermark is bounded by the client's delivery position (6) —
+    // offline reading applies only to previously synchronized messages
+    expect(getPendingRead('user-1', 'chat-1')).toBe(6)
+
+    await act(async () => {
+      resolveRead()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(getPendingRead('user-1', 'chat-1')).toBe(0)
+    })
   })
 })

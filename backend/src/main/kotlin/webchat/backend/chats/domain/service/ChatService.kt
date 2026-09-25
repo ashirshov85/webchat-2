@@ -140,6 +140,16 @@ class ChatService(
      * message `createdAt` DESC NULLS LAST, `chat_id` tie-break), the §2
      * exclusion of fully deleted dialogs and the aggregates, so this is a
      * straight delegation with nothing to veto.
+     *
+     * T031 (005, FR-007): the `unreadCount` aggregate is the
+     * server-authoritative delivery-bounded formula of data-model 005
+     * сущность 3 — `GREATEST(last_read, deleted) < seq ≤
+     * LEAST(chats.last_seq, delivered_up_to_seq)` of incoming messages —
+     * the SAME formula [ParticipantRepository.countUnread] embodies for
+     * the №26 `SyncChatDelta.unreadCount` (one calculator, no drift): the
+     * badge grows ONLY by the delivery ack №25, on both the realtime and
+     * the catch-up paths alike; below the truncation point messages are
+     * inaccessible, not unread (US1-5).
      */
     fun listChats(callerId: UUID): List<ChatListEntry> = chatListRepository.listForUser(callerId)
 

@@ -54,8 +54,13 @@ class MessageController(
      * Contract №16: the idempotent send — `201 Message` when a fresh
      * record is stored, `200 Message` when the `clientMessageId` is
      * already recorded (FR-004: the same row returned, never a
-     * duplicate). The flood (`429`) and blocking-pair (`403`) gates join
-     * this path in later stories (T032/T054) without changing the map.
+     * duplicate). The blocking-pair (`403`) and flood (`429`) gates and
+     * the T041 admission shed — `503 server_busy` + `Retry-After` with
+     * `errors: {chat: [server_busy]}` (the typed
+     * [webchat.backend.chats.domain.service.ServerBusyException], rendered by
+     * [ChatsExceptionHandler]) — leave here as typed exceptions; the №16
+     * check order dedup → admission → membership → validation → flood is
+     * owned by [MessageService] (api-contract.md 005 §3, BackpressureIT).
      */
     @PostMapping("/messages")
     fun send(
@@ -78,23 +83,33 @@ class MessageController(
     }
 
     /**
-     * Contract №15: the history page — `messages` by `seq DESC` behind
-     * the EXCLUSIVE `before` cursor, `nextBefore` absent at exhaustion.
-     * The `limit` bounds (`400 limit_out_of_range`) are checked in
-     * [HistoryService] against the contract-fixed `1..50`.
+     * Contract №15: the history page — the two mutually exclusive walk
+     * regimes over one visibility query. `before` (004): `messages` by
+     * `seq DESC` behind the EXCLUSIVE cursor, `nextBefore` absent at
+     * exhaustion. `after` (005 §2): the ascending catch-up window
+     * `(after, after+limit]` by `seq ASC` with the mirror cursor
+     * `nextAfter` — the catch-up fetch of sync-protocol.md §4. The two
+     * cursors together are the typed 400 `mixed_cursors` carrier of
+     * [MixedCursorsException] (rendered by [ChatsExceptionHandler]),
+     * resolved inside [HistoryService] AFTER the membership gate like
+     * every №15 parameter rule. The `limit` bounds (`400
+     * limit_out_of_range`) are checked in [HistoryService] against the
+     * contract-fixed `1..50`.
      */
     @GetMapping("/messages")
     fun list(
         @PathVariable chatId: UUID,
         @RequestParam before: Long? = null,
+        @RequestParam after: Long? = null,
         @RequestParam limit: Int? = null,
         @AuthenticationPrincipal accessToken: Jwt,
     ): MessagePageView {
         val viewerId = callerId(accessToken)
-        val page = historyService.history(chatId, viewerId, before, limit)
+        val page = historyService.history(chatId, viewerId, before, after, limit)
         return MessagePageView(
             messages = page.messages.map(::view),
             nextBefore = page.nextBefore,
+            nextAfter = page.nextAfter,
         )
     }
 

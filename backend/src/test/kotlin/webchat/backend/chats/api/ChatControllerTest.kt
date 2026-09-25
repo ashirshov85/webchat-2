@@ -15,6 +15,7 @@ import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.ChatPeerSnapshot
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
+import webchat.backend.chats.domain.model.UndeliveredChatPage
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
@@ -354,6 +355,23 @@ class ChatControllerTest {
             userId: UUID,
             chatLastSeq: Long,
         ): ChatParticipant? = null
+
+        /** 005 legs are outside the №11–№13 surface — empty by contract default. */
+        override fun advanceDelivered(
+            userId: UUID,
+            acks: Map<UUID, Long>,
+        ) = Unit
+
+        override fun loadForSync(
+            userId: UUID,
+            clientCursors: Map<UUID, Long>,
+            chatLimit: Int,
+        ): UndeliveredChatPage = UndeliveredChatPage(emptyList(), moreChats = false)
+
+        override fun countUnread(
+            userId: UUID,
+            chatId: UUID,
+        ): Long = 0L
     }
 
     /** The T054 fixture: point lookups against the scripted [blockedPairs] (empty — no blocks). */

@@ -204,15 +204,40 @@ class RateLimitIT(
 
         // 10 SUCCESSFUL logins keep the brute-force failure counter (T045b) at
         // zero — every attempt comes from a FRESH source, so only the account
-        // bucket keyed by sha256(identifier) (data-model.md §7) can trip
-        repeat(LOGIN_ACCOUNT_LIMIT) { index ->
-            val response = login("rlacct", PASSWORD, xForwardedFor = "198.18.0.${61 + index}")
-            assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
+        // bucket keyed by sha256(identifier) (data-model.md §7) can trip.
+        // The login route refills GREEDILY (002: a continuous ~1 token / 6 s
+        // drip at 10/1m) and every attempt pays the Argon2 cost, so on a busy
+        // full-`gradlew check` host the drip returns a token or two before the
+        // bucket is fully drained — the throttle point is therefore probed
+        // WITH the drip allowance (bounded well below a whole window, which
+        // a 10/1m bucket could not survive anyway), not at the exact N+1.
+        var successful = 0
+        var flooded: ResponseEntity<String>? = null
+        while (flooded == null && successful < LOGIN_ACCOUNT_LIMIT + LOGIN_DRIP_ALLOWANCE) {
+            val response = login("rlacct", PASSWORD, xForwardedFor = "198.18.0.${61 + successful}")
+            if (response.statusCode == HttpStatus.OK) {
+                successful += 1
+            } else {
+                flooded = response
+            }
         }
 
-        val flooded = login("rlacct", PASSWORD, xForwardedFor = "198.18.0.72")
-
-        assertTooManyRequests(flooded, MINUTE_SECONDS)
+        assertThat(successful)
+            .overridingErrorMessage(
+                "the account bucket must admit the configured %d successful logins " +
+                    "(plus at most the greedy drip allowance of %d), got %d before the throttle",
+                LOGIN_ACCOUNT_LIMIT,
+                LOGIN_DRIP_ALLOWANCE,
+                successful,
+            ).isBetween(LOGIN_ACCOUNT_LIMIT, LOGIN_ACCOUNT_LIMIT + LOGIN_DRIP_ALLOWANCE)
+        assertTooManyRequests(
+            flooded
+                ?: throw AssertionError(
+                    "the account bucket must throttle after ${LOGIN_ACCOUNT_LIMIT + LOGIN_DRIP_ALLOWANCE} " +
+                        "successful logins at the latest",
+                ),
+            MINUTE_SECONDS,
+        )
         assertThat(redisTemplate.hasKey("rl:email:login:${sha256Hex("rlacct")}") ?: false).isTrue
     }
 
@@ -753,6 +778,14 @@ class RateLimitIT(
         const val RESEND_EMAIL_LIMIT = 3
         const val LOGIN_IP_LIMIT = 10
         const val LOGIN_ACCOUNT_LIMIT = 10
+
+        /**
+         * The greedy refill of the 10/1m login bucket drips back ~1 token
+         * per 6 s; Argon2-paced attempts on a loaded host may reclaim a
+         * couple of tokens before the account bucket drains, so the
+         * throttle point is probed with this much slack.
+         */
+        const val LOGIN_DRIP_ALLOWANCE = 4
         const val RESET_IP_LIMIT = 5
         const val RESET_EMAIL_LIMIT = 3
         const val TOKEN_ROUTE_IP_LIMIT = 30

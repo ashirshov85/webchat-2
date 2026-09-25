@@ -26,6 +26,38 @@
  * `message.id` already is the rendered preview changes nothing (the
  * badge was counted before), and refetches replace the local state
  * wholesale, so the server stays the single source of truth.
+ *
+ * Catch-up deltas (feature 005, T023): `applySyncUpdate` merges the
+ * №26/№15 pages useSync applied — a known chat's preview/position move
+ * to the page tail (dedup: only a strictly newer `seq` replaces the
+ * preview), and a chat unknown to the list materializes from the
+ * delta's metadata (peer, badge) — US1-6's «новый чат появляется со
+ * всей перепиской»: the row shows up at once and the №12 refetch of
+ * the next (re)connect converges the aggregate.
+ *
+ * Unread badge convergence (feature 005, T035; US3, FR-007): the
+ * counter is server-authoritative and delivery-bounded — the badge is
+ * an OPTIMISTIC CACHE of it with three sources:
+ *
+ *  * №12 refetch replaces the value wholesale (the server truth of
+ *    `unread = COUNT(incoming, seq > GREATEST(last_read, deleted),
+ *    seq ≤ LEAST(last_seq, delivered))`, data-model 005 сущность 3);
+ *  * a №26 delta RE-ANCHORS it: the delta's `unreadCount` is a
+ *    pre-ack snapshot (the contract №26 — «сообщения текущей страницы
+ *    дельты не входят до ack'а»), so the applied page's incoming
+ *    messages are added on top (US3-2: the badge grows by the actual
+ *    number of missed messages; offline reads flushed before №26
+ *    already lowered the server value, so the anchor may converge the
+ *    badge DOWN — US3-7);
+ *  * №15 continuation pages and realtime frames ADD optimistically —
+ *    each incoming message counts exactly once (a per-chat high-water
+ *    of counted `seq`s filters pages against realtime races, US1-3).
+ *
+ * While `blockedByMe` the badge is FROZEN (US3-5 — FR-020 of 004,
+ * semantics unchanged): no realtime increment, no read reset, no
+ * delta adoption, and a №12 refetch of a STILL-blocked chat keeps the
+ * frozen value; the unblock refetch (block toggles reload №12)
+ * converges to the server counter again.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listChats } from '../../api/chats'
@@ -33,6 +65,22 @@ import type { ChatListItem, Message } from '../../api/chats'
 import { useRealtime } from './useRealtime'
 
 export type ChatListStatus = 'loading' | 'ready' | 'error'
+
+/**
+ * One applied catch-up page handed to the list (feature 005, T023):
+ * №26 delta pages carry the chat metadata (`peer`, `blockedByMe`,
+ * server counters), №15 continuation pages carry only the tail.
+ */
+export interface SyncChatListUpdate {
+  readonly chatId: string
+  readonly messages: Message[]
+  readonly peer?: PublicUserLike
+  readonly blockedByMe?: boolean
+  readonly unreadCount?: number
+}
+
+/** Structural `peer` of the delta (№12 projection — id/username/…). */
+type PublicUserLike = ChatListItem['peer']
 
 export interface UseChatListResult {
   /** Chats sorted by the last visible message (FR-014): newest first, messageless last. */
@@ -44,9 +92,21 @@ export interface UseChatListResult {
   /**
    * Zeroes the chat's unread badge locally (FR-014): the read marks of
    * the open dialog (useChatMessages POSTs /read) reset the counter as
-   * the user reads; wired into the panel by T058/T060.
+   * the user reads; wired into the panel by T058/T060. A blocked chat
+   * keeps its value — the FR-020 frozen badge of US3-5.
    */
   readonly markChatReadLocally: (chatId: string) => void
+  /**
+   * Merges an applied catch-up page into the list (feature 005,
+   * T023/T035): preview/position of a known chat follow the page tail
+   * (idempotent — only a strictly newer `seq` replaces anything), an
+   * unknown chat materializes as a row (US1-6). The badge converges
+   * per T035: a №26 delta re-anchors it to the server counter plus
+   * the page's incoming (pre-ack snapshot, US3-2/US3-7), a №15
+   * continuation adds the not-yet-counted incoming (US1-3), and a
+   * blocked chat stays frozen (US3-5).
+   */
+  readonly applySyncUpdate: (update: SyncChatListUpdate) => void
 }
 
 /**
@@ -86,13 +146,17 @@ function isSameListItem(a: ChatListItem, b: ChatListItem): boolean {
 
 /**
  * Applies one `message.created` frame to a known chat: preview,
- * position and — for incoming messages — the unread badge. Returns the
- * previous reference when nothing changed (idempotent render).
+ * position and — for incoming messages — the unread badge (frozen
+ * while `blockedByMe`, US3-5). Returns the previous reference when
+ * nothing changed (idempotent render). An incremented badge advances
+ * the chat's counted high-water, so a later sync page re-carrying the
+ * same message does not count it twice (US1-3 race).
  */
 function applyMessageCreated(
   chats: ChatListItem[],
   message: Message,
   currentUserId: string | null,
+  countedIncomingSeq: Map<string, number>,
 ): ChatListItem[] {
   const index = chats.findIndex((item) => item.chatId === message.chatId)
   const current = index === -1 ? undefined : chats[index]
@@ -103,13 +167,17 @@ function applyMessageCreated(
   if (lastMessage !== null && lastMessage.id === message.id) {
     return chats
   }
+  const incoming = currentUserId !== null && message.senderId !== currentUserId
+  if (incoming && !current.blockedByMe) {
+    countedIncomingSeq.set(
+      message.chatId,
+      Math.max(countedIncomingSeq.get(message.chatId) ?? 0, message.seq),
+    )
+  }
   const updated: ChatListItem = {
     ...current,
     lastMessage: lastMessage === null || message.seq > lastMessage.seq ? message : lastMessage,
-    unreadCount:
-      currentUserId !== null && message.senderId !== currentUserId
-        ? current.unreadCount + 1
-        : current.unreadCount,
+    unreadCount: incoming && !current.blockedByMe ? current.unreadCount + 1 : current.unreadCount,
   }
   if (isSameListItem(current, updated)) {
     return chats
@@ -119,16 +187,139 @@ function applyMessageCreated(
   return sortChatListItems(next)
 }
 
-/** Zeroes the chat's unread badge (FR-014) keeping the position untouched. */
+/**
+ * Zeroes the chat's unread badge (FR-014) keeping the position
+ * untouched. A blocked chat keeps its value — the FR-020 «заморожен»
+ * badge neither grows nor resets until the unblock (US3-5).
+ */
 function resetUnread(chats: ChatListItem[], chatId: string): ChatListItem[] {
   const index = chats.findIndex((item) => item.chatId === chatId)
   const current = index === -1 ? undefined : chats[index]
-  if (current === undefined || current.unreadCount === 0) {
+  if (current === undefined || current.unreadCount === 0 || current.blockedByMe) {
     return chats
   }
   const next = [...chats]
   next[index] = { ...current, unreadCount: 0 }
   return next
+}
+
+/** Incoming (`senderId !== currentUserId`) messages of a page above `aboveSeq`. */
+function countIncoming(
+  messages: readonly Message[],
+  currentUserId: string | null,
+  aboveSeq: number,
+): number {
+  let count = 0
+  for (const message of messages) {
+    if (message.seq > aboveSeq && currentUserId !== null && message.senderId !== currentUserId) {
+      count++
+    }
+  }
+  return count
+}
+
+/**
+ * Applies one catch-up page to the list (feature 005, T023/T035):
+ * known chats move their preview to a strictly newer page tail;
+ * unknown chats materialize from the №26 delta metadata (US1-6).
+ * The badge follows the T035 convergence rules:
+ *
+ *  * a №26 delta (`unreadCount` present) RE-ANCHORS: the server
+ *    counter is a pre-ack snapshot, the applied page's incoming
+ *    messages are added on top (US3-2/US3-7 — up or down);
+ *  * a №15 continuation page ADDS only what the counted high-water
+ *    has not seen (realtime races count once, US1-3);
+ *  * `blockedByMe` freezes the badge (US3-5) — preview and position
+ *    still follow the page.
+ *
+ * Returns the previous reference when nothing changed — idempotent
+ * render.
+ */
+function applySyncDelta(
+  chats: ChatListItem[],
+  update: SyncChatListUpdate,
+  currentUserId: string | null,
+  countedIncomingSeq: Map<string, number>,
+): ChatListItem[] {
+  const tail = update.messages.at(-1)
+  const pageTop = tail?.seq ?? 0
+  const index = chats.findIndex((item) => item.chatId === update.chatId)
+  const current = index === -1 ? undefined : chats[index]
+  if (current === undefined) {
+    // №15 continuation pages of a chat the list never saw cannot
+    // materialize a row (no peer) — the №26 delta of the same cycle
+    // always precedes them, so dropping is safe.
+    if (update.peer === undefined || tail === undefined) {
+      return chats
+    }
+    const unreadCount =
+      update.unreadCount !== undefined
+        ? update.unreadCount + countIncoming(update.messages, currentUserId, 0)
+        : countIncoming(update.messages, currentUserId, 0)
+    countedIncomingSeq.set(
+      update.chatId,
+      Math.max(countedIncomingSeq.get(update.chatId) ?? 0, pageTop),
+    )
+    const created: ChatListItem = {
+      chatId: update.chatId,
+      peer: update.peer,
+      lastMessage: tail,
+      unreadCount,
+      blockedByMe: update.blockedByMe ?? false,
+    }
+    return sortChatListItems([...chats, created])
+  }
+  const lastMessage =
+    tail !== undefined && (current.lastMessage === null || tail.seq > current.lastMessage.seq)
+      ? tail
+      : current.lastMessage
+  const blockedByMe = update.blockedByMe ?? current.blockedByMe
+  let unreadCount = current.unreadCount
+  if (!blockedByMe) {
+    if (update.unreadCount !== undefined) {
+      // The №26 anchor: assignment (not increment) — the server value
+      // outranks any local optimism, converging the badge up (missed
+      // messages, US3-2) or down (offline reads flushed before №26,
+      // US3-7).
+      unreadCount = update.unreadCount + countIncoming(update.messages, currentUserId, 0)
+    } else {
+      // The №15 continuation: only messages above the counted
+      // high-water — a realtime-raced message already counted is
+      // skipped (US1-3).
+      unreadCount =
+        current.unreadCount +
+        countIncoming(update.messages, currentUserId, countedIncomingSeq.get(update.chatId) ?? 0)
+    }
+    countedIncomingSeq.set(
+      update.chatId,
+      Math.max(countedIncomingSeq.get(update.chatId) ?? 0, pageTop),
+    )
+  }
+  const updated: ChatListItem = { ...current, lastMessage, blockedByMe, unreadCount }
+  if (isSameListItem(current, updated)) {
+    return chats
+  }
+  const next = [...chats]
+  next[index] = updated
+  return sortChatListItems(next)
+}
+
+/**
+ * Merges one №12 refetch into the previous list: a STILL-blocked chat
+ * keeps the frozen badge (T035/US3-5, FR-020 «не растёт и не
+ * сбрасывается до разблокировки») — the moment of blocking is the value
+ * the user saw; a just-blocked or unblocked chat adopts the server
+ * value (the unblock refetch converges it).
+ */
+function mergeRefetchedChats(items: ChatListItem[], previous: ChatListItem[]): ChatListItem[] {
+  const merged = items.map((item) => {
+    if (!item.blockedByMe) {
+      return item
+    }
+    const local = previous.find((entry) => entry.chatId === item.chatId)
+    return local?.blockedByMe ? { ...item, unreadCount: local.unreadCount } : item
+  })
+  return sortChatListItems(merged)
 }
 
 export function useChatList(currentUserId: string | null): UseChatListResult {
@@ -147,6 +338,21 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
   /** Latest user id without resubscribing the realtime listeners. */
   const currentUserIdRef = useRef<string | null>(currentUserId)
   currentUserIdRef.current = currentUserId
+  /**
+   * Per-chat high-water of incoming `seq`s already reflected in the
+   * badge (T035): realtime increments and applied sync pages advance
+   * it, so a №15 continuation page re-carrying a raced message counts
+   * it once (US1-3). Session-local bookkeeping — never persisted, the
+   * server value converges whatever it missed.
+   */
+  const countedIncomingSeqRef = useRef(new Map<string, number>())
+
+  useEffect(() => {
+    // A user switch invalidates every per-chat watermark: the new
+    // user's chats (even id-identical ones — the same dialog seen
+    // from the peer side) must not inherit the old session's counts.
+    countedIncomingSeqRef.current = new Map()
+  }, [currentUserId])
 
   const applyChats = useCallback((updater: (previous: ChatListItem[]) => ChatListItem[]) => {
     setChats((previous) => {
@@ -166,7 +372,7 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
         }
         setError(null)
         setStatus('ready')
-        applyChats(() => sortChatListItems(items))
+        applyChats((previous) => mergeRefetchedChats(items, previous))
       } catch (cause) {
         if (cancelled) {
           return
@@ -193,7 +399,12 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
         return
       }
       applyChats((previous) =>
-        applyMessageCreated(previous, event.message, currentUserIdRef.current),
+        applyMessageCreated(
+          previous,
+          event.message,
+          currentUserIdRef.current,
+          countedIncomingSeqRef.current,
+        ),
       )
     })
     const unsubscribeRead = realtime.onChatRead(null, (event) => {
@@ -220,11 +431,21 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
     [applyChats],
   )
 
+  const applySyncUpdate = useCallback(
+    (update: SyncChatListUpdate) => {
+      applyChats((previous) =>
+        applySyncDelta(previous, update, currentUserIdRef.current, countedIncomingSeqRef.current),
+      )
+    },
+    [applyChats],
+  )
+
   return {
     chats,
     status,
     error,
     reload,
     markChatReadLocally,
+    applySyncUpdate,
   }
 }
