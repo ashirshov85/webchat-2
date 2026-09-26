@@ -56,12 +56,18 @@ class GroupMetricsTest {
         metrics.countAuthzDenial(GroupMetrics.AuthzOperation.GET)
         metrics.countAuthzDenial(GroupMetrics.AuthzOperation.REMOVE_MEMBER)
 
-        assertThat(
-            meterRegistry.find(AUTHZ_DENIALS_TOTAL).tag(TAG_OPERATION, "get").counter()!!.count(),
-        ).isEqualTo(2.0)
-        assertThat(
-            meterRegistry.find(AUTHZ_DENIALS_TOTAL).tag(TAG_OPERATION, "remove_member").counter()!!.count(),
-        ).isEqualTo(1.0)
+        val getDenials =
+            meterRegistry
+                .find(AUTHZ_DENIALS_TOTAL)
+                .tag(TAG_OPERATION, "get")
+                .counter()!!
+        assertThat(getDenials.count()).isEqualTo(2.0)
+        val removeMemberDenials =
+            meterRegistry
+                .find(AUTHZ_DENIALS_TOTAL)
+                .tag(TAG_OPERATION, "remove_member")
+                .counter()!!
+        assertThat(removeMemberDenials.count()).isEqualTo(1.0)
         assertThat(meterRegistry.find(AUTHZ_DENIALS_TOTAL).counters().sumOf { it.count() })
             .isEqualTo(3.0)
     }
