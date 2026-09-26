@@ -26,6 +26,20 @@ class InvalidMemberIdsException : RuntimeException("memberUserIds must be unique
 class InvalidUserIdsException : RuntimeException("userIds must be a non-empty array of unique UUIDs (at most 199)")
 
 /**
+ * 400 `invalid_uuid` (api-contract.md №28/№31): the PATH `chatId` of a
+ * groups endpoint is not a UUID — the refusal a raw-string path
+ * variable makes possible (the №11 `peerUserId` convention), decided in
+ * the controller (T022) BEFORE the service and its uniform 404 gate are
+ * touched. The submitted value is never echoed (constitution V).
+ *
+ * Thrown by [GroupController], rendered by T017
+ * (`GroupsExceptionHandler`).
+ */
+class InvalidGroupChatIdException(
+    cause: IllegalArgumentException? = null,
+) : RuntimeException("chatId must be a UUID", cause)
+
+/**
  * 400 `empty_patch` (api-contract.md №29): a `PATCH /groups/{chatId}`
  * body carrying none of `title`/`description` — at least one field must
  * be present for the metadata update to apply (FR-007).

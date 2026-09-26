@@ -150,6 +150,17 @@ class GroupsExceptionHandler {
         problem(HttpStatus.BAD_REQUEST, INVALID_USER_IDS_DETAIL)
             .apply { setProperty(ERRORS_PROPERTY, mapOf(USER_IDS_FIELD to listOf(INVALID_USER_IDS_CODE))) }
 
+    /**
+     * 400 (api-contract.md №28/№31): the PATH `chatId` is not a UUID —
+     * rendered as `errors: {chatId: [invalid_uuid]}`; a well-formed but
+     * unknown/foreign chatId never reaches here, it answers the uniform
+     * 404 of the service gate instead.
+     */
+    @ExceptionHandler(InvalidGroupChatIdException::class)
+    fun onInvalidGroupChatId(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, INVALID_CHAT_ID_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(CHAT_ID_FIELD to listOf(INVALID_UUID_CODE))) }
+
     /** 400 (api-contract.md №29, FR-007): a PATCH body carrying none of `title`/`description`. */
     @ExceptionHandler(EmptyPatchException::class)
     fun onEmptyPatch(): ProblemDetail =
@@ -175,6 +186,7 @@ class GroupsExceptionHandler {
         const val DESCRIPTION_FIELD = "description"
         const val ROLE_FIELD = "role"
         const val BODY_FIELD = "body"
+        const val CHAT_ID_FIELD = "chatId"
         const val GROUP_NOT_FOUND_CODE = "group_not_found"
         const val FORBIDDEN_ROLE_CODE = "forbidden_role"
         const val ROLE_HIERARCHY_VIOLATION_CODE = "role_hierarchy_violation"
@@ -189,6 +201,7 @@ class GroupsExceptionHandler {
         const val INVALID_ROLE_CODE = "invalid_role"
         const val INVALID_MEMBER_IDS_CODE = "invalid_member_ids"
         const val INVALID_USER_IDS_CODE = "invalid_user_ids"
+        const val INVALID_UUID_CODE = "invalid_uuid"
         const val EMPTY_PATCH_CODE = "empty_patch"
         const val GROUP_NOT_FOUND_DETAIL = "The requested group was not found"
         const val FORBIDDEN_ROLE_DETAIL = "The caller's role does not allow this operation"
@@ -204,6 +217,7 @@ class GroupsExceptionHandler {
         const val INVALID_ROLE_DETAIL = "role must be one of: admin, member"
         const val INVALID_MEMBER_IDS_DETAIL = "memberUserIds must be unique UUIDs (at most 199)"
         const val INVALID_USER_IDS_DETAIL = "userIds must be a non-empty array of unique UUIDs (at most 199)"
+        const val INVALID_CHAT_ID_DETAIL = "chatId must be a UUID"
         const val EMPTY_PATCH_DETAIL = "PATCH body must carry at least one of title, description"
     }
 }

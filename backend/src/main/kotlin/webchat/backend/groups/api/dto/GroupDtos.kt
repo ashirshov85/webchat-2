@@ -139,6 +139,17 @@ data class TransferOwnershipRequest(
 )
 
 /**
+ * Contract №31 answer envelope (openapi.yaml 0.6.0): `{members: […]}` —
+ * the CURRENT active roster after the operation (the idempotent re-add
+ * included), the exact shape `additionalProperties: false,
+ * required: [members]` pins. Owned by the api layer (T022) — the
+ * service answers the bare roster, the HTTP adapter wraps it.
+ */
+data class GroupMembersResponse(
+    val members: List<GroupMember>,
+)
+
+/**
  * The reused `PublicUser {id, username, email, status, createdAt}`
  * fragment of [GroupMember] (openapi.yaml 0.6.0): the groups-local
  * projection of the contract schema, in the [ChatPeerView] convention —

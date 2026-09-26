@@ -138,6 +138,44 @@ class GroupService(
     }
 
     /**
+     * №28 `GET /api/v1/groups/{chatId}` (api-contract.md 006 №28,
+     * FR-008): the gated read of one group — the membership gate FIRST
+     * (a stranger, a removed former member and an unknown chat id are
+     * the SAME counted `404 group_not_found`, the authz metric riding
+     * the gate), then the group row resolves through the
+     * `kind='group'` predicate of [GroupRepository.find]: the chatId of
+     * the caller's own DIRECT dialog passes the gate (an active
+     * participant row exists) and STILL renders the same uniform 404 —
+     * a direct dialog is not a group resource and its existence as one
+     * is never disclosed (FR-008/FR-009).
+     *
+     * A proven member reads the [GroupView] with HIS `myRole` (the
+     * gate's own row, not a roster re-lookup) and the ACTIVE roster
+     * with roles (≤ 200, only `state='active'` rows). A pure read — no
+     * journal fact, no frame, no metric beyond a refused gate.
+     */
+    fun get(
+        callerId: UUID,
+        chatId: UUID,
+    ): GroupView {
+        val membership = membershipGate.requireActiveMembership(chatId, callerId, GroupMetrics.AuthzOperation.GET)
+        val group = resolveGroup(chatId)
+        val roster = participants.activeMembers(group.id)
+        val profiles = profilesOf(roster)
+        val myRole =
+            requireNotNull(membership.role) {
+                "the gate row of an active group membership must carry a role (V14 ck_chat_participants_role)"
+            }
+        return GroupView(
+            chatId = group.id,
+            title = group.title.value,
+            description = group.description?.value,
+            myRole = memberRoleLabel(myRole),
+            members = roster.map { row -> memberView(row, profiles) },
+        )
+    }
+
+    /**
      * №31 `POST /api/v1/groups/{chatId}/members` (api-contract.md 006 №31,
      * FR-002/FR-004/FR-013): the membership gate → the `FOR UPDATE`
      * serialization of the group row → the add-members role gate → the
@@ -189,6 +227,19 @@ class GroupService(
         }
         return roster.map { row -> memberView(row, profiles) }
     }
+
+    /**
+     * The №28 group resolve of the gated read: the lock-free
+     * [GroupRepository.find] answers the same `kind='group'` predicate
+     * as [resolveGroupForUpdate] — a `null` (an unknown id AND a direct
+     * dialog) renders as the SAME uniform [GroupNotFoundException] the
+     * gate throws one step earlier, so the read path stays
+     * 404-indistinguishable end to end (api-contract.md 006 №28,
+     * FR-008/FR-009).
+     */
+    private fun resolveGroup(chatId: UUID): GroupChat =
+        groupRepository.find(chatId)
+            ?: throw GroupNotFoundException()
 
     /**
      * The №31 group resolve INSIDE the ambient transaction: the
