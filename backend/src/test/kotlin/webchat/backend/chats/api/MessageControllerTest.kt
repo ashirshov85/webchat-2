@@ -45,6 +45,7 @@ import webchat.backend.config.ChatsProperties
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.groups.domain.model.MemberRole
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -390,6 +391,35 @@ class MessageControllerTest {
         override fun countUnread(
             userId: UUID,
             chatId: UUID,
+        ): Long = 0L
+
+        /** 006 group-roster legs are outside the №15–№17 surface — inert defaults. */
+        override fun findActive(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun activeMembers(chatId: UUID): List<ChatParticipant> = emptyList()
+
+        override fun addMember(
+            chatId: UUID,
+            userId: UUID,
+            role: MemberRole,
+        ): ChatParticipant = error("the message endpoints never manage the group roster")
+
+        override fun reactivate(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun removeMember(
+            chatId: UUID,
+            userId: UUID,
+        ): Boolean = false
+
+        override fun minOtherReadUpToSeq(
+            chatId: UUID,
+            userId: UUID,
         ): Long = 0L
     }
 

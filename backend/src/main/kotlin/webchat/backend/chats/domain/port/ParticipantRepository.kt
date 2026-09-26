@@ -2,6 +2,7 @@ package webchat.backend.chats.domain.port
 
 import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.UndeliveredChatPage
+import webchat.backend.groups.domain.model.MemberRole
 import java.util.UUID
 
 /**
@@ -13,7 +14,15 @@ import java.util.UUID
  * `(chat_id, user_id)` PK: a zero rowcount means the transition does not
  * apply and no side effects occur — the same conditional-UPDATE discipline
  * as the auth feature ports.
+ *
+ * Since V14 (006) the same rows carry the GROUP membership projection
+ * `role`/`state` (data-model 006 §Сущность 2): membership in a group ⟺
+ * an ACTIVE row (FR-008) checked on every request, while the 004/005
+ * watermarks survive a removal for the re-add semantics (FR-002) — the
+ * group-roster legs below (T008, adapter T011) evolve this port instead
+ * of introducing a separate membership table (constitution VII).
  */
+@Suppress("TooManyFunctions") // one member per port rule: 004/005 dialog legs + the 006 roster extension (T008)
 interface ParticipantRepository {
     /**
      * Per-user state read: the read watermark, the deletion watermark and
@@ -135,5 +144,107 @@ interface ParticipantRepository {
     fun countUnread(
         userId: UUID,
         chatId: UUID,
+    ): Long
+
+    /**
+     * The FR-008 membership projection of 006: [userId]'s row of the
+     * chat ONLY WHILE it is ACTIVE — `WHERE chat_id = ? AND user_id = ?
+     * AND state='active'`. `null` covers every non-member ALIKE: a
+     * stranger who never was a member, a REMOVED former member (№32
+     * kick/№33 leave) and a foreign or unknown chatId — the single read
+     * of the groups membership gate (T015 `GroupMembershipGate`),
+     * rendering all three identically as the privacy `404
+     * group_not_found` (FR-008/FR-009: existence is never disclosed).
+     */
+    fun findActive(
+        chatId: UUID,
+        userId: UUID,
+    ): ChatParticipant?
+
+    /**
+     * The ACTIVE roster snapshot of a group (006, FR-011): one
+     * index-only scan over the V14 partial index
+     * `ix_chat_participants_chat_active` — ≤ 200 rows by the FR-002
+     * limit, each with its [ChatParticipant.role] for the fan-out
+     * addressees, the №28 `GroupView` roster and the FR-003/FR-004
+     * role checks. Deterministic `created_at, user_id` order (the
+     * `joined_at, user_id` member order of the №28 projection,
+     * data-model 006 §Выводные представления). The message path calls
+     * it INSIDE the send transaction — the addressee snapshot of the
+     * post-commit fan-out is exactly the roster that saw the message
+     * admitted.
+     */
+    fun activeMembers(chatId: UUID): List<ChatParticipant>
+
+    /**
+     * №27/№31 roster INSERT — the FIRST add of [userId] to a group
+     * (data-model 006 §Сущность 2): BOTH watermarks initialize at the
+     * chat head read in the SAME statement — `last_read_seq =
+     * delivered_up_to_seq = chats.last_seq` — so the unread badge
+     * starts at 0 (FR-013) and the history before the add is never
+     * re-delivered (the 005 FR-001 discipline holds: only №25 acks move
+     * the delivery position afterwards). [role] carries the joining
+     * role — `owner` ONLY for the №27 creator (the
+     * `ux_chat_participants_owner` partial unique index backs the
+     * single-owner invariant, FR-003), everyone else joins as `member`.
+     * The chat row must already exist (the service has resolved the
+     * group and, for №31, holds the `chats` row lock of
+     * `GroupRepository.findForUpdate` in the ambient transaction); a
+     * pre-existing row of the user surfaces as a PK violation — the
+     * addMembers scenario skips an ACTIVE row (idempotence, the №31
+     * `200` without a duplicate) and routes a REMOVED one to
+     * [reactivate] (api-contract.md 006 §2).
+     */
+    fun addMember(
+        chatId: UUID,
+        userId: UUID,
+        role: MemberRole,
+    ): ChatParticipant
+
+    /**
+     * №31 re-adding a REMOVED member (data-model 006 §Сущность 2): the
+     * single conditional `UPDATE … SET state='active', role='member',
+     * hidden=false WHERE … AND state='removed'` — BOTH 004/005
+     * watermarks SURVIVE the absence verbatim (FR-002: no re-anchoring,
+     * the returning member's badge counts the away-period tail), the
+     * role always resets to plain `member` and a stale №14 `hidden`
+     * flag clears. `null` on rowcount 0 — no row at all or the
+     * membership is already ACTIVE (the caller has just skipped it as
+     * the idempotent case); no side effects either way.
+     */
+    fun reactivate(
+        chatId: UUID,
+        userId: UUID,
+    ): ChatParticipant?
+
+    /**
+     * №32 kick / №33 leave (data-model 006 §Сущность 2): the single
+     * conditional `UPDATE … SET state='removed', role='member' WHERE
+     * chat_id = ? AND user_id = ? AND state='active'`, resolved by
+     * rowcount — `true` on exactly 1; `false` when the removal has
+     * already happened (the kick×leave race converges without
+     * duplicates, edge of api-contract.md 006 §2) or the user was never
+     * a member. The watermarks stay in the row for the re-add semantics
+     * (FR-002/FR-005) and the removed member's messages keep their
+     * attribution — `messages` rows are never touched here.
+     */
+    fun removeMember(
+        chatId: UUID,
+        userId: UUID,
+    ): Boolean
+
+    /**
+     * The ✓✓ rule of a group (FR-012): `MIN(last_read_seq)` over the
+     * ACTIVE members EXCEPT [userId] — an index-only fold over the same
+     * V14 partial index (`INCLUDE (user_id, role, last_read_seq)`); a
+     * REMOVED reader drops out of the condition naturally and a group
+     * of one folds to 0 (✓✓ unreachable, data-model 006 §Правила
+     * видимости). Monotone per reader by the GREATEST-discipline of
+     * [advanceReadUpTo] — the MIN over monotone legs never regresses,
+     * and a re-added member's PRESERVED watermark (FR-002) keeps it so.
+     */
+    fun minOtherReadUpToSeq(
+        chatId: UUID,
+        userId: UUID,
     ): Long
 }

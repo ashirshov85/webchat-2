@@ -8,12 +8,15 @@ import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.UndeliveredChat
 import webchat.backend.chats.domain.model.UndeliveredChatPage
 import webchat.backend.chats.domain.port.ParticipantRepository
+import webchat.backend.groups.domain.model.MemberRole
+import webchat.backend.groups.domain.model.MembershipState
 import java.sql.ResultSet
 import java.util.UUID
 
 /**
  * JDBC adapter for [ParticipantRepository] (data-model 004 §2 + 005
- * сущность 1; DIP: the adapter lives outside the domain).
+ * сущность 1 + 006 §Сущность 2; DIP: the adapter lives outside the
+ * domain).
  *
  * Every transition is a conditional single-row UPDATE against the
  * `(chat_id, user_id)` PK evaluated with `RETURNING` against the database
@@ -27,8 +30,18 @@ import java.util.UUID
  * idempotent; FR-001: the ONLY writer of `delivered_up_to_seq`), and
  * [loadForSync] is a pure READ joining `chats` — it never moves the
  * position.
+ *
+ * Since V14 (006) the same rows carry the group roster `role`/`state`
+ * (T008/T011): every projection maps them (direct rows read `role=NULL,
+ * state='active'`), the ACTIVE-roster legs run on the partial index
+ * `ix_chat_participants_chat_active`, and the membership transitions
+ * keep the conditional-UPDATE discipline — [removeMember] resolves the
+ * kick×leave race by rowcount, [reactivate] preserves BOTH watermarks
+ * (FR-002) and [addMember] anchors them at the chat head in the INSERT
+ * itself (FR-013).
  */
 @Repository
+@Suppress("TooManyFunctions") // one member per port rule: 004/005 dialog legs + the 006 roster extension (T008/T011)
 class JdbcParticipantRepository(
     private val jdbcTemplate: JdbcTemplate,
 ) : ParticipantRepository {
@@ -132,6 +145,86 @@ class JdbcParticipantRepository(
         chatId: UUID,
     ): Long = jdbcTemplate.queryForObject(COUNT_UNREAD_SQL, Long::class.java, userId, chatId, userId) ?: 0L
 
+    /**
+     * T008 (FR-008): the ACTIVE-membership point lookup of the groups
+     * gate — the `state='active'` filter is the whole membership rule;
+     * every other case reads as `null` and renders identically at the
+     * gate (privacy 404).
+     */
+    override fun findActive(
+        chatId: UUID,
+        userId: UUID,
+    ): ChatParticipant? = jdbcTemplate.query(FIND_ACTIVE_SQL, ROW_MAPPER, chatId, userId).firstOrNull()
+
+    /**
+     * T008 (FR-011): the ACTIVE roster snapshot — one scan over the
+     * V14 partial index `ix_chat_participants_chat_active` (≤ 200 rows
+     * by the FR-002 limit), deterministic `created_at, user_id` order
+     * (the №28 member order of data-model 006). A pure READ: the
+     * addressee snapshot for the post-commit fan-out is taken inside
+     * the caller's transaction.
+     */
+    override fun activeMembers(chatId: UUID): List<ChatParticipant> =
+        jdbcTemplate.query(
+            ACTIVE_MEMBERS_SQL,
+            ROW_MAPPER,
+            chatId,
+        )
+
+    /**
+     * T008 (№27/№31, FR-013): the FIRST add — one INSERT…SELECT anchors
+     * BOTH watermarks at the chat head read in the same statement, so
+     * the badge starts at 0 and the pre-add history never re-delivers.
+     * A missing `chats` row inserts nothing (the service has resolved
+     * the group already) and fails the invariant; a pre-existing row
+     * of the user surfaces as the PK violation the caller routes to
+     * [reactivate].
+     */
+    override fun addMember(
+        chatId: UUID,
+        userId: UUID,
+        role: MemberRole,
+    ): ChatParticipant =
+        jdbcTemplate
+            .query(ADD_MEMBER_SQL, ROW_MAPPER, chatId, userId, role.name.lowercase(), chatId)
+            .firstOrNull()
+            ?: error("addMember requires the chats row to exist (the service resolves the group first)")
+
+    /**
+     * T008 (№31, FR-002): re-adding a REMOVED member — the single
+     * conditional UPDATE restores `state='active'`, resets the role to
+     * `member` and clears a stale `hidden` flag while BOTH watermarks
+     * ride the row untouched (no re-anchoring); rowcount 0 (no row, or
+     * already ACTIVE) reads as `null` with no side effects.
+     */
+    override fun reactivate(
+        chatId: UUID,
+        userId: UUID,
+    ): ChatParticipant? = jdbcTemplate.query(REACTIVATE_SQL, ROW_MAPPER, chatId, userId).firstOrNull()
+
+    /**
+     * T008 (№32/№33): the single conditional removal UPDATE resolved by
+     * rowcount — `true` exactly once, `false` when the kick×leave race
+     * has already resolved or the user was never a member (the
+     * convergence of api-contract.md 006 §2). Watermarks stay in the
+     * row for the re-add semantics.
+     */
+    override fun removeMember(
+        chatId: UUID,
+        userId: UUID,
+    ): Boolean = jdbcTemplate.update(REMOVE_MEMBER_SQL, chatId, userId) == 1
+
+    /**
+     * T008 (FR-012): the ✓✓ fold — `MIN(last_read_seq)` of the ACTIVE
+     * members except the reader, an index-only aggregation over the
+     * same partial index (removed readers drop out naturally); a group
+     * of one folds to 0 via COALESCE.
+     */
+    override fun minOtherReadUpToSeq(
+        chatId: UUID,
+        userId: UUID,
+    ): Long = jdbcTemplate.queryForObject(MIN_OTHER_READ_SQL, Long::class.java, chatId, userId) ?: 0L
+
     private companion object {
         val ROW_MAPPER =
             RowMapper { rs: ResultSet, _: Int ->
@@ -142,6 +235,10 @@ class JdbcParticipantRepository(
                     deletedUpToSeq = rs.getLong("deleted_up_to_seq"),
                     deliveredUpToSeq = rs.getLong("delivered_up_to_seq"),
                     hidden = rs.getBoolean("hidden"),
+                    // V14 (006): the group roster projection — direct rows
+                    // read role=NULL and never leave state='active'.
+                    role = rs.getString("role")?.let { MemberRole.valueOf(it.uppercase()) },
+                    state = MembershipState.valueOf(rs.getString("state").uppercase()),
                     createdAt = rs.getTimestamp("created_at").toInstant(),
                 )
             }
@@ -156,9 +253,14 @@ class JdbcParticipantRepository(
                 )
             }
 
+        /** Every roster projection selects the same column set as [ROW_MAPPER] maps. */
+        const val PARTICIPANT_COLUMNS =
+            "chat_id, user_id, last_read_seq, deleted_up_to_seq, " +
+                "delivered_up_to_seq, hidden, role, state, created_at"
+
         val FIND_SQL =
             """
-            SELECT chat_id, user_id, last_read_seq, deleted_up_to_seq, delivered_up_to_seq, hidden, created_at
+            SELECT $PARTICIPANT_COLUMNS
             FROM chat_participants
             WHERE chat_id = ? AND user_id = ?
             """.trimIndent()
@@ -166,9 +268,72 @@ class JdbcParticipantRepository(
         /** T043: the two watermark rows of №11/№13 `ChatView` in one read. */
         val FIND_FOR_CHAT_SQL =
             """
-            SELECT chat_id, user_id, last_read_seq, deleted_up_to_seq, delivered_up_to_seq, hidden, created_at
+            SELECT $PARTICIPANT_COLUMNS
             FROM chat_participants
             WHERE chat_id = ?
+            """.trimIndent()
+
+        /** T008: the FR-008 membership point lookup — `state='active'` IS the membership rule. */
+        val FIND_ACTIVE_SQL =
+            """
+            SELECT $PARTICIPANT_COLUMNS
+            FROM chat_participants
+            WHERE chat_id = ? AND user_id = ? AND state = 'active'
+            """.trimIndent()
+
+        /**
+         * T008: the ACTIVE roster snapshot — the V14 partial index
+         * `ix_chat_participants_chat_active (chat_id) INCLUDE (user_id,
+         * role, last_read_seq) WHERE state='active'` serves it as an
+         * index-only scan; `created_at, user_id` mirrors the №28 member
+         * order deterministically.
+         */
+        val ACTIVE_MEMBERS_SQL =
+            """
+            SELECT $PARTICIPANT_COLUMNS
+            FROM chat_participants
+            WHERE chat_id = ? AND state = 'active'
+            ORDER BY created_at, user_id
+            """.trimIndent()
+
+        /**
+         * T008: the FIRST add — both watermarks anchor at `chats.last_seq`
+         * read INSIDE the INSERT (FR-013), `deleted_up_to_seq`/`hidden`
+         * ride their defaults (groups never use them, data-model 006
+         * §Сущность 2). A missing chats row inserts nothing.
+         */
+        val ADD_MEMBER_SQL =
+            """
+            INSERT INTO chat_participants (chat_id, user_id, role, state, last_read_seq, delivered_up_to_seq)
+            SELECT ?, ?, ?, 'active', c.last_seq, c.last_seq
+            FROM chats c
+            WHERE c.id = ?
+            RETURNING $PARTICIPANT_COLUMNS
+            """.trimIndent()
+
+        /** T008: re-adding a REMOVED member — watermarks untouched, role reset, `hidden` cleared. */
+        val REACTIVATE_SQL =
+            """
+            UPDATE chat_participants
+            SET state = 'active', role = 'member', hidden = false
+            WHERE chat_id = ? AND user_id = ? AND state = 'removed'
+            RETURNING $PARTICIPANT_COLUMNS
+            """.trimIndent()
+
+        /** T008: the single conditional №32/№33 removal, resolved by rowcount. */
+        val REMOVE_MEMBER_SQL =
+            """
+            UPDATE chat_participants
+            SET state = 'removed', role = 'member'
+            WHERE chat_id = ? AND user_id = ? AND state = 'active'
+            """.trimIndent()
+
+        /** T008: the ✓✓ fold of FR-012 over the active roster except the reader. */
+        val MIN_OTHER_READ_SQL =
+            """
+            SELECT COALESCE(MIN(last_read_seq), 0)
+            FROM chat_participants
+            WHERE chat_id = ? AND user_id <> ? AND state = 'active'
             """.trimIndent()
 
         val ADVANCE_READ_SQL =
@@ -176,7 +341,7 @@ class JdbcParticipantRepository(
             UPDATE chat_participants
             SET last_read_seq = GREATEST(last_read_seq, ?)
             WHERE chat_id = ? AND user_id = ? AND last_read_seq < ?
-            RETURNING chat_id, user_id, last_read_seq, deleted_up_to_seq, delivered_up_to_seq, hidden, created_at
+            RETURNING $PARTICIPANT_COLUMNS
             """.trimIndent()
 
         val DELETE_UP_TO_SQL =
@@ -184,7 +349,7 @@ class JdbcParticipantRepository(
             UPDATE chat_participants
             SET deleted_up_to_seq = ?, hidden = true
             WHERE chat_id = ? AND user_id = ?
-            RETURNING chat_id, user_id, last_read_seq, deleted_up_to_seq, delivered_up_to_seq, hidden, created_at
+            RETURNING $PARTICIPANT_COLUMNS
             """.trimIndent()
 
         val ADVANCE_DELIVERED_SQL =
