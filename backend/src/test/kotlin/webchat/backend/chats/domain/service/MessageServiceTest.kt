@@ -24,6 +24,7 @@ import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.GroupEvent
 import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.MessageRepository
@@ -532,6 +533,22 @@ class MessageServiceTest {
 
         override fun publishChatRead(
             toUserId: UUID,
+            event: ChatReadEvent,
+        ) = Unit
+
+        /** The 006 group legs stay outside the 004 send slice — silent sinks. */
+        override fun fanoutGroupEvent(
+            toUserIds: List<UUID>,
+            event: GroupEvent,
+        ) = Unit
+
+        override fun fanoutMessageCreated(
+            toUserIds: List<UUID>,
+            event: MessageCreatedEvent,
+        ) = Unit
+
+        override fun fanoutChatRead(
+            toUserIds: List<UUID>,
             event: ChatReadEvent,
         ) = Unit
     }
