@@ -102,10 +102,10 @@ Redis-ключей; frontend — новый модуль `src/groups/` (созд
 | # | Принцип | Статус | Комментарий |
 |---|---------|--------|-------------|
 | I | Spec-Driven (NON-NEGOTIABLE) | ✅ PASS | Спека утверждена (раунд clarify зафиксирован); план — этот документ; `tasks.md` — следующий шаг (`/speckit.tasks`). Код только по задачам. |
-| II | Масштабируемость / stateless (NON-NEGOTIABLE) | ✅ PASS | Новое долговечное состояние — только PG (V14): колонки дискриминатора/ролей + журнал; in-process состояния НЕ добавляется, поды остаются stateless. Путь отправки получает ≤200-строчный read состава (PK-range) и ≤199 post-commit Redis-публикаций — расчёт усиления и рычаги (групповой канал `rt:chat:{id}` как точка расширения) — [research.md §4](./research.md); k6 smoke + закрепление полнообъёмного прогона за 016 (прецедент 004/005, Complexity Tracking). |
+| II | Масштабируемость / stateless (NON-NEGOTIABLE) | ✅ PASS | Новое долговечное состояние — только PG (V14): колонки дискриминатора/ролей + журнал; in-process состояния НЕ добавляется, поды остаются stateless. Путь отправки получает ≤200-строчный read состава (PK-range) и ≤199 post-commit Redis-публикаций — расчёт усиления и рычаги (групповой канал `rt:chat:{id}` как точка расширения) — [research.md §4](./research.md); k6 smoke + закрепление полнообъёмного прогона за 016 (прецедент 004/005, Complexity Tracking). Hard-delete группы (FR-006) не конфликтует со стандартом хранения истории 12 мес. (Performance & Data Retention Standards): стандарт применяется к существующим чатам и не сохраняет содержимое удалённых владельцем групп — факт удаления фиксирует журнал без содержимого (spec Assumptions). |
 | III | Доставка без дублей (NON-NEGOTIABLE) | ✅ PASS | Пути 004/005 не меняются: клиентский ID + дедуп-фастпас, per-chat `seq`, GREATEST-водяные знаки, курсоры/ack/sync — группа получает их автоматически (единое хранилище). События группы — at-most-once канал + идемпотентная обработка клиента (FR-015); тесты дубли/порядка/потерь расширены на группы (`GroupRealtimeIT`, k6). |
 | IV | API-First и встраиваемость | ✅ PASS | Сначала `contracts/openapi.yaml` (additive minor 0.5.0 → 0.6.0: №27–№35, group-поля №12/№13/№26, события №18, схемы `Group*`); TS-типы — codegen; drift/breaking-детекция CI; протокол событий нормативно описан в [contracts/realtime-group-events.md](./contracts/realtime-group-events.md) на основе OpenAPI-схем. Неизвестные `event:`-типы игнорируются (прямая совместимость 004). |
-| V | Безопасность и приватность | ✅ PASS | FR-008/FR-009 — ядро фичи: active-membership на каждом запросе (порт `GroupMembershipGate`), единый `404 group_not_found` (не раскрывает существование), публичного каталога нет, метаданные/состав/события — только участникам; SSE-аутентификация Bearer (без изменений 004); журнал без содержимого сообщений; логи без PII-текста (прецедент 004). |
+| V | Безопасность и приватность | ✅ PASS | FR-008/FR-009 — ядро фичи: active-membership на каждом запросе (гейт `GroupMembershipGate`, groups/domain/service), единый `404 group_not_found` (не раскрывает существование), публичного каталога нет, метаданные/состав/события — только участникам; SSE-аутентификация Bearer (без изменений 004); журнал без содержимого сообщений; логи без PII-текста (прецедент 004). |
 | VI | Test-First (NON-NEGOTIABLE) | ✅ PASS | Тесты в каждой задаче (DoD): IT-матрица приватности по каждой операции (SC-003), IT доставки/статусов, frontend-тесты событий/списка, контрактный конвейер, k6 — группы в бюджетах (SC-007). |
 | VII | Простота (YAGNI) | ✅ PASS | Минимально: переиспользование `chats`/`chat_participants`/`messages` вместо новых таблиц (одна миграция); фанаут по существующим per-user каналам вместо нового брокера/групповых каналов; state-колонка вместо таблицы истории членств; приглашения по ссылке/публичные группы/аватары/«только админы пишут» — вне объёма (Assumptions); системные сообщения не вводятся (FR-015). Отклонённые альтернативы — [research.md §1, §2, §4](./research.md). |
 | VIII | SOLID на уровне кода | ✅ PASS | SRP: новый пакет `groups/` (жизненный цикл/состав/роли) отделён от `chats/` (сообщения) и `contacts/` (гейт контактов — порт); DIP: домен зависит от портов (`GroupRepository`, `GroupAdminLogRepository`, `RealtimeEventPublisher`); эволюция `chats` — точечная (membership-гейт, group-поля DTO); без спекулятивных абстракций (VII). |
@@ -156,11 +156,13 @@ backend/src/main/kotlin/webchat/backend/
 │   │   ├── port/
 │   │   │   ├── GroupRepository.kt            # create/get/update/delete(hard), состав, MIN-водяные
 │   │   │   │                                 #   знаки, countActive (FOR UPDATE сериализация добавлений)
-│   │   │   ├── GroupAdminLogRepository.kt    # append-only журнал (FR-017)
-│   │   │   └── GroupEventPublisher.kt        # доменные события группы (адаптер — realtime)
+│   │   │   └── GroupAdminLogRepository.kt    # append-only журнал (FR-017); события группы —
+│   │   │                                     #   через расширенный RealtimeEventPublisher (T009)
 │   │   └── service/
 │   │       ├── GroupService.kt               # сценарии US1/US3/US4/US6; идемпотентность добавления,
 │   │       │                                 #   инициализация водяных знаков, transfer (demote→promote)
+│   │       ├── GroupMembershipGate.kt        # active-членство на каждом запросе (FR-008): единый
+│   │       │                                 #   404 group_not_found + инкремент authz-метрики
 │   │       └── GroupRolePolicy.kt            # иерархия FR-003/FR-004: кто кого добавляет/исключает/
 │   │                                         #   назначает; owner-инвариант
 │   └── repository/
@@ -169,8 +171,9 @@ backend/src/main/kotlin/webchat/backend/
 ├── chats/                                    # эволюция 004 (точечно)
 │   ├── api/
 │   │   ├── ChatController.kt                 # №12/№13: group-варианты ответов (type-дискриминация)
-│   │   └── dto/                              # ChatListItem/ChatView + type/title/memberCount/
-│   │                                         #   myRole/othersReadUpToSeq (optional/nullable)
+│   │   └── dto/                              # ChatListItem/ChatView + type/title/description/
+│   │                                         #   memberCount/myRole/othersReadUpToSeq
+│   │                                         #   (optional/nullable; myReadUpToSeq — уже в 0.5.0)
 │   ├── domain/
 │   │   ├── model/Chat.kt                     # +kind/title/description; involves() только для direct
 │   │   ├── model/ChatParticipant.kt          # +role/state
@@ -241,6 +244,9 @@ frontend/src/
 │   │   ├── useChatList.ts                    # group-элементы + события состава/удаления
 │   │   └── useRealtime.ts                    # диспетчер новых event:-типов → useGroupRealtime
 │   └── pages/MessengerPage.tsx               # вход создания группы, открытие GroupInfoPanel
+├── sync/
+│   └── ack.ts                                # эволюция (T058): исключение chatId групп из
+│                                               #   отложенных ack-батчей №25 (realtime-group-events §5.5)
 └── App.tsx                                   # без изменений маршрутов
 
 contracts/openapi.yaml                        # 0.5.0 → 0.6.0 (additive): №27–№35, group-поля
@@ -285,7 +291,7 @@ group-поля DTO, fanout-ноги); `realtime/` получает только 
 гарантирует инвариант «ровно один owner» на уровне хранилища; water-mark-семантика повторного
 добавления — `state`-колонка (выход/исключение ≠ удаление строки). contracts/api-contract.md +
 contracts/realtime-group-events.md — additive к публичному контракту (minor 0.6.0): новые №27–№35,
-optional-поля `type`/`title`/`memberCount`/`myRole`/`othersReadUpToSeq` у №12/№13 и `type`/`title`/`memberCount`/`othersReadUpToSeq` у №26 (`myRole` в дельте не передаётся — сходится через №12/№28, api-contract.md §3), новые
+optional-поля `type`/`title`/`memberCount`/`myRole` у №12, `type`/`title`/`description`/`memberCount`/`myRole`/`othersReadUpToSeq` у №13 и `type`/`title`/`memberCount`/`othersReadUpToSeq` у №26 (`myRole` в дельте не передаётся — сходится через №12/№28, api-contract.md §3), новые
 `event:`-типы №18 (неизвестные игнорируются — прямая совместимость 004); nullable-переход `peer`/`blockedByMe` у №12 и `peer`/`blockedByMe`/`peerReadUpToSeq` у №13/№26 — единственное формальное изменение обязательности полей, обосновано и
 помечено в research.md §5 / api-contract.md §4 (для существующих потребителей semver-minor-совместимо по протоколу: операции групп старыми
 клиентами не запрашиваются; пассивное появление group-элемента в №12/№26 при добавлении

@@ -54,7 +54,7 @@ curl -s -X POST http://localhost:8080/api/v1/groups \
 3. Валидация: пустое/пробельное название, 65 символов, описание 257 → `400 invalid_title` /
    `invalid_description` (US1-4). Участник не из контактов (dave, не добавленный alice) → `422
    not_in_contacts`, группа НЕ создана (US1-3). Себя в memberUserIds → `400 self_forbidden`.
-4. Лимит: при `groups.max-members=3` добавить dave (состав 3) → `422 group_full`; повторные
+4. Лимит: при `groups.max-members=3` добавить dave (состав 3) → `409 group_full`; повторные
    попытки не создают записей (US1-5/edge).
 
 ### 3.2 Переписка с гарантиями 004/005 (US2) — SC-001/SC-002
@@ -70,7 +70,9 @@ curl -s -X POST http://localhost:8080/api/v1/groups \
 ### 3.3 Роли и управление составом (US3) — SC-004
 
 1. Alice назначает bob admin (№34) → у всех участников роль обновляется в составе без перезагрузки
-   (событие `group.role.changed`, US3-1).
+   (событие `group.role.changed`, US3-1). Снятие: alice возвращает bob роль member (№34,
+   `role:'member'`) → событие `group.role.changed`, журнал `admin_revoked`; повторное назначение —
+   `admin_granted`.
 2. Bob (admin) добавляет dave из СВОИХ контактов (bob–dave контакт) — успех; исключает dave —
    успех. Попытки bob исключить carol-admin/саму alice, изменить роли → `403
    role_hierarchy_violation` / `not_group_owner` (US3-2). Carol (member) добавляет/исключает/
@@ -83,8 +85,9 @@ curl -s -X POST http://localhost:8080/api/v1/groups \
 
 ### 3.4 Метаданные (US4)
 
-1. Admin переименовывает группу → у всех участников название в «Чатах» и заголовке меняется без
-   перезагрузки (`group.updated`, US4-1).
+1. Admin переименовывает группу и меняет описание → у всех участников название в «Чатах» и
+   заголовке меняется без перезагрузки (`group.updated`, US4-1); журнал — `title_changed`/
+   `description_changed`.
 2. Carol (member) переименовывает → `403 forbidden_role` (US4-2). Некорректное название/описание
    → `400` (US4-3). Два admin переименовывают одновременно → применяется последняя
    подтверждённая операция целиком, «смешивания» нет (edge).
@@ -124,8 +127,9 @@ curl -s -X POST http://localhost:8080/api/v1/groups \
 
 ### 3.8 Журнал и метрики (FR-017, SC-008)
 
-1. `group_admin_log` по группе: `group_created`, `member_added`×N, `admin_granted`,
-   `ownership_transferred`, `member_removed`, `member_left`, `title_changed`, `group_deleted` —
+1. `group_admin_log` по группе (все 10 действий, data-model.md §Сущность 4): `group_created`,
+   `member_added`×N, `admin_granted`, `admin_revoked`, `ownership_transferred`,
+   `member_removed`, `member_left`, `title_changed`, `description_changed`, `group_deleted` —
    хронология соответствует действиям §3.1–§3.7.
 2. `http://localhost:8080/actuator/prometheus`: в сценариях растут
    `webchat_group_authz_denials_total` (§3.5), `webchat_group_message_fanout_total` /

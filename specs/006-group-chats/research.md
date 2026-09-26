@@ -173,7 +173,7 @@ api-contract.md; oasdiff-прогон в quickstart подтверждает о�
 (приватность FR-008/FR-009: существование не раскрывается; различие «участник без права» — `403
 forbidden_role` / `role_hierarchy_violation` / `owner_must_transfer`); `400` — валидация
 (`invalid_title`, `invalid_description`, `invalid_user_ids`, `self_forbidden`, `invalid_role`);
-`422 not_in_contacts` (атомарно: весь batch отклонён), `422 group_full` (лимит 200), `409
+`422 not_in_contacts` (атомарно: весь batch отклонён), `409 group_full` (лимит 200), `409
 target_not_member` (роли/передача/исключение не-участника). Идемпотентность: №31 повторно для
 активного — 200 текущего состава; №30/№32/№33 повторно — 404 (группа/членство исчезли — штатно).
 
