@@ -3,12 +3,14 @@ package webchat.backend.chats.domain.service
 import org.springframework.stereotype.Service
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.groups.domain.model.MemberRole
 import java.util.UUID
 
 /**
@@ -56,6 +58,20 @@ class NotParticipantException : RuntimeException("the caller is not a participan
 data class ReadWatermarks(
     val myReadUpToSeq: Long,
     val peerReadUpToSeq: Long,
+)
+
+/**
+ * The GROUP projection of `ChatView` (T024, 006 №13, api-contract.md §3):
+ * the caller's [myRole] and own [myReadUpToSeq] from his ACTIVE
+ * membership row, the FR-012 ✓✓ bound [othersReadUpToSeq]
+ * (`MIN(last_read_seq)` of the other active members) and the ACTIVE
+ * [memberCount] — the group-side counterpart of [ReadWatermarks].
+ */
+data class GroupChatProjection(
+    val myRole: MemberRole,
+    val myReadUpToSeq: Long,
+    val othersReadUpToSeq: Long,
+    val memberCount: Long,
 )
 
 /**
@@ -111,7 +127,19 @@ class ChatService(
         callerId: UUID,
     ): Chat {
         val chat = chatRepository.findById(chatId) ?: throw ChatNotFoundException()
-        if (!chat.involves(callerId)) throw NotParticipantException()
+        val member =
+            when (chat.kind) {
+                // FR-002 (004): the pair predicate of a DIRECT dialog.
+                ChatKind.DIRECT -> chat.involves(callerId)
+                // FR-008 (006, T024): a group resolves through the ACTIVE
+                // membership row — a stranger, a REMOVED former member and
+                // (with the 404 above) an unknown chat id stay inside the
+                // SAME 004 semantics of №12–№17 (api-contract.md 006 §3:
+                // «не-участнику 404 chat_not_found/403 not_participant —
+                // семантика 004»), unlike the uniform group 404 of №28+.
+                ChatKind.GROUP -> participantRepository.findActive(chatId, callerId) != null
+            }
+        if (!member) throw NotParticipantException()
         return chat
     }
 
@@ -199,6 +227,37 @@ class ChatService(
             chat.peerOf(callerId)
                 ?: error("chat ${chat.id} does not involve the authenticated caller")
         return blockRepository.exists(callerId, peerId)
+    }
+
+    /**
+     * T024 (006, api-contract.md §3 №13): the GROUP projection of
+     * `ChatView` — the caller's own role and read watermark from his
+     * ACTIVE membership row (the one [get] has just proven), the ✓✓ rule
+     * of FR-012 as [GroupChatProjection.othersReadUpToSeq] (the
+     * `minOtherReadUpToSeq` MIN-fold over the other active members — 0 in
+     * a group of one) and [GroupChatProjection.memberCount] as the ACTIVE
+     * roster size (1–200, the `ix_chat_participants_chat_active` scan of
+     * [ParticipantRepository.activeMembers] — no `FOR UPDATE` lock of a
+     * plain read). A pure read: nothing here mutates dialog state.
+     */
+    fun groupProjection(
+        chat: Chat,
+        callerId: UUID,
+    ): GroupChatProjection {
+        require(chat.kind == ChatKind.GROUP) { "chat ${chat.id} is not a group" }
+        val membership =
+            participantRepository.findActive(chat.id, callerId)
+                ?: error("chat ${chat.id} does not carry an active membership of the authenticated caller")
+        val myRole =
+            requireNotNull(membership.role) {
+                "an active group membership row must carry a role (V14 ck_chat_participants_role)"
+            }
+        return GroupChatProjection(
+            myRole = myRole,
+            myReadUpToSeq = membership.lastReadSeq,
+            othersReadUpToSeq = participantRepository.minOtherReadUpToSeq(chat.id, callerId),
+            memberCount = participantRepository.activeMembers(chat.id).size.toLong(),
+        )
     }
 
     private companion object {

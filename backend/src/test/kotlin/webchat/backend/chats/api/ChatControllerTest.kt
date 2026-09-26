@@ -70,7 +70,7 @@ class ChatControllerTest {
         val response = controller.ensure(EnsureChatRequest(ALICE.toString()), tokenOf(BOB))
 
         assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
-        assertThat(response.body!!.peer.id).isEqualTo(ALICE)
+        assertThat(requireNotNull(response.body!!.peer).id).isEqualTo(ALICE)
         assertThat(response.body!!.myReadUpToSeq)
             .overridingErrorMessage("the reader must see its OWN mark as myReadUpToSeq")
             .isEqualTo(BOB_READ_SEQ)
@@ -211,6 +211,10 @@ class ChatControllerTest {
 
     private fun webchat.backend.chats.api.dto.ChatView.assertPairView() {
         assertThat(chatId).isEqualTo(PAIR_CHAT.id)
+        val peer =
+            requireNotNull(peer) {
+                "the DIRECT variant of №11/№13 always carries the peer projection (T024 nullable group leg aside)"
+            }
         assertThat(peer.id).isEqualTo(BOB)
         assertThat(peer.username).isEqualTo("bob")
         assertThat(peer.email).isEqualTo("bob@example.com")

@@ -124,12 +124,22 @@ class JdbcChatRepository(
         )
 
     private companion object {
+        /**
+         * The full V14 `chats` projection (T024): `kind`/`title`/
+         * `description` ride along the pair columns, so a GROUP row
+         * resolves as itself — `findById` serves №13 of both kinds, while
+         * the pair reads ([FIND_BY_PAIR_SQL]) only ever match DIRECT rows
+         * (the pair is NULL for groups by the `ck_chats_shape` CHECK).
+         */
         val CHAT_ROW_MAPPER =
             RowMapper { rs: ResultSet, _: Int ->
                 Chat(
                     id = rs.getObject("id", UUID::class.java),
+                    kind = ChatKind.valueOf(rs.getString("kind").uppercase()),
                     userLowId = rs.getObject("user_low_id", UUID::class.java),
                     userHighId = rs.getObject("user_high_id", UUID::class.java),
+                    title = rs.getString("title"),
+                    description = rs.getString("description"),
                     createdAt = rs.getTimestamp("created_at").toInstant(),
                     lastSeq = rs.getLong("last_seq"),
                 )
@@ -249,7 +259,7 @@ class JdbcChatRepository(
 
         private fun findSql(condition: String): String =
             """
-            SELECT id, user_low_id, user_high_id, created_at, last_seq
+            SELECT id, kind, user_low_id, user_high_id, title, description, created_at, last_seq
             FROM chats
             WHERE $condition
             """.trimIndent()

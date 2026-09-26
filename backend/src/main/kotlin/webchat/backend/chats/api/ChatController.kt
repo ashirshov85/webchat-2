@@ -123,7 +123,23 @@ class ChatController(
     }
 
     /**
-     * The dialog projected for its participant: the peer side resolved via
+     * The resolved chat projected for its participant, discriminated by
+     * kind (T024, api-contract.md 006 §3): the DIRECT dialog keeps the
+     * 0.4.0 №11/№13 body verbatim ([directView]), a GROUP answers the
+     * 006 variant ([groupView]) — `type:'group'` with the metadata and
+     * the roster projection, the peer fields as explicit `null`s.
+     */
+    private fun view(
+        chat: Chat,
+        callerId: UUID,
+    ): ChatView =
+        when (chat.kind) {
+            ChatKind.DIRECT -> directView(chat, callerId)
+            ChatKind.GROUP -> groupView(chat, callerId)
+        }
+
+    /**
+     * The DIRECT dialog projected for its participant: the peer side resolved via
      * [UserRepository], the US4 read watermarks via
      * [ChatService.readWatermarks] (T043 — `myReadUpToSeq` for the caller,
      * `peerReadUpToSeq` for the ✓✓ of the sender) and the FR-020 block
@@ -132,7 +148,7 @@ class ChatController(
      * of V10 and the №11 pre-check guarantee it) — a miss is a broken
      * invariant, not a client answer.
      */
-    private fun view(
+    private fun directView(
         chat: Chat,
         callerId: UUID,
     ): ChatView {
@@ -156,6 +172,40 @@ class ChatController(
             blockedByMe = chatService.blockedByMe(chat, callerId),
             peerReadUpToSeq = watermarks.peerReadUpToSeq,
             myReadUpToSeq = watermarks.myReadUpToSeq,
+        )
+    }
+
+    /**
+     * The GROUP variant of №13 (T024, openapi.yaml 0.6.0): the metadata
+     * (`type`/`title`/`description` of the `chats` row — a GROUP always
+     * carries a title by the V14 CHECK) plus the roster projection of
+     * [ChatService.groupProjection]: the caller's `myRole`, his own
+     * `myReadUpToSeq`, the FR-012 ✓✓ bound `othersReadUpToSeq` and the
+     * ACTIVE `memberCount`. The required-nullable peer fields render as
+     * explicit `null`s — blocks never apply to groups (Assumptions 006)
+     * and `peerReadUpToSeq` is replaced by `othersReadUpToSeq`; the role
+     * label reuses [memberRoleLabel] — the single lowercase mapping of
+     * the contract enum. The membership row exists ([ChatService.get]
+     * has just proven it) — a miss is a broken invariant, not a client
+     * answer.
+     */
+    private fun groupView(
+        chat: Chat,
+        callerId: UUID,
+    ): ChatView {
+        val projection = chatService.groupProjection(chat, callerId)
+        return ChatView(
+            chatId = chat.id,
+            type = chat.kind.label(),
+            title = chat.title,
+            description = chat.description,
+            myRole = memberRoleLabel(projection.myRole),
+            othersReadUpToSeq = projection.othersReadUpToSeq,
+            memberCount = projection.memberCount,
+            peer = null,
+            blockedByMe = null,
+            peerReadUpToSeq = null,
+            myReadUpToSeq = projection.myReadUpToSeq,
         )
     }
 

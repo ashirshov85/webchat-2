@@ -32,22 +32,44 @@ data class ChatPeerView(
 )
 
 /**
- * Contract №11/№13 success body — `ChatView` (openapi.yaml 0.4.0): the
- * resolved dialog, the peer projection and the US4 read watermarks.
+ * Contract №11/№13 success body — `ChatView` (openapi.yaml 0.6.0): the
+ * resolved dialog, the peer projection and the US4 read watermarks —
+ * or the GROUP variant of 006 (№13, T024, api-contract.md §3), type-
+ * discriminated like [ChatListItemView].
  *
- * `peerReadUpToSeq`/`myReadUpToSeq` (T043) carry the FR-010 per-user
- * marks of both sides — the sender renders ✓✓ from `peerReadUpToSeq`;
- * `blockedByMe` (T054, FR-020) is the ONLY block projection in the API:
- * the caller blocks the peer — the inverse «who blocked me» field is
- * deliberately absent, the blocked user learns about the block ONLY from
- * the `403 you_are_blocked` of his own send (research.md 004 §6).
+ * The DIRECT variant keeps the 0.4.0 shape verbatim: the group-only
+ * fields stay ABSENT (NON_NULL — «direct-ответ — без изменений»,
+ * backward-friendly), [peer]/[blockedByMe]/[peerReadUpToSeq] keep their
+ * 004 meaning — `peerReadUpToSeq`/`myReadUpToSeq` (T043) carry the
+ * FR-010 per-user marks of both sides (the sender renders ✓✓ from
+ * `peerReadUpToSeq`); `blockedByMe` (T054, FR-020) is the ONLY block
+ * projection in the API: the caller blocks the peer — the inverse «who
+ * blocked me» field is deliberately absent, the blocked user learns
+ * about the block ONLY from the `403 you_are_blocked` of his own send
+ * (research.md 004 §6).
+ *
+ * The GROUP variant answers `type:'group'` with [title]/[description]
+ * and the roster projection: [myRole] of the caller, [memberCount] of
+ * the ACTIVE roster (1–200) and the ✓✓ rule of FR-012 —
+ * [othersReadUpToSeq] is `MIN(last_read_seq)` of the active members
+ * EXCEPT the caller (0 in a group of one — ✓✓ is never set), while
+ * [myReadUpToSeq] stays the caller's own mark. The required-nullable
+ * peer fields render as EXPLICIT `null`s: blocks never apply to groups
+ * (Assumptions 006) and `peerReadUpToSeq` is REPLACED by
+ * `othersReadUpToSeq` (openapi.yaml 0.6.0).
  */
 data class ChatView(
     val chatId: UUID,
-    val peer: ChatPeerView,
-    val blockedByMe: Boolean,
-    val peerReadUpToSeq: Long,
-    val myReadUpToSeq: Long,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val type: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val title: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val description: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val myRole: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val othersReadUpToSeq: Long? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val memberCount: Long? = null,
+    val peer: ChatPeerView? = null,
+    val blockedByMe: Boolean? = null,
+    val peerReadUpToSeq: Long? = null,
+    val myReadUpToSeq: Long = 0,
 )
 
 /**
