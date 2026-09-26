@@ -403,7 +403,11 @@ class GroupRepositoryIT : AbstractIntegrationTest() {
 
         assertThat(participantRepository.minOtherReadUpToSeq(group.id, owner)).isEqualTo(FIRST_READ)
         assertThat(participantRepository.minOtherReadUpToSeq(group.id, first)).isEqualTo(SECOND_READ)
-        assertThat(participantRepository.minOtherReadUpToSeq(group.id, second)).isEqualTo(OWNER_READ)
+        assertThat(participantRepository.minOtherReadUpToSeq(group.id, second))
+            .overridingErrorMessage(
+                "the fold is the MIN of the OTHER readers (FR-012): besides second only owner and " +
+                    "first remain, MIN(OWNER_READ, FIRST_READ) = FIRST_READ",
+            ).isEqualTo(FIRST_READ)
 
         participantRepository.removeMember(group.id, first)
         assertThat(participantRepository.minOtherReadUpToSeq(group.id, owner))
