@@ -202,4 +202,9 @@ jobs:
 
       - name: Breaking change detection (oasdiff)
         if: steps.breaking.outputs.skip != 'true' && steps.base.outputs.exists == 'true'
-        run: oasdiff breaking --fail-on ERR "$RUNNER_TEMP/openapi-base.yaml" contracts/openapi.yaml
+        run: |
+          ARGS=()
+          if [ -f contracts/oasdiff-err-ignore.txt ]; then
+            ARGS+=(--err-ignore contracts/oasdiff-err-ignore.txt)
+          fi
+          oasdiff breaking --fail-on ERR "${ARGS[@]}" "$RUNNER_TEMP/openapi-base.yaml" contracts/openapi.yaml

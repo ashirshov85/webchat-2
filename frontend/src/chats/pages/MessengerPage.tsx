@@ -216,10 +216,9 @@ export function MessengerPage() {
       return
     }
     const item = chats.find((entry) => entry.chatId === activeChat.chatId)
-    if (item !== undefined && item.blockedByMe !== activeChat.blockedByMe) {
-      setActiveChat((previous) =>
-        previous === null ? previous : { ...previous, blockedByMe: item.blockedByMe },
-      )
+    const blockedByMe = item?.blockedByMe ?? false
+    if (item !== undefined && blockedByMe !== activeChat.blockedByMe) {
+      setActiveChat((previous) => (previous === null ? previous : { ...previous, blockedByMe }))
     }
   }, [chats, activeChat])
 
@@ -242,8 +241,12 @@ export function MessengerPage() {
   const handleSelectChat = useCallback(
     (chatId: string) => {
       const item = chats.find((entry) => entry.chatId === chatId)
-      if (item !== undefined) {
-        openChatView({ chatId: item.chatId, peer: item.peer, blockedByMe: item.blockedByMe })
+      if (item !== undefined && item.peer !== null) {
+        openChatView({
+          chatId: item.chatId,
+          peer: item.peer,
+          blockedByMe: item.blockedByMe ?? false,
+        })
         return
       }
       // The row can only be clicked while present in №12, but the list
@@ -251,7 +254,13 @@ export function MessengerPage() {
       void (async () => {
         try {
           const view = await getChat(chatId)
-          openChatView({ chatId: view.chatId, peer: view.peer, blockedByMe: view.blockedByMe })
+          if (view.peer !== null) {
+            openChatView({
+              chatId: view.chatId,
+              peer: view.peer,
+              blockedByMe: view.blockedByMe ?? false,
+            })
+          }
         } catch (cause) {
           setActionError(cause)
         }
@@ -360,7 +369,13 @@ export function MessengerPage() {
         refreshKey={contactsRefresh}
         activePeerUserId={activeChat?.peer.id ?? null}
         onOpenChat={(view) => {
-          openChatView({ chatId: view.chatId, peer: view.peer, blockedByMe: view.blockedByMe })
+          if (view.peer !== null) {
+            openChatView({
+              chatId: view.chatId,
+              peer: view.peer,
+              blockedByMe: view.blockedByMe ?? false,
+            })
+          }
         }}
       />
     </div>

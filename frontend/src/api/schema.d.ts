@@ -372,8 +372,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Список диалогов пользователя (№12, Bearer)
-         * @description ChatListItem одним запросом. Серверная сортировка: последнее видимое сообщение (входящее или исходящее) по убыванию createdAt; чаты без видимых сообщений — ниже; исключены только удалённые без новых сообщений (hidden ∧ last_seq ≤ deleted_up_to_seq). Новый входящий снимает hidden и возвращает чат в список (FR-021). Превью lastMessage.text — полный текст (обрезка ≤64 симв. — клиентский рендер).
+         * Список чатов пользователя (№12, Bearer)
+         * @description ChatListItem одним запросом. Серверная сортировка: последнее видимое сообщение (входящее или исходящее) по убыванию createdAt; чаты без видимых сообщений — ниже; исключены только удалённые без новых сообщений (hidden ∧ last_seq ≤ deleted_up_to_seq). Новый входящий снимает hidden и возвращает чат в список (FR-021). Превью lastMessage.text — полный текст (обрезка ≤64 симв. — клиентский рендер). С 006 список единый для direct-чатов и групп (FR-014): group-элементы несут type:'group', title, memberCount, myRole, а peer/blockedByMe = null; lastMessage/unreadCount/сортировка — без изменений; включаются только чаты с active-членством вызывающего.
          */
         get: operations["listChats"];
         put?: never;
@@ -393,7 +393,7 @@ export interface paths {
         };
         /**
          * Диалог по идентификатору (№13, Bearer)
-         * @description ChatView пары с водяными знаками прочтения. Авторизация на уровне ресурса — membership диалога (FR-002): не-участник получает 403 not_participant на существующем чате; несуществующий — 404.
+         * @description ChatView пары с водяными знаками прочтения. Авторизация на уровне ресурса — membership диалога (FR-002): не-участник получает 403 not_participant на существующем чате; несуществующий — 404. Группа (006): group-вариант ответа — type:'group', title, description, myRole, myReadUpToSeq, othersReadUpToSeq (MIN водяных знаков прочтения остальных активных участников; 0 в группе из одного — ✓✓ не выставляется; монотонно, FR-012), memberCount; peer/blockedByMe/peerReadUpToSeq = null.
          */
         get: operations["getChat"];
         put?: never;
@@ -461,7 +461,7 @@ export interface paths {
         };
         /**
          * Поток событий пользователя — SSE (№18, Bearer)
-         * @description Единый realtime-поток событий пользователя (FR-022, US6): мультиплекс всех диалогов; каждое устройство/сессия открывает свой поток. Канал строго server→client: отправка — REST №16 (подтверждение = HTTP-ответ). Подключение: Authorization Bearer (тот же access JWT, что и REST; токен в URL запрещён) + Accept: text/event-stream. Фрейминг WHATWG SSE: первая строка потока — retry: 3000 (подсказка реконнекта); heartbeat-комментарий :ka каждые 15 с. Кадры: event: message.created | chat.read, за которым одна data:-строка с JSON-полем одной строкой, UTF-8. Событие message.created (FR-007) публикуется обоим участникам после коммита записи: payload {chatId, message: Message}; отправитель рендерит свои исходящие с других устройств сразу «доставлено»; клиент дедуплицирует по message.id. Событие chat.read (FR-010): payload {chatId, readUpToSeq, byUserId} — собеседник прочитал до readUpToSeq включительно; монотонно (повторные/меньшие не публикуются). Канал at-most-once: при (пере)подключении клиент выполняет рефетч REST (№12/№15); порядок/дубли исключены серверным seq и дедупом по id. Неизвестные клиенту event:-типы обязаны игнорироваться (прямая совместимость, US6-3).
+         * @description Единый realtime-поток событий пользователя (FR-022, US6): мультиплекс всех диалогов; каждое устройство/сессия открывает свой поток. Канал строго server→client: отправка — REST №16 (подтверждение = HTTP-ответ). Подключение: Authorization Bearer (тот же access JWT, что и REST; токен в URL запрещён) + Accept: text/event-stream. Фрейминг WHATWG SSE: первая строка потока — retry: 3000 (подсказка реконнекта); heartbeat-комментарий :ka каждые 15 с. Кадры: event: message.created | chat.read, за которым одна data:-строка с JSON-полем одной строкой, UTF-8. Событие message.created (FR-007) публикуется обоим участникам после коммита записи: payload {chatId, message: Message}; отправитель рендерит свои исходящие с других устройств сразу «доставлено»; клиент дедуплицирует по message.id. Событие chat.read (FR-010): payload {chatId, readUpToSeq, byUserId} — собеседник прочитал до readUpToSeq включительно; монотонно (повторные/меньшие не публикуются). Канал at-most-once: при (пере)подключении клиент выполняет рефетч REST (№12/№15); порядок/дубли исключены серверным seq и дедупом по id. Неизвестные клиенту event:-типы обязаны игнорироваться (прямая совместимость, US6-3). События групп (006): event: group.updated | group.member.added | group.member.removed | group.role.changed | group.you_removed | group.deleted — payloads Group*Event; идентификатор группы — поле groupId (= chatId). Адресат — активный участник группы на момент публикации (снимок состава в транзакции операции, публикация post-commit). group.you_removed — финальное событие группы в канале адресата: после него события группы не публикуются (окно прекращения ≤5 с, FR-010); клиент обязан удалить группу из «Чатов», игнорировать последующие события этой группы (гонка порядка — сообщение, закоммиченное до исключения, может прийти позже) и исключить её из отложенных ack-батчей №25. Обработка групповых событий идемпотентна: применяется состояние (состав/роли/ метаданные), а не дельты (FR-015); события группы не создают системных сообщений в истории. В группах message.created публикуется всем активным участникам, кроме отправителя (FR-011); chat.read — всем активным, кроме читавшего.
          */
         get: operations["streamUserEvents"];
         put?: never;
@@ -594,6 +594,154 @@ export interface paths {
          * @description Возвращает чаты вызывающего с недоставленным (эффективный курсор < максимальный видимый seq) — по последней активности DESC (первыми чаты с самыми новыми сообщениями), до chatLimit; moreChats — недоставленные чаты остались за пределами страницы. cursors — карта клиентских курсоров: сервер применяет её как нижнюю границу своей позиции (эффективный курсор = max(клиентский, серверный)); чужие/несуществующие chatId в cursors молча игнорируются (per-user операция — в отличие от атомарного батча №25). Дельта чата: startAfterSeq — эффективный курсор возобновления (после обрезки/ремонта клиент продвигает локальный курсор до него); truncatedUpToSeq — точка обрезки (сообщения ниже недоступны, не непрочитаны; позиция/курсор закрепляются на ней ack'ом); messages — ascending (startAfterSeq, …] ≤ messageLimit, только видимые, включая исходящие пользователя; hasMore — хвост за пределами страницы (продолжение — №15 after); peerReadUpToSeq — накопленные оффлайн ✓✓ собственных сообщений; unreadCount — серверный счётчик; lastSeq — chats.last_seq; desynced + serverUpToSeq — per-chat ремонт «курсора из будущего» без ошибки запроса. Операция не двигает позицию доставки (только ack №25); консистентность — один снимок чтения: либо полный корректный ответ, либо 5xx для повтора («частичный список как полный» исключён). Порядок и границы — только по серверному seq; часы клиента не участвуют.
          */
         post: operations["sync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Создать группу с начальным составом из контактов (№27, Bearer)
+         * @description Создаёт группу: создатель получает роль owner, участники начального состава (из контактов создателя) — member (FR-001/FR-002). Валидация: название — trim, 1–64 символов; описание — ≤256; memberUserIds — uuid, без дублей, ≤199, без самого создателя; каждый элемент — контакт создателя (фича 004), иначе весь запрос отклоняется атомарно и группа не создаётся. Лимит участников — 200 включая владельца: при исчерпании вместимости (заниженный groups.max-members) — 409 group_full; штатно начальный состав ≤199 + создатель ≤200 — ошибка недостижима. После создания всем активным участникам (включая создателя) публикуется group.member.added (№18).
+         */
+        post: operations["createGroup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{chatId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Группа по идентификатору — метаданные и состав с ролями (№28, Bearer)
+         * @description GroupView группы: метаданные + активный состав с ролями (≤200). Авторизация — active-членство на каждом запросе (FR-008): не-участник (включая бывшего), несуществующая группа и chatId direct-чата отвечают единым 404 group_not_found — существование группы не раскрывается (FR-009).
+         */
+        get: operations["getGroup"];
+        put?: never;
+        post?: never;
+        /**
+         * Удалить группу — hard-delete (№30, Bearer)
+         * @description Физическое удаление группы (FR-006), только owner: история, членства, водяные знаки и счётчики непрочитанных стираются каскадом; в журнале административных операций остаётся факт удаления (кто, когда) без содержимого сообщений (FR-017). Всем бывшим активным участникам (снимок состава до удаления) публикуется group.deleted (№18) — клиент убирает группу из «Чатов» и закрывает окна. Повторный вызов — 404 (объект исчез, штатная сходимость).
+         */
+        delete: operations["deleteGroup"];
+        options?: never;
+        head?: never;
+        /**
+         * Изменить название и/или описание группы (№29, Bearer)
+         * @description Изменение метаданных группы (FR-007): owner/admin; валидация — та же, что при создании (FR-001); PATCH применяется атомарно целиком — при одновременном изменении двумя admin применяется одна последняя подтверждённая операция без смешивания. Хотя бы одно поле — иначе 400 empty_patch. Всем активным участникам — group.updated (№18).
+         */
+        patch: operations["updateGroup"];
+        trace?: never;
+    };
+    "/api/v1/groups/{chatId}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Добавить участников из контактов добавляющего (№31, Bearer)
+         * @description Добавление участников (owner/admin — FR-002/FR-004): каждый элемент batch — контакт ДОБАВЛЯЮЩЕГО (фича 004); batch атомарен — любая невалидность (не-uuid, дубль, не-контакт, вместимость) отклоняет весь batch без частичных добавлений. Добавленные получают роль member. Идемпотентность: уже активные участники игнорируются (дубля в составе нет), возвращается текущий активный состав; добавление самого себя → 400 self_forbidden. Лимит: активные + batch > 200 → 409 group_full. Первое добавление инициализирует водяные знаки добавленного позицией группы (chats.last_seq — бейдж непрочитанных 0, FR-013); повторное добавление (после выхода/исключения) сохраняет водяные знаки и сбрасывает роль в member (FR-002). Всем активным участникам (включая добавленных) — group.member.added (№18): добавленному группа сразу видна в «Чатах».
+         */
+        post: operations["addGroupMembers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{chatId}/members/{userId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Исключить участника (№32, Bearer)
+         * @description Исключение участника владельцем или администратором (FR-004): owner исключает любых, кроме себя (self_forbidden проверяется до иерархии ролей — выход владельца только через №33 после передачи владения); admin исключает только member (иначе 403 role_hierarchy_violation); member — 403 forbidden_role. Исключённому публикуется финальное group.you_removed {reason: 'kicked'} (последнее событие группы в его канале; доставка событий группы прекращается ≤5 с — FR-010), остальным активным — group.member.removed (№18). Сообщения исключённого остаются в истории с атрибуцией; водяные знаки сохранены (повторное добавление — FR-002). Повторный вызов при существующей группе (цель уже не активна) — 409 target_not_member; конкуренция «исключение×выход» — применяется одна операция.
+         */
+        delete: operations["removeGroupMember"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{chatId}/members/{userId}/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Назначить или снять роль admin (№34, Bearer)
+         * @description Смена роли active-участника (только owner — FR-003): назначение admin (role:'admin') или снятие в member (role:'member'); роль owner этой операцией не назначается — передача владения — №35. Себе → 400 self_forbidden (смена роли owner — только передачей владения; инвариант «ровно один owner»). Всем активным — group.role.changed (№18). Цель не активна → 409 target_not_member.
+         */
+        put: operations["setGroupMemberRole"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{chatId}/membership": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Покинуть группу (№33, Bearer)
+         * @description Самостоятельный выход участника (FR-005): роли admin/member; owner — только после передачи владения (№35) или удаления группы (№30), иначе 403 owner_must_transfer. Водяной знак прочтения вышедшего сохраняется, его сообщения остаются в истории с атрибуцией; непрочитанные за период отсутствия — после повторного добавления (FR-002). Устройствам вышедшего — group.you_removed {reason:'left'} (финальное событие группы, доставка прекращается ≤5 с), остальным активным — group.member.removed (№18). Повторный выход — 404 (членства нет, штатная сходимость); конкуренция «исключение×выход» — применяется одна операция, второй — 409 target_not_member (№32) / 404 (№33).
+         */
+        delete: operations["leaveGroup"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/groups/{chatId}/owner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Передать владение (№35, Bearer)
+         * @description Передача роли owner (только owner — FR-003): одна транзакция demote (прежний owner → admin) THEN promote (цель → owner) — инвариант «ровно один owner» не нарушается; прежний owner становится admin. Цель — active-участник и не сам owner (иначе 409 target_not_member / 400 self_forbidden). Всем активным — group.role.changed ×2 парой кадров (новый owner; прежний → admin, №18).
+         */
+        post: operations["transferGroupOwnership"];
         delete?: never;
         options?: never;
         head?: never;
@@ -740,21 +888,43 @@ export interface components {
              */
             peerUserId: string;
         };
+        /** @description Чат вызывающего: direct-вариант (004) или group-вариант (006) — type-дискриминация; group-поля присутствуют только при type=group, peer-поля у group-варианта — null */
         ChatView: {
             /**
              * Format: uuid
-             * @description Идентификатор диалога пары пользователей
+             * @description Идентификатор чата (диалога пары или группы)
              */
             chatId: string;
-            /** @description Собеседник (вторая сторона диалога) */
-            peer: components["schemas"]["PublicUser"];
-            /** @description Вызывающий блокирует собеседника (FR-020). Единственная проекция блокировок в API: поле «кто заблокировал меня» отсутствует — заблокированный узнаёт о блокировке только из 403 you_are_blocked при отправке */
-            blockedByMe: boolean;
+            /**
+             * @description Тип чата (006): direct-ответ может не нести поле (backward-friendly) или несёт direct; group — групповой вариант ответа
+             * @enum {string}
+             */
+            type?: "direct" | "group";
+            /** @description Название группы (только type=group) */
+            title?: string;
+            /** @description Описание группы (только type=group); null — описание не задано */
+            description?: string | null;
+            /**
+             * @description Роль вызывающего в группе (только type=group)
+             * @enum {string}
+             */
+            myRole?: "owner" | "admin" | "member";
             /**
              * Format: int64
-             * @description Водяной знак прочтения собеседника (0 — ничего не прочитано); для двойной галочки отправителя
+             * @description MIN(last_read_seq) активных участников группы, кроме вызывающего (только type=group, 006): ✓✓ собственных сообщений; 0 в группе из одного — ✓✓ не выставляется; монотонно, не сбрасывается новыми участниками (FR-012); вышедшие/исключённые выпадают из условия
              */
-            peerReadUpToSeq: number;
+            othersReadUpToSeq?: number;
+            /** @description Активный состав группы, включая владельца (только type=group) */
+            memberCount?: number;
+            /** @description Собеседник (вторая сторона диалога; direct); null у group-варианта (006) */
+            peer: components["schemas"]["PublicUser"] | null;
+            /** @description Вызывающий блокирует собеседника (FR-020). Единственная проекция блокировок в API: поле «кто заблокировал меня» отсутствует — заблокированный узнаёт о блокировке только из 403 you_are_blocked при отправке. Null у group-варианта (006): блокировки на группы не действуют */
+            blockedByMe: boolean | null;
+            /**
+             * Format: int64
+             * @description Водяной знак прочтения собеседника (0 — ничего не прочитано); для двойной галочки отправителя. Null у group-варианта (006) — заменяется othersReadUpToSeq
+             */
+            peerReadUpToSeq: number | null;
             /**
              * Format: int64
              * @description Водяной знак прочтения вызывающего (0 — ничего не прочитано)
@@ -784,11 +954,26 @@ export interface components {
             /** Format: date-time */
             createdAt: string;
         };
+        /** @description Элемент единого списка «Чаты» (№12, 006): direct-диалог или группа — type-дискриминация; group-поля присутствуют только при type=group, peer-поля у group-элемента — null */
         ChatListItem: {
             /** Format: uuid */
             chatId: string;
-            /** @description Собеседник */
-            peer: components["schemas"]["PublicUser"];
+            /**
+             * @description Тип чата (006): direct-элементы могут не нести поле (backward-friendly) или несут direct; group — групповой элемент единого списка (FR-014)
+             * @enum {string}
+             */
+            type?: "direct" | "group";
+            /** @description Название группы (только type=group) */
+            title?: string;
+            /** @description Активный состав группы, включая владельца (только type=group) */
+            memberCount?: number;
+            /**
+             * @description Роль вызывающего в группе (только type=group)
+             * @enum {string}
+             */
+            myRole?: "owner" | "admin" | "member";
+            /** @description Собеседник (direct); null у group-элемента (006) */
+            peer: components["schemas"]["PublicUser"] | null;
             /** @description Последнее видимое вызывающему сообщение (входящее или исходящее); null — видимых сообщений нет (пустой или полностью удалённый у себя диалог) */
             lastMessage: components["schemas"]["Message"] | null;
             /**
@@ -796,8 +981,8 @@ export interface components {
              * @description Серверно-авторитарный счётчик, ограничен позицией доставки — входящие видимые сообщения с GREATEST(last_read_seq, deleted_up_to_seq) < seq ≤ LEAST(last_seq, delivered_up_to_seq); realtime и дозагруженные синхронизацией сообщения увеличивают его одинаково (после ack доставки №25); ниже точки обрезки — недоступные, не непрочитанные (FR-007); при блокировке у блокирующего «замирает» (FR-020); «99+» — клиентский рендер, внутренний счёт точный
              */
             unreadCount: number;
-            /** @description Вызывающий блокирует собеседника — метка «заблокирован» в UI (FR-020) */
-            blockedByMe: boolean;
+            /** @description Вызывающий блокирует собеседника — метка «заблокирован» в UI (FR-020). Null у group-элемента (006): блокировки на группы не действуют */
+            blockedByMe: boolean | null;
         };
         MessagePage: {
             /** @description Страница истории — по seq DESC (новее — раньше) в режиме before/без курсора: ровно те, что seq < before; по seq ASC в режиме after: ровно те, что seq > after; пустая страница на границе — корректный ответ */
@@ -920,17 +1105,31 @@ export interface components {
              */
             messageLimit: number;
         };
-        /** @description Дельта одного чата в №26: курсор возобновления, страница сообщений и серверные счётчики — вычислены в одном снимке чтения */
+        /** @description Дельта одного чата в №26: курсор возобновления, страница сообщений и серверные счётчики — вычислены в одном снимке чтения; с 006 — дельта direct-чата или группы (type-дискриминация; myRole в дельте не передаётся — сходится через №12/№28) */
         SyncChatDelta: {
             /**
              * Format: uuid
-             * @description Диалог дельты
+             * @description Чат дельты
              */
             chatId: string;
-            /** @description Собеседник (как №12) */
-            peer: components["schemas"]["PublicUser"];
-            /** @description Вызывающий блокирует собеседника — единственная проекция блокировок в API (004, без изменений) */
-            blockedByMe: boolean;
+            /**
+             * @description Тип чата (006): direct-дельта может не нести поле (backward-friendly); group-дельта несёт title/memberCount/othersReadUpToSeq, peer-поля — null; отбираются только active-членства вызывающего (исключённому дельты группы не приходят)
+             * @enum {string}
+             */
+            type?: "direct" | "group";
+            /** @description Название группы (только type=group) */
+            title?: string;
+            /** @description Активный состав группы, включая владельца (только type=group) */
+            memberCount?: number;
+            /**
+             * Format: int64
+             * @description MIN(last_read_seq) активных участников группы, кроме вызывающего (только type=group, 006): накопленные оффлайн ✓✓ собственных сообщений; монотонно (FR-012)
+             */
+            othersReadUpToSeq?: number;
+            /** @description Собеседник (как №12; direct); null у group-дельты (006) */
+            peer: components["schemas"]["PublicUser"] | null;
+            /** @description Вызывающий блокирует собеседника — единственная проекция блокировок в API (004, без изменений); null у group-дельты (006): блокировки на группы не действуют */
+            blockedByMe: boolean | null;
             /**
              * Format: int64
              * @description Эффективный курсор возобновления (после обрезки/ремонта) — клиент продвигает локальный курсор до него до применения сообщений
@@ -947,9 +1146,9 @@ export interface components {
             hasMore: boolean;
             /**
              * Format: int64
-             * @description Водяной знак прочтения собеседника — накопленные оффлайн ✓✓ собственных сообщений вызывающего (0 — ничего не прочитано)
+             * @description Водяной знак прочтения собеседника — накопленные оффлайн ✓✓ собственных сообщений вызывающего (0 — ничего не прочитано). Null у group-дельты (006) — заменяется othersReadUpToSeq
              */
-            peerReadUpToSeq: number;
+            peerReadUpToSeq: number | null;
             /**
              * Format: int64
              * @description Серверный счётчик непрочитанных: COUNT(входящих, seq > GREATEST(last_read_seq, deleted_up_to_seq), seq ≤ LEAST(last_seq, delivered_up_to_seq)); сообщения текущей страницы не входят до ack'а доставки — клиент учитывает отображённое оптимистично и сходится к серверному значению
@@ -974,6 +1173,176 @@ export interface components {
             chats: components["schemas"]["SyncChatDelta"][];
             /** @description Недоставленные чаты остались за пределами chatLimit — повтор №26 с обновлёнными курсорами (вычислено в том же снимке чтения) */
             moreChats: boolean;
+        };
+        /** @description Тело №27: создание группы; начальный состав — из контактов создателя, весь запрос атомарен */
+        CreateGroupRequest: {
+            /** @description Название группы (FR-001): trim начальных/конечных пробелов, 1–64 символов после trim (иначе 400 invalid_title) */
+            title: string;
+            /** @description Описание (опционально): ≤256 символов (иначе 400 invalid_description) */
+            description?: string;
+            /** @description Начальный состав из контактов создателя (добавленные получают роль member); не-uuid/дубли → 400 invalid_member_ids; сам создатель в списке → 400 self_forbidden; кто-то не в контактах создателя → 422 not_in_contacts (весь запрос отклонён, группа не создаётся); вместимость (состав + создатель > 200) → 409 group_full */
+            memberUserIds?: string[];
+        };
+        /** @description Тело №29: изменение метаданных группы (owner/admin); хотя бы одно поле — иначе 400 empty_patch; применяется атомарно целиком */
+        UpdateGroupRequest: {
+            /** @description Новое название (валидация как №27: trim, 1–64 символов после trim — иначе 400 invalid_title) */
+            title?: string;
+            /** @description Новое описание (≤256 символов — иначе 400 invalid_description) */
+            description?: string;
+        };
+        /** @description Тело №31: batch добавления участников из контактов ДОБАВЛЯЮЩЕГО (owner/admin); атомарен — невалидность любого элемента отклоняет весь batch */
+        AddMembersRequest: {
+            /** @description Добавляемые (роль member): не-uuid/дубли → 400 invalid_user_ids; сам добавляющий → 400 self_forbidden; не-контакт добавляющего → 422 not_in_contacts (весь batch отклонён); активные + batch > 200 → 409 group_full; уже активные — идемпотентно игнорируются */
+            userIds: string[];
+        };
+        /** @description Тело №34: назначение (admin) или снятие (member) роли администратора — только owner */
+        SetMemberRoleRequest: {
+            /**
+             * @description Новая роль active-участника; owner этой операцией не назначается (передача владения — №35); иное значение → 400 invalid_role
+             * @enum {string}
+             */
+            role: "admin" | "member";
+        };
+        /** @description Тело №35: передача владения — только owner; цель — active-участник, не сам owner */
+        TransferOwnershipRequest: {
+            /**
+             * Format: uuid
+             * @description Новый владелец (active-участник): сам owner → 400 self_forbidden; не active-участник → 409 target_not_member
+             */
+            userId: string;
+        };
+        /** @description Участник группы с ролью (элемент состава GroupView и ответов №31/№34) */
+        GroupMember: {
+            /** @description Участник группы */
+            user: components["schemas"]["PublicUser"];
+            /**
+             * @description Роль в группе (FR-003): owner — ровно один (частичный уникальный индекс), admin — назначается/снимается owner (№34), member — базовая роль
+             * @enum {string}
+             */
+            role: "owner" | "admin" | "member";
+            /**
+             * Format: date-time
+             * @description Момент первого добавления участника в группу
+             */
+            joinedAt: string;
+        };
+        /** @description Группа (№27/№28/№29/№35): метаданные + активный состав с ролями; chatId = groupId событий и chatId путей №12–№17/№26 */
+        GroupView: {
+            /**
+             * Format: uuid
+             * @description Идентификатор группы (id строки chats — единый ключ №12–№17/№26 и groupId событий)
+             */
+            chatId: string;
+            /** @description Название группы (FR-001) */
+            title: string;
+            /** @description Описание группы; null — описание не задано */
+            description: string | null;
+            /**
+             * @description Роль вызывающего в группе
+             * @enum {string}
+             */
+            myRole: "owner" | "admin" | "member";
+            /** @description Активный состав с ролями (лимит участников — 200, включая владельца); только активные членства (state=active) */
+            members: components["schemas"]["GroupMember"][];
+        };
+        /** @description SSE-событие №18 group.updated: метаданные группы изменены (FR-007); всем активным участникам; клиент обновляет название в «Чатах» и заголовке без перезагрузки; обработка идемпотентна (состояние, не дельты — FR-015) */
+        GroupUpdatedEvent: {
+            /**
+             * Format: uuid
+             * @description Группа (= chatId)
+             */
+            groupId: string;
+            /** @description Новое название */
+            title: string;
+            /** @description Новое описание; null — не задано */
+            description: string | null;
+            /**
+             * Format: uuid
+             * @description Кто изменил (owner/admin)
+             */
+            actorId: string;
+        };
+        /** @description SSE-событие №18 group.member.added: состав вырос (FR-002); всем активным участникам, включая добавленного — группа сразу видна в его «Чатах»; водяной знак добавленного инициализирован позицией группы (бейдж с 0, FR-013); обработка идемпотентна — дубль кадра не создаёт дубль группы (FR-015) */
+        GroupMemberAddedEvent: {
+            /**
+             * Format: uuid
+             * @description Группа (= chatId)
+             */
+            groupId: string;
+            /** @description Добавленный участник (роль — member) */
+            user: components["schemas"]["PublicUser"];
+            /**
+             * Format: uuid
+             * @description Кто добавил
+             */
+            actorId: string;
+        };
+        /** @description SSE-событие №18 group.member.removed: состав уменьшился (исключение №32 или выход №33); всем оставшимся активным участникам — сам удалённый получает group.you_removed */
+        GroupMemberRemovedEvent: {
+            /**
+             * Format: uuid
+             * @description Группа (= chatId)
+             */
+            groupId: string;
+            /**
+             * Format: uuid
+             * @description Исключённый/вышедший участник
+             */
+            userId: string;
+            /**
+             * Format: uuid
+             * @description Кто исключил; null при самостоятельном выходе (№33)
+             */
+            actorId: string | null;
+        };
+        /** @description SSE-событие №18 group.role.changed: роль изменена (FR-003); всем активным участникам; передача владения (№35) — два кадра парой: новый owner и прежний → admin; обработка идемпотентна (состояние, не дельты — FR-015) */
+        GroupRoleChangedEvent: {
+            /**
+             * Format: uuid
+             * @description Группа (= chatId)
+             */
+            groupId: string;
+            /**
+             * Format: uuid
+             * @description Чья роль изменилась
+             */
+            userId: string;
+            /**
+             * @description Новая роль
+             * @enum {string}
+             */
+            role: "owner" | "admin" | "member";
+            /**
+             * Format: uuid
+             * @description Кто изменил (owner)
+             */
+            actorId: string;
+        };
+        /** @description SSE-событие №18 group.deleted: группа удалена владельцем — hard-delete (FR-006); всем бывшим активным участникам (снимок состава до удаления); клиент убирает группу из «Чатов», закрывает окна и игнорирует последующие события группы */
+        GroupDeletedEvent: {
+            /**
+             * Format: uuid
+             * @description Группа (= chatId)
+             */
+            groupId: string;
+            /**
+             * Format: uuid
+             * @description Владелец, выполнивший удаление
+             */
+            actorId: string;
+        };
+        /** @description SSE-событие №18 group.you_removed: финальное событие группы для исключённого/вышедшего (FR-010/FR-015); адресуется только затронутому пользователю (все его устройства/сессии); после него события группы в канал не публикуются (окно ≤5 с); клиент обязан удалить группу из «Чатов», игнорировать последующие события этой группы (гонка порядка) и исключить её из отложенных ack-батчей №25 */
+        GroupYouRemovedEvent: {
+            /**
+             * Format: uuid
+             * @description Группа (= chatId)
+             */
+            groupId: string;
+            /**
+             * @description kicked — исключён владельцем/админом (№32); left — вышел самостоятельно (№33)
+             * @enum {string}
+             */
+            reason: "kicked" | "left";
         };
     };
     responses: never;
@@ -1801,7 +2170,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Диалоги пользователя, отсортированные по последнему видимому сообщению */
+            /** @description Чаты пользователя (direct и группы — единый список), отсортированные по последнему видимому сообщению */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -2161,7 +2530,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, события message.created и chat.read (фрейминг и payloads — в описании операции) */
+            /** @description SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, события message.created, chat.read и события групп (group.updated, group.member.added, group.member.removed, group.role.changed, group.you_removed, group.deleted; фрейминг и payloads — в описании операции) */
             200: {
                 headers: {
                     /** @description no — отключение буферизации прокси (кадры доставляются немедленно, без агрегации за ingress) */
@@ -2541,6 +2910,591 @@ export interface operations {
             };
             /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateGroupRequest"];
+            };
+        };
+        responses: {
+            /** @description Группа создана — GroupView (создатель owner, добавленные member) */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupView"];
+                };
+            };
+            /** @description Валидация: название пустое/пробельное или длиннее 64 символов после trim (errors: {title: [invalid_title]}); описание длиннее 256 (errors: {description: [invalid_description]}); не-uuid/дубли в memberUserIds (errors: {memberUserIds: [invalid_member_ids]}); создатель в начальном составе (errors: {memberUserIds: [self_forbidden]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вместимость исчерпана: активные + начальный состав > 200 (errors: {group: [group_full]}); штатно недостижимо (≤199 + создатель), возможно при заниженном groups.max-members */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Кто-то из memberUserIds не в контактах создателя — весь запрос отклонён атомарно, группа не создана (errors: {memberUserIds: [not_in_contacts]}) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор группы */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Группа — GroupView с активным составом и ролями */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupView"];
+                };
+            };
+            /** @description Не-UUID chatId (errors: {chatId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Группа не найдена, недоступна вызывающему (не-участник/бывший участник) или chatId — direct-чат; единый ответ, существование не раскрывается (errors: {group: [group_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    deleteGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор группы */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Группа физически удалена; бывшим участникам — group.deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не-UUID chatId (errors: {chatId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — участник, но не owner (errors: {group: [not_group_owner]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Группа не найдена или недоступна вызывающему — единый ответ (errors: {group: [group_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    updateGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор группы */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateGroupRequest"];
+            };
+        };
+        responses: {
+            /** @description Метаданные применены — GroupView */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupView"];
+                };
+            };
+            /** @description Валидация как №27: пустое/пробельное/длиннее 64 название (errors: {title: [invalid_title]}); описание длиннее 256 (errors: {description: [invalid_description]}); ни одного поля в патче (errors: {body: [empty_patch]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — участник с ролью member: метаданные не изменяет (errors: {group: [forbidden_role]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Группа не найдена или недоступна вызывающему — единый ответ (errors: {group: [group_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    addGroupMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор группы */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddMembersRequest"];
+            };
+        };
+        responses: {
+            /** @description Участники добавлены (или уже активны — идемпотентно) — текущий активный состав после операции */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description Текущий активный состав группы с ролями (≤200, включая добавленных) */
+                        members: components["schemas"]["GroupMember"][];
+                    };
+                };
+            };
+            /** @description Не-uuid/дубли в userIds (errors: {userIds: [invalid_user_ids]}); добавляющий сам себе (errors: {userIds: [self_forbidden]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — участник с ролью member: состав не изменяет (errors: {group: [forbidden_role]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Группа не найдена или недоступна вызывающему — единый ответ (errors: {group: [group_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Активные + batch > 200 — конфликт вместимости, весь batch отклонён (errors: {group: [group_full]}) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Кто-то из userIds не в контактах ДОБАВЛЯЮЩЕГО — весь batch отклонён атомарно, состав не меняется (errors: {userIds: [not_in_contacts]}) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    removeGroupMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор группы */
+                chatId: string;
+                /** @description Исключаемый участник; равен вызывающему → 400 self_forbidden (выход — №33) */
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Участник исключён (state=removed); ему — group.you_removed {reason:'kicked'}, остальным — group.member.removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не-UUID chatId/userId (errors: {chatId: [invalid_uuid]} / {userId: [invalid_uuid]}); userId = вызывающий (errors: {userId: [self_forbidden]} — выход только через №33, проверяется до иерархии ролей) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — member (errors: {group: [forbidden_role]}); admin исключает admin/owner (errors: {userId: [role_hierarchy_violation]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Группа не найдена или недоступна вызывающему — единый ответ (errors: {group: [group_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Цель — не активный участник группы (errors: {userId: [target_not_member]}) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    setGroupMemberRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор группы */
+                chatId: string;
+                /** @description Участник, чья роль меняется; равен вызывающему → 400 self_forbidden */
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetMemberRoleRequest"];
+            };
+        };
+        responses: {
+            /** @description Роль применена — GroupMember с новой ролью */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupMember"];
+                };
+            };
+            /** @description Не-UUID chatId/userId (errors: {chatId: [invalid_uuid]} / {userId: [invalid_uuid]}); role вне admin|member (errors: {role: [invalid_role]}); userId = вызывающий-owner (errors: {userId: [self_forbidden]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не owner (errors: {group: [not_group_owner]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Группа не найдена или недоступна вызывающему — единый ответ (errors: {group: [group_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Цель — не активный участник группы (errors: {userId: [target_not_member]}) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    leaveGroup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор группы */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Вызывающий покинул группу (state=removed, role сброшена в member); ему — group.you_removed {reason:'left'}, остальным — group.member.removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не-UUID chatId (errors: {chatId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — owner: сначала передайте владение (№35) или удалите группу (№30) (errors: {group: [owner_must_transfer]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Группа не найдена/недоступна либо членства уже нет (повторный выход) — единый ответ (errors: {group: [group_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    transferGroupOwnership: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор группы */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TransferOwnershipRequest"];
+            };
+        };
+        responses: {
+            /** @description Владение передано — GroupView (новый owner, прежний — admin) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupView"];
+                };
+            };
+            /** @description Не-UUID chatId/userId (errors: {chatId: [invalid_uuid]} / {userId: [invalid_uuid]}); userId = вызывающий-owner (errors: {userId: [self_forbidden]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не owner (errors: {group: [not_group_owner]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Группа не найдена или недоступна вызывающему — единый ответ (errors: {group: [group_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Цель — не активный участник группы или текущий owner (errors: {userId: [target_not_member]}) */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

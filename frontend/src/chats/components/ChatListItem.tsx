@@ -70,7 +70,7 @@ export function ChatListItem({
         }}
       >
         <span className="chat-item-head">
-          <span className="chat-item-title">{item.peer.username}</span>
+          <span className="chat-item-title">{item.peer?.username ?? ''}</span>
           {item.blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
           {item.unreadCount > 0 && <span className="chat-item-badge">{unreadLabel}</span>}
         </span>
