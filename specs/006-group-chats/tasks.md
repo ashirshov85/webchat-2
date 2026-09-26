@@ -47,7 +47,7 @@ description: "Task list for feature implementation: групповые чаты 
 
 ### Tests for Phase 2 (писать ПЕРВЫМИ — красные)
 
-- [ ] T005a [P] Написать `backend/src/test/kotlin/webchat/backend/groups/domain/model/GroupChatModelTest.kt` (JUnit 5, без контейнеров): `GroupTitle` (trim, 1–64; пусто/65 → invalid), `GroupDescription` (≤256; 257 → invalid), `MemberRole`/`MembershipState` (covers T005; DTO-маппинг схем 0.6.0 — T016)
+- [x] T005a [P] Написать `backend/src/test/kotlin/webchat/backend/groups/domain/model/GroupChatModelTest.kt` (JUnit 5, без контейнеров): `GroupTitle` (trim, 1–64; пусто/65 → invalid), `GroupDescription` (≤256; 257 → invalid), `MemberRole`/`MembershipState` (covers T005; DTO-маппинг схем 0.6.0 — T016)
 - [ ] T010a [P] Написать `backend/src/test/kotlin/webchat/backend/groups/GroupMetricsTest.kt` (JUnit 5 + Micrometer `SimpleMeterRegistry`): счётчики/таймер/гистограмма регистрируются и растут (covers T010)
 - [ ] T012a [P] Написать `backend/src/test/kotlin/webchat/backend/GroupRepositoryIT.kt` (JUnit 5 + Testcontainers PG+Redis): тонкий срез адаптеров — create (chats+participants в одной tx), `activeMembers`/`countActive`, `addMember`/`reactivate` (инициализация и сохранение водяных знаков), `removeMember` (rowcount), MIN-водяные знаки, append-only журнал, hard-delete; post-commit публикация `RedisRealtimePublisher` в `rt:user:{id}` (подписка в Testcontainers Redis) (covers T011–T014)
 - [ ] T015a [P] Написать `backend/src/test/kotlin/webchat/backend/groups/domain/service/GroupMembershipGateTest.kt` + `GroupsExceptionHandlerTest.kt` (JUnit 5, fake-порты): гейт — не-участник/несуществующая → `404 group_not_found` + инкремент `webchat_group_authz_denials_total`; маппинг problem-кодов (covers T015, T017)
