@@ -39,7 +39,9 @@ class ChatTest {
         val low = UUID.fromString("00000000-0000-0000-0000-000000000001")
         val high = UUID.fromString("00000000-0000-0000-0000-000000000002")
 
-        assertThrows<IllegalArgumentException> { Chat(ID, high, low, CREATED_AT) }
+        assertThrows<IllegalArgumentException> {
+            Chat(id = ID, userLowId = high, userHighId = low, createdAt = CREATED_AT)
+        }
     }
 
     @Test

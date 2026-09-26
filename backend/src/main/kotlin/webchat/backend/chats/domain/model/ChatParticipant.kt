@@ -1,18 +1,25 @@
 package webchat.backend.chats.domain.model
 
+import webchat.backend.groups.domain.model.MemberRole
+import webchat.backend.groups.domain.model.MembershipState
 import java.time.Instant
 import java.util.UUID
 
 /**
- * Per-user state of a dialog (data-model 004 §2, extended by 005): one
- * row per (participant, chat) — the read watermark `last_read_seq`
- * (monotone, GREATEST-update, US4-5), the deletion watermark
- * `deleted_up_to_seq` plus `hidden` of the per-user chat deletion
- * (FR-021) and, since V12 (005), the delivery position
+ * Per-user state of a conversation row (data-model 004 §2, extended by
+ * 005 and 006): one row per (participant, chat) — the read watermark
+ * `last_read_seq` (monotone, GREATEST-update, US4-5), the deletion
+ * watermark `deleted_up_to_seq` plus `hidden` of the per-user chat
+ * deletion (FR-021) and, since V12 (005), the delivery position
  * `delivered_up_to_seq` (FR-001): the server-side sync cursor that is
  * moved ONLY by the ack operation №25 — neither a №26 sync answer nor
- * an SSE frame writes it. Mirrors the `chat_participants` table
- * (non-negative CHECKs).
+ * an SSE frame writes it. Since V14 (006) the same row carries the
+ * group membership projection: [role] (NULL ⟺ a direct dialog, where a
+ * role is meaningless) and [state] — membership in a group ⟺ an ACTIVE
+ * row (FR-008); a REMOVED row preserves the 004/005 watermarks for
+ * re-adding (FR-002) and reactivation resets the role to `member`
+ * (data-model 006 §Сущность 2). Mirrors the `chat_participants` table
+ * (non-negative CHECKs, `ck_chat_participants_role`/`_state`).
  *
  * Derived visibility rules (data-model 004 §2 + 005 сущности 1–3):
  * - a message is visible to the participant ⟺ `seq > deletedUpToSeq`;
@@ -28,6 +35,8 @@ data class ChatParticipant(
     val deletedUpToSeq: Long = 0,
     val deliveredUpToSeq: Long = 0,
     val hidden: Boolean = false,
+    val role: MemberRole? = null,
+    val state: MembershipState = MembershipState.ACTIVE,
     val createdAt: Instant,
 ) {
     init {
