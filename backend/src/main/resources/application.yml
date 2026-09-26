@@ -304,6 +304,14 @@ delivery:
     max-limit: 64
     latency-baseline: 50ms
 
+groups:
+  # 006 api-contract.md header (FR-001/FR-002): contract constants;
+  # stress checks lower groups.max-members via SPRING_APPLICATION_JSON
+  # (quickstart.md «Новые настройки»)
+  max-members: 200
+  title-max-length: 64
+  description-max-length: 256
+
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)
   observations:
