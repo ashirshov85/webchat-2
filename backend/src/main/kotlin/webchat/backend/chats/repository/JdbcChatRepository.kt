@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.model.ChatPeerSnapshot
 import webchat.backend.chats.domain.model.Message
@@ -12,6 +13,7 @@ import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.groups.domain.model.MemberRole
 import java.sql.ResultSet
 import java.util.UUID
 
@@ -69,31 +71,50 @@ class JdbcChatRepository(
     }
 
     /**
-     * №12 (T055, research.md 004 §8): the WHOLE panel in ONE query — the
-     * caller's participant state, the dialog, the peer `users` row, the
-     * caller's own `user_blocks` mark and both per-chat aggregates:
-     * `lastMessage` via a LATERAL top-1 by the max VISIBLE `seq`
-     * (`seq > deleted_up_to_seq` — the per-user watermark of data-model
-     * 004 §2) and `unreadCount` by the server-authoritative formula of
-     * data-model 005 сущность 3 (T031, FR-007) — the SAME bounds the ONE
-     * reusable calculator `JdbcParticipantRepository.countUnread` (T013)
-     * embodies for the №26 deltas, inlined here as a correlated COUNT so
-     * the panel stays the single aggregate query (an N+1 of per-chat
-     * `countUnread` calls is the rejected alternative, research.md 004
-     * §8): incoming `sender_id <> me` with
-     * `seq > GREATEST(last_read_seq, deleted_up_to_seq)` and
-     * `seq <= LEAST(chats.last_seq, delivered_up_to_seq)` — the badge
-     * carries only the CONFIRMED delivered tail (a realtime frame and a
-     * №26 page do not count until the ack №25 moves the position), and
-     * below the deletion watermark messages are inaccessible, not
-     * unread (US1-5). The peer of a two-participant dialog is
-     * the CASE-flipped side of the canonical pair. Sorting is
-     * `last_message_at DESC NULLS LAST` (either direction lifts the
-     * dialog, FR-014; empty dialogs keep their place below, FR-018) with
-     * the `chat_id` tie-break — `chats.last_seq`/`seq` are per-chat
-     * values and never inter-chat keys (plan.md). The ONLY exclusion is
-     * the data-model §2 invariant `hidden AND deleted_up_to_seq >=
-     * chats.last_seq` (FR-021).
+     * №12 (T055, research.md 004 §8; unified by 006 T023, FR-014): the
+     * WHOLE panel — direct dialogs AND groups — in ONE query. The direct
+     * projection: the caller's participant state, the dialog, the peer
+     * `users` row, the caller's own `user_blocks` mark and both per-chat
+     * aggregates: `lastMessage` via a LATERAL top-1 by the max VISIBLE
+     * `seq` (`seq > deleted_up_to_seq` — the per-user watermark of
+     * data-model 004 §2) and `unreadCount` by the server-authoritative
+     * formula of data-model 005 сущность 3 (T031, FR-007) — the SAME
+     * bounds the ONE reusable calculator
+     * `JdbcParticipantRepository.countUnread` (T013) embodies for the №26
+     * deltas, inlined here as a correlated COUNT so the panel stays the
+     * single aggregate query (an N+1 of per-chat `countUnread` calls is
+     * the rejected alternative, research.md 004 §8): incoming
+     * `sender_id <> me` with `seq > GREATEST(last_read_seq,
+     * deleted_up_to_seq)` and `seq <= LEAST(chats.last_seq,
+     * delivered_up_to_seq)` — the badge carries only the CONFIRMED
+     * delivered tail (a realtime frame and a №26 page do not count until
+     * the ack №25 moves the position), and below the deletion watermark
+     * messages are inaccessible, not unread (US1-5). The SAME aggregate
+     * pair serves groups unchanged — a group is a `chats` row with
+     * shared history (plan.md 006).
+     *
+     * The group projection (006, api-contract.md §3): `chats.title`, the
+     * caller's `role` and the ACTIVE roster count as a correlated COUNT
+     * over `ix_chat_participants_chat_active` (≤200 rows, index-only —
+     * the same index the capacity check reads); the peer join is a LEFT
+     * JOIN guarded by `kind='direct'`, so a group row renders NO peer
+     * (`peer` = NULL — the pair is NULL by the V14 shape-CHECK) and its
+     * `blocked_by_me` is CASE-nulled: blocks never apply to groups
+     * (Assumptions 006), the required-nullable fields of the schema stay
+     * explicit.
+     *
+     * The peer of a two-participant dialog is the CASE-flipped side of
+     * the canonical pair. Sorting is `last_message_at DESC NULLS LAST`
+     * (either direction lifts the dialog, FR-014; empty dialogs keep
+     * their place below, FR-018) with the `chat_id` tie-break —
+     * `chats.last_seq`/`seq` are per-chat values and never inter-chat
+     * keys (plan.md). The direct exclusion is the data-model §2
+     * invariant `hidden AND deleted_up_to_seq >= chats.last_seq`
+     * (FR-021); groups never carry `hidden` (№14 is a direct-dialog
+     * operation), their membership lives on `state` — `me.state =
+     * 'active'` keeps the row ONLY for an active member (FR-008:
+     * removed/kicked members lose the group from the panel; direct rows
+     * are 'active' forever, V14).
      */
     override fun listForUser(callerId: UUID): List<ChatListEntry> =
         jdbcTemplate.query(
@@ -116,16 +137,23 @@ class JdbcChatRepository(
 
         val CHAT_LIST_ROW_MAPPER =
             RowMapper { rs: ResultSet, _: Int ->
+                val kind = ChatKind.valueOf(rs.getString("chat_kind").uppercase())
                 ChatListEntry(
                     chatId = rs.getObject("chat_id", UUID::class.java),
+                    kind = kind,
+                    title = rs.getString("chat_title"),
+                    memberCount = rs.getLong("member_count").takeIf { kind == ChatKind.GROUP },
+                    myRole = rs.getString("my_role")?.let { role -> MemberRole.valueOf(role.uppercase()) },
                     peer =
-                        ChatPeerSnapshot(
-                            id = rs.getObject("peer_id", UUID::class.java),
-                            username = rs.getString("peer_username"),
-                            email = rs.getString("peer_email"),
-                            status = rs.getString("peer_status"),
-                            createdAt = rs.getTimestamp("peer_created_at").toInstant(),
-                        ),
+                        rs.getObject("peer_id", UUID::class.java)?.let { peerId ->
+                            ChatPeerSnapshot(
+                                id = peerId,
+                                username = rs.getString("peer_username"),
+                                email = rs.getString("peer_email"),
+                                status = rs.getString("peer_status"),
+                                createdAt = rs.getTimestamp("peer_created_at").toInstant(),
+                            )
+                        },
                     lastMessage =
                         rs.getObject("last_message_id", UUID::class.java)?.let { messageId ->
                             Message(
@@ -138,7 +166,7 @@ class JdbcChatRepository(
                             )
                         },
                     unreadCount = rs.getLong("unread_count"),
-                    blockedByMe = rs.getBoolean("blocked_by_me"),
+                    blockedByMe = rs.getObject("blocked_by_me")?.let { (it as Boolean) },
                 )
             }
 
@@ -171,6 +199,13 @@ class JdbcChatRepository(
             """
             SELECT
                 c.id AS chat_id,
+                c.kind::text AS chat_kind,
+                c.title AS chat_title,
+                me.role::text AS my_role,
+                (SELECT count(*)
+                   FROM chat_participants mc
+                  WHERE mc.chat_id = c.id
+                    AND mc.state = 'active') AS member_count,
                 p.id AS peer_id,
                 p.username AS peer_username,
                 p.email AS peer_email,
@@ -187,15 +222,17 @@ class JdbcChatRepository(
                     AND um.sender_id <> me.user_id
                     AND um.seq > GREATEST(me.last_read_seq, me.deleted_up_to_seq)
                     AND um.seq <= LEAST(c.last_seq, me.delivered_up_to_seq)) AS unread_count,
-                EXISTS (SELECT 1
-                          FROM user_blocks ub
-                         WHERE ub.blocker_id = me.user_id
-                           AND ub.blocked_id = p.id) AS blocked_by_me
+                CASE WHEN c.kind = 'group' THEN NULL
+                     ELSE EXISTS (SELECT 1
+                                    FROM user_blocks ub
+                                   WHERE ub.blocker_id = me.user_id
+                                     AND ub.blocked_id = p.id) END AS blocked_by_me
             FROM chat_participants me
             JOIN chats c ON c.id = me.chat_id
-            JOIN users p ON p.id = CASE WHEN c.user_low_id = me.user_id
-                                        THEN c.user_high_id
-                                        ELSE c.user_low_id END
+            LEFT JOIN users p ON c.kind = 'direct'
+                 AND p.id = CASE WHEN c.user_low_id = me.user_id
+                                 THEN c.user_high_id
+                                 ELSE c.user_low_id END
             LEFT JOIN LATERAL (
                 SELECT m.id, m.sender_id, m.text, m.seq, m.created_at
                   FROM messages m
@@ -205,6 +242,7 @@ class JdbcChatRepository(
                  LIMIT 1
             ) lm ON true
             WHERE me.user_id = ?
+              AND me.state = 'active'
               AND NOT (me.hidden AND me.deleted_up_to_seq >= c.last_seq)
             ORDER BY lm.created_at DESC NULLS LAST, c.id
             """.trimIndent()

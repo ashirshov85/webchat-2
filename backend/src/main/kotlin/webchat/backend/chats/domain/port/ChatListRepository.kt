@@ -16,17 +16,23 @@ import java.util.UUID
  * 004 §8). Since 005 (T031, data-model сущность 3) the `unreadCount`
  * aggregate carries the delivery-bounded server-authoritative formula —
  * the same bounds [ParticipantRepository.countUnread] embodies for №26.
+ * Since 006 (T023, FR-014) the SAME query projects the UNIFIED panel of
+ * direct dialogs AND groups: kind discrimination, the group
+ * `title`/`myRole`/active `memberCount` and the nulled group peer/block
+ * marks are decided in the read.
  */
 fun interface ChatListRepository {
     /**
-     * All dialogs of [callerId] as [ChatListEntry] rows, sorted by the
-     * `createdAt` of the last VISIBLE message DESC (incoming or outgoing —
-     * either lifts the dialog, FR-014), chats without visible messages
-     * last (NULLS LAST, FR-014/FR-018), tie-break `chat_id` — `seq` is
-     * per-chat and is NEVER an inter-chat key (plan.md). Excluded is ONLY
-     * the fully deleted dialog `hidden AND deleted_up_to_seq >=
+     * All chats of [callerId] — direct dialogs AND groups of his ACTIVE
+     * memberships (FR-014/FR-008) — as [ChatListEntry] rows, sorted by
+     * the `createdAt` of the last VISIBLE message DESC (incoming or
+     * outgoing — either lifts the chat, FR-014), chats without visible
+     * messages last (NULLS LAST, FR-014/FR-018), tie-break `chat_id` —
+     * `seq` is per-chat and is NEVER an inter-chat key (plan.md). Excluded
+     * is ONLY the fully deleted dialog `hidden AND deleted_up_to_seq >=
      * chats.last_seq` (data-model 004 §2; FR-021 — a new incoming resets
-     * `hidden` on the write path of T012 and the dialog returns).
+     * `hidden` on the write path of T012 and the dialog returns) and, for
+     * groups, the non-ACTIVE membership row (removed/kicked — FR-008).
      */
     fun listForUser(callerId: UUID): List<ChatListEntry>
 }

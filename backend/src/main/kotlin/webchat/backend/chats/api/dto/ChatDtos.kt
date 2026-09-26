@@ -1,5 +1,6 @@
 package webchat.backend.chats.api.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import java.time.Instant
 import java.util.UUID
 
@@ -50,24 +51,39 @@ data class ChatView(
 )
 
 /**
- * Contract №12 success item — `ChatListItem` (openapi.yaml 0.4.0): the
- * dialog, the peer projection, the LAST VISIBLE message (`null` for a
- * chat without visible messages — empty or fully deleted for the caller)
+ * Contract №12 success item — `ChatListItem` (openapi.yaml 0.6.0): the
+ * UNIFIED «Чаты» element (006, FR-014) — a direct dialog or a group,
+ * discriminated by [type]. Direct rows keep the 0.4.0 shape verbatim:
+ * the peer projection, the LAST VISIBLE message (`null` for a chat
+ * without visible messages — empty or fully deleted for the caller)
  * with its FULL text (the ≤64-char cut is a client render), the unread
  * badge count (exact number; «99+» is the client render) and the
- * caller's own block mark.
+ * caller's own block mark; the group-only fields stay ABSENT (NON_NULL
+ * — «direct-элементы могут не нести поле», backward-friendly,
+ * api-contract.md 006 §3).
+ *
+ * Group rows carry the 006 projection: `type:'group'`, [title],
+ * [memberCount] (the active roster, 1–200) and [myRole], with the peer
+ * projection rendered as an EXPLICIT `null` — [peer] and
+ * [blockedByMe] are required nullable fields of the schema, so they are
+ * always present in the payload.
  *
  * `blockedByMe` (T054/T055, FR-020) is the ONLY block projection of the
  * list, exactly as in [ChatView]: no inverse «who blocked me» field —
  * the blocked user learns about the block ONLY from the `403
- * you_are_blocked` of his own send (research.md 004 §6).
+ * you_are_blocked` of his own send (research.md 004 §6). For groups it
+ * is `null` — blocks never apply to groups (Assumptions 006).
  */
 data class ChatListItemView(
     val chatId: UUID,
-    val peer: ChatPeerView,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val type: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val title: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val memberCount: Long? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val myRole: String? = null,
+    val peer: ChatPeerView?,
     val lastMessage: MessageView?,
     val unreadCount: Long,
-    val blockedByMe: Boolean,
+    val blockedByMe: Boolean?,
 )
 
 /**

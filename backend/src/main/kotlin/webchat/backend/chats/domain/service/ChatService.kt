@@ -135,11 +135,15 @@ class ChatService(
     }
 
     /**
-     * №12 (T055): the caller's dialog list — the one aggregate read of
-     * [ChatListRepository]; the repository owns the sorting (last visible
-     * message `createdAt` DESC NULLS LAST, `chat_id` tie-break), the §2
-     * exclusion of fully deleted dialogs and the aggregates, so this is a
-     * straight delegation with nothing to veto.
+     * №12 (T055; unified by 006 T023, FR-014): the caller's UNIFIED chat
+     * list — direct dialogs AND groups in one panel — the one aggregate
+     * read of [ChatListRepository]; the repository owns the sorting (last
+     * visible message `createdAt` DESC NULLS LAST, `chat_id` tie-break —
+     * one order over both kinds), the §2 exclusion of fully deleted
+     * dialogs, the 006 active-membership filter (a group stays in the
+     * list ONLY while the caller holds an ACTIVE `chat_participants`
+     * row, FR-008) and the aggregates (the group `memberCount` included),
+     * so this is a straight delegation with nothing to veto.
      *
      * T031 (005, FR-007): the `unreadCount` aggregate is the
      * server-authoritative delivery-bounded formula of data-model 005
@@ -149,7 +153,10 @@ class ChatService(
      * the №26 `SyncChatDelta.unreadCount` (one calculator, no drift): the
      * badge grows ONLY by the delivery ack №25, on both the realtime and
      * the catch-up paths alike; below the truncation point messages are
-     * inaccessible, not unread (US1-5).
+     * inaccessible, not unread (US1-5). The formula serves groups
+     * unchanged — a group is a `chats` row with shared history (plan.md
+     * 006), and the first-add watermark initialization (FR-013) starts a
+     * new member's badge at 0.
      */
     fun listChats(callerId: UUID): List<ChatListEntry> = chatListRepository.listForUser(callerId)
 

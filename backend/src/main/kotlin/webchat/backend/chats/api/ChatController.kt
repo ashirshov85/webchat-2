@@ -19,9 +19,11 @@ import webchat.backend.chats.api.dto.ChatsResponse
 import webchat.backend.chats.api.dto.EnsureChatRequest
 import webchat.backend.chats.api.dto.MessageView
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.service.ChatService
+import webchat.backend.groups.api.dto.memberRoleLabel
 import java.util.UUID
 
 /**
@@ -88,10 +90,13 @@ class ChatController(
     }
 
     /**
-     * Contract №12 (T055): the caller's dialog list — the whole panel in
-     * ONE request (the aggregate query of the repository, research.md 004
-     * §8): the sorting, the per-user visibility/aggregates and the §2
-     * exclusion are decided in the read; an empty list is a valid body.
+     * Contract №12 (T055; unified by 006 T023): the caller's chat list —
+     * direct dialogs AND groups in ONE panel (FR-014): the whole read is
+     * the aggregate query of the repository (research.md 004 §8) — the
+     * sorting, the per-user visibility/aggregates, the §2 exclusion and
+     * the active-membership filter of 006 (FR-008) are decided in the
+     * read; an empty list is a valid body. The kind discrimination of
+     * the items happens in [listItemView].
      */
     @GetMapping
     fun listChats(
@@ -155,23 +160,36 @@ class ChatController(
     }
 
     /**
-     * One №12 row: the entry already carries the full projection (peer
-     * snapshot, last visible message, badge, own block mark) — the HTTP
-     * layer only re-shapes it into the contract schemas; the peer
-     * `status` arrives as the lowercase `user_status` label of the row,
-     * matching [ChatPeerView] of №11/№13.
+     * One №12 row (006 T023, api-contract.md §3): the entry already
+     * carries the full projection — the peer snapshot, last visible
+     * message, badge, own block mark for a DIRECT row; the title, active
+     * roster size and the caller's role for a GROUP — so the HTTP layer
+     * only re-shapes it into the contract schemas. The group-only fields
+     * (`type`/`title`/`memberCount`/`myRole`) render ONLY on the group
+     * element (NON_NULL — a direct item keeps the 0.4.0 shape
+     * verbatim), while the required-nullable `peer`/`blockedByMe` stay
+     * present as explicit `null`s for a group; the role label reuses
+     * [memberRoleLabel] — the single lowercase mapping of the contract
+     * enum. The peer `status` arrives as the lowercase `user_status`
+     * label of the row, matching [ChatPeerView] of №11/№13.
      */
     private fun listItemView(entry: ChatListEntry): ChatListItemView =
         ChatListItemView(
             chatId = entry.chatId,
+            type = entry.kind.label().takeIf { entry.kind == ChatKind.GROUP },
+            title = entry.title.takeIf { entry.kind == ChatKind.GROUP },
+            memberCount = entry.memberCount.takeIf { entry.kind == ChatKind.GROUP },
+            myRole = entry.myRole?.let(::memberRoleLabel).takeIf { entry.kind == ChatKind.GROUP },
             peer =
-                ChatPeerView(
-                    id = entry.peer.id,
-                    username = entry.peer.username,
-                    email = entry.peer.email,
-                    status = entry.peer.status,
-                    createdAt = entry.peer.createdAt,
-                ),
+                entry.peer?.let { peer ->
+                    ChatPeerView(
+                        id = peer.id,
+                        username = peer.username,
+                        email = peer.email,
+                        status = peer.status,
+                        createdAt = peer.createdAt,
+                    )
+                },
             lastMessage =
                 entry.lastMessage?.let { message ->
                     MessageView(
@@ -187,6 +205,13 @@ class ChatController(
             blockedByMe = entry.blockedByMe,
         )
 }
+
+/**
+ * The lowercase contract label of a [ChatKind] (the `ChatListItem.type`
+ * enum of openapi.yaml 0.6.0: direct|group) — the same single-source
+ * convention as [memberRoleLabel].
+ */
+private fun ChatKind.label(): String = name.lowercase()
 
 /**
  * 400 (api-contract.md №11): the request `peerUserId` is absent or not a
