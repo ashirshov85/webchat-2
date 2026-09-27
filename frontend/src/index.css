@@ -291,6 +291,41 @@ body {
   font-style: italic;
 }
 
+/* Group rows of the unified «Чаты» list (feature 006, T028; FR-014) */
+.chat-item-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.chat-item-members {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Поиск единого списка «Чаты» (feature 006, T028; FR-014) */
+.chat-panel-search {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
 .chat-panel-error {
   display: flex;
   flex-direction: column;

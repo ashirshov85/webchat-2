@@ -5,6 +5,14 @@
  * already comes from the №12 aggregate (`ChatListItem`): the panel never
  * issues per-chat requests.
  *
+ * Unified list (feature 006, T028; FR-014): №12 now also carries group
+ * elements, and the row discriminates by `type` — a group renders the
+ * group avatar glyph, `title` and the `memberCount` counter (Russian
+ * plurals) while `peer`/`blockedByMe` are null (api-contract.md §3);
+ * blocks never apply to groups. A direct row keeps rendering the peer
+ * login exactly as in 004 (the `type` field may be absent —
+ * backward-friendly) and never carries a member counter.
+ *
  * Preview: the server sends the FULL last message text and the contract
  * (№12) makes truncation a client render decision — the row clamps it
  * to 64 code points with an ellipsis. `null` lastMessage (an empty or
@@ -17,7 +25,8 @@
  * decision over the exact count: the internal `unreadCount` stays
  * exact (US3-4) and never affects the ordering (positions are owned by
  * useChatList sorting). While the chat is blocked the displayed value
- * is whatever useChatList froze at the block moment (US3-5).
+ * is whatever useChatList froze at the block moment (US3-5). Group
+ * rows badge exactly like direct ones (FR-013/FR-014).
  *
  * Blocked mark (FR-020): only the blocker sees «заблокирован» —
  * `blockedByMe` is the single block projection the API exposes, so
@@ -30,6 +39,22 @@ const PREVIEW_MAX_LENGTH = 64
 
 /** Бейдж непрочитанных сворачивается в «99+» (FR-014). */
 const UNREAD_CAP = 99
+
+/**
+ * Русская плюрализация счётчика участников (№12 `memberCount` 1–200):
+ * 1/21 участник, 3 участника, 5/11 участников.
+ */
+function membersLabel(count: number): string {
+  const mod10 = count % 10
+  const mod100 = count % 100
+  if (mod10 === 1 && mod100 !== 11) {
+    return 'участник'
+  }
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return 'участника'
+  }
+  return 'участников'
+}
 
 export interface ChatListItemProps {
   /** №12 aggregate row: peer, lastMessage, unreadCount, blockedByMe. */
@@ -56,6 +81,8 @@ export function ChatListItem({
   onSelect,
 }: ChatListItemProps) {
   const last = item.lastMessage
+  const isGroup = item.type === 'group'
+  const title = isGroup ? item.title : item.peer?.username
   const outgoing = last !== null && last.senderId === currentUserId
   const unreadLabel = item.unreadCount > UNREAD_CAP ? `${UNREAD_CAP}+` : String(item.unreadCount)
 
@@ -70,7 +97,17 @@ export function ChatListItem({
         }}
       >
         <span className="chat-item-head">
-          <span className="chat-item-title">{item.peer?.username ?? ''}</span>
+          {isGroup && (
+            <span className="chat-item-avatar" aria-hidden="true">
+              #
+            </span>
+          )}
+          <span className="chat-item-title">{title ?? ''}</span>
+          {isGroup && item.memberCount !== undefined && (
+            <span className="chat-item-members">
+              {item.memberCount} {membersLabel(item.memberCount)}
+            </span>
+          )}
           {item.blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
           {item.unreadCount > 0 && <span className="chat-item-badge">{unreadLabel}</span>}
         </span>
