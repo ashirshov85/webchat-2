@@ -16,6 +16,13 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer
 import org.springframework.stereotype.Component
 import webchat.backend.chats.api.dto.MessageView
 import webchat.backend.chats.domain.port.ChatReadEvent
+import webchat.backend.chats.domain.port.GroupDeletedEvent
+import webchat.backend.chats.domain.port.GroupEvent
+import webchat.backend.chats.domain.port.GroupMemberAddedEvent
+import webchat.backend.chats.domain.port.GroupMemberRemovedEvent
+import webchat.backend.chats.domain.port.GroupRoleChangedEvent
+import webchat.backend.chats.domain.port.GroupUpdatedEvent
+import webchat.backend.chats.domain.port.GroupYouRemovedEvent
 import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import java.util.UUID
@@ -128,10 +135,15 @@ internal class RedisRealtimePubSubConfig {
 
 /**
  * The Redis adapter of the domain's [RealtimeEventPublisher] port (T019;
- * research.md 004 §2, data-model 004 §3 step 5): strictly AFTER the PG
- * commit the caller hands over the event, and this adapter PUBLISHES a
- * compact one-line JSON envelope `{"event":…,"data":…}` to the per-user
- * channel `rt:user:{userId}` of every addressee.
+ * research.md 004 §2, data-model 004 §3 step 5; the 006 group frames and
+ * the roster fan-out legs — T009/T014, realtime-group-events.md §3):
+ * strictly AFTER the PG commit the caller hands over the event, and this
+ * adapter PUBLISHES a compact one-line JSON envelope `{"event":…,"data":…}`
+ * to the per-user channel `rt:user:{userId}` of every addressee — a
+ * single addressee for the 004 dialog legs, the roster snapshot list
+ * (≤ 200 by FR-002) for the group frames and the group `message.created`/
+ * `chat.read` fan-outs, all over the SAME per-user channel family with
+ * no new broker topology (research.md 006 §4).
  *
  * At the same time the adapter is the LOCAL half of the fan-out: it
  * listens to the [SseConnectionRegistry] connection lifecycle and keeps
@@ -150,7 +162,7 @@ internal class RedisRealtimePubSubConfig {
  * contract payloads ([MessageView] for `message.created`).
  */
 @Component
-@Suppress("TooManyFunctions") // T028: one function per fan-out leg plus the SC-005 timer
+@Suppress("TooManyFunctions") // T028/T009: one function per fan-out leg plus the SC-005 timer
 class RedisRealtimePublisher(
     private val connectionRegistry: SseConnectionRegistry,
     private val objectMapper: ObjectMapper,
@@ -176,6 +188,38 @@ class RedisRealtimePublisher(
         event: ChatReadEvent,
     ) {
         publishEnvelope(toUserId, EVENT_CHAT_READ, event)
+    }
+
+    /**
+     * T009 (realtime-group-events.md 006 §3): one envelope per roster
+     * addressee — the SAME per-user channels, the SAME at-most-once
+     * post-commit discipline; the name/payload pair resolves ONCE per
+     * frame, the loop is the pure channel fan-out.
+     */
+    override fun fanoutGroupEvent(
+        toUserIds: List<UUID>,
+        event: GroupEvent,
+    ) {
+        val eventName = groupEventName(event)
+        val payload = groupEventPayload(event)
+        toUserIds.forEach { addressee -> publishEnvelope(addressee, eventName, payload) }
+    }
+
+    /** FR-011 (006 §3.7): the roster list minus the sender — the 004 payload verbatim. */
+    override fun fanoutMessageCreated(
+        toUserIds: List<UUID>,
+        event: MessageCreatedEvent,
+    ) {
+        val payload = messageCreatedPayload(event)
+        toUserIds.forEach { addressee -> publishEnvelope(addressee, EVENT_MESSAGE_CREATED, payload) }
+    }
+
+    /** FR-012 (006 §3.7): everyone active except the reader — the 004 payload verbatim. */
+    override fun fanoutChatRead(
+        toUserIds: List<UUID>,
+        event: ChatReadEvent,
+    ) {
+        toUserIds.forEach { addressee -> publishEnvelope(addressee, EVENT_CHAT_READ, event) }
     }
 
     /** The T019 dynamic subscription hook: subscribe `rt:user:{id}` on the first live session. */
@@ -220,6 +264,70 @@ class RedisRealtimePublisher(
                     createdAt = event.message.createdAt,
                 ),
         )
+
+    /**
+     * realtime-group-events.md 006 §3: the №18 `event:` name of every
+     * group frame — exhaustive over the sealed [GroupEvent] hierarchy,
+     * so a future contract frame fails compilation here until mapped.
+     */
+    private fun groupEventName(event: GroupEvent): String =
+        when (event) {
+            is GroupUpdatedEvent -> EVENT_GROUP_UPDATED
+            is GroupMemberAddedEvent -> EVENT_GROUP_MEMBER_ADDED
+            is GroupMemberRemovedEvent -> EVENT_GROUP_MEMBER_REMOVED
+            is GroupRoleChangedEvent -> EVENT_GROUP_ROLE_CHANGED
+            is GroupYouRemovedEvent -> EVENT_GROUP_YOU_REMOVED
+            is GroupDeletedEvent -> EVENT_GROUP_DELETED
+        }
+
+    /**
+     * The contract payloads of §3.1–§3.6 rendered field-by-field (the
+     * 004 discipline of [messageCreatedPayload]): the wire enums go as
+     * the LOWER-CASE contract values (`owner|admin|member`,
+     * `kicked|left`) and a `null` [GroupUpdatedEvent.description] /
+     * [GroupMemberRemovedEvent.actorId] rides the frame as `null`,
+     * never dropped (§3.1/§3.3 `additionalProperties: false` schemas
+     * keep the absent fields REQUIRED-and-nullable).
+     */
+    private fun groupEventPayload(event: GroupEvent): Map<String, Any?> =
+        when (event) {
+            is GroupUpdatedEvent ->
+                mapOf(
+                    FIELD_GROUP_ID to event.groupId,
+                    FIELD_TITLE to event.title,
+                    FIELD_DESCRIPTION to event.description,
+                    FIELD_ACTOR_ID to event.actorId,
+                )
+            is GroupMemberAddedEvent ->
+                mapOf(
+                    FIELD_GROUP_ID to event.groupId,
+                    FIELD_USER to event.user,
+                    FIELD_ACTOR_ID to event.actorId,
+                )
+            is GroupMemberRemovedEvent ->
+                mapOf(
+                    FIELD_GROUP_ID to event.groupId,
+                    FIELD_USER_ID to event.userId,
+                    FIELD_ACTOR_ID to event.actorId,
+                )
+            is GroupRoleChangedEvent ->
+                mapOf(
+                    FIELD_GROUP_ID to event.groupId,
+                    FIELD_USER_ID to event.userId,
+                    FIELD_ROLE to event.role.name.lowercase(),
+                    FIELD_ACTOR_ID to event.actorId,
+                )
+            is GroupYouRemovedEvent ->
+                mapOf(
+                    FIELD_GROUP_ID to event.groupId,
+                    FIELD_REASON to event.reason.name.lowercase(),
+                )
+            is GroupDeletedEvent ->
+                mapOf(
+                    FIELD_GROUP_ID to event.groupId,
+                    FIELD_ACTOR_ID to event.actorId,
+                )
+        }
 
     /**
      * The outbound half: one compact JSON envelope to the user channel.
@@ -313,6 +421,14 @@ class RedisRealtimePublisher(
         const val EVENT_MESSAGE_CREATED = "message.created"
         const val EVENT_CHAT_READ = "chat.read"
 
+        /** realtime-group-events.md 006 §3: the №18 group `event:` values (T009). */
+        const val EVENT_GROUP_UPDATED = "group.updated"
+        const val EVENT_GROUP_MEMBER_ADDED = "group.member.added"
+        const val EVENT_GROUP_MEMBER_REMOVED = "group.member.removed"
+        const val EVENT_GROUP_ROLE_CHANGED = "group.role.changed"
+        const val EVENT_GROUP_YOU_REMOVED = "group.you_removed"
+        const val EVENT_GROUP_DELETED = "group.deleted"
+
         /** The internal wire envelope fields (transport detail, NOT the public SSE framing). */
         const val FIELD_EVENT = "event"
         const val FIELD_DATA = "data"
@@ -320,6 +436,16 @@ class RedisRealtimePublisher(
         /** realtime-channel.md §3.1: the `MessageCreatedEvent` payload fields. */
         const val FIELD_CHAT_ID = "chatId"
         const val FIELD_MESSAGE = "message"
+
+        /** realtime-group-events.md 006 §3.1–§3.6: the group-frame payload fields. */
+        const val FIELD_GROUP_ID = "groupId"
+        const val FIELD_TITLE = "title"
+        const val FIELD_DESCRIPTION = "description"
+        const val FIELD_ACTOR_ID = "actorId"
+        const val FIELD_USER = "user"
+        const val FIELD_USER_ID = "userId"
+        const val FIELD_ROLE = "role"
+        const val FIELD_REASON = "reason"
 
         /** research.md 004 §11 observability contract name (SC-005). */
         const val PUSH_SECONDS = "webchat_realtime_push_seconds"

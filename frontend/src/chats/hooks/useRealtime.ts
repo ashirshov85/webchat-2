@@ -15,9 +15,17 @@
  * the FR-009 trigger for refetching REST state. The channel is
  * at-most-once: consumers deduplicate by `message.id` and reconcile
  * with the server on (re)connect (SC-002/003).
+ *
+ * Feature 006 (T027, realtime-group-events.md §1): the same per-user
+ * stream also carries the `group.*` frames, so the dispatcher parses
+ * them and hands every frame to the group listeners (`onGroupEvent`,
+ * consumed by groups/hooks/useGroupRealtime) — one connection, one
+ * multiplexed feed. Unknown `event:` types stay ignored (forward
+ * compatibility, 004 §2).
  */
 import { useEffect, useRef } from 'react'
 import type { ChatReadEvent, MessageCreatedEvent } from '../../api/chats'
+import type { GroupRealtimeEvent } from '../../api/groups'
 import { streamUserEvents } from '../../api/sse'
 import type { SseConnection } from '../../api/sse'
 
@@ -29,10 +37,19 @@ export type ChatReadListener = (event: ChatReadEvent) => void
 
 export type RealtimeOpenListener = () => void
 
+export type GroupEventListener = (event: GroupRealtimeEvent) => void
+
 export interface RealtimeStream {
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe
   onChatRead(chatId: string | null, listener: ChatReadListener): Unsubscribe
   onOpen(listener: RealtimeOpenListener): Unsubscribe
+  /**
+   * Subscribes to every №18 group frame of the user's stream
+   * (feature 006): the listener applies the described STATE
+   * idempotently (FR-015) — dedup/ordering concerns live in the
+   * consumer's reducer, not here.
+   */
+  onGroupEvent(listener: GroupEventListener): Unsubscribe
 }
 
 class UserEventStream implements RealtimeStream {
@@ -41,6 +58,7 @@ class UserEventStream implements RealtimeStream {
   private readonly messageListeners = new Map<string | null, Set<MessageCreatedListener>>()
   private readonly chatReadListeners = new Map<string | null, Set<ChatReadListener>>()
   private readonly openListeners = new Set<RealtimeOpenListener>()
+  private readonly groupListeners = new Set<GroupEventListener>()
 
   retain(): void {
     this.refCount += 1
@@ -54,12 +72,18 @@ class UserEventStream implements RealtimeStream {
         }
       },
     })
-    this.connection.subscribe('message.created', (data) => {
+    const connection = this.connection
+    connection.subscribe('message.created', (data) => {
       this.handleMessageCreated(data)
     })
-    this.connection.subscribe('chat.read', (data) => {
+    connection.subscribe('chat.read', (data) => {
       this.handleChatRead(data)
     })
+    for (const eventType of GROUP_EVENT_TYPES) {
+      connection.subscribe(eventType, (data) => {
+        this.handleGroupEvent(eventType, data)
+      })
+    }
   }
 
   release(): void {
@@ -73,6 +97,7 @@ class UserEventStream implements RealtimeStream {
     this.messageListeners.clear()
     this.chatReadListeners.clear()
     this.openListeners.clear()
+    this.groupListeners.clear()
   }
 
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe {
@@ -87,6 +112,13 @@ class UserEventStream implements RealtimeStream {
     this.openListeners.add(listener)
     return () => {
       this.openListeners.delete(listener)
+    }
+  }
+
+  onGroupEvent(listener: GroupEventListener): Unsubscribe {
+    this.groupListeners.add(listener)
+    return () => {
+      this.groupListeners.delete(listener)
     }
   }
 
@@ -126,6 +158,16 @@ class UserEventStream implements RealtimeStream {
     }
     this.emitTo(this.chatReadListeners, event.chatId, event)
     this.emitTo(this.chatReadListeners, null, event)
+  }
+
+  private handleGroupEvent(eventType: GroupEventType, data: string): void {
+    const event = parseGroupEvent(eventType, data)
+    if (event === null) {
+      return
+    }
+    for (const listener of this.groupListeners) {
+      listener(event)
+    }
   }
 
   private emitTo<T>(
@@ -186,6 +228,75 @@ function isChatReadEvent(value: unknown): value is ChatReadEvent {
     typeof candidate.readUpToSeq === 'number' &&
     typeof candidate.byUserId === 'string'
   )
+}
+
+/** №18 group `event:` types (feature 006, realtime-group-events.md §3). */
+const GROUP_EVENT_TYPES = [
+  'group.updated',
+  'group.member.added',
+  'group.member.removed',
+  'group.role.changed',
+  'group.deleted',
+  'group.you_removed',
+] as const
+
+type GroupEventType = (typeof GROUP_EVENT_TYPES)[number]
+
+function parseGroupEvent(eventType: GroupEventType, data: string): GroupRealtimeEvent | null {
+  let payload: unknown
+  try {
+    payload = JSON.parse(data)
+  } catch {
+    return null
+  }
+  if (typeof payload !== 'object' || payload === null || !isGroupEventPayload(eventType, payload)) {
+    return null
+  }
+  return { ...payload, type: eventType } as GroupRealtimeEvent
+}
+
+function isGroupEventPayload(eventType: GroupEventType, value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const candidate = value as Record<string, unknown>
+  // `groupId` (= chatId) is the one field every §3 payload carries.
+  if (typeof candidate.groupId !== 'string') {
+    return false
+  }
+  switch (eventType) {
+    case 'group.updated':
+      return (
+        typeof candidate.title === 'string' &&
+        (candidate.description === null || typeof candidate.description === 'string') &&
+        typeof candidate.actorId === 'string'
+      )
+    case 'group.member.added':
+      return isPublicUser(candidate.user) && typeof candidate.actorId === 'string'
+    case 'group.member.removed':
+      return (
+        typeof candidate.userId === 'string' &&
+        (candidate.actorId === null || typeof candidate.actorId === 'string')
+      )
+    case 'group.role.changed':
+      return (
+        typeof candidate.userId === 'string' &&
+        (candidate.role === 'owner' || candidate.role === 'admin' || candidate.role === 'member') &&
+        typeof candidate.actorId === 'string'
+      )
+    case 'group.deleted':
+      return typeof candidate.actorId === 'string'
+    case 'group.you_removed':
+      return candidate.reason === 'kicked' || candidate.reason === 'left'
+  }
+}
+
+function isPublicUser(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const candidate = value as { id?: unknown; username?: unknown }
+  return typeof candidate.id === 'string' && typeof candidate.username === 'string'
 }
 
 let sharedStream: UserEventStream | null = null

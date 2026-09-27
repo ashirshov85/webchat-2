@@ -28,6 +28,7 @@ import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.GroupEvent
 import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.MessageRepository
@@ -45,6 +46,7 @@ import webchat.backend.config.ChatsProperties
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.groups.domain.model.MemberRole
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -391,6 +393,35 @@ class MessageControllerTest {
             userId: UUID,
             chatId: UUID,
         ): Long = 0L
+
+        /** 006 group-roster legs are outside the №15–№17 surface — inert defaults. */
+        override fun findActive(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun activeMembers(chatId: UUID): List<ChatParticipant> = emptyList()
+
+        override fun addMember(
+            chatId: UUID,
+            userId: UUID,
+            role: MemberRole,
+        ): ChatParticipant = error("the message endpoints never manage the group roster")
+
+        override fun reactivate(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun removeMember(
+            chatId: UUID,
+            userId: UUID,
+        ): Boolean = false
+
+        override fun minOtherReadUpToSeq(
+            chatId: UUID,
+            userId: UUID,
+        ): Long = 0L
     }
 
     /** The realtime leg is irrelevant to the HTTP mapping — a silent sink keeps the unit surface narrow. */
@@ -402,6 +433,21 @@ class MessageControllerTest {
 
         override fun publishChatRead(
             toUserId: UUID,
+            event: ChatReadEvent,
+        ) = Unit
+
+        override fun fanoutGroupEvent(
+            toUserIds: List<UUID>,
+            event: GroupEvent,
+        ) = Unit
+
+        override fun fanoutMessageCreated(
+            toUserIds: List<UUID>,
+            event: MessageCreatedEvent,
+        ) = Unit
+
+        override fun fanoutChatRead(
+            toUserIds: List<UUID>,
             event: ChatReadEvent,
         ) = Unit
     }

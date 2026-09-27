@@ -216,9 +216,11 @@ async function runCatchUp(
       applyPage(userId, batcher, emit, {
         chatId: delta.chatId,
         messages: delta.messages,
-        peer: delta.peer,
-        blockedByMe: delta.blockedByMe,
-        peerReadUpToSeq: delta.peerReadUpToSeq,
+        // 006: group deltas carry null peer metadata (research.md §5) —
+        // normalized to "absent" until the group list projection (T028/T037).
+        peer: delta.peer ?? undefined,
+        blockedByMe: delta.blockedByMe ?? undefined,
+        peerReadUpToSeq: delta.peerReadUpToSeq ?? undefined,
         unreadCount: delta.unreadCount,
         truncatedUpToSeq: delta.truncatedUpToSeq,
       })

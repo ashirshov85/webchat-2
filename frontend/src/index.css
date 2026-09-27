@@ -291,6 +291,41 @@ body {
   font-style: italic;
 }
 
+/* Group rows of the unified «Чаты» list (feature 006, T028; FR-014) */
+.chat-item-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.chat-item-members {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Поиск единого списка «Чаты» (feature 006, T028; FR-014) */
+.chat-panel-search {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 6px 10px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
 .chat-panel-error {
   display: flex;
   flex-direction: column;
@@ -759,4 +794,155 @@ p {
   color: inherit;
   background: none;
   border: none;
+}
+
+/* Group creation entry (feature 006, T029): the panel button swaps
+   into the inline CreateGroupDialog above the unified «Чаты» list. */
+.panel-actions {
+  margin-bottom: 12px;
+}
+
+.panel-create-group {
+  width: 100%;
+  padding: 8px 10px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.panel-create-group:hover:not(:disabled) {
+  color: inherit;
+  border-color: var(--accent);
+}
+
+.messenger-panel .group-dialog {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+/* Group creation dialog (feature 006, T026): №27 form — title/
+   description fields (FR-001) + the contacts multiselect (FR-002). */
+.group-dialog {
+  position: static;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 10px;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: inherit;
+}
+
+.group-dialog-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.group-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-dialog-field label {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.group-dialog-field input {
+  padding: 8px 10px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.group-dialog-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.group-dialog-submit {
+  padding: 8px 14px;
+  font: inherit;
+  color: #ffffff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+.group-dialog-submit:disabled {
+  opacity: 0.6;
+}
+
+.group-dialog-cancel {
+  padding: 8px 14px;
+  font: inherit;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* Contacts multiselect (AddMembersPicker, feature 006, T026):
+   checkbox rows over the shared contact-row typography. */
+.member-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.member-picker-legend {
+  padding: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.member-picker-items {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.member-picker-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.member-picker-row-main:has(input:checked) {
+  border-color: var(--accent);
+}
+
+.member-picker-count {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
 }

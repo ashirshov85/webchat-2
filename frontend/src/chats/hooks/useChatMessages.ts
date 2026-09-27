@@ -277,8 +277,13 @@ export function useChatMessages(
         if (cancelled) {
           return
         }
-        setPeerUserId(view.peer.id)
-        setPeerReadUpToSeq((previous) => Math.max(previous, view.peerReadUpToSeq))
+        if (view.peer !== null) {
+          setPeerUserId(view.peer.id)
+        }
+        const peerReadUpToSeq = view.peerReadUpToSeq
+        if (peerReadUpToSeq !== null) {
+          setPeerReadUpToSeq((previous) => Math.max(previous, peerReadUpToSeq))
+        }
         lastSentReadSeqRef.current = Math.max(lastSentReadSeqRef.current, view.myReadUpToSeq)
       } catch {
         // Read marks and ✓✓ are background enhancements: the history

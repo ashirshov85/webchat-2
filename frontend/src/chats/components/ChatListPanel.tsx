@@ -11,11 +11,20 @@
  * state inside the «Контакты» content (T059 sort toggle, search field)
  * survive the round trip. The default mode is «Чаты» (FR-013).
  *
+ * Unified list + search (feature 006, T028; FR-014): direct dialogs and
+ * groups render in ONE «Чаты» list — a group row shows its `title`, a
+ * direct row the peer login (ChatListItem discriminates by `type`). The
+ * search field filters the RENDERED rows live, case-insensitively, by
+ * the group title or the peer login: the server keeps owning the
+ * ordering, the panel only filters what it already renders (no extra
+ * requests); clearing the query restores the full list.
+ *
  * «Чаты» states: loading, error with a retry (the list refetches via
  * `onReload` — the same path SSE reconnects use), empty (a first
- * incoming from a stranger lands here automatically, FR-019) and the
- * list itself. Rows (ChatListItem) render the preview, the unread
- * badge («99+», exact internal count — the optimistic cache of the
+ * incoming from a stranger lands here automatically, FR-019), the
+ * list itself and the «Ничего не найдено» hint of an over-narrow
+ * query. Rows (ChatListItem) render the preview, the unread badge
+ * («99+», exact internal count — the optimistic cache of the
  * server-authoritative counter that useChatList converges over №12,
  * №26 sync deltas and realtime frames, feature 005 T035) and the
  * «заблокирован» mark (FR-014/020); clicking a row opens the pair
@@ -30,6 +39,20 @@ import { ErrorBanner } from './ErrorBanner'
 import { ChatListItem } from './ChatListItem'
 
 export type ChatListPanelMode = 'chats' | 'contacts'
+
+/**
+ * FR-014 row matching: a group answers by its `title`, a direct dialog
+ * by the peer login — both case-insensitively. A group whose №12
+ * aggregate has not landed yet (a bare realtime row) matches nothing:
+ * the aggregate converges on the next №12 refetch.
+ */
+function chatMatchesQuery(item: ChatListItemData, normalizedQuery: string): boolean {
+  if (normalizedQuery === '') {
+    return true
+  }
+  const label = item.type === 'group' ? item.title : item.peer?.username
+  return label !== undefined && label.toLowerCase().includes(normalizedQuery)
+}
 
 export interface ChatListPanelProps {
   /** №12 aggregate rows as maintained by useChatList (already ordered). */
@@ -64,6 +87,10 @@ export function ChatListPanel({
   defaultMode = 'chats',
 }: ChatListPanelProps) {
   const [mode, setMode] = useState<ChatListPanelMode>(defaultMode)
+  const [query, setQuery] = useState('')
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleChats =
+    normalizedQuery === '' ? chats : chats.filter((item) => chatMatchesQuery(item, normalizedQuery))
 
   return (
     <div className="chat-panel">
@@ -105,6 +132,16 @@ export function ChatListPanel({
         className="chat-panel-section"
         hidden={mode !== 'chats'}
       >
+        <input
+          type="search"
+          className="chat-panel-search"
+          aria-label="Поиск чатов"
+          placeholder="Поиск: название группы или логин"
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value)
+          }}
+        />
         {status === 'loading' && <p className="messenger-empty">Загрузка чатов…</p>}
         {status === 'error' && (
           <div className="chat-panel-error">
@@ -125,9 +162,12 @@ export function ChatListPanel({
         {status === 'ready' && chats.length === 0 && (
           <p className="messenger-empty">Диалогов пока нет</p>
         )}
-        {chats.length > 0 && (
+        {status === 'ready' && chats.length > 0 && visibleChats.length === 0 && (
+          <p className="messenger-empty">Ничего не найдено</p>
+        )}
+        {visibleChats.length > 0 && (
           <ul className="chat-list" aria-label="Список чатов">
-            {chats.map((item) => (
+            {visibleChats.map((item) => (
               <ChatListItem
                 key={item.chatId}
                 item={item}

@@ -10,6 +10,7 @@ import webchat.backend.auth.domain.model.UserStatus
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.api.dto.EnsureChatRequest
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.ChatPeerSnapshot
@@ -23,6 +24,7 @@ import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.service.ChatService
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.groups.domain.model.MemberRole
 import java.time.Instant
 import java.util.UUID
 
@@ -68,7 +70,7 @@ class ChatControllerTest {
         val response = controller.ensure(EnsureChatRequest(ALICE.toString()), tokenOf(BOB))
 
         assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
-        assertThat(response.body!!.peer.id).isEqualTo(ALICE)
+        assertThat(requireNotNull(response.body!!.peer).id).isEqualTo(ALICE)
         assertThat(response.body!!.myReadUpToSeq)
             .overridingErrorMessage("the reader must see its OWN mark as myReadUpToSeq")
             .isEqualTo(BOB_READ_SEQ)
@@ -135,11 +137,12 @@ class ChatControllerTest {
         assertThat(response.chats).hasSize(2)
         val pairItem = response.chats[0]
         assertThat(pairItem.chatId).isEqualTo(PAIR_CHAT.id)
-        assertThat(pairItem.peer.id).isEqualTo(BOB)
-        assertThat(pairItem.peer.username).isEqualTo("bob")
-        assertThat(pairItem.peer.email).isEqualTo("bob@example.com")
-        assertThat(pairItem.peer.status).isEqualTo("pending_email_confirmation")
-        assertThat(pairItem.peer.createdAt).isEqualTo(CREATED_AT)
+        val peer = pairItem.peer!!
+        assertThat(peer.id).isEqualTo(BOB)
+        assertThat(peer.username).isEqualTo("bob")
+        assertThat(peer.email).isEqualTo("bob@example.com")
+        assertThat(peer.status).isEqualTo("pending_email_confirmation")
+        assertThat(peer.createdAt).isEqualTo(CREATED_AT)
         assertThat(pairItem.lastMessage!!.id).isEqualTo(LAST_MESSAGE.id)
         assertThat(pairItem.lastMessage.chatId).isEqualTo(PAIR_CHAT.id)
         assertThat(pairItem.lastMessage.senderId).isEqualTo(BOB)
@@ -149,6 +152,29 @@ class ChatControllerTest {
         assertThat(pairItem.unreadCount).isEqualTo(UNREAD_COUNT)
         assertThat(pairItem.blockedByMe).isFalse
         assertThat(listRepository.listCalls).containsExactly(ALICE)
+    }
+
+    /**
+     * T023 (006, api-contract.md §3): a GROUP row re-shapes into the group
+     * element of the unified №12 list — `type:'group'`, `title`,
+     * `memberCount`, `myRole` (the lowercase contract label) and the peer
+     * projection carried as explicit nulls (a group has no peer; blocks
+     * never apply, Assumptions 006).
+     */
+    @Test
+    fun `listChats maps a group row into the group element with nulled peer fields`() {
+        listRepository.entries = listOf(groupEntry())
+
+        val item = controller.listChats(tokenOf(OWNER)).chats.single()
+
+        assertThat(item.type).isEqualTo("group")
+        assertThat(item.title).isEqualTo(GROUP_TITLE)
+        assertThat(item.memberCount).isEqualTo(GROUP_MEMBER_COUNT)
+        assertThat(item.myRole).isEqualTo("owner")
+        assertThat(item.peer).isNull()
+        assertThat(item.blockedByMe).isNull()
+        assertThat(item.lastMessage).isNull()
+        assertThat(item.unreadCount).isZero
     }
 
     /** №12 empty leg: a caller without dialogs gets an EMPTY array, not an absent field. */
@@ -185,6 +211,10 @@ class ChatControllerTest {
 
     private fun webchat.backend.chats.api.dto.ChatView.assertPairView() {
         assertThat(chatId).isEqualTo(PAIR_CHAT.id)
+        val peer =
+            requireNotNull(peer) {
+                "the DIRECT variant of №11/№13 always carries the peer projection (T024 nullable group leg aside)"
+            }
         assertThat(peer.id).isEqualTo(BOB)
         assertThat(peer.username).isEqualTo("bob")
         assertThat(peer.email).isEqualTo("bob@example.com")
@@ -261,6 +291,20 @@ class ChatControllerTest {
             blockedByMe = false,
         )
 
+    /** T023 fixture: one №12 GROUP row — the owner's element of a fresh group. */
+    private fun groupEntry(): ChatListEntry =
+        ChatListEntry(
+            chatId = GROUP_CHAT_ID,
+            kind = ChatKind.GROUP,
+            title = GROUP_TITLE,
+            memberCount = GROUP_MEMBER_COUNT,
+            myRole = MemberRole.OWNER,
+            peer = null,
+            lastMessage = null,
+            unreadCount = 0,
+            blockedByMe = null,
+        )
+
     private companion object {
         val ALICE = UUID.fromString("00000000-0000-0000-0000-000000000001")
         val BOB = UUID.fromString("00000000-0000-0000-0000-000000000002")
@@ -283,6 +327,12 @@ class ChatControllerTest {
                 createdAt = CREATED_AT,
             )
         const val UNREAD_COUNT = 2L
+
+        /** T023 fixtures: the group element of the unified №12 list. */
+        val OWNER = UUID.fromString("00000000-0000-0000-0000-000000000004")
+        val GROUP_CHAT_ID = UUID.fromString("00000000-0000-0000-0000-0000000000dd")
+        const val GROUP_TITLE = "the T023 group"
+        const val GROUP_MEMBER_COUNT = 3L
     }
 
     /**
@@ -371,6 +421,35 @@ class ChatControllerTest {
         override fun countUnread(
             userId: UUID,
             chatId: UUID,
+        ): Long = 0L
+
+        /** 006 group-roster legs are outside the №11–№13 surface — inert defaults. */
+        override fun findActive(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun activeMembers(chatId: UUID): List<ChatParticipant> = emptyList()
+
+        override fun addMember(
+            chatId: UUID,
+            userId: UUID,
+            role: MemberRole,
+        ): ChatParticipant = error("the chat views never manage the group roster")
+
+        override fun reactivate(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = null
+
+        override fun removeMember(
+            chatId: UUID,
+            userId: UUID,
+        ): Boolean = false
+
+        override fun minOtherReadUpToSeq(
+            chatId: UUID,
+            userId: UUID,
         ): Long = 0L
     }
 

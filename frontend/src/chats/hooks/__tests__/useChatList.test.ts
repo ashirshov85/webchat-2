@@ -291,7 +291,7 @@ describe('useChatList stranger chat (FR-019/US5-4)', () => {
     await waitFor(() => {
       expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-stranger', 'chat-1'])
     })
-    expect(result.current.chats[0]?.peer.username).toBe('carol')
+    expect(result.current.chats[0]?.peer?.username).toBe('carol')
     expect(result.current.chats[0]?.unreadCount).toBe(1)
   })
 

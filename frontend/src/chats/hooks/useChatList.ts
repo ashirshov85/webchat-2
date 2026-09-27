@@ -58,6 +58,24 @@
  * delta adoption, and a №12 refetch of a STILL-blocked chat keeps the
  * frozen value; the unblock refetch (block toggles reload №12)
  * converges to the server counter again.
+ *
+ * Unified direct+group list (feature 006, T028; FR-014): №12 returns
+ * one aggregate for both kinds — group elements (`type:'group'`,
+ * `title`, `memberCount`, `myRole`, null `peer`/`blockedByMe`) flow
+ * through the SAME sort (004: last visible message first), and the
+ * helpers above are kind-agnostic (a null `blockedByMe` is falsy, so
+ * group badges grow and reset exactly like direct ones — blocks never
+ * apply to groups). `group.member.added` frames close the US1-2 gap
+ * the way FR-019 closes strangers: a frame of a group UNKNOWN to the
+ * list means the user was just added (the frame reaches every active
+ * participant INCLUDING the added one, realtime-group-events.md §3.2),
+ * so the hook refetches №12 — the group appears with its server-owned
+ * title/counter/role and the FR-013 zero badge in one request. A frame
+ * of a KNOWN group changes nothing: the aggregates are
+ * server-authoritative and the channel may redeliver, so the handler
+ * applies STATE, never deltas (FR-015) — `memberCount` converges on
+ * the next №12 refetch. The removal/role events of the later stories
+ * join here with their own reducers (T048/T053/T058/T066).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listChats } from '../../api/chats'
@@ -413,10 +431,28 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
       }
       applyChats((previous) => resetUnread(previous, event.chatId))
     })
+    const unsubscribeGroup = realtime.onGroupEvent((event) => {
+      if (event.type !== 'group.member.added') {
+        return
+      }
+      if (chatsRef.current.some((item) => item.chatId === event.groupId)) {
+        // Known group: the frame carries no aggregates and the channel
+        // may redeliver — state, not deltas (FR-015); memberCount and
+        // the roster converge via №12 on the next (re)connect refetch.
+        return
+      }
+      // US1-2 (realtime-group-events.md §3.2): the user was just added
+      // — only the server aggregate can materialize the row (title,
+      // counter, role, the FR-013 zero badge). The refetch is
+      // idempotent: a duplicate frame at worst refetches the same
+      // truth.
+      setRefreshCount((count) => count + 1)
+    })
     return () => {
       unsubscribeOpen()
       unsubscribeCreated()
       unsubscribeRead()
+      unsubscribeGroup()
     }
   }, [realtime, applyChats])
 

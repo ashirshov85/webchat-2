@@ -1,0 +1,66 @@
+# oasdiff breaking --err-ignore — path+field-scoped исключения (006-group-chats, T002)
+#
+# Основание: specs/006-group-chats/research.md §5 и specs/006-group-chats/contracts/api-contract.md §4 —
+# единственное намеренное изменение обязательности полей в контракте 0.6.0 — nullable-переход
+# peer / blockedByMe / peerReadUpToSeq (у group-элементов эти поля возвращают null):
+#   №12 GET  /api/v1/chats            — ChatListItem (peer, blockedByMe)
+#   №13 GET  /api/v1/chats/{chatId}   — ChatView (peer, blockedByMe, peerReadUpToSeq)
+#   №11 POST /api/v1/chats/ensure     — та же схема ChatView => тот же переход (неизбежное
+#                                       следствие переиспользования схемы, не отдельное изменение)
+#   №26 POST /api/v1/users/me/sync    — SyncChatDelta (peer, blockedByMe, peerReadUpToSeq)
+#
+# Переход выражается правилами oasdiff: response-property-became-nullable (blockedByMe,
+# peerReadUpToSeq), response-property-any-of-added + response-property-type-changed (peer как
+# anyOf [PublicUser, null] в OpenAPI 3.1) и response-required-property-removed (суб-свойства peer
+# перестают быть безусловно обязательными, т.к. peer может быть null).
+#
+# Область действия точечная: любое другое поле на этих путях и любые другие пути по-прежнему
+# падают с --fail-on ERR. Глобальные rule-exclusions НЕ используются.
+#
+# УДАЛИТЬ этот файл, когда база сравнения на origin/main станет 0.6.0 — дифф по данным полям
+# исчезнет, и исключения станут мёртвыми строками.
+
+GET /api/v1/chats added `#/components/schemas/PublicUser, subschema #2` to the `chats/items/peer` response property `anyOf` list for the response status `200`
+GET /api/v1/chats the response property `chats/items/blockedByMe` became nullable for the status `200`
+GET /api/v1/chats the `chats/items/peer` response's property `type` changed from `object` to `any` for status `200`
+GET /api/v1/chats removed the required property `chats/items/peer/createdAt` from the response with the `200` status
+GET /api/v1/chats removed the required property `chats/items/peer/email` from the response with the `200` status
+GET /api/v1/chats removed the required property `chats/items/peer/id` from the response with the `200` status
+GET /api/v1/chats removed the required property `chats/items/peer/status` from the response with the `200` status
+GET /api/v1/chats removed the required property `chats/items/peer/username` from the response with the `200` status
+POST /api/v1/chats/ensure added `#/components/schemas/PublicUser, subschema #2` to the `peer` response property `anyOf` list for the response status `200`
+POST /api/v1/chats/ensure added `#/components/schemas/PublicUser, subschema #2` to the `peer` response property `anyOf` list for the response status `201`
+POST /api/v1/chats/ensure the response property `blockedByMe` became nullable for the status `200`
+POST /api/v1/chats/ensure the response property `blockedByMe` became nullable for the status `201`
+POST /api/v1/chats/ensure the response property `peerReadUpToSeq` became nullable for the status `200`
+POST /api/v1/chats/ensure the response property `peerReadUpToSeq` became nullable for the status `201`
+POST /api/v1/chats/ensure the `peer` response's property `type` changed from `object` to `any` for status `200`
+POST /api/v1/chats/ensure the `peer` response's property `type` changed from `object` to `any` for status `201`
+POST /api/v1/chats/ensure removed the required property `peer/createdAt` from the response with the `200` status
+POST /api/v1/chats/ensure removed the required property `peer/createdAt` from the response with the `201` status
+POST /api/v1/chats/ensure removed the required property `peer/email` from the response with the `200` status
+POST /api/v1/chats/ensure removed the required property `peer/email` from the response with the `201` status
+POST /api/v1/chats/ensure removed the required property `peer/id` from the response with the `200` status
+POST /api/v1/chats/ensure removed the required property `peer/id` from the response with the `201` status
+POST /api/v1/chats/ensure removed the required property `peer/status` from the response with the `200` status
+POST /api/v1/chats/ensure removed the required property `peer/status` from the response with the `201` status
+POST /api/v1/chats/ensure removed the required property `peer/username` from the response with the `200` status
+POST /api/v1/chats/ensure removed the required property `peer/username` from the response with the `201` status
+GET /api/v1/chats/{chatId} added `#/components/schemas/PublicUser, subschema #2` to the `peer` response property `anyOf` list for the response status `200`
+GET /api/v1/chats/{chatId} the response property `blockedByMe` became nullable for the status `200`
+GET /api/v1/chats/{chatId} the response property `peerReadUpToSeq` became nullable for the status `200`
+GET /api/v1/chats/{chatId} the `peer` response's property `type` changed from `object` to `any` for status `200`
+GET /api/v1/chats/{chatId} removed the required property `peer/createdAt` from the response with the `200` status
+GET /api/v1/chats/{chatId} removed the required property `peer/email` from the response with the `200` status
+GET /api/v1/chats/{chatId} removed the required property `peer/id` from the response with the `200` status
+GET /api/v1/chats/{chatId} removed the required property `peer/status` from the response with the `200` status
+GET /api/v1/chats/{chatId} removed the required property `peer/username` from the response with the `200` status
+POST /api/v1/users/me/sync added `#/components/schemas/PublicUser, subschema #2` to the `chats/items/peer` response property `anyOf` list for the response status `200`
+POST /api/v1/users/me/sync the response property `chats/items/blockedByMe` became nullable for the status `200`
+POST /api/v1/users/me/sync the response property `chats/items/peerReadUpToSeq` became nullable for the status `200`
+POST /api/v1/users/me/sync the `chats/items/peer` response's property `type` changed from `object` to `any` for status `200`
+POST /api/v1/users/me/sync removed the required property `chats/items/peer/createdAt` from the response with the `200` status
+POST /api/v1/users/me/sync removed the required property `chats/items/peer/email` from the response with the `200` status
+POST /api/v1/users/me/sync removed the required property `chats/items/peer/id` from the response with the `200` status
+POST /api/v1/users/me/sync removed the required property `chats/items/peer/status` from the response with the `200` status
+POST /api/v1/users/me/sync removed the required property `chats/items/peer/username` from the response with the `200` status

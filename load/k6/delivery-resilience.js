@@ -96,7 +96,7 @@ import { Counter, Trend } from 'k6/metrics'
  *      K6_SATURATION_PAIRS >= 12000; for the budget profile —
  *      K6_TARGET_RPS=100000 K6_DURATION=10m K6_SATURATION_PAIRS>=200000 —
  *      executed by distributed k6 on scaled infrastructure (platform feature
- *      014, plan.md Complexity Tracking); user seeding then scales with the
+ *      016, plan.md Complexity Tracking); user seeding then scales with the
  *      stand and is not Mailpit-bound.
  *
  * The SSE client needs the k6/x/sse extension (stock k6 buffers HTTP bodies,
