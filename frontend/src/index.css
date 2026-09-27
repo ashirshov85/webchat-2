@@ -826,14 +826,17 @@ p {
 /* Group creation dialog (feature 006, T026): №27 form — title/
    description fields (FR-001) + the contacts multiselect (FR-002). */
 .group-dialog {
+  position: static;
   display: flex;
   flex-direction: column;
+  width: 100%;
   gap: 10px;
   margin: 0;
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
+  color: inherit;
 }
 
 .group-dialog-title {

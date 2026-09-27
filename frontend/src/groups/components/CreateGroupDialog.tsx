@@ -15,7 +15,7 @@
  * retry; the created `GroupView` is handed to the parent via
  * `onCreated` (T029 wiring opens the group window).
  */
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type SubmitEvent } from 'react'
 import { listContacts } from '../../api/chats'
 import type { ContactView } from '../../api/chats'
 import { createGroup } from '../../api/groups'
@@ -85,7 +85,7 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
   }, [])
 
   const handleSubmit = useCallback(
-    (event: FormEvent) => {
+    (event: SubmitEvent<HTMLFormElement>) => {
       event.preventDefault()
       if (pending) {
         return
@@ -127,7 +127,7 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
   )
 
   return (
-    <section className="group-dialog" role="dialog" aria-label="Создание группы">
+    <dialog className="group-dialog" open aria-label="Создание группы">
       <h2 className="group-dialog-title">Новая группа</h2>
       <form className="group-dialog-form" onSubmit={handleSubmit}>
         {validationError !== null && (
@@ -200,6 +200,6 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
           )}
         </div>
       </form>
-    </section>
+    </dialog>
   )
 }

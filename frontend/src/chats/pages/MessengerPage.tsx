@@ -253,7 +253,7 @@ export function MessengerPage() {
   // open dialog's mark to the server state. A GROUP window never
   // carries the mark — blocks never apply to groups (006 Assumptions).
   useEffect(() => {
-    if (activeChat === null || activeChat.kind !== 'direct') {
+    if (activeChat?.kind !== 'direct') {
       return
     }
     const item = chats.find((entry) => entry.chatId === activeChat.chatId)
@@ -300,7 +300,7 @@ export function MessengerPage() {
   const handleSelectChat = useCallback(
     (chatId: string) => {
       const item = chats.find((entry) => entry.chatId === chatId)
-      if (item !== undefined && item.type === 'group') {
+      if (item?.type === 'group') {
         // The unified list (T028): a group row opens the GROUP window —
         // the №12 title is the server-owned header of US1.
         openChatView({ kind: 'group', chatId: item.chatId, title: item.title ?? '' })
@@ -343,7 +343,7 @@ export function MessengerPage() {
   /** №14 DELETE /chats/{chatId} + outbox purge (FR-021, T060) — direct only. */
   const handleConfirmDeleteChat = useCallback(() => {
     const target = activeChat
-    if (target === null || target.kind !== 'direct') {
+    if (target?.kind !== 'direct') {
       return
     }
     setActionPending(true)
@@ -368,7 +368,7 @@ export function MessengerPage() {
   /** №23/№24 block toggle driven by `blockedByMe` (FR-020, T060) — direct only. */
   const handleConfirmBlockToggle = useCallback(() => {
     const target = activeChat
-    if (target === null || target.kind !== 'direct') {
+    if (target?.kind !== 'direct') {
       return
     }
     const blocking = !target.blockedByMe

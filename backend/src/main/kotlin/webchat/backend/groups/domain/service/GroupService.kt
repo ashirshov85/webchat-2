@@ -212,7 +212,7 @@ class GroupService(
         rolePolicy.requireCanAddMembers(membership)
         requireNotSelf(callerId, userIds, USER_IDS_FIELD)
         requireAllContactsOf(callerId, userIds, USER_IDS_FIELD)
-        val activeIds = participants.activeMembers(group.id).mapTo(mutableSetOf()) { it.userId }
+        val activeIds = participants.activeMembers(group.id).map { it.userId }.toSet()
         val incoming = userIds.filter { it !in activeIds }
         requireWithinCapacity(activeCount = activeIds.size, joiningCount = incoming.size)
         val addedIds = incoming.mapNotNull { userId -> addOrReactivate(group.id, userId, callerId) }
@@ -280,7 +280,7 @@ class GroupService(
     ) {
         if (candidateIds.isEmpty()) return
         val contactIds =
-            contacts.listByOwner(actorId, ContactSort.LOGIN).mapTo(mutableSetOf()) { it.contact.contactUserId }
+            contacts.listByOwner(actorId, ContactSort.LOGIN).map { it.contact.contactUserId }.toSet()
         if (candidateIds.any { it !in contactIds }) throw NotInContactsException(field)
     }
 
