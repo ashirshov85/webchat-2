@@ -47,10 +47,27 @@
  * it spans all chats (the outbox storage is per-user), so it lives
  * here and not inside a dialog; the evicted records themselves render
  * «не отправлено (переполнение очереди)» in their dialogs (T028).
+ *
+ * Group creation entry + group window (feature 006, T029; US1,
+ * quickstart §3.1): the panel carries the «Создать группу» button
+ * that swaps into the CreateGroupDialog (T026) — its №27 `onCreated`
+ * result closes the dialog, refetches №12 (the group materializes
+ * from the server aggregate for the creator at once) and OPENS the
+ * group window on the fresh `GroupView`. A group row of the unified
+ * list (T028) opens the same window: the header renders the group
+ * title, and the direct-only «Действия» menu (№14/№23/№24 — a 004
+ * pair-dialog feature; blocks never apply to groups) stays absent
+ * until the group card of US3 joins here. The window body is the
+ * chatId-agnostic MessageList/MessageInput pair: the №16 history of
+ * an active member loads already, while SENDING before the US2 gate
+ * (T035) may be refused by the server — the documented interim US1
+ * state (tasks.md US1 Dependencies), surfaced by the outbox as the
+ * usual «не отправлено» + retry.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
+import type { GroupView } from '../../api/groups'
 import { blockUser, deleteChat, getChat, unblockUser } from '../../api/chats'
 import type { Message } from '../../api/chats'
 import { getAckBatcher } from '../../sync/ack'
@@ -68,15 +85,36 @@ import { useChatList } from '../hooks/useChatList'
 import { useChatMessages } from '../hooks/useChatMessages'
 import { useOutbox } from '../hooks/useOutbox'
 import { useRealtime } from '../hooks/useRealtime'
+import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
 
-/** The open dialog: everything the header actions need (T060). */
-interface ActiveChat {
+/** The open direct dialog: everything the header actions need (T060). */
+interface DirectChatView {
+  readonly kind: 'direct'
   readonly chatId: string
   readonly peer: PublicUser
   readonly blockedByMe: boolean
 }
 
-/** A confirmation awaiting the user's decision («диалоговое меню»). */
+/**
+ * The open GROUP window (feature 006, T029; US1): the header title is
+ * all the US1 window needs — the roster/roles card is US3 (T046), the
+ * window actions are US3/US6. `title` comes from the №12 row or the
+ * №27/№13 answer and is server-authoritative.
+ */
+interface GroupChatView {
+  readonly kind: 'group'
+  readonly chatId: string
+  readonly title: string
+}
+
+/** The open dialog of either kind (T029): one window, two headers. */
+type ActiveChat = DirectChatView | GroupChatView
+
+/**
+ * A confirmation awaiting the user's decision («диалоговое меню») —
+ * the actions are DIRECT-dialog only (T029: a group window carries no
+ * №14/№23/№24 controls until the US3/US6 group card joins).
+ */
 type PendingAction = 'delete-chat' | 'block' | 'unblock'
 
 interface ConfirmCopy {
@@ -118,6 +156,8 @@ export function MessengerPage() {
   const [actionError, setActionError] = useState<unknown>(null)
   /** Bumps ContactList refetch after UserSearchBox added a contact. */
   const [contactsRefresh, setContactsRefresh] = useState(0)
+  /** The CreateGroupDialog lifetime (T029): closed = the entry button. */
+  const [createGroupOpen, setCreateGroupOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -210,15 +250,18 @@ export function MessengerPage() {
 
   // Keep the header's `blockedByMe` in step with the №12 aggregate:
   // every list refetch (block actions, SSE reconnects) reconciles the
-  // open dialog's mark to the server state.
+  // open dialog's mark to the server state. A GROUP window never
+  // carries the mark — blocks never apply to groups (006 Assumptions).
   useEffect(() => {
-    if (activeChat === null) {
+    if (activeChat === null || activeChat.kind !== 'direct') {
       return
     }
     const item = chats.find((entry) => entry.chatId === activeChat.chatId)
     const blockedByMe = item?.blockedByMe ?? false
     if (item !== undefined && blockedByMe !== activeChat.blockedByMe) {
-      setActiveChat((previous) => (previous === null ? previous : { ...previous, blockedByMe }))
+      setActiveChat((previous) =>
+        previous !== null && previous.kind === 'direct' ? { ...previous, blockedByMe } : previous,
+      )
     }
   }, [chats, activeChat])
 
@@ -238,11 +281,34 @@ export function MessengerPage() {
     setActiveChat(view)
   }, [])
 
+  /**
+   * №27 success (T029): close the dialog, converge №12 (the creator's
+   * group materializes from the server aggregate — title, memberCount,
+   * `myRole`, the FR-013 zero badge) and open the group window on the
+   * fresh `GroupView` (quickstart §3.1: the group is immediately in
+   * «Чаты» and open for the creator).
+   */
+  const handleGroupCreated = useCallback(
+    (group: GroupView) => {
+      setCreateGroupOpen(false)
+      reloadChatList()
+      openChatView({ kind: 'group', chatId: group.chatId, title: group.title })
+    },
+    [reloadChatList, openChatView],
+  )
+
   const handleSelectChat = useCallback(
     (chatId: string) => {
       const item = chats.find((entry) => entry.chatId === chatId)
+      if (item !== undefined && item.type === 'group') {
+        // The unified list (T028): a group row opens the GROUP window —
+        // the №12 title is the server-owned header of US1.
+        openChatView({ kind: 'group', chatId: item.chatId, title: item.title ?? '' })
+        return
+      }
       if (item !== undefined && item.peer !== null) {
         openChatView({
+          kind: 'direct',
           chatId: item.chatId,
           peer: item.peer,
           blockedByMe: item.blockedByMe ?? false,
@@ -254,8 +320,13 @@ export function MessengerPage() {
       void (async () => {
         try {
           const view = await getChat(chatId)
+          if (view.type === 'group') {
+            openChatView({ kind: 'group', chatId: view.chatId, title: view.title ?? '' })
+            return
+          }
           if (view.peer !== null) {
             openChatView({
+              kind: 'direct',
               chatId: view.chatId,
               peer: view.peer,
               blockedByMe: view.blockedByMe ?? false,
@@ -269,10 +340,10 @@ export function MessengerPage() {
     [chats, openChatView],
   )
 
-  /** №14 DELETE /chats/{chatId} + outbox purge (FR-021, T060). */
+  /** №14 DELETE /chats/{chatId} + outbox purge (FR-021, T060) — direct only. */
   const handleConfirmDeleteChat = useCallback(() => {
     const target = activeChat
-    if (target === null) {
+    if (target === null || target.kind !== 'direct') {
       return
     }
     setActionPending(true)
@@ -294,10 +365,10 @@ export function MessengerPage() {
     })()
   }, [activeChat, outbox, reloadChatList])
 
-  /** №23/№24 block toggle driven by `blockedByMe` (FR-020, T060). */
+  /** №23/№24 block toggle driven by `blockedByMe` (FR-020, T060) — direct only. */
   const handleConfirmBlockToggle = useCallback(() => {
     const target = activeChat
-    if (target === null) {
+    if (target === null || target.kind !== 'direct') {
       return
     }
     const blocking = !target.blockedByMe
@@ -310,7 +381,9 @@ export function MessengerPage() {
           await unblockUser(target.peer.id)
         }
         setActiveChat((previous) =>
-          previous === null ? previous : { ...previous, blockedByMe: blocking },
+          previous !== null && previous.kind === 'direct'
+            ? { ...previous, blockedByMe: blocking }
+            : previous,
         )
         setPendingAction(null)
         // The №12 refetch converges the «заблокирован» mark and the
@@ -354,7 +427,7 @@ export function MessengerPage() {
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
   const dialogOpen = activeChat !== null
   const confirmation =
-    activeChat !== null && pendingAction !== null
+    activeChat !== null && activeChat.kind === 'direct' && pendingAction !== null
       ? confirmCopy(pendingAction, activeChat.peer.username)
       : null
 
@@ -367,10 +440,11 @@ export function MessengerPage() {
       />
       <ContactList
         refreshKey={contactsRefresh}
-        activePeerUserId={activeChat?.peer.id ?? null}
+        activePeerUserId={activeChat?.kind === 'direct' ? activeChat.peer.id : null}
         onOpenChat={(view) => {
           if (view.peer !== null) {
             openChatView({
+              kind: 'direct',
               chatId: view.chatId,
               peer: view.peer,
               blockedByMe: view.blockedByMe ?? false,
@@ -386,6 +460,26 @@ export function MessengerPage() {
       <aside className="messenger-panel" aria-label="Чаты и контакты">
         <QueueOverflowBanner userId={currentUserId} />
         <SyncIndicator syncing={syncing} />
+        {createGroupOpen ? (
+          <CreateGroupDialog
+            onCreated={handleGroupCreated}
+            onCancel={() => {
+              setCreateGroupOpen(false)
+            }}
+          />
+        ) : (
+          <div className="panel-actions">
+            <button
+              type="button"
+              className="panel-create-group"
+              onClick={() => {
+                setCreateGroupOpen(true)
+              }}
+            >
+              Создать группу
+            </button>
+          </div>
+        )}
         <ChatListPanel
           chats={chats}
           status={chatListStatus}
@@ -401,49 +495,62 @@ export function MessengerPage() {
         {dialogOpen && activeChat !== null ? (
           <>
             <header className="dialog-header">
-              <h2 className="dialog-title">{activeChat.peer.username}</h2>
-              {activeChat.blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
-              <div className="dialog-menu">
-                <button
-                  type="button"
-                  className="dialog-menu-toggle"
-                  aria-haspopup="menu"
-                  aria-expanded={menuOpen}
-                  onClick={() => {
-                    setMenuOpen((open) => !open)
-                  }}
-                >
-                  Действия
-                </button>
-                {menuOpen && (
-                  <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
+              {activeChat.kind === 'group' ? (
+                <>
+                  <span className="chat-item-avatar" aria-hidden="true">
+                    #
+                  </span>
+                  <h2 className="dialog-title">{activeChat.title}</h2>
+                </>
+              ) : (
+                <>
+                  <h2 className="dialog-title">{activeChat.peer.username}</h2>
+                  {activeChat.blockedByMe && (
+                    <span className="chat-item-blocked">заблокирован</span>
+                  )}
+                  <div className="dialog-menu">
                     <button
                       type="button"
-                      role="menuitem"
-                      className="dialog-menu-item"
+                      className="dialog-menu-toggle"
+                      aria-haspopup="menu"
+                      aria-expanded={menuOpen}
                       onClick={() => {
-                        setMenuOpen(false)
-                        setPendingAction('delete-chat')
+                        setMenuOpen((open) => !open)
                       }}
                     >
-                      Удалить чат
+                      Действия
                     </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="dialog-menu-item"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        setPendingAction(activeChat.blockedByMe ? 'unblock' : 'block')
-                      }}
-                    >
-                      {activeChat.blockedByMe
-                        ? 'Разблокировать пользователя'
-                        : 'Заблокировать пользователя'}
-                    </button>
+                    {menuOpen && (
+                      <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="dialog-menu-item"
+                          onClick={() => {
+                            setMenuOpen(false)
+                            setPendingAction('delete-chat')
+                          }}
+                        >
+                          Удалить чат
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="dialog-menu-item"
+                          onClick={() => {
+                            setMenuOpen(false)
+                            setPendingAction(activeChat.blockedByMe ? 'unblock' : 'block')
+                          }}
+                        >
+                          {activeChat.blockedByMe
+                            ? 'Разблокировать пользователя'
+                            : 'Заблокировать пользователя'}
+                        </button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                </>
+              )}
             </header>
 
             {actionError !== null && (

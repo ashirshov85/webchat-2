@@ -189,7 +189,12 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
             {pending ? 'Создаётся…' : 'Создать группу'}
           </button>
           {onCancel !== undefined && (
-            <button type="button" className="group-dialog-cancel" onClick={onCancel} disabled={pending}>
+            <button
+              type="button"
+              className="group-dialog-cancel"
+              onClick={onCancel}
+              disabled={pending}
+            >
               Отмена
             </button>
           )}

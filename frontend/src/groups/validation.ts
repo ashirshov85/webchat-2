@@ -13,8 +13,7 @@ export const GROUP_TITLE_MAX_LENGTH = 64
 export const GROUP_DESCRIPTION_MAX_LENGTH = 256
 
 export type GroupTitleValidation =
-  | { readonly ok: true; readonly title: string }
-  | { readonly ok: false; readonly error: string }
+  { readonly ok: true; readonly title: string } | { readonly ok: false; readonly error: string }
 
 export function validateGroupTitle(raw: string): GroupTitleValidation {
   const title = raw.trim()
