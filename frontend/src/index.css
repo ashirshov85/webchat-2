@@ -760,3 +760,124 @@ p {
   background: none;
   border: none;
 }
+
+/* Group creation dialog (feature 006, T026): №27 form — title/
+   description fields (FR-001) + the contacts multiselect (FR-002). */
+.group-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.group-dialog-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.group-dialog-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.group-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.group-dialog-field label {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.group-dialog-field input {
+  padding: 8px 10px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.group-dialog-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.group-dialog-submit {
+  padding: 8px 14px;
+  font: inherit;
+  color: #ffffff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+.group-dialog-submit:disabled {
+  opacity: 0.6;
+}
+
+.group-dialog-cancel {
+  padding: 8px 14px;
+  font: inherit;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* Contacts multiselect (AddMembersPicker, feature 006, T026):
+   checkbox rows over the shared contact-row typography. */
+.member-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.member-picker-legend {
+  padding: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.member-picker-items {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.member-picker-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.member-picker-row-main:has(input:checked) {
+  border-color: var(--accent);
+}
+
+.member-picker-count {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
