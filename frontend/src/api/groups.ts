@@ -15,6 +15,31 @@ export type GroupView = components['schemas']['GroupView']
 export type AddMembersResponse =
   operations['addGroupMembers']['responses'][200]['content']['application/json']
 
+export type GroupUpdatedEvent = components['schemas']['GroupUpdatedEvent']
+
+export type GroupMemberAddedEvent = components['schemas']['GroupMemberAddedEvent']
+
+export type GroupMemberRemovedEvent = components['schemas']['GroupMemberRemovedEvent']
+
+export type GroupRoleChangedEvent = components['schemas']['GroupRoleChangedEvent']
+
+export type GroupDeletedEvent = components['schemas']['GroupDeletedEvent']
+
+export type GroupYouRemovedEvent = components['schemas']['GroupYouRemovedEvent']
+
+/**
+ * A №18 group frame as the client dispatches it (feature 006,
+ * realtime-group-events.md §3): the SSE `event:` type tagged onto the
+ * payload — the payload itself carries no type field.
+ */
+export type GroupRealtimeEvent =
+  | ({ type: 'group.updated' } & GroupUpdatedEvent)
+  | ({ type: 'group.member.added' } & GroupMemberAddedEvent)
+  | ({ type: 'group.member.removed' } & GroupMemberRemovedEvent)
+  | ({ type: 'group.role.changed' } & GroupRoleChangedEvent)
+  | ({ type: 'group.deleted' } & GroupDeletedEvent)
+  | ({ type: 'group.you_removed' } & GroupYouRemovedEvent)
+
 async function authedRequest(path: string, method: string, body?: unknown): Promise<Response> {
   const response = await apiFetch(path, {
     method,
