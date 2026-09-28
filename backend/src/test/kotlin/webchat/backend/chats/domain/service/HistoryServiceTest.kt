@@ -1,5 +1,6 @@
 package webchat.backend.chats.domain.service
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -20,7 +21,9 @@ import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.config.ChatsProperties
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.groups.GroupMetrics
 import webchat.backend.groups.domain.model.MemberRole
+import webchat.backend.groups.domain.service.GroupMembershipGate
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -203,6 +206,7 @@ class HistoryServiceTest {
                     ChatListRepository { emptyList() },
                     NoopParticipantRepository,
                     NoopBlockRepository,
+                    GroupMembershipGate(NoopParticipantRepository, GroupMetrics(SimpleMeterRegistry())),
                 ),
             messageRepository = repository,
             chatsProperties = TEST_PROPERTIES,

@@ -46,7 +46,9 @@ import webchat.backend.config.ChatsProperties
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.groups.GroupMetrics
 import webchat.backend.groups.domain.model.MemberRole
+import webchat.backend.groups.domain.service.GroupMembershipGate
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -230,6 +232,7 @@ class MessageControllerTest {
             ChatListRepository { emptyList() },
             participants,
             NoopBlockRepository,
+            GroupMembershipGate(participants, GroupMetrics(SimpleMeterRegistry())),
         )
 
     /**

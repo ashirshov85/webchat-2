@@ -11,6 +11,7 @@ import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.contacts.domain.port.BlockRepository
 import webchat.backend.groups.domain.model.MemberRole
+import webchat.backend.groups.domain.service.GroupMembershipGate
 import java.util.UUID
 
 /**
@@ -88,6 +89,10 @@ data class GroupChatProjection(
  * the same gate — `404 chat_not_found` first, then `403 not_participant`
  * for a stranger (Carol), so the two are never distinguishable beyond
  * membership. List (№12) and the per-user delete (№14) join here in T055/T056.
+ * T034 (006, api-contract.md §3) embeds the GROUP half of the gate here
+ * as well: the №15–№17 messaging paths and EVERY №25 batch element
+ * resolve a `kind='group'` row through the ACTIVE-membership resolution
+ * of [GroupMembershipGate], keeping this 004 refusal order verbatim.
  *
  * List (№12, T055): [listChats] is a pure read — the WHOLE panel
  * (participants + peer + block mark + aggregates + sorting) is ONE
@@ -112,6 +117,7 @@ class ChatService(
     private val chatListRepository: ChatListRepository,
     private val participantRepository: ParticipantRepository,
     private val blockRepository: BlockRepository,
+    private val groupMembershipGate: GroupMembershipGate,
 ) {
     fun ensure(
         callerId: UUID,
@@ -131,13 +137,16 @@ class ChatService(
             when (chat.kind) {
                 // FR-002 (004): the pair predicate of a DIRECT dialog.
                 ChatKind.DIRECT -> chat.involves(callerId)
-                // FR-008 (006, T024): a group resolves through the ACTIVE
-                // membership row — a stranger, a REMOVED former member and
-                // (with the 404 above) an unknown chat id stay inside the
-                // SAME 004 semantics of №12–№17 (api-contract.md 006 §3:
-                // «не-участнику 404 chat_not_found/403 not_participant —
-                // семантика 004»), unlike the uniform group 404 of №28+.
-                ChatKind.GROUP -> participantRepository.findActive(chatId, callerId) != null
+                // FR-008 (006, T034): a group resolves through the ACTIVE
+                // membership row LENT by the T015 gate — a stranger, a
+                // REMOVED former member and (with the 404 above) an
+                // unknown chat id stay inside the SAME 004 semantics of
+                // №15–№17/№25 (api-contract.md 006 §3: «не-участнику 404
+                // chat_not_found/403 not_participant — семантика 004»),
+                // unlike the counted uniform group 404 of №28+; the №25
+                // batch walks EVERY element through this same `get`
+                // (DeliveryAckService, all-or-refusal).
+                ChatKind.GROUP -> groupMembershipGate.findActiveMembership(chatId, callerId) != null
             }
         if (!member) throw NotParticipantException()
         return chat

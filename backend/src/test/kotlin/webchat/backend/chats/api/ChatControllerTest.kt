@@ -1,5 +1,6 @@
 package webchat.backend.chats.api
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -24,7 +25,9 @@ import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.service.ChatService
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.groups.GroupMetrics
 import webchat.backend.groups.domain.model.MemberRole
+import webchat.backend.groups.domain.service.GroupMembershipGate
 import java.time.Instant
 import java.util.UUID
 
@@ -246,6 +249,9 @@ class ChatControllerTest {
     /** The T054 seam: the (blocker, blocked) pairs the `blockedByMe` projection answers `true` for. */
     private val blocks = ScriptedBlockRepository()
 
+    /** T034: the real T015 gate over the inert participant seam (the №11–№14 surface stays direct-only). */
+    private val membershipGate = GroupMembershipGate(MapParticipantRepository(), GroupMetrics(SimpleMeterRegistry()))
+
     private val controller =
         ChatController(
             chatService =
@@ -255,6 +261,7 @@ class ChatControllerTest {
                     chatListRepository = listRepository,
                     participantRepository = MapParticipantRepository(),
                     blockRepository = blocks,
+                    groupMembershipGate = membershipGate,
                 ),
             userRepository = MapUserRepository(),
         )
