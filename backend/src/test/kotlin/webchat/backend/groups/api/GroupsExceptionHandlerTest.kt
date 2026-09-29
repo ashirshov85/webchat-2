@@ -47,8 +47,9 @@ import java.util.stream.Stream
  * `userIds` of №31 vs `userId` of №32/№34/№35), so only the code is
  * pinned here and the per-operation fields are asserted end-to-end by
  * GroupLifecycleIT (T018/T040/T049/T059). The `invalid_uuid` rendering
- * of malformed path parameters is owned by the controller layer
- * (T022/T044/T065) and the №15–№17/№25 chats semantics stay with the
+ * of a malformed path `chatId` is owned by the controller layer
+ * (T022/T065) while the №32/№34/№35 single-target `userId` leg of T044
+ * is pinned below, and the №15–№17/№25 chats semantics stay with the
  * 004 handler (`chat_not_found`/`not_participant`, FR-008 оговорка).
  */
 class GroupsExceptionHandlerTest {
@@ -115,6 +116,8 @@ class GroupsExceptionHandlerTest {
                     handler.onInvalidMemberIds()
                 },
                 case("invalid_user_ids", HttpStatus.BAD_REQUEST, FIELD_USER_IDS) { handler.onInvalidUserIds() },
+                // №32/№34/№35 single-target shape gate (T044): the raw userId refuses as {userId: [invalid_uuid]}
+                case("invalid_uuid", HttpStatus.BAD_REQUEST, FIELD_USER_ID) { handler.onInvalidGroupUserId() },
                 case("empty_patch", HttpStatus.BAD_REQUEST, FIELD_BODY) { handler.onEmptyPatch() },
             ).stream()
 

@@ -40,6 +40,22 @@ class InvalidGroupChatIdException(
 ) : RuntimeException("chatId must be a UUID", cause)
 
 /**
+ * 400 `invalid_uuid` (api-contract.md №32/№34/№35): the `userId` of a
+ * single-target groups operation — the PATH variable of №32/№34 and the
+ * body field of №35 — is not a UUID. The same raw-string convention as
+ * [InvalidGroupChatIdException] (the №11 `peerUserId` split): the
+ * refusal is decided in the controller (T044) BEFORE the service and
+ * its uniform 404 gate are touched, and renders as `errors: {userId:
+ * [invalid_uuid]}`. The submitted value is never echoed (constitution V).
+ *
+ * Thrown by [GroupController], rendered by T017
+ * (`GroupsExceptionHandler`).
+ */
+class InvalidGroupUserIdException(
+    cause: IllegalArgumentException? = null,
+) : RuntimeException("userId must be a UUID", cause)
+
+/**
  * 400 `empty_patch` (api-contract.md №29): a `PATCH /groups/{chatId}`
  * body carrying none of `title`/`description` — at least one field must
  * be present for the metadata update to apply (FR-007).
