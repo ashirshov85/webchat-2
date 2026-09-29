@@ -4,6 +4,9 @@ import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatKind
+import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
@@ -63,6 +66,36 @@ class InvalidUpToSeqException : RuntimeException("upToSeq is outside the recorde
  *    monotone — after an unblock the state is already correct), but the
  *    `chat.read` event is NOT delivered to the blocker — the blocked
  *    side's activity is never revealed.
+ *
+ * T036 (006, US2, FR-012, realtime-group-events.md §3.7): a
+ * `kind='group'` chat rides the SAME bounded GREATEST-advance, with
+ * exactly two kind-specific substitutions — everything else (the
+ * [ChatService.get] membership gate of T034 answering the 004
+ * `404 chat_not_found`/`403 not_participant`, the `400 invalid_up_to_seq`
+ * bound, the rowcount-gated idempotent no-op of US4-5 and the
+ * `webchat_read_advanced_total` sample) is the shared path:
+ *  * the FR-020 blocking-pair suppression is a DIRECT-dialog concept —
+ *    a group read NEVER consults the block marks (spec.md 006
+ *    Assumptions: a pair blocked in their dialog keeps exchanging group
+ *    messages and reading group history), so both the freeze leg and
+ *    the publish-suppression leg simply do not exist here;
+ *  * the post-commit publication addresses the ACTIVE-roster snapshot
+ *    MINUS the reader over the list leg
+ *    [RealtimeEventPublisher.fanoutChatRead] — the payload stays the
+ *    exact 004 `ChatReadEvent` shape, and the FR-012 ✓✓ projection the
+ *    addressees fold it into is `othersReadUpToSeq` — the
+ *    `MIN(last_read_seq)` over the ACTIVE members EXCEPT each viewer —
+ *    recalculated by [ChatService.groupProjection] (№13) and the №26
+ *    delta (T037) from the same GREATEST-monotone rows this advance
+ *    moves, so the roster recalculation tracks removals and re-adds
+ *    naturally (a REMOVED reader drops out of the MIN, FR-012). The
+ *    snapshot is read AFTER the committed advance and only on the
+ *    rowcount > 0 leg (a no-op never reads the roster): the advance
+ *    statement is its own commit point, so the publication stays
+ *    strictly post-commit; a roster race around it converges
+ *    client-side — an at-most-once extra frame past a removal is
+ *    ignored after `group.you_removed` (§1), a missed one is replayed
+ *    by the №26 catch-up (FR-009).
  */
 @Service
 class ReadService(
@@ -80,7 +113,10 @@ class ReadService(
      * (silent no-op, US4-5) and both FR-020 suppressed legs (T054: the
      * blocker's frozen no-op, the blocked user's silent local advance).
      * Refusals leave as typed exceptions: 404/403 from the membership
-     * gate, `400 invalid_up_to_seq` from the bound.
+     * gate, `400 invalid_up_to_seq` from the bound. T036 (006): the KIND
+     * branch — a group keeps the shared gate/bound/advance legs and
+     * swaps only the FR-020 pair suppression for the FR-012 roster
+     * fan-out.
      */
     fun markRead(
         chatId: UUID,
@@ -89,17 +125,65 @@ class ReadService(
     ) {
         val chat = chatService.get(chatId, callerId)
         if (upToSeq < MIN_UP_TO_SEQ || upToSeq > chat.lastSeq) throw InvalidUpToSeqException()
+        when (chat.kind) {
+            ChatKind.DIRECT -> markDirectRead(chat, callerId, upToSeq)
+            ChatKind.GROUP -> markGroupRead(chat.id, callerId, upToSeq)
+        }
+    }
+
+    /**
+     * The 004 half of №17, verbatim: the FR-020 freeze leg (the caller
+     * blocks the peer — nothing moves, nothing is published), the
+     * GREATEST-advance and the peer-channel publish suppressed while
+     * the PEER blocks the caller.
+     */
+    private fun markDirectRead(
+        chat: Chat,
+        callerId: UUID,
+        upToSeq: Long,
+    ) {
         val peerId =
             checkNotNull(chat.peerOf(callerId)) {
                 "the caller passed the membership gate, so the peer must resolve"
             }
         if (blockRepository.exists(callerId, peerId)) return
 
-        val advanced = participantRepository.advanceReadUpTo(chatId, callerId, upToSeq)
+        val advanced = participantRepository.advanceReadUpTo(chat.id, callerId, upToSeq)
         if (advanced != null) {
             readAdvancedTotal().increment()
             publishToPeerUnlessBlocked(peerId, callerId, chat.id, advanced.lastReadSeq)
         }
+    }
+
+    /**
+     * T036 (006, §3.7, FR-012): the GROUP half of №17 — the same
+     * bounded GREATEST-advance over the caller's ACTIVE membership row
+     * (proven by the gate), then on the rowcount > 0 leg ONLY the
+     * roster fan-out: `chat.read` with the unchanged 004 payload to
+     * every ACTIVE member EXCEPT the reader. The reader's own stream
+     * stays silent (his devices already hold the watermark locally),
+     * and a group of one publishes nothing — the addressee fold of the
+     * roster is empty, ✓✓ stays unreachable (№13 answers
+     * `othersReadUpToSeq` 0). A repeated or smaller `upToSeq` answers
+     * the same `204` with no roster read and no event (US4-5).
+     */
+    private fun markGroupRead(
+        chatId: UUID,
+        readerId: UUID,
+        upToSeq: Long,
+    ) {
+        val advanced = participantRepository.advanceReadUpTo(chatId, readerId, upToSeq) ?: return
+        readAdvancedTotal().increment()
+        val addressees =
+            participantRepository
+                .activeMembers(chatId)
+                .map(ChatParticipant::userId)
+                .filterNot { it == readerId }
+        if (addressees.isEmpty()) return
+        publishRosterIsolated(
+            addressees,
+            ChatReadEvent(chatId = chatId, readUpToSeq = advanced.lastReadSeq, byUserId = readerId),
+        )
     }
 
     /**
@@ -143,6 +227,35 @@ class ReadService(
                 event.chatId,
                 event.readUpToSeq,
                 targetUserId,
+                failure.message,
+            )
+        }
+    }
+
+    /**
+     * T036 (006, §3.7): the same at-most-once isolation over the roster
+     * LIST leg — the adapter isolates per-addressee failures itself
+     * (every envelope publish is an isolated leg of
+     * [RealtimeEventPublisher.fanoutChatRead]), so this catch is the
+     * defense-in-depth of the direct leg's discipline above, not a
+     * retry: the `204` is already answered over the durable watermark,
+     * and the addressees converge via the №26 catch-up / refetch
+     * (FR-009). Warn ids only, never dialog contents (constitution V).
+     */
+    @Suppress("TooGenericExceptionCaught") // defense-in-depth: the transport adapter isolates per addressee
+    private fun publishRosterIsolated(
+        addressees: List<UUID>,
+        event: ChatReadEvent,
+    ) {
+        try {
+            realtimeEventPublisher.fanoutChatRead(addressees, event)
+        } catch (failure: Exception) {
+            log.warn(
+                "realtime fan-out of chat.read (chat <{}>, seq {}) to <{}> addressees failed; " +
+                    "the watermark is durable and members converge on the №26 catch-up (FR-009): {}",
+                event.chatId,
+                event.readUpToSeq,
+                addressees.size,
                 failure.message,
             )
         }
