@@ -274,6 +274,10 @@ class MessageControllerTest {
                         ),
                     sendAdmissionGate = NoopSendAdmissionGate(),
                     meterRegistry = SimpleMeterRegistry(),
+                    // T035 (006): the №16 group leg collaborators — inert in
+                    // this direct-dialog controller scope.
+                    participantRepository = participants,
+                    groupMetrics = GroupMetrics(SimpleMeterRegistry()),
                 ),
             historyService =
                 HistoryService(

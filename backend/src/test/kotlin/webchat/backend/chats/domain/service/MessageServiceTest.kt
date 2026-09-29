@@ -428,6 +428,10 @@ class MessageServiceTest {
                 ),
             sendAdmissionGate = NoopSendAdmissionGate(),
             meterRegistry = meterRegistry,
+            // T035 (006): the №16 group leg collaborators — inert in this
+            // direct-dialog unit scope (the group slice is GroupRealtimeIT/T030).
+            participantRepository = NoopParticipantRepository,
+            groupMetrics = GroupMetrics(meterRegistry),
         )
 
     private companion object {
