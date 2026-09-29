@@ -37,9 +37,23 @@
  * «доставлено ✓». The watermark comes from ChatView and `chat.read`
  * frames and is monotonic (US4-5) — a delivered message never loses
  * its second check mark. Incoming messages never show marks.
+ *
+ * Group variant (feature 006, US2, T038, FR-012): passing the №28
+ * roster switches the list to the group rendering — every INCOMING
+ * message is attributed to its sender's roster username (several
+ * peers are distinguishable), own messages keep only the status
+ * marks. ✓✓ follows the group watermark `othersReadUpToSeq` =
+ * MIN(last_read_seq) of the OTHER active members (№13/№26): own
+ * messages with `seq ≤ othersReadUpToSeq` render «прочитано ✓✓». The
+ * watermark is monotonic (max) — the hook holds the maximum, so a
+ * stale `chat.read` frame or a reconnect refetch with a lower server
+ * projection never rolls a rendered ✓✓ back (FR-012). Without a
+ * roster the list stays the plain direct variant — no attribution,
+ * `peerReadUpToSeq` drives ✓✓ (004 semantics untouched).
  */
 import { useEffect, useRef } from 'react'
 import type { Message } from '../../api/chats'
+import type { GroupMember } from '../../api/groups'
 import { QUEUE_OVERFLOW_ERROR_CODE } from '../outbox'
 import type { OutboxRecord } from '../outbox'
 
@@ -74,9 +88,23 @@ export interface MessageListProps {
   /**
    * Peer's read watermark of the open chat (US4): outgoing messages
    * with `seq ≤ peerReadUpToSeq` render ✓✓. Defaults to 0 — nothing
-   * read yet, everything stays «доставлено ✓».
+   * read yet, everything stays «доставлено ✓». Direct chats only —
+   * groups read the `othersReadUpToSeq` watermark instead.
    */
   readonly peerReadUpToSeq?: number
+  /**
+   * Active roster of the open GROUP (feature 006, US2, T038): its
+   * presence switches the list to the group variant — incoming
+   * messages are attributed to the sender's roster username.
+   */
+  readonly members?: readonly GroupMember[]
+  /**
+   * Group read watermark (US2, FR-012): own messages with
+   * `seq ≤ othersReadUpToSeq` render ✓✓ — the MIN of the other
+   * active members' read marks (№13/№26 + `chat.read` frames).
+   * Defaults to 0; monotonic — a rendered ✓✓ never rolls back.
+   */
+  readonly othersReadUpToSeq?: number
 }
 
 export function MessageList({
@@ -90,6 +118,8 @@ export function MessageList({
   loadingOlder = false,
   onLoadOlder,
   peerReadUpToSeq = 0,
+  members,
+  othersReadUpToSeq = 0,
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
@@ -128,6 +158,15 @@ export function MessageList({
   const activePending = pending.filter((entry) => !confirmedIds.has(entry.clientMessageId))
   const activeOutbox = outbox.filter((entry) => !confirmedIds.has(entry.clientMessageId))
 
+  // Group variant (T038): the roster presence discriminates; sender
+  // attribution resolves through it, and ✓✓ follows the group
+  // watermark instead of the direct-chat `peerReadUpToSeq`.
+  const isGroup = members !== undefined
+  const senderNames = isGroup
+    ? new Map(members.map((member) => [member.user.id, member.user.username]))
+    : undefined
+  const readUpToSeq = isGroup ? othersReadUpToSeq : peerReadUpToSeq
+
   if (messages.length === 0 && activePending.length === 0 && activeOutbox.length === 0) {
     return <p className="messenger-empty">Сообщений пока нет</p>
   }
@@ -146,9 +185,11 @@ export function MessageList({
       )}
       {messages.map((message) => {
         const outgoing = message.senderId === currentUserId
-        const read = outgoing && message.seq <= peerReadUpToSeq
+        const read = outgoing && message.seq <= readUpToSeq
+        const sender = outgoing ? undefined : senderNames?.get(message.senderId)
         return (
           <li key={message.id} className={outgoing ? 'message outgoing' : 'message incoming'}>
+            {sender !== undefined && <span className="message-sender">{sender}</span>}
             <p className="message-text">{message.text}</p>
             {outgoing && (
               <span className={read ? 'message-status message-status-read' : 'message-status'}>

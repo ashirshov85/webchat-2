@@ -4,6 +4,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
+import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.UndeliveredChat
 import webchat.backend.chats.domain.model.UndeliveredChatPage
@@ -109,6 +110,17 @@ class JdbcParticipantRepository(
      * `chatLimit + 1` rows) — cursor-aware pagination keeps «частичный
      * список как полный» исключён. This read never writes the delivery
      * position (FR-001).
+     *
+     * 006 T037 (api-contract.md 006 §3 №26): the candidacy is the
+     * caller's ACTIVE memberships only — `me.state = 'active'` drops a
+     * REMOVED group row entirely (исключённому дельты группы не
+     * приходят, FR-008; direct rows never leave 'active', V14). The
+     * GROUP projection rides the same snapshot as correlated aggregates
+     * over `ix_chat_participants_chat_active` (≤ 200 rows, the
+     * `LIST_FOR_USER` precedent): the ACTIVE [memberCount] and the
+     * FR-012 ✓✓ fold `MIN(last_read_seq)` of the other actives
+     * (COALESCE 0 — a group of one never sets ✓✓) — one read, no N+1 of
+     * per-chat `activeMembers`/`minOtherReadUpToSeq` calls.
      */
     @Suppress("SpreadOperator") // the dynamic VALUES join makes the argument list per-cursor — a tiny one-off copy
     override fun loadForSync(
@@ -245,11 +257,19 @@ class JdbcParticipantRepository(
 
         val UNDELIVERED_ROW_MAPPER =
             RowMapper { rs: ResultSet, _: Int ->
+                // 006 T037: the group projection rides the candidate only
+                // for GROUP rows — a DIRECT candidate keeps the fields
+                // null so its delta stays the exact 0.5.0 shape.
+                val kind = ChatKind.valueOf(rs.getString("chat_kind").uppercase())
                 UndeliveredChat(
                     chatId = rs.getObject("chat_id", UUID::class.java),
                     deliveredUpToSeq = rs.getLong("delivered_up_to_seq"),
                     deletedUpToSeq = rs.getLong("deleted_up_to_seq"),
                     chatLastSeq = rs.getLong("chat_last_seq"),
+                    kind = kind,
+                    title = rs.getString("chat_title").takeIf { kind == ChatKind.GROUP },
+                    memberCount = rs.getLong("member_count").takeIf { kind == ChatKind.GROUP },
+                    othersReadUpToSeq = rs.getLong("others_read_up_to_seq").takeIf { kind == ChatKind.GROUP },
                 )
             }
 
@@ -364,10 +384,22 @@ class JdbcParticipantRepository(
             SELECT me.chat_id,
                    me.delivered_up_to_seq,
                    me.deleted_up_to_seq,
-                   c.last_seq AS chat_last_seq
+                   c.last_seq AS chat_last_seq,
+                   c.kind::text AS chat_kind,
+                   c.title AS chat_title,
+                   (SELECT count(*)
+                      FROM chat_participants mc
+                     WHERE mc.chat_id = me.chat_id
+                       AND mc.state = 'active') AS member_count,
+                   (SELECT COALESCE(MIN(op.last_read_seq), 0)
+                      FROM chat_participants op
+                     WHERE op.chat_id = me.chat_id
+                       AND op.user_id <> me.user_id
+                       AND op.state = 'active') AS others_read_up_to_seq
             FROM chat_participants me
             JOIN chats c ON c.id = me.chat_id
             WHERE me.user_id = ?
+              AND me.state = 'active'
               AND c.last_seq > GREATEST(me.delivered_up_to_seq, me.deleted_up_to_seq)
             ORDER BY c.last_seq DESC, c.created_at DESC, c.id
             LIMIT ?
@@ -379,12 +411,24 @@ class JdbcParticipantRepository(
             SELECT me.chat_id,
                    me.delivered_up_to_seq,
                    me.deleted_up_to_seq,
-                   c.last_seq AS chat_last_seq
+                   c.last_seq AS chat_last_seq,
+                   c.kind::text AS chat_kind,
+                   c.title AS chat_title,
+                   (SELECT count(*)
+                      FROM chat_participants mc
+                     WHERE mc.chat_id = me.chat_id
+                       AND mc.state = 'active') AS member_count,
+                   (SELECT COALESCE(MIN(op.last_read_seq), 0)
+                      FROM chat_participants op
+                     WHERE op.chat_id = me.chat_id
+                       AND op.user_id <> me.user_id
+                       AND op.state = 'active') AS others_read_up_to_seq
             FROM chat_participants me
             JOIN chats c ON c.id = me.chat_id
             LEFT JOIN (VALUES ${cursorValues(cursorCount)}) AS k(chat_id, cur)
               ON k.chat_id = me.chat_id
             WHERE me.user_id = ?
+              AND me.state = 'active'
               AND c.last_seq > GREATEST(
                     me.delivered_up_to_seq,
                     me.deleted_up_to_seq,

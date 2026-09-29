@@ -1,11 +1,13 @@
 package webchat.backend.chats.domain.service
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.ChatPeerSnapshot
@@ -18,7 +20,10 @@ import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.groups.GroupMetrics
 import webchat.backend.groups.domain.model.MemberRole
+import webchat.backend.groups.domain.model.MembershipState
+import webchat.backend.groups.domain.service.GroupMembershipGate
 import java.time.Instant
 import java.util.UUID
 
@@ -91,6 +96,42 @@ class ChatServiceTest {
     }
 
     /**
+     * T034 (006, api-contract.md §3): the GROUP branch of the №15–№17/№25
+     * gate — a group resolves through the ACTIVE membership row lent by
+     * the T015 gate, keeping the 004 refusal order (`404 chat_not_found`
+     * for an unknown id FIRST, then `403 not_participant`).
+     */
+    @Test
+    fun `get resolves a group through the active membership row of the gate`() {
+        participants.activeRows[GROUP_CHAT.id to ALICE] = groupMembership(ALICE, MemberRole.MEMBER)
+
+        assertThat(service.get(GROUP_CHAT.id, ALICE)).isEqualTo(GROUP_CHAT)
+    }
+
+    @Test
+    fun `get refuses a stranger of a group with the 004 not_participant`() {
+        val exception =
+            assertThrows<NotParticipantException> {
+                service.get(GROUP_CHAT.id, CAROL)
+            }
+
+        assertThat(exception.code).isEqualTo(CODE_NOT_PARTICIPANT)
+    }
+
+    @Test
+    fun `get treats a removed member of a group as a non-participant`() {
+        participants.activeRows[GROUP_CHAT.id to BOB] =
+            groupMembership(BOB, MemberRole.MEMBER, MembershipState.REMOVED)
+
+        val exception =
+            assertThrows<NotParticipantException> {
+                service.get(GROUP_CHAT.id, BOB)
+            }
+
+        assertThat(exception.code).isEqualTo(CODE_NOT_PARTICIPANT)
+    }
+
+    /**
      * T043: the №11/№13 read fields — the watermarks project PER SIDE from
      * the participant rows (the reader its own mark, the sender the peer's
      * mark), never as a chat-wide value; a side without a row reads as the
@@ -143,6 +184,9 @@ class ChatServiceTest {
 
     private val participants = MapParticipantRepository()
 
+    /** T034: the T015 gate over the SAME participant seam — the group half of `get`. */
+    private val membershipGate = GroupMembershipGate(participants, GroupMetrics(SimpleMeterRegistry()))
+
     /** The T054 seam: the (blocker, blocked) pairs `blockedByMe` answers `true` for. */
     private val blocks = ScriptedBlockRepository()
 
@@ -156,6 +200,7 @@ class ChatServiceTest {
             chatListRepository = listRepository,
             participantRepository = participants,
             blockRepository = blocks,
+            groupMembershipGate = membershipGate,
         )
 
     private companion object {
@@ -171,6 +216,15 @@ class ChatServiceTest {
         val UNKNOWN_CHAT = UUID.fromString("00000000-0000-0000-0000-0000000000ee")
         val CREATED_AT = Instant.parse("2026-01-01T00:00:00Z")
         val PAIR_CHAT = Chat.forPair(UUID.fromString("00000000-0000-0000-0000-0000000000aa"), ALICE, BOB, CREATED_AT)
+
+        /** T034: the `kind='group'` counterpart of [PAIR_CHAT] (no pair, a title). */
+        val GROUP_CHAT =
+            Chat(
+                id = UUID.fromString("00000000-0000-0000-0000-0000000000ab"),
+                kind = ChatKind.GROUP,
+                title = "the group gate fixture",
+                createdAt = CREATED_AT,
+            )
 
         /** T043 fixture marks: distinct per side, so a swap would not pass unnoticed. */
         const val ALICE_READ_SEQ = 3L
@@ -206,7 +260,12 @@ class ChatServiceTest {
     private class RecordingChatRepository : ChatRepository {
         val ensureCalls = mutableListOf<Pair<UUID, UUID>>()
 
-        override fun findById(chatId: UUID): Chat? = if (chatId == PAIR_CHAT.id) PAIR_CHAT else null
+        override fun findById(chatId: UUID): Chat? =
+            when (chatId) {
+                PAIR_CHAT.id -> PAIR_CHAT
+                GROUP_CHAT.id -> GROUP_CHAT
+                else -> null
+            }
 
         override fun ensure(
             callerId: UUID,
@@ -232,6 +291,9 @@ class ChatServiceTest {
     private class MapParticipantRepository : ParticipantRepository {
         val readMarks = mutableMapOf<UUID, Long>()
 
+        /** T034: the ACTIVE-membership projection of the adapter (`WHERE state='active'`). */
+        val activeRows = mutableMapOf<Pair<UUID, UUID>, ChatParticipant>()
+
         override fun find(
             chatId: UUID,
             userId: UUID,
@@ -241,6 +303,11 @@ class ChatServiceTest {
             readMarks.map { (userId, seq) ->
                 ChatParticipant(chatId = chatId, userId = userId, lastReadSeq = seq, createdAt = CREATED_AT)
             }
+
+        override fun findActive(
+            chatId: UUID,
+            userId: UUID,
+        ): ChatParticipant? = activeRows[chatId to userId]?.takeIf { it.state == MembershipState.ACTIVE }
 
         override fun advanceReadUpTo(
             chatId: UUID,
@@ -271,12 +338,7 @@ class ChatServiceTest {
             chatId: UUID,
         ): Long = 0L
 
-        /** 006 group-roster legs are outside the №11–№13 surface — inert defaults. */
-        override fun findActive(
-            chatId: UUID,
-            userId: UUID,
-        ): ChatParticipant? = null
-
+        /** 006 group-roster legs are outside the №11–№13 surface — inert defaults (`findActive` — [activeRows]). */
         override fun activeMembers(chatId: UUID): List<ChatParticipant> = emptyList()
 
         override fun addMember(
@@ -318,6 +380,19 @@ class ChatServiceTest {
 
         override fun findByEmail(email: String): User? = null
     }
+
+    /** T034: one membership row of [GROUP_CHAT], mutable per state. */
+    private fun groupMembership(
+        userId: UUID,
+        role: MemberRole,
+        state: MembershipState = MembershipState.ACTIVE,
+    ) = ChatParticipant(
+        chatId = GROUP_CHAT.id,
+        userId = userId,
+        role = role,
+        state = state,
+        createdAt = CREATED_AT,
+    )
 
     /** The T054 fixture: point lookups against the scripted [blockedPairs] (empty — no blocks). */
     private class ScriptedBlockRepository : BlockRepository {

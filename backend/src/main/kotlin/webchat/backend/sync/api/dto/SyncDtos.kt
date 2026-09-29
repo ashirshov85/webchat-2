@@ -60,7 +60,7 @@ data class SyncRequest(
 
 /**
  * Contract №26 success item — `SyncChatDelta` (api-contract.md §1,
- * openapi.yaml 0.5.0): the resumption cursor, one ascending message page
+ * openapi.yaml 0.6.0): the resumption cursor, one ascending message page
  * and the server counters of a chat, computed in a single read snapshot.
  *
  * `messages` reuse the `Message` schema ([MessageView], one schema for
@@ -70,16 +70,33 @@ data class SyncRequest(
  * occur (NON_NULL inclusion — never an explicit `null`): truncation and
  * the «cursor from the future» repair are per-chat, without a request
  * error (sync-protocol.md §5).
+ *
+ * 006 T037 (api-contract.md 006 §3 №26): the delta is type-discriminated
+ * — a GROUP delta answers `type:'group'` with [title], the ACTIVE
+ * [memberCount] and the FR-012 ✓✓ bound [othersReadUpToSeq]
+ * (`MIN(last_read_seq)` of the other active members — the caller's own
+ * mark never folds in), while the peer projection renders as EXPLICIT
+ * `null`s (`peer`/`blockedByMe`/`peerReadUpToSeq` are required-nullable
+ * fields of the schema): blocks never apply to groups (Assumptions 006)
+ * and `peerReadUpToSeq` is replaced by `othersReadUpToSeq`. A DIRECT
+ * delta keeps the exact 0.5.0 field set — the group-only fields stay
+ * ABSENT (NON_NULL, backward-friendly); only active memberships are
+ * selected (`myRole` is deliberately NOT carried — it converges through
+ * №12/№28).
  */
 data class SyncChatDelta(
     val chatId: UUID,
-    val peer: ChatPeerView,
-    val blockedByMe: Boolean,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val type: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val title: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val memberCount: Long? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val othersReadUpToSeq: Long? = null,
+    val peer: ChatPeerView? = null,
+    val blockedByMe: Boolean? = null,
     val startAfterSeq: Long,
     @JsonInclude(JsonInclude.Include.NON_NULL) val truncatedUpToSeq: Long? = null,
     val messages: List<MessageView>,
     val hasMore: Boolean,
-    val peerReadUpToSeq: Long,
+    val peerReadUpToSeq: Long? = null,
     val unreadCount: Long,
     val lastSeq: Long,
     @JsonInclude(JsonInclude.Include.NON_NULL) val desynced: Boolean? = null,

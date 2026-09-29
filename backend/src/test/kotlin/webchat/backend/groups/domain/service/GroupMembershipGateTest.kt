@@ -142,6 +142,33 @@ class GroupMembershipGateTest {
         assertThat(meterRegistry.find(AUTHZ_DENIALS_TOTAL).counters().sumOf { it.count() }).isEqualTo(3.0)
     }
 
+    // --- T034: the resolution half for the CHATS paths (№15–№17/№25) ---
+
+    @Test
+    fun `gate lends the chats paths the active row without any refusal semantics`() {
+        val membership = gate.findActiveMembership(GROUP, PLAIN_MEMBER)
+
+        assertThat(membership)
+            .overridingErrorMessage("the 004 paths resolve the SAME active row the gated operations do")
+            .isNotNull
+        assertThat(membership?.role).isEqualTo(MemberRole.MEMBER)
+        assertThat(meterRegistry.find(AUTHZ_DENIALS_TOTAL).counters())
+            .overridingErrorMessage("a resolution never counts a denial — only the №28–№35 refusals do")
+            .isEmpty()
+    }
+
+    @Test
+    fun `gate lends the chats paths null for a stranger and a removed member`() {
+        assertThat(gate.findActiveMembership(GROUP, STRANGER)).isNull()
+        assertThat(gate.findActiveMembership(GROUP, REMOVED_MEMBER)).isNull()
+
+        assertThat(meterRegistry.find(AUTHZ_DENIALS_TOTAL).counters())
+            .overridingErrorMessage(
+                "the 004 refusal order (404 chat_not_found → 403 not_participant) belongs to ChatService, " +
+                    "and its counter vocabulary stays the gated №28–№35 (research.md §8)",
+            ).isEmpty()
+    }
+
     // --- the port discipline ---
 
     @Test

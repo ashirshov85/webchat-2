@@ -9,14 +9,18 @@ import webchat.backend.backpressure.AdmissionDecision
 import webchat.backend.backpressure.AdmissionLease
 import webchat.backend.backpressure.SendAdmissionGate
 import webchat.backend.chats.domain.model.Chat
+import webchat.backend.chats.domain.model.ChatKind
+import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
+import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.config.ChatsProperties
+import webchat.backend.groups.GroupMetrics
 import java.util.UUID
 
 /**
@@ -147,9 +151,29 @@ sealed interface MessageSendResult {
  * доставляются в приоритете», US4-4): the realtime fan-out below and the
  * №26 pull synchronization run without admission — overload may only
  * slow ACCEPTANCE, never the delivery of accepted messages.
+ *
+ * T035 (006, US2, FR-011): a `kind='group'` chat rides the SAME gated
+ * path with exactly two kind-specific substitutions, everything else —
+ * the dedup fast-path, the admission gate, the flood bucket, the
+ * exactly-once INSERT and the `201`/`200`/`409` mapping — unchanged:
+ *  * the FR-020 blocking-pair gate is a DIRECT-dialog concept — a group
+ *    send NEVER consults the block marks (spec.md Assumptions: a pair
+ *    blocked in their dialog keeps exchanging group messages);
+ *  * the post-commit publication addresses the ACTIVE-roster snapshot
+ *    MINUS the sender (realtime-group-events.md §3.7) — the snapshot is
+ *    read as the last statement before the INSERT (the roster under
+ *    which the message is admitted; the group scenario transactions of
+ *    006 serialize roster changes on the `chats` row lock, and a roster
+ *    race outside that window converges client-side: an at-most-once
+ *    extra frame past a removal is ignored after `group.you_removed`
+ *    (§1), a missed one is replayed by the №26 catch-up, FR-009) — and
+ *    rides the list leg [RealtimeEventPublisher.fanoutMessageCreated]
+ *    with the [GroupMetrics] fan-out pair of T010
+ *    (`webchat_group_message_fanout_total`/`_seconds`).
  */
 @Service
-@Suppress("LongParameterList") // the №16 path collaborators, one per leg (T041 adds the admission gate port)
+// the №16 path collaborators, one per leg (T041 the admission gate; T035 the 006 roster/metrics pair)
+@Suppress("LongParameterList")
 class MessageService(
     private val chatService: ChatService,
     private val messageRepository: MessageRepository,
@@ -158,6 +182,8 @@ class MessageService(
     private val sendPolicyGate: SendPolicyGate,
     private val sendAdmissionGate: SendAdmissionGate,
     private val meterRegistry: MeterRegistry,
+    private val participantRepository: ParticipantRepository,
+    private val groupMetrics: GroupMetrics,
 ) {
     private val log = LoggerFactory.getLogger(MessageService::class.java)
 
@@ -211,12 +237,14 @@ class MessageService(
 
     /**
      * The gated remainder of the №16 path (steps 1+ of the class doc):
-     * membership → normalization → flood → blocking pair → INSERT → the
-     * post-commit fan-out. The [webchat.backend.backpressure.AdmissionLease]
-     * settles at the `use` of the caller on EVERY outcome; only the durable
-     * `201 Created` / `200 Existing` settles mark [AdmissionLease.acked] —
-     * a typed refusal thrown here releases its slot WITHOUT a latency
-     * sample (a fast 4xx/429 never measured the PG-commit leg).
+     * membership → normalization → flood → the KIND branch (a direct
+     * dialog: the FR-020 blocking pair; a group: the FR-011 addressee
+     * snapshot) → INSERT → the post-commit fan-out of the same kind. The
+     * [webchat.backend.backpressure.AdmissionLease] settles at the `use`
+     * of the caller on EVERY outcome; only the durable `201 Created` /
+     * `200 Existing` settles mark [AdmissionLease.acked] — a typed
+     * refusal thrown here releases its slot WITHOUT a latency sample (a
+     * fast 4xx/429 never measured the PG-commit leg).
      */
     private fun executeAdmittedSend(
         ack: Timer.Sample,
@@ -229,14 +257,41 @@ class MessageService(
         val chat = chatService.get(chatId, senderId)
         val text = MessageText.normalize(rawText, chatsProperties.message.maxLength)
         sendPolicyGate.enforceFloodLimit(senderId)
-        sendPolicyGate.enforceBlockPair(chat, senderId)
+        // T035 (006): the FR-020 blocking pair is a DIRECT concept —
+        // block marks never apply to a group (spec.md Assumptions); the
+        // group branch reads its FR-011 addressee snapshot instead, the
+        // ACTIVE roster minus the sender, as the LAST statement before
+        // the INSERT (the class doc carries the convergence argument).
+        val groupAddressees: List<UUID>? =
+            when (chat.kind) {
+                ChatKind.DIRECT -> {
+                    sendPolicyGate.enforceBlockPair(chat, senderId)
+                    null
+                }
+                ChatKind.GROUP ->
+                    participantRepository
+                        .activeMembers(chat.id)
+                        .map(ChatParticipant::userId)
+                        .filterNot { it == senderId }
+            }
         val outcome =
             messageRepository.insert(
                 NewMessage(id = clientMessageId, chatId = chat.id, senderId = senderId, text = text),
             )
         return when (outcome) {
             is MessageInsertResult.Inserted -> {
-                publishCreated(chat, outcome.message)
+                when (chat.kind) {
+                    ChatKind.DIRECT -> publishCreated(chat, outcome.message)
+                    ChatKind.GROUP ->
+                        publishGroupCreated(
+                            chatId = chat.id,
+                            message = outcome.message,
+                            addressees =
+                                checkNotNull(groupAddressees) {
+                                    "a group send resolves its roster snapshot before the INSERT"
+                                },
+                        )
+                }
                 ack.stop(ackTimer(OUTCOME_CREATED))
                 lease.acked()
                 MessageSendResult.Created(outcome.message)
@@ -279,11 +334,13 @@ class MessageService(
     }
 
     /**
-     * FR-007 fan-out to BOTH participants (realtime-channel.md §3.1): the
+     * FR-007 fan-out to BOTH participants of the DIRECT dialog
+     * (realtime-channel.md §3.1; the 004 leg, unchanged by 006): the
      * recipient renders the message; the sender's other devices/sessions
      * render it already «доставлено» (US2-6). Only an ACTUAL new record
      * publishes — the idempotent `200` retry is silent (at-most-once
-     * channel + exactly-once storage).
+     * channel + exactly-once storage). The group counterpart of 006 is
+     * [publishGroupCreated] (T035).
      *
      * Each target is isolated: the record is durable and the request
      * already succeeded, so a lost/failed realtime delivery must NOT fail
@@ -302,6 +359,52 @@ class MessageService(
             }
         publishIsolated(message.senderId, event)
         publishIsolated(recipientId, event)
+    }
+
+    /**
+     * T035 (006, FR-011, realtime-group-events.md §3.7): the group
+     * fan-out — `message.created` to EVERY [addressees] entry (the ACTIVE
+     * roster snapshot MINUS the sender, resolved before the INSERT) over
+     * the list leg [RealtimeEventPublisher.fanoutMessageCreated], with
+     * the payload of the №16 answer VERBATIM (the exact 004 frame shape;
+     * clients dedup by `message.id`). The sender's own stream stays
+     * silent — unlike a direct dialog, his devices already hold the
+     * durable answer of this very POST.
+     *
+     * The [GroupMetrics] pair of T010 rides the loop:
+     * `webchat_group_message_fanout_seconds` times the publish and
+     * `webchat_group_message_fanout_total` grows by the leg count. The
+     * same at-most-once isolation as the direct leg holds — the record is
+     * durable and the request already succeeded, so a lost/failed frame
+     * must NOT fail it (clients converge via the №26 catch-up, FR-009);
+     * the transport adapter isolates per-addressee failures itself, the
+     * catch here is the defense-in-depth of the same discipline. Warn
+     * logs carry ids only, never the message text (constitution V,
+     * SC-008).
+     */
+    @Suppress("TooGenericExceptionCaught") // at-most-once isolation, the same defense-in-depth as the direct leg
+    private fun publishGroupCreated(
+        chatId: UUID,
+        message: Message,
+        addressees: List<UUID>,
+    ) {
+        val event = MessageCreatedEvent(chatId = chatId, message = message)
+        val fanout = groupMetrics.startFanout()
+        try {
+            realtimeEventPublisher.fanoutMessageCreated(addressees, event)
+        } catch (failure: Exception) {
+            log.warn(
+                "realtime fan-out of message <{}> in group <{}> to <{}> addressees failed; " +
+                    "the record is durable and clients converge on the №26 catch-up (FR-009): {}",
+                message.id,
+                chatId,
+                addressees.size,
+                failure.message,
+            )
+        } finally {
+            groupMetrics.countFanoutLegs(addressees.size)
+            fanout.stop()
+        }
     }
 
     @Suppress("TooGenericExceptionCaught") // the transport adapter signals any delivery failure by throwing

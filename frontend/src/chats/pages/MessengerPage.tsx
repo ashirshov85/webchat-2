@@ -63,11 +63,21 @@
  * (T035) may be refused by the server — the documented interim US1
  * state (tasks.md US1 Dependencies), surfaced by the outbox as the
  * usual «не отправлено» + retry.
+ *
+ * US2 wiring (feature 006, T038, FR-012): opening a group window
+ * fetches its №28 roster once and feeds it to the chatId-agnostic
+ * dialog pair — MessageList switches to the group variant (sender
+ * attribution + ✓✓ by `othersReadUpToSeq`) and useChatMessages
+ * switches its `chat.read`/№17 semantics to the group MIN watermark.
+ * The roster is guarded by chatId, so a direct dialog opened next
+ * never sees the stale group roster. Live roster changes land with
+ * the US3 `useGroup`/`useGroupRealtime` wiring (T046a/T048).
  */
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
-import type { GroupView } from '../../api/groups'
+import { getGroup } from '../../api/groups'
+import type { GroupMember, GroupView } from '../../api/groups'
 import { blockUser, deleteChat, getChat, unblockUser } from '../../api/chats'
 import type { Message } from '../../api/chats'
 import { getAckBatcher } from '../../sync/ack'
@@ -145,6 +155,101 @@ function confirmCopy(action: PendingAction, peerName: string): ConfirmCopy {
   }
 }
 
+/**
+ * The DIRECT dialog header (T060): the peer title, the «заблокирован»
+ * mark and the «Действия» menu (№14 delete + №23/№24 block toggle).
+ * A group window carries none of these controls (T029).
+ */
+interface DirectChatHeaderProps {
+  readonly username: string
+  readonly blockedByMe: boolean
+  readonly menuOpen: boolean
+  readonly onToggleMenu: () => void
+  readonly onDeleteChat: () => void
+  readonly onToggleBlock: () => void
+}
+
+function DirectChatHeader({
+  username,
+  blockedByMe,
+  menuOpen,
+  onToggleMenu,
+  onDeleteChat,
+  onToggleBlock,
+}: DirectChatHeaderProps) {
+  return (
+    <>
+      <h2 className="dialog-title">{username}</h2>
+      {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
+      <div className="dialog-menu">
+        <button
+          type="button"
+          className="dialog-menu-toggle"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={onToggleMenu}
+        >
+          Действия
+        </button>
+        {menuOpen && (
+          <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
+            <button
+              type="button"
+              role="menuitem"
+              className="dialog-menu-item"
+              onClick={onDeleteChat}
+            >
+              Удалить чат
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="dialog-menu-item"
+              onClick={onToggleBlock}
+            >
+              {blockedByMe ? 'Разблокировать пользователя' : 'Заблокировать пользователя'}
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+/** The «диалоговое меню» confirmation of a pending T060 action. */
+interface ConfirmDialogProps {
+  readonly confirmation: ConfirmCopy
+  readonly pending: boolean
+  readonly onAccept: () => void
+  readonly onCancel: () => void
+}
+
+function ConfirmDialog({ confirmation, pending, onAccept, onCancel }: ConfirmDialogProps) {
+  return (
+    <dialog className="dialog-confirm" open aria-label={confirmation.title}>
+      <p className="dialog-confirm-text">{confirmation.text}</p>
+      <div className="dialog-confirm-actions">
+        <button
+          type="button"
+          className="dialog-confirm-accept"
+          disabled={pending}
+          onClick={onAccept}
+        >
+          {pending ? 'Выполняется…' : confirmation.confirmLabel}
+        </button>
+        <button
+          type="button"
+          className="dialog-confirm-cancel"
+          disabled={pending}
+          onClick={onCancel}
+        >
+          Отмена
+        </button>
+      </div>
+    </dialog>
+  )
+}
+
 export function MessengerPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [activeChat, setActiveChat] = useState<ActiveChat | null>(null)
@@ -158,6 +263,14 @@ export function MessengerPage() {
   const [contactsRefresh, setContactsRefresh] = useState(0)
   /** The CreateGroupDialog lifetime (T029): closed = the entry button. */
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  /**
+   * №28 roster of the open group window (US2, T038): `{chatId,
+   * members}` — the guard keeps a direct dialog opened next free of
+   * the stale group roster before the reset lands.
+   */
+  const [groupRoster, setGroupRoster] = useState<{ chatId: string; members: GroupMember[] } | null>(
+    null,
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -187,6 +300,8 @@ export function MessengerPage() {
   } = useChatList(currentUserId)
 
   const activeChatId = activeChat?.chatId ?? null
+  const activeGroupMembers =
+    groupRoster !== null && groupRoster.chatId === activeChatId ? groupRoster.members : undefined
 
   const {
     messages,
@@ -198,8 +313,35 @@ export function MessengerPage() {
     loadingOlder,
     loadOlder,
     peerReadUpToSeq,
+    othersReadUpToSeq,
     applySyncPage: applyDialogSync,
-  } = useChatMessages(activeChatId, currentUserId)
+  } = useChatMessages(activeChatId, currentUserId, activeGroupMembers)
+
+  // №28 roster of the open group window (US2, T038): fetched once per
+  // open — it switches the dialog pair to the group variant (sender
+  // attribution, group ✓✓/№17 semantics). Live roster changes are the
+  // US3 realtime wiring (T046a/T048).
+  useEffect(() => {
+    if (activeChat?.kind !== 'group') {
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const group = await getGroup(activeChat.chatId)
+        if (!cancelled) {
+          setGroupRoster({ chatId: group.chatId, members: group.members })
+        }
+      } catch {
+        // The roster only enriches the group window (attribution,
+        // ✓✓): the №16 history stays the dialog's error surface, and
+        // №13 still converges the watermark inside useChatMessages.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [activeChat])
 
   // The §3.1 catch-up loop (feature 005): runs on every SSE (re)open,
   // its `syncing` drives the SyncIndicator below.
@@ -503,53 +645,22 @@ export function MessengerPage() {
                   <h2 className="dialog-title">{activeChat.title}</h2>
                 </>
               ) : (
-                <>
-                  <h2 className="dialog-title">{activeChat.peer.username}</h2>
-                  {activeChat.blockedByMe && (
-                    <span className="chat-item-blocked">заблокирован</span>
-                  )}
-                  <div className="dialog-menu">
-                    <button
-                      type="button"
-                      className="dialog-menu-toggle"
-                      aria-haspopup="menu"
-                      aria-expanded={menuOpen}
-                      onClick={() => {
-                        setMenuOpen((open) => !open)
-                      }}
-                    >
-                      Действия
-                    </button>
-                    {menuOpen && (
-                      <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="dialog-menu-item"
-                          onClick={() => {
-                            setMenuOpen(false)
-                            setPendingAction('delete-chat')
-                          }}
-                        >
-                          Удалить чат
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="dialog-menu-item"
-                          onClick={() => {
-                            setMenuOpen(false)
-                            setPendingAction(activeChat.blockedByMe ? 'unblock' : 'block')
-                          }}
-                        >
-                          {activeChat.blockedByMe
-                            ? 'Разблокировать пользователя'
-                            : 'Заблокировать пользователя'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </>
+                <DirectChatHeader
+                  username={activeChat.peer.username}
+                  blockedByMe={activeChat.blockedByMe}
+                  menuOpen={menuOpen}
+                  onToggleMenu={() => {
+                    setMenuOpen((open) => !open)
+                  }}
+                  onDeleteChat={() => {
+                    setMenuOpen(false)
+                    setPendingAction('delete-chat')
+                  }}
+                  onToggleBlock={() => {
+                    setMenuOpen(false)
+                    setPendingAction(activeChat.blockedByMe ? 'unblock' : 'block')
+                  }}
+                />
               )}
             </header>
 
@@ -565,35 +676,18 @@ export function MessengerPage() {
             )}
 
             {confirmation !== null && pendingAction !== null && (
-              <dialog className="dialog-confirm" open aria-label={confirmation.title}>
-                <p className="dialog-confirm-text">{confirmation.text}</p>
-                <div className="dialog-confirm-actions">
-                  <button
-                    type="button"
-                    className="dialog-confirm-accept"
-                    disabled={actionPending}
-                    onClick={() => {
-                      if (pendingAction === 'delete-chat') {
-                        handleConfirmDeleteChat()
-                      } else {
-                        handleConfirmBlockToggle()
-                      }
-                    }}
-                  >
-                    {actionPending ? 'Выполняется…' : confirmation.confirmLabel}
-                  </button>
-                  <button
-                    type="button"
-                    className="dialog-confirm-cancel"
-                    disabled={actionPending}
-                    onClick={() => {
-                      setPendingAction(null)
-                    }}
-                  >
-                    Отмена
-                  </button>
-                </div>
-              </dialog>
+              <ConfirmDialog
+                confirmation={confirmation}
+                pending={actionPending}
+                onAccept={
+                  pendingAction === 'delete-chat'
+                    ? handleConfirmDeleteChat
+                    : handleConfirmBlockToggle
+                }
+                onCancel={() => {
+                  setPendingAction(null)
+                }}
+              />
             )}
 
             {status === 'error' && <ErrorBanner error={error} onDismiss={reload} />}
@@ -612,6 +706,8 @@ export function MessengerPage() {
               loadingOlder={loadingOlder}
               onLoadOlder={loadOlder}
               peerReadUpToSeq={peerReadUpToSeq}
+              members={activeGroupMembers}
+              othersReadUpToSeq={othersReadUpToSeq}
             />
             <MessageInput onSend={handleSend} disabled={currentUserId === null} />
           </>

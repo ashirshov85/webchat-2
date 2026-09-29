@@ -5,7 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.web.client.TestRestTemplate
+import org.springframework.http.HttpEntity
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
 import java.time.OffsetDateTime
 import java.util.UUID
@@ -53,13 +57,32 @@ import java.util.UUID
  * against the V12 column (T005), keeping the FR-001 legs anchored on
  * the authoritative table, not on response bodies.
  *
+ * T032 (tasks.md Phase 4, US2): the №26 GROUP deltas join this suite at
+ * the US2 close — the group element of the catch-up answer (006,
+ * api-contract.md §3): `type:'group'` with `title`/`memberCount` of the
+ * active roster and the FR-012 ✓✓ bound `othersReadUpToSeq`
+ * (MIN of the OTHER actives' read watermarks — the caller's own mark
+ * never folds in), while the direct-shaped peer projection renders as
+ * EXPLICIT nulls (`peer`/`blockedByMe`/`peerReadUpToSeq`); the replay
+ * rules themselves stay the 005 ones verbatim — ascending by `seq`,
+ * seeded ids verbatim, the caller's own outgoing included,
+ * delivery-bounded `unreadCount`, no repair fields, and the sweep never
+ * writes the delivery position (FR-001). The DIRECT delta beside the
+ * group in the SAME answer keeps the exact 0.5.0 field set — no group
+ * field may leak into a direct delta. The group read watermarks are
+ * staged straight on `chat_participants` (the №17 group path is owned by
+ * T036 — the same end state its GREATEST-update produces), and the group
+ * history rides [seedChatBacklog]: the real №16 group send lands with
+ * T035. RED by design until the T037 group delta projection exists.
+ *
  * Anchored on the T002 fixtures over the real 001 flows (registration,
  * login, №11 ensure, №25 ack, №14 end state), Testcontainers PG 17 +
  * Redis 7 and real HTTP — no mocks; every method registers its own
  * trio, so no account rows or rate-limit buckets leak between methods.
  */
-@Suppress("TooManyFunctions") // T008: one test method per №26 contract rule of tasks.md
+@Suppress("TooManyFunctions", "LargeClass") // T008/T032: one test method per №26 contract rule of tasks.md
 class SyncIT(
+    @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val objectMapper: ObjectMapper,
     @Autowired private val itJdbcTemplate: JdbcTemplate,
 ) : SyncTestSupport() {
@@ -537,6 +560,130 @@ class SyncIT(
     }
 
     /**
+     * T032 (api-contract.md 006 §3, FR-012): the GROUP delta of №26 — the
+     * exact contract field set with the group projection: `type:'group'`,
+     * `title`, `memberCount` of the active roster and
+     * `othersReadUpToSeq` = MIN of the OTHER actives' read watermarks
+     * (staged straight on `chat_participants` — the end state the №17
+     * GREATEST-update of T036 produces; the caller's own mark never folds
+     * in), while the peer projection renders as EXPLICIT nulls:
+     * `peer`/`blockedByMe`/`peerReadUpToSeq`. The 005 replay rules stay
+     * verbatim over the group: ascending by `seq`, seeded ids verbatim,
+     * the caller's own outgoing included, delivery-bounded `unreadCount`,
+     * no repair fields, and the sweep never writes the delivery position
+     * (FR-001).
+     */
+    @Test
+    fun `the group delta carries the roster projection with the peer fields null`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        addGroupContact(owner, bob.id)
+        addGroupContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, listOf(bob.id, carol.id)))
+        val senderCycle = listOf(owner, bob, carol)
+        val seeded = seedGroupBacklog(chatId, senderCycle)
+        stageReadWatermark(bob.id, chatId, seeded[GROUP_OTHER_READ_INDEX].seq)
+        stageReadWatermark(owner.id, chatId, seeded[GROUP_HIGHER_READ_INDEX].seq)
+
+        val response = syncOk(carol, listOf(chatId to ZERO_CURSOR))
+        assertThat(response["chats"].size())
+            .overridingErrorMessage(
+                "a group with an undelivered backlog must produce exactly one delta, got <%s>",
+                response,
+            ).isEqualTo(ONE_DELTA)
+        val delta = deltaOf(response, chatId)
+
+        assertThat(fieldNames(delta))
+            .overridingErrorMessage(
+                "the group SyncChatDelta must carry exactly the contract fields, got <%s>",
+                fieldNames(delta),
+            ).containsExactlyInAnyOrderElementsOf(GROUP_DELTA_FIELDS)
+        assertThat(delta["type"].asText()).isEqualTo("group")
+        assertThat(delta["title"].asText()).isEqualTo(GROUP_TITLE)
+        assertThat(delta["memberCount"].asLong())
+            .overridingErrorMessage("memberCount must count the active roster — the creator plus both added")
+            .isEqualTo(3)
+        assertThat(delta["othersReadUpToSeq"].asLong())
+            .overridingErrorMessage(
+                "othersReadUpToSeq is the MIN of the OTHER actives' watermarks (FR-012) — the caller's own " +
+                    "mark never folds in",
+            ).isEqualTo(seeded[GROUP_OTHER_READ_INDEX].seq)
+        assertNullField(delta, "peer")
+        assertNullField(delta, "blockedByMe")
+        assertNullField(delta, "peerReadUpToSeq")
+
+        assertThat(delta["startAfterSeq"].asLong())
+            .overridingErrorMessage("a zero cursor of a fresh group must resume from 0")
+            .isZero()
+        assertThat(delta["lastSeq"].asLong()).isEqualTo(seeded.last().seq)
+        assertThat(delta["hasMore"].asBoolean())
+            .overridingErrorMessage("a backlog within one default page must leave no tail")
+            .isFalse()
+        assertThat(delta["unreadCount"].asLong())
+            .overridingErrorMessage(
+                "unread is delivery-bounded (data-model entity 3): before any ack nothing may count, got <%s>",
+                delta["unreadCount"],
+            ).isZero()
+        assertNoRepairFields(delta)
+        assertReplayVerbatim(delta["messages"], seeded)
+
+        assertThat(deliveredUpToSeq(carol.id, chatId))
+            .overridingErrorMessage(
+                "the №26 group sweep must NOT write the delivery position — only ack №25 does (FR-001)",
+            ).isZero()
+    }
+
+    /**
+     * T032 (api-contract.md 006 §3): the unified №26 answer — the group
+     * delta and the caller's DIRECT delta ride ONE response ordered by the
+     * last activity DESC, and the direct delta keeps the exact 0.5.0 field
+     * set (`peer` resolves, `peerReadUpToSeq` stays the direct ✓✓ bound)
+     * — no group field may leak into a direct delta.
+     */
+    @Test
+    fun `the direct delta keeps its exact shape beside the group delta in one answer`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        val dave = messagingUser("dave")
+        addGroupContact(owner, bob.id)
+        addGroupContact(owner, carol.id)
+        val groupChat = chatIdOf(createGroupOk(owner, listOf(bob.id, carol.id)))
+        seedChatBacklog(groupChat, UNIFIED_GROUP_MESSAGES, { owner }, UNIFIED_GROUP_TEXT_PREFIX)
+        distinctMoment()
+        val directChat = ensureDialog(carol, dave)
+        val fromDave =
+            seedChatBacklog(directChat, UNIFIED_DIRECT_MESSAGES, { dave }, UNIFIED_DIRECT_TEXT_PREFIX)
+                .map { it.seq }
+
+        val response = syncOk(carol, listOf(groupChat to ZERO_CURSOR, directChat to ZERO_CURSOR))
+
+        assertThat(response["chats"].map { it["chatId"].asText() })
+            .overridingErrorMessage("the unified №26 answer orders the deltas by last activity DESC — the direct first")
+            .containsExactly(directChat.toString(), groupChat.toString())
+        assertThat(response["moreChats"].asBoolean()).isFalse()
+
+        val directDelta = deltaOf(response, directChat)
+        assertThat(fieldNames(directDelta))
+            .overridingErrorMessage(
+                "the direct delta beside a group must keep the exact 0.5.0 field set, got <%s>",
+                fieldNames(directDelta),
+            ).containsExactlyInAnyOrderElementsOf(DIRECT_DELTA_FIELDS)
+        assertThat(directDelta["peer"]["id"].asText())
+            .overridingErrorMessage("the direct delta peer must resolve as before the groups")
+            .isEqualTo(dave.id.toString())
+        assertThat(directDelta["peerReadUpToSeq"].asLong())
+            .overridingErrorMessage("the direct delta keeps the peer ✓✓ watermark (0 — the peer read nothing)")
+            .isZero()
+        assertThat(directDelta["messages"].map { it["seq"].asLong() })
+            .containsExactlyElementsOf(fromDave)
+
+        val groupDelta = deltaOf(response, groupChat)
+        assertThat(groupDelta["type"].asText())
+            .overridingErrorMessage("the group delta of the SAME answer must carry the type discrimination")
+            .isEqualTo("group")
+    }
+
+    /**
      * Seeds [count] incoming messages (the peer is the sender) and
      * returns their `seq`s ascending — the controlled coordinates of
      * the №26 rules, without crossing the 30/min flood limit of the
@@ -548,6 +695,149 @@ class SyncIT(
         count: Int,
         textPrefix: String,
     ): List<Long> = seedChatBacklog(chatId, count, { sender }, textPrefix).map { it.seq }
+
+    /**
+     * PG `now()` carries microsecond precision, so two seeded backlogs
+     * within the same microsecond would tie on `created_at` — a sleep
+     * keeps the last-activity DESC order of the unified answer
+     * deterministic (the ChatListIT precedent).
+     */
+    private fun distinctMoment() {
+        Thread.sleep(ORDER_SLEEP_MILLIS)
+    }
+
+    /**
+     * Seeds the [GROUP_MESSAGES]-row group backlog with the MIXED member
+     * attribution — the [senderCycle] repeats owner, bob and the caller
+     * herself, so the delta replay proves the member attribution verbatim
+     * and the caller's own outgoing included.
+     */
+    private fun seedGroupBacklog(
+        chatId: UUID,
+        senderCycle: List<MessagingUser>,
+    ): List<SeededMessage> {
+        val senderFor: (Int) -> MessagingUser = { index -> senderCycle[index % senderCycle.size] }
+        return seedChatBacklog(chatId, GROUP_MESSAGES, senderFor, GROUP_TEXT_PREFIX)
+    }
+
+    /**
+     * The 005 replay rules verbatim over a seeded group backlog:
+     * ascending by `seq`, ids verbatim (no loss, no duplicates) and the
+     * mixed sender attribution with the caller's own outgoing included.
+     */
+    private fun assertReplayVerbatim(
+        messages: JsonNode,
+        seeded: List<SeededMessage>,
+    ) {
+        assertThat(messages.size()).isEqualTo(seeded.size)
+        assertThat(messages.map { it["seq"].asLong() })
+            .overridingErrorMessage("the group delta must replay the backlog strictly ascending by seq")
+            .containsExactlyElementsOf(seeded.map { it.seq })
+        assertThat(messages.map { it["id"].asText() })
+            .overridingErrorMessage("the group delta must replay the seeded ids verbatim — no loss, no duplicates")
+            .containsExactlyElementsOf(seeded.map { it.id.toString() })
+        assertThat(messages.map { it["senderId"].asText() })
+            .overridingErrorMessage(
+                "the group delta must replay the mixed member attribution and the caller's own outgoing verbatim",
+            ).containsExactlyElementsOf(seeded.map { it.senderId.toString() })
+    }
+
+    /**
+     * Contract №27 `POST /api/v1/groups` — the T032 group fixture: a
+     * group of the creator plus [memberUserIds] from HIS contacts (№21
+     * rows staged by [addGroupContact] first) → the stored `GroupView`.
+     */
+    private fun createGroupOk(
+        owner: MessagingUser,
+        memberUserIds: List<UUID>,
+    ): JsonNode {
+        val response =
+            restTemplate.postForEntity(
+                GROUPS_PATH,
+                HttpEntity(
+                    buildMap<String, Any> {
+                        put("title", GROUP_TITLE)
+                        put("memberUserIds", memberUserIds.map(UUID::toString))
+                    },
+                    jsonHeaders(owner),
+                ),
+                String::class.java,
+            )
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "№27 group fixture must answer 201, got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.CREATED)
+        return objectMapper.readTree(response.body)
+    }
+
+    /** Contract №21 `POST /api/v1/contacts` — the №27 roster gate fixture. */
+    private fun addGroupContact(
+        user: MessagingUser,
+        userId: UUID,
+    ) {
+        val response =
+            restTemplate.postForEntity(
+                CONTACTS_PATH,
+                HttpEntity(mapOf("userId" to userId.toString()), jsonHeaders(user)),
+                String::class.java,
+            )
+        assertThat(response.statusCode.is2xxSuccessful)
+            .overridingErrorMessage(
+                "fixture contact №21 of <%s> → <%s> must succeed, got <%s>: %s",
+                user.username,
+                userId,
+                response.statusCode,
+                response.body,
+            ).isTrue
+    }
+
+    private fun jsonHeaders(user: MessagingUser): HttpHeaders =
+        HttpHeaders().apply {
+            contentType = MediaType.APPLICATION_JSON
+            setBearerAuth(user.accessToken)
+        }
+
+    private fun chatIdOf(view: JsonNode): UUID = UUID.fromString(view["chatId"].asText())
+
+    private fun fieldNames(node: JsonNode): List<String> = node.fieldNames().asSequence().toList()
+
+    /** A contract-REQUIRED nullable field must be PRESENT as JSON null (not omitted). */
+    private fun assertNullField(
+        node: JsonNode,
+        field: String,
+    ) {
+        assertThat(node.has(field) && node[field].isNull)
+            .overridingErrorMessage(
+                "field <%s> must be present as JSON null on the group delta, got <%s>",
+                field,
+                node[field],
+            ).isTrue
+    }
+
+    /**
+     * Stages the №17 end state of a fellow member straight on the real
+     * row (`last_read_seq` — the GREATEST-update T036 drives through the
+     * HTTP path; the setDeletionWatermark precedent): the ✓✓ coordinates
+     * of the FR-012 MIN-fold the group delta projects.
+     */
+    private fun stageReadWatermark(
+        userId: UUID,
+        chatId: UUID,
+        upToSeq: Long,
+    ) {
+        val updated =
+            itJdbcTemplate.update(
+                "UPDATE chat_participants SET last_read_seq = ? WHERE chat_id = ? AND user_id = ?",
+                upToSeq,
+                chatId,
+                userId,
+            )
+        assertThat(updated)
+            .overridingErrorMessage("the read watermark fixture must land on the participant row")
+            .isEqualTo(1)
+    }
 
     /** №26 happy path → the parsed `SyncResponse` tree (status asserted verbatim). */
     private fun syncOk(
@@ -689,5 +979,49 @@ class SyncIT(
         const val REFUSAL_TEXT_PREFIX = "sync-refusal"
         const val REFUSAL_PEER_TEXT_PREFIX = "sync-refusal-peer"
         const val CLOCK_TEXT_PREFIX = "sync-clock"
+
+        const val ORDER_SLEEP_MILLIS = 50L
+
+        const val GROUPS_PATH = "/api/v1/groups"
+        const val CONTACTS_PATH = "/api/v1/contacts"
+        const val GROUP_TITLE = "Sync group delta IT"
+        const val GROUP_TEXT_PREFIX = "sync-group"
+        const val GROUP_MESSAGES = 6
+        const val GROUP_OTHER_READ_INDEX = 1
+        const val GROUP_HIGHER_READ_INDEX = 3
+        const val UNIFIED_GROUP_MESSAGES = 2
+        const val UNIFIED_GROUP_TEXT_PREFIX = "sync-unified-group"
+        const val UNIFIED_DIRECT_MESSAGES = 2
+        const val UNIFIED_DIRECT_TEXT_PREFIX = "sync-unified-direct"
+
+        /** openapi.yaml 0.6.0 №26 shapes — every delta is pinned field-by-field. */
+        val GROUP_DELTA_FIELDS =
+            listOf(
+                "chatId",
+                "type",
+                "title",
+                "memberCount",
+                "othersReadUpToSeq",
+                "peer",
+                "blockedByMe",
+                "startAfterSeq",
+                "messages",
+                "hasMore",
+                "peerReadUpToSeq",
+                "unreadCount",
+                "lastSeq",
+            )
+        val DIRECT_DELTA_FIELDS =
+            listOf(
+                "chatId",
+                "peer",
+                "blockedByMe",
+                "startAfterSeq",
+                "messages",
+                "hasMore",
+                "peerReadUpToSeq",
+                "unreadCount",
+                "lastSeq",
+            )
     }
 }

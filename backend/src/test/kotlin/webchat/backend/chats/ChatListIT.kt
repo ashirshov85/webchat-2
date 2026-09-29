@@ -5,7 +5,11 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.web.client.TestRestTemplate
+import org.springframework.http.HttpEntity
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
 import webchat.backend.sync.SyncTestSupport
 import java.util.UUID
@@ -42,6 +46,21 @@ import java.util.UUID
  * on `chat_participants` (the same rows №14 would write), exactly like the
  * ChatDeletionIT fixtures.
  *
+ * T032 (tasks.md Phase 4, US2): the №12 GROUP elements join this suite at
+ * the US2 close — the full projection check of the unified list (006,
+ * api-contract.md §3, FR-014): the group item carries the roster
+ * projection (`type:'group'`/`title`/`memberCount`/`myRole` per caller)
+ * with the peer fields as EXPLICIT nulls (`peer`/`blockedByMe` — blocks
+ * never apply to groups, Assumptions 006), groups and direct dialogs sort
+ * together by the last visible message (any member's send lifts the
+ * group), the badge stays delivery-bounded (fellow members' messages
+ * count only after the №25 ack, own sends never) — while the DIRECT
+ * neighbors in the very same list keep the exact 0.4.0 field set (no
+ * group field may leak into a direct item). The group history is staged
+ * with the [SyncTestSupport.seedChatBacklog] fixture: the real №16 group
+ * send is owned by T035 (US2 implementation) and stays out of the №12
+ * projection fixtures on purpose.
+ *
  * Anchored on the T002 fixtures over the real 001 flows, Testcontainers
  * PG+Redis, real HTTP, no mocks; every method registers its own users, so
  * nothing leaks between methods and the FR-011 flood bucket is never
@@ -49,6 +68,7 @@ import java.util.UUID
  * badge now depends on (T031).
  */
 class ChatListIT(
+    @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val objectMapper: ObjectMapper,
     @Autowired private val jdbcTemplate: JdbcTemplate,
 ) : SyncTestSupport() {
@@ -240,6 +260,157 @@ class ChatListIT(
             .isEmpty()
     }
 
+    /**
+     * T032 (api-contract.md 006 §3, FR-014): the GROUP item of the unified
+     * list — the exact contract field set with the roster projection:
+     * `type:'group'`, `title`, `memberCount` of the active roster and the
+     * caller's OWN `myRole` (owner for the creator, member for the added),
+     * while the peer projection renders as EXPLICIT nulls: `peer` never
+     * resolves in a group and `blockedByMe` stays null EVEN with a real
+     * user_blocks row to a fellow member — blocks never apply to groups
+     * (Assumptions 006). `lastMessage` is the newest message with the FULL
+     * text and the attribution of the fellow member who sent it. The
+     * DIRECT neighbor in the same list keeps the exact 0.4.0 field set —
+     * no group field may leak into a direct item.
+     */
+    @Test
+    fun `the group item carries the roster projection with the peer fields null`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        val dave = messagingUser("dave")
+        addGroupContact(owner, bob.id)
+        addGroupContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, listOf(bob.id, carol.id)))
+        seedChatBacklog(chatId, GROUP_HISTORY_MESSAGES, { bob }, GROUP_TEXT_PREFIX)
+        val directChat = ensureChatOk(owner, dave.id)
+
+        val items = chatListOk(owner)
+        val groupItem = items.single { chatIdOf(it) == chatId }
+        assertThat(fieldNames(groupItem))
+            .overridingErrorMessage(
+                "the group ChatListItem must carry exactly the contract fields, got <%s>",
+                fieldNames(groupItem),
+            ).containsExactlyInAnyOrderElementsOf(GROUP_CHAT_LIST_ITEM_FIELDS)
+        assertThat(groupItem["type"].asText()).isEqualTo("group")
+        assertThat(groupItem["title"].asText()).isEqualTo(GROUP_TITLE)
+        assertThat(groupItem["memberCount"].asLong())
+            .overridingErrorMessage("memberCount must count the active roster — the creator plus both added")
+            .isEqualTo(3)
+        assertThat(groupItem["myRole"].asText()).isEqualTo("owner")
+        assertNullField(groupItem, "peer")
+        assertNullField(groupItem, "blockedByMe")
+        assertThat(lastMessageTextOf(groupItem))
+            .overridingErrorMessage("the group lastMessage must be the newest message with its full text")
+            .isEqualTo("$GROUP_TEXT_PREFIX-${GROUP_HISTORY_MESSAGES - INDEX_ONE}")
+        assertThat(groupItem["lastMessage"]["senderId"].asText())
+            .overridingErrorMessage("the group lastMessage carries the attribution of the fellow member who sent it")
+            .isEqualTo(bob.id.toString())
+        assertThat(fieldNames(groupItem["lastMessage"]))
+            .overridingErrorMessage("the group lastMessage fragment must reuse the Message schema")
+            .containsExactlyInAnyOrderElementsOf(MESSAGE_FIELDS)
+        assertThat(unreadCountOf(groupItem))
+            .overridingErrorMessage("a group the caller has not acked yet carries the delivery-bounded zero badge")
+            .isZero()
+
+        assertThat(chatListItemOf(bob, chatId)["myRole"].asText())
+            .overridingErrorMessage("myRole is the projection of the CALLER's own row — member for the added")
+            .isEqualTo("member")
+
+        stageBlock(owner.id, bob.id)
+        assertThat(chatListItemOf(owner, chatId)["blockedByMe"].isNull)
+            .overridingErrorMessage(
+                "blocks never apply to groups (Assumptions 006) — blockedByMe must stay an explicit null " +
+                    "even over a real block row",
+            ).isTrue
+
+        items
+            .filterNot { chatIdOf(it) == chatId }
+            .forEach { direct ->
+                assertThat(fieldNames(direct))
+                    .overridingErrorMessage(
+                        "the direct neighbors of a group must keep the exact 0.4.0 field set, got <%s>",
+                        fieldNames(direct),
+                    ).containsExactlyInAnyOrderElementsOf(CHAT_LIST_ITEM_FIELDS)
+            }
+        assertThat(chatIdsOf(items))
+            .overridingErrorMessage("the unified list carries the group AND the direct dialog of the caller")
+            .contains(chatId, directChat)
+    }
+
+    /**
+     * T032 (FR-014): the unified sort — groups and direct dialogs ride ONE
+     * list ordered by the last visible message createdAt DESC: ANY member's
+     * send lifts the group (a fellow member's message above), the caller's
+     * newer direct dialog takes the top back, and a group without messages
+     * keeps its place BELOW the correspondence (NULLS LAST) — exactly the
+     * 004 rules, now over both kinds.
+     */
+    @Test
+    fun `groups and direct dialogs sort together by the last visible message`() {
+        val owner = messagingUser("owner")
+        val (alice, bob) = messagingUser("alice") to messagingUser("bob")
+        val dave = messagingUser("dave")
+        addGroupContact(owner, alice.id)
+        addGroupContact(owner, bob.id)
+        val quietGroup = chatIdOf(createGroupOk(owner, QUIET_GROUP_TITLE, listOf(alice.id)))
+        val activeGroup = chatIdOf(createGroupOk(owner, GROUP_TITLE, listOf(alice.id, bob.id)))
+        val directChat = ensureChatOk(alice, dave.id)
+
+        seedChatBacklog(directChat, DIRECT_LIFT_MESSAGES, { dave }, DIRECT_TEXT_PREFIX)
+        distinctMoment()
+        seedChatBacklog(activeGroup, GROUP_LIFT_MESSAGES, { bob }, GROUP_TEXT_PREFIX)
+
+        assertThat(chatIdsOf(chatListOk(alice)))
+            .overridingErrorMessage(
+                "a fellow member's message must lift the group above the older direct dialog, empty group last",
+            ).containsExactly(activeGroup, directChat, quietGroup)
+
+        distinctMoment()
+        seedChatBacklog(directChat, DIRECT_LIFT_MESSAGES, { dave }, NEWER_DIRECT_TEXT_PREFIX)
+
+        assertThat(chatIdsOf(chatListOk(alice)))
+            .overridingErrorMessage(
+                "the caller's newer direct message must take the top back (one sort over both kinds)",
+            ).containsExactly(directChat, activeGroup, quietGroup)
+    }
+
+    /**
+     * T032 (FR-013 + data-model 005 сущность 3): the group badge is the
+     * SAME delivery-bounded counter as the dialogs — a fellow member's
+     * messages count ONLY after the №25 ack grows the position (before it
+     * the badge stays 0), and the caller's OWN group message never counts.
+     */
+    @Test
+    fun `the group badge counts only ack-delivered incoming messages of fellow members`() {
+        val owner = messagingUser("owner")
+        val (alice, bob) = messagingUser("alice") to messagingUser("bob")
+        addGroupContact(owner, alice.id)
+        addGroupContact(owner, bob.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, listOf(alice.id, bob.id)))
+        val incoming =
+            seedChatBacklog(chatId, GROUP_UNREAD_MESSAGES, { owner }, GROUP_TEXT_PREFIX)
+                .map { it.seq }
+
+        assertThat(unreadCountOf(chatListItemOf(alice, chatId)))
+            .overridingErrorMessage(
+                "an unacked group message is not unread yet — only the ack №25 grows the badge (FR-007)",
+            ).isZero()
+
+        assertThat(deliveryAck(alice, listOf(chatId to incoming.max())).statusCode)
+            .isEqualTo(HttpStatus.NO_CONTENT)
+        assertThat(unreadCountOf(chatListItemOf(alice, chatId)))
+            .overridingErrorMessage("every delivered unread message of a fellow member must count in the group badge")
+            .isEqualTo(GROUP_UNREAD_MESSAGES.toLong())
+
+        distinctMoment()
+        val withOwn = seedChatBacklog(chatId, GROUP_OWN_MESSAGES, { alice }, OWN_GROUP_TEXT_PREFIX)
+        assertThat(deliveryAck(alice, listOf(chatId to withOwn.maxOf { it.seq })).statusCode)
+            .isEqualTo(HttpStatus.NO_CONTENT)
+        assertThat(unreadCountOf(chatListItemOf(alice, chatId)))
+            .overridingErrorMessage("the caller's own group message must not add to the badge")
+            .isEqualTo(GROUP_UNREAD_MESSAGES.toLong())
+    }
+
     /** Sends [count] messages and returns their server `seq`s ascending — the dialog reading order. */
     private fun sendFrom(
         sender: MessagingUser,
@@ -291,6 +462,19 @@ class ChatListIT(
 
     private fun fieldNames(node: JsonNode): List<String> = node.fieldNames().asSequence().toList()
 
+    /** A contract-REQUIRED nullable field must be PRESENT as JSON null (not omitted). */
+    private fun assertNullField(
+        node: JsonNode,
+        field: String,
+    ) {
+        assertThat(node.has(field) && node[field].isNull)
+            .overridingErrorMessage(
+                "field <%s> must be present as JSON null on the group item, got <%s>",
+                field,
+                node[field],
+            ).isTrue
+    }
+
     /**
      * Stages the exact №14 end state on the real rows (T056 will drive it
      * through DELETE): `deleted_up_to_seq = chats.last_seq, hidden = true`
@@ -324,6 +508,66 @@ class ChatListIT(
         jdbcTemplate.update(STAGE_BLOCK_SQL, blockerId, blockedId)
     }
 
+    /**
+     * Contract №27 `POST /api/v1/groups` — the T032 group fixture: a group
+     * of the creator plus [memberUserIds] from HIS contacts (№21 rows are
+     * staged by [addGroupContact] first) → the stored `GroupView` chatId.
+     */
+    private fun createGroupOk(
+        owner: MessagingUser,
+        title: String,
+        memberUserIds: List<UUID> = emptyList(),
+    ): JsonNode {
+        val response =
+            restTemplate.postForEntity(
+                GROUPS_PATH,
+                HttpEntity(
+                    buildMap<String, Any> {
+                        put("title", title)
+                        if (memberUserIds.isNotEmpty()) {
+                            put("memberUserIds", memberUserIds.map(UUID::toString))
+                        }
+                    },
+                    jsonHeaders(owner),
+                ),
+                String::class.java,
+            )
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "№27 group fixture must answer 201, got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.CREATED)
+        return objectMapper.readTree(response.body)
+    }
+
+    /** Contract №21 `POST /api/v1/contacts` — the №27 roster gate fixture. */
+    private fun addGroupContact(
+        user: MessagingUser,
+        userId: UUID,
+    ) {
+        val response =
+            restTemplate.postForEntity(
+                CONTACTS_PATH,
+                HttpEntity(mapOf("userId" to userId.toString()), jsonHeaders(user)),
+                String::class.java,
+            )
+        assertThat(response.statusCode.is2xxSuccessful)
+            .overridingErrorMessage(
+                "fixture contact №21 of <%s> → <%s> must succeed, got <%s>: %s",
+                user.username,
+                userId,
+                response.statusCode,
+                response.body,
+            ).isTrue
+    }
+
+    private fun jsonHeaders(user: MessagingUser): HttpHeaders =
+        HttpHeaders().apply {
+            contentType = MediaType.APPLICATION_JSON
+            setBearerAuth(user.accessToken)
+        }
+
     private companion object {
         const val ORDER_SLEEP_MILLIS = 50L
 
@@ -342,7 +586,36 @@ class ChatListIT(
         const val BLOCK_FIXTURE_PREFIX = "block-fixture"
         const val BLOCK_FIXTURE_MESSAGES = 1
 
+        const val GROUPS_PATH = "/api/v1/groups"
+        const val CONTACTS_PATH = "/api/v1/contacts"
+
+        const val GROUP_TITLE = "ChatList unified roster IT"
+        const val QUIET_GROUP_TITLE = "ChatList quiet group IT"
+        const val GROUP_TEXT_PREFIX = "chat-list-group"
+        const val OWN_GROUP_TEXT_PREFIX = "chat-list-group-own"
+        const val DIRECT_TEXT_PREFIX = "chat-list-direct"
+        const val NEWER_DIRECT_TEXT_PREFIX = "chat-list-direct-newer"
+
+        const val GROUP_HISTORY_MESSAGES = 2
+        const val GROUP_LIFT_MESSAGES = 1
+        const val DIRECT_LIFT_MESSAGES = 1
+        const val GROUP_UNREAD_MESSAGES = 3
+        const val GROUP_OWN_MESSAGES = 1
+        const val INDEX_ONE = 1
+
         val CHAT_LIST_ITEM_FIELDS = listOf("chatId", "peer", "lastMessage", "unreadCount", "blockedByMe")
+        val GROUP_CHAT_LIST_ITEM_FIELDS =
+            listOf(
+                "chatId",
+                "type",
+                "title",
+                "memberCount",
+                "myRole",
+                "peer",
+                "lastMessage",
+                "unreadCount",
+                "blockedByMe",
+            )
         val PUBLIC_USER_FIELDS = listOf("id", "username", "email", "status", "createdAt")
         val MESSAGE_FIELDS = listOf("id", "chatId", "senderId", "text", "seq", "createdAt")
 

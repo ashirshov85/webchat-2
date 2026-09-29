@@ -16,6 +16,19 @@
  * at-most-once: consumers deduplicate by `message.id` and reconcile
  * with the server on (re)connect (SC-002/003).
  *
+ * Group `chat.read` (feature 006, US2, T039; realtime-group-events.md
+ * §3.7): the frame payload stays the 004 shape, but the group fan-out
+ * covers every ACTIVE member EXCEPT the reader — so a group listener
+ * sees one frame per reading MEMBER (`byUserId`), and the group
+ * consumer (useChatMessages with the №28 roster) folds the marks into
+ * the ✓✓ candidate MIN(other members' watermarks), held monotonically
+ * (max, FR-012). The reader's own stream stays silent about his own
+ * read, and the unread badge of the reading side resets locally
+ * (markChatReadLocally); everything the at-most-once channel missed —
+ * badges, watermarks, roster state — converges on (re)connect through
+ * the №12/№13 refetches and the №26 catch-up (useSync carries the
+ * group `othersReadUpToSeq`), the checkpoint US2 convergence.
+ *
  * Feature 006 (T027, realtime-group-events.md §1): the same per-user
  * stream also carries the `group.*` frames, so the dispatcher parses
  * them and hands every frame to the group listeners (`onGroupEvent`,
