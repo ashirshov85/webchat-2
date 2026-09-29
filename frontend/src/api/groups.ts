@@ -8,6 +8,10 @@ export type UpdateGroupRequest = components['schemas']['UpdateGroupRequest']
 
 export type AddMembersRequest = components['schemas']['AddMembersRequest']
 
+export type SetMemberRoleRequest = components['schemas']['SetMemberRoleRequest']
+
+export type TransferOwnershipRequest = components['schemas']['TransferOwnershipRequest']
+
 export type GroupMember = components['schemas']['GroupMember']
 
 export type GroupView = components['schemas']['GroupView']
@@ -92,4 +96,50 @@ export async function addMembers(chatId: string, body: AddMembersRequest): Promi
   )
   const parsed = (await response.json()) as AddMembersResponse
   return parsed.members
+}
+
+/**
+ * №32 `DELETE /groups/{chatId}/members/{userId}`: kicks a member
+ * (owner/admin, FR-004 hierarchy — admins cannot kick admins/owner).
+ * The kicked user's messages stay in history; kicking yourself is
+ * `400 self_forbidden` — leaving is №33, not this call.
+ */
+export async function kickMember(chatId: string, userId: string): Promise<void> {
+  await authedRequest(
+    `/groups/${encodeURIComponent(chatId)}/members/${encodeURIComponent(userId)}`,
+    'DELETE',
+  )
+}
+
+/**
+ * №34 `PUT /groups/{chatId}/members/{userId}/role`: grants/revokes the
+ * admin role — owner-only (FR-003); `200` GroupMember with the new
+ * role; everyone gets `group.role.changed`.
+ */
+export async function setMemberRole(
+  chatId: string,
+  userId: string,
+  role: SetMemberRoleRequest['role'],
+): Promise<GroupMember> {
+  const response = await authedRequest(
+    `/groups/${encodeURIComponent(chatId)}/members/${encodeURIComponent(userId)}/role`,
+    'PUT',
+    { role },
+  )
+  return (await response.json()) as GroupMember
+}
+
+/**
+ * №35 `POST /groups/{chatId}/owner`: transfers ownership (owner-only,
+ * FR-003) — exactly one owner remains, the old owner becomes admin;
+ * `200` GroupView of the group under the new owner.
+ */
+export async function transferOwnership(
+  chatId: string,
+  userId: TransferOwnershipRequest['userId'],
+): Promise<GroupView> {
+  const response = await authedRequest(`/groups/${encodeURIComponent(chatId)}/owner`, 'POST', {
+    userId,
+  })
+  return (await response.json()) as GroupView
 }
