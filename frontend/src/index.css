@@ -550,6 +550,40 @@ body {
   margin-left: auto;
 }
 
+/* Group card entry + card (feature 006, T046a): the header toggle
+   opens the №28 GroupInfoPanel under the header of the group window;
+   the card scrolls independently so a ≤200 roster never buries the
+   message history. */
+.dialog-group-info-toggle {
+  margin-left: auto;
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dialog-group-info-toggle:hover {
+  border-color: var(--accent);
+}
+
+.dialog-group-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  max-height: 45%;
+  overflow-y: auto;
+}
+
 .dialog-menu-toggle {
   font-size: 0.9rem;
 }

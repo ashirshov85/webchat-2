@@ -43,7 +43,7 @@ const realtime = vi.hoisted(() => {
   }
 })
 
-vi.mock('../../chats/hooks/useRealtime', () => ({
+vi.mock('../../../chats/hooks/useRealtime', () => ({
   useRealtime: () => realtime.stream,
 }))
 
