@@ -283,6 +283,12 @@ class GroupMembershipGateTest {
             userId: UUID,
         ): Boolean = error("the gate never removes members")
 
+        override fun updateRole(
+            chatId: UUID,
+            userId: UUID,
+            role: MemberRole,
+        ): ChatParticipant? = error("the gate never changes roles")
+
         override fun minOtherReadUpToSeq(
             chatId: UUID,
             userId: UUID,

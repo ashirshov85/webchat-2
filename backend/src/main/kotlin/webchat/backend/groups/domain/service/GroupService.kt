@@ -6,8 +6,13 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import webchat.backend.chats.domain.model.ChatParticipant
+import webchat.backend.chats.domain.port.GroupEvent
 import webchat.backend.chats.domain.port.GroupMemberAddedEvent
+import webchat.backend.chats.domain.port.GroupMemberRemovedEvent
 import webchat.backend.chats.domain.port.GroupMemberUser
+import webchat.backend.chats.domain.port.GroupRemovalReason
+import webchat.backend.chats.domain.port.GroupRoleChangedEvent
+import webchat.backend.chats.domain.port.GroupYouRemovedEvent
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.config.GroupsProperties
@@ -36,6 +41,10 @@ import java.util.UUID
  * creator as the single `owner` and the initial roster sourced from HIS
  * contacts, and the owner/admin batch add with the idempotent re-add and
  * the 200-member capacity gate.
+ *
+ * T043 later grew the №32/№34/№35 role scenarios of User Story 3
+ * (FR-003/FR-004/FR-010) on the same collaborators — [setRole],
+ * [transferOwnership] and [kick] below.
  *
  * Ordering discipline (pinned red-first by T018/T018a):
  *  * №27 — `400 self_forbidden` for the creator inside the roster is
@@ -229,6 +238,199 @@ class GroupService(
     }
 
     /**
+     * №34 `PUT /api/v1/groups/{chatId}/members/{userId}/role`
+     * (api-contract.md 006 №34, FR-003, T043): the owner ALONE grants
+     * and revokes the admin flag. The refusal order is the contract's
+     * own: the membership gate FIRST (a stranger, a removed former
+     * member, an unknown id AND the chatId of a direct dialog are the
+     * SAME counted `404 group_not_found` — the direct row passes the
+     * gate and dies at the `kind='group'` resolve), then the self rule
+     * (`400 self_forbidden` — the owner's own role moves only through
+     * №35, decided BEFORE the role gate so it can never be masked by
+     * `not_group_owner`), then [GroupRolePolicy.requireOwner] (`403
+     * not_group_owner` for an admin/member caller), then the target
+     * gate — an ACTIVE row is required (`409 target_not_member`) and
+     * the conditional role UPDATE re-asserts it by rowcount (a kick
+     * racing between the read and the write converges on the same 409).
+     *
+     * ONE transaction: the role UPDATE and the journal fact (`admin_granted`
+     * / `admin_revoked`) commit or roll back together, and the
+     * `group.role.changed` frame rides the POST-operation ACTIVE roster
+     * snapshot — §3.4 broadcasts to ALL actives — strictly post-commit.
+     * The `owner` label never reaches the UPDATE (the T016 DTO refuses
+     * it; the guard here keeps the partial unique index inviolable from
+     * any direct caller too).
+     *
+     * @return the updated [GroupMember] — the `200` answer body of №34.
+     */
+    @Suppress("ThrowsCount") // the throw legs ARE the №34 refusal ladder of api-contract.md 006 §2
+    @Transactional
+    fun setRole(
+        callerId: UUID,
+        chatId: UUID,
+        targetUserId: UUID,
+        role: MemberRole,
+    ): GroupMember {
+        if (role == MemberRole.OWNER) throw InvalidRoleException()
+        val membership =
+            membershipGate.requireActiveMembership(chatId, callerId, GroupMetrics.AuthzOperation.SET_ROLE)
+        val group = resolveGroup(chatId)
+        if (targetUserId == callerId) throw SelfForbiddenException(USER_ID_FIELD)
+        rolePolicy.requireOwner(membership)
+        participants.findActive(chatId, targetUserId) ?: throw TargetNotMemberException()
+        val updated =
+            participants.updateRole(group.id, targetUserId, role) ?: throw TargetNotMemberException()
+        adminLog.append(
+            GroupAdminLogEntry(
+                group.id,
+                callerId,
+                targetUserId,
+                if (role == MemberRole.ADMIN) GroupAdminAction.ADMIN_GRANTED else GroupAdminAction.ADMIN_REVOKED,
+            ),
+        )
+        val roster = participants.activeMembers(group.id)
+        val profiles = profilesOf(roster)
+        fanoutGroupEventAfterCommit(
+            group.id,
+            roster.map(ChatParticipant::userId),
+            GroupRoleChangedEvent(group.id, targetUserId, role, callerId),
+        )
+        return memberView(updated, profiles)
+    }
+
+    /**
+     * №35 `POST /api/v1/groups/{chatId}/owner` (api-contract.md 006 №35,
+     * FR-003, T043): the ownership hand-over — ONE transaction of demote
+     * THEN promote, the exact order the partial unique index
+     * `ux_chat_participants_owner` dictates: the former owner demotes to
+     * `admin` BEFORE the target promotes to `owner`, so the index never
+     * observes two active owners — nor zero — at any statement boundary,
+     * and a mid-flight failure rolls the pair back together.
+     *
+     * The refusal order mirrors №34: the gate (`404 group_not_found`,
+     * counted), the `FOR UPDATE` group resolve (concurrent transfers of
+     * one owner serialize on the `chats` row lock — the loser re-reads
+     * his row as a non-owner and answers `403 not_group_owner` instead
+     * of racing the index), the self rule (`400 self_forbidden` — an
+     * owner transfer to himself would be a no-op that still wears the
+     * contract edge code), [GroupRolePolicy.requireOwner], then the
+     * target gate: an ACTIVE participant is required (`409
+     * target_not_member`) and the promote UPDATE re-asserts it by
+     * rowcount (the kick×transfer race converges on the same 409 with
+     * the demote rolled back).
+     *
+     * Durable effects: the journal `ownership_transferred` fact in the
+     * SAME transaction, and the `group.role.changed` PAIR of frames —
+     * the new owner promoted, the former demoted (§3.4: both to every
+     * ACTIVE participant, clients fold them idempotently) — strictly
+     * post-commit.
+     *
+     * @return the caller's [GroupView] — HIS `myRole` is now `admin`,
+     * the roster carries the single new owner.
+     */
+    @Suppress("ThrowsCount") // the throw legs ARE the №35 refusal ladder of api-contract.md 006 §2
+    @Transactional
+    fun transferOwnership(
+        callerId: UUID,
+        chatId: UUID,
+        targetUserId: UUID,
+    ): GroupView {
+        val membership =
+            membershipGate.requireActiveMembership(chatId, callerId, GroupMetrics.AuthzOperation.TRANSFER_OWNERSHIP)
+        val group = resolveGroupForUpdate(chatId)
+        if (targetUserId == callerId) throw SelfForbiddenException(USER_ID_FIELD)
+        rolePolicy.requireOwner(membership)
+        participants.findActive(chatId, targetUserId) ?: throw TargetNotMemberException()
+        val demoted =
+            requireNotNull(participants.updateRole(group.id, callerId, MemberRole.ADMIN)) {
+                "the transferring owner <$callerId> of group <${group.id}> must hold an active row (the gate proved it)"
+            }
+        participants.updateRole(group.id, targetUserId, MemberRole.OWNER) ?: throw TargetNotMemberException()
+        adminLog.append(GroupAdminLogEntry(group.id, callerId, targetUserId, GroupAdminAction.OWNERSHIP_TRANSFERRED))
+        val roster = participants.activeMembers(group.id)
+        val profiles = profilesOf(roster)
+        val addressees = roster.map(ChatParticipant::userId)
+        fanoutGroupEventAfterCommit(
+            group.id,
+            addressees,
+            GroupRoleChangedEvent(group.id, targetUserId, MemberRole.OWNER, callerId),
+        )
+        fanoutGroupEventAfterCommit(
+            group.id,
+            addressees,
+            GroupRoleChangedEvent(group.id, callerId, MemberRole.ADMIN, callerId),
+        )
+        return GroupView(
+            chatId = group.id,
+            title = group.title.value,
+            description = group.description?.value,
+            myRole = memberRoleLabel(demoted.role!!),
+            members = roster.map { row -> memberView(row, profiles) },
+        )
+    }
+
+    /**
+     * №32 `DELETE /api/v1/groups/{chatId}/members/{userId}`
+     * (api-contract.md 006 №32, FR-004/FR-010, T043): the kick. The
+     * refusal order is the contract's own, each step BEFORE any write:
+     * the membership gate (`404 group_not_found`, counted — a direct
+     * chatId dies at the `kind='group'` resolve the same way), the SELF
+     * rule (`400 self_forbidden` decided BEFORE the hierarchy — even a
+     * plain member kicking HIMSELF sees self_forbidden, never
+     * forbidden_role; leaving is №33 only), the target gate (an ACTIVE
+     * row required — a stranger or an already-removed target is `409
+     * target_not_member`, the repeated-№32 convergence of
+     * api-contract.md 006 §2), and [GroupRolePolicy.requireCanKick]
+     * against the caller-resolved ACTIVE target row (a plain member
+     * removes no one — `403 forbidden_role`; an admin removes ONLY
+     * members — `403 role_hierarchy_violation`).
+     *
+     * The removal itself is the single conditional UPDATE of
+     * [ParticipantRepository.removeMember] resolved by rowcount: a
+     * concurrent №33 leave (or a winning twin №32) already resolved the
+     * race, and the loser re-converges on `409 target_not_member` — no
+     * duplicates, no partial effects (edge «исключение×выход»). The
+     * watermarks survive in the row for the FR-002 re-add and the
+     * kicked member's messages keep their attribution (`messages` rows
+     * are never touched).
+     *
+     * Durable effects in ONE transaction: the journal `member_removed`
+     * fact and the shrunken-roster size sample. Post-commit, strictly
+     * after the commit: the FINAL `group.you_removed {reason:'kicked'}`
+     * to the kicked user ALONE (§3.6 — after this frame no group event
+     * reaches his channel again) and `group.member.removed` with the
+     * actor to every REMAINING active participant (§3.3).
+     */
+    @Suppress("ThrowsCount") // the throw legs ARE the №32 refusal ladder of api-contract.md 006 §2
+    @Transactional
+    fun kick(
+        callerId: UUID,
+        chatId: UUID,
+        targetUserId: UUID,
+    ) {
+        val membership =
+            membershipGate.requireActiveMembership(chatId, callerId, GroupMetrics.AuthzOperation.REMOVE_MEMBER)
+        val group = resolveGroup(chatId)
+        if (targetUserId == callerId) throw SelfForbiddenException(USER_ID_FIELD)
+        val target = participants.findActive(chatId, targetUserId) ?: throw TargetNotMemberException()
+        rolePolicy.requireCanKick(membership, target)
+        if (!participants.removeMember(group.id, targetUserId)) throw TargetNotMemberException()
+        adminLog.append(GroupAdminLogEntry(group.id, callerId, targetUserId, GroupAdminAction.MEMBER_REMOVED))
+        val survivors = participants.activeMembers(group.id)
+        metrics.recordGroupSize(survivors.size)
+        fanoutGroupEventAfterCommit(
+            group.id,
+            listOf(targetUserId),
+            GroupYouRemovedEvent(group.id, GroupRemovalReason.KICKED),
+        )
+        fanoutGroupEventAfterCommit(
+            group.id,
+            survivors.map(ChatParticipant::userId),
+            GroupMemberRemovedEvent(group.id, targetUserId, callerId),
+        )
+    }
+
+    /**
      * The №28 group resolve of the gated read: the lock-free
      * [GroupRepository.find] answers the same `kind='group'` predicate
      * as [resolveGroupForUpdate] — a `null` (an unknown id AND a direct
@@ -390,6 +592,37 @@ class GroupService(
     }
 
     /**
+     * The T043 frame leg (realtime-group-events.md 006 §3.3/§3.4/§3.6):
+     * one group frame to its EXACT addressee list — the ACTIVE-roster
+     * snapshot taken inside the scenario transaction (§3.4 every
+     * active; §3.3 the REMAINING roster; §3.6 the removed user ONLY) —
+     * handed to the publisher strictly AFTER the commit, the same
+     * defence-in-depth isolation as the №27/№31 leg above: a lost or
+     * failed at-most-once delivery never fails the already-durable
+     * operation, clients converge on refetch (FR-009, constitution II).
+     */
+    @Suppress("TooGenericExceptionCaught") // at-most-once isolation, the same defence-in-depth as the 004 publish paths
+    private fun fanoutGroupEventAfterCommit(
+        groupId: UUID,
+        addressees: List<UUID>,
+        event: GroupEvent,
+    ) {
+        afterCommit {
+            try {
+                realtime.fanoutGroupEvent(addressees, event)
+            } catch (failure: Exception) {
+                log.warn(
+                    "realtime fan-out of a group frame (group <{}>, addressees <{}>) failed; " +
+                        "the roster is durable and clients converge on refetch (FR-009): {}",
+                    groupId,
+                    addressees.size,
+                    failure.message,
+                )
+            }
+        }
+    }
+
+    /**
      * One [GroupMember] of the roster projection: the public profile, the
      * contract role label, the FIRST-add moment (FR-002).
      */
@@ -437,5 +670,8 @@ class GroupService(
 
         /** api-contract.md 006 №31: the `errors` key of the add-members refusals. */
         const val USER_IDS_FIELD = "userIds"
+
+        /** api-contract.md 006 №32/№34/№35: the `errors` key of the single-target refusals. */
+        const val USER_ID_FIELD = "userId"
     }
 }

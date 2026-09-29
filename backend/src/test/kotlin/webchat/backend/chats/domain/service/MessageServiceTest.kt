@@ -632,6 +632,12 @@ class MessageServiceTest {
             userId: UUID,
         ): Boolean = false
 
+        override fun updateRole(
+            chatId: UUID,
+            userId: UUID,
+            role: MemberRole,
+        ): ChatParticipant? = null
+
         override fun minOtherReadUpToSeq(
             chatId: UUID,
             userId: UUID,
