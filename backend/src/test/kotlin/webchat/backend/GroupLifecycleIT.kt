@@ -6,6 +6,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.web.client.TestRestTemplate
+import org.springframework.boot.test.web.server.LocalServerPort
 import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpMethod
@@ -14,8 +15,15 @@ import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.jdbc.core.JdbcTemplate
 import webchat.backend.sync.SyncTestSupport
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * T018 (tasks.md Phase 3, US1, constitution VI Test-First) — the CREATION
@@ -69,14 +77,33 @@ import java.util.UUID
  *    a repeated №32 on the LIVE group answers `409 target_not_member`
  *    (api-contract.md §2 «Идемпотентность»).
  *
+ * T049 (US4) grew the METADATA SLICE on top of the same staging —
+ * №29 `PATCH /groups/{chatId}` of api-contract.md §2 (FR-007):
+ *
+ *  * the owner/admin gate — a plain member managing metadata gets
+ *    `403 forbidden_role` (FR-004), a non-member/nonexistent target hits
+ *    the uniform privacy `404 group_not_found` (§1);
+ *  * the №27 validation reused verbatim: a blank/65-char title → `400
+ *    invalid_title`, a 257-char description → `400 invalid_description`,
+ *    a body with NEITHER field → `400 empty_patch` (errors.body), and a
+ *    MIXED patch is refused atomically — nothing lands, nothing journals;
+ *  * a confirmed patch answers the `GroupView`, №28/№12 serve the new
+ *    metadata on the next load, EVERY active receives `group.updated`
+ *    (realtime-group-events.md §3.1) and the journal grows
+ *    `title_changed`/`description_changed` of the actor (FR-017);
+ *  * the EDGE of two admins patching SIMULTANEOUSLY: both operations
+ *    confirm whole (the FOR UPDATE serialization) and the stored
+ *    (title, description) pair is EXACTLY one of the two patches — the
+ *    last confirmed — never a mix of the two.
+ *
  * NOTE (TDD, constitution VI): the creation slice was written BEFORE the
- * US1 implementation tasks (T020–T024); T040 grew the roles slice the same
- * way — until the US3 implementation tasks (T042–T044) land, №32/№34/№35
- * answer 404/405, so every roles method fails (RED) by design. Limits
- * (200/64/256/batch) and the №31 idempotency matrix are owned by T018a
- * (GroupLimitsIT); the metadata/leave-delete slices of this lifecycle
- * (T049/T059) EXTEND this class later — keep every fixture self-contained
- * per method.
+ * US1 implementation tasks (T020–T024); T040 grew the roles slice and T049
+ * the metadata slice the same way — until the US4 implementation tasks
+ * (T051/T052) land, №29 answers 405, so every metadata method fails (RED)
+ * by design. Limits (200/64/256/batch) and the №31 idempotency matrix are
+ * owned by T018a (GroupLimitsIT); the leave-delete slice of this lifecycle
+ * (T059) EXTENDS this class later — keep every fixture self-contained per
+ * method.
  */
 @Suppress("TooManyFunctions", "LargeClass") // T018: one method per US1 rule of tasks.md
 class GroupLifecycleIT(
@@ -86,6 +113,21 @@ class GroupLifecycleIT(
 ) : SyncTestSupport() {
     /** A role frame must arrive well inside this CI-tolerant budget (SC-004 functional leg). */
     private val deliveryBudget: Duration = Duration.ofSeconds(DELIVERY_BUDGET_SECONDS)
+
+    /** The random HTTP port — the JDK-HttpClient №29 leg needs the absolute URL. */
+    @LocalServerPort
+    private var serverPort: Int = 0
+
+    /**
+     * One shared client for the №29 calls (connection reuse over the test
+     * JVM lifetime) — the JDK transport the SSE reader already uses.
+     */
+    private val patchHttpClient =
+        HttpClient
+            .newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(Duration.ofSeconds(PATCH_CONNECT_TIMEOUT_SECONDS))
+            .build()
 
     /** №27 happy path: 201 GroupView — creator owner, added contacts member (US1-1). */
     @Test
@@ -880,6 +922,304 @@ class GroupLifecycleIT(
         assertGroupNotFound(kickMember(stranger, chatId, carol.id))
     }
 
+    /**
+     * №29 happy path (FR-007, api-contract.md №29): an ADMIN patches title
+     * AND description — `200` with the exact `GroupView` of the new
+     * metadata; №28/№12 of the OTHER members serve it on the next load
+     * (changes MUST survive reloads); EVERY active (the actor included)
+     * receives `group.updated` carrying the §3.1 payload verbatim; the
+     * journal grows one `title_changed` + one `description_changed` of the
+     * actor (FR-017).
+     */
+    @Test
+    fun `updateGroup applies the whole patch broadcasts the frame and journals both actions`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        addContact(owner, bob.id)
+        addContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, GROUP_DESCRIPTION, listOf(bob.id, carol.id)))
+        grantAdminOk(owner, chatId, bob.id)
+
+        openUserEvents(owner).use { ownerStream ->
+            openUserEvents(bob).use { bobStream ->
+                openUserEvents(carol).use { carolStream ->
+                    val response =
+                        patchGroup(
+                            bob,
+                            chatId,
+                            mapOf(TITLE_FIELD to RENAMED_TITLE, DESCRIPTION_FIELD to RENAMED_DESCRIPTION),
+                        )
+                    assertThat(response.statusCode)
+                        .overridingErrorMessage(
+                            "№29 by an admin must answer 200, got <%s>: %s",
+                            response.statusCode,
+                            response.body,
+                        ).isEqualTo(HttpStatus.OK)
+                    val view = objectMapper.readTree(response.body)
+                    assertThat(fieldNames(view))
+                        .overridingErrorMessage(
+                            "the №29 answer must be exactly the GroupView schema, got <%s>",
+                            fieldNames(view),
+                        ).containsExactlyInAnyOrderElementsOf(GROUP_VIEW_FIELDS)
+                    assertThat(view["title"].asText()).isEqualTo(RENAMED_TITLE)
+                    assertThat(view["description"].asText()).isEqualTo(RENAMED_DESCRIPTION)
+                    assertThat(view["myRole"].asText())
+                        .overridingErrorMessage("the patching admin reads his own view with myRole=admin")
+                        .isEqualTo(ADMIN_ROLE)
+
+                    assertThat(objectMapper.readTree(getGroup(carol, chatId).body)["title"].asText())
+                        .overridingErrorMessage("№28 must serve the new title on the next load (FR-007)")
+                        .isEqualTo(RENAMED_TITLE)
+                    assertThat(groupListItemOf(owner, chatId)["title"].asText())
+                        .overridingErrorMessage("the №12 group element must carry the new title (FR-007/FR-014)")
+                        .isEqualTo(RENAMED_TITLE)
+
+                    awaitUpdatedOnAll(
+                        streams = listOf(ownerStream, bobStream, carolStream),
+                        chatId = chatId,
+                        title = RENAMED_TITLE,
+                        description = RENAMED_DESCRIPTION,
+                        actorId = bob.id,
+                    )
+
+                    assertThat(adminLogActions(chatId, TITLE_CHANGED_ACTION, DESCRIPTION_CHANGED_ACTION))
+                        .overridingErrorMessage(
+                            "№29 must journal one title_changed + one description_changed of the actor (FR-017)",
+                        ).containsExactlyInAnyOrder(
+                            TITLE_CHANGED_ACTION to bob.id,
+                            DESCRIPTION_CHANGED_ACTION to bob.id,
+                        )
+                }
+            }
+        }
+    }
+
+    /**
+     * №29 validation (FR-001/FR-007, api-contract.md №29): a body with
+     * neither field is `400 empty_patch` (errors.body); the №27 rules
+     * reused verbatim — a blank/empty/65-char title is `400 invalid_title`,
+     * a 257-char description `400 invalid_description`; and a MIXED patch
+     * (valid title + invalid description) is refused ATOMICALLY: nothing
+     * lands on №28 and nothing journals — the patch applies whole or not
+     * at all.
+     */
+    @Test
+    fun `updateGroup refuses an empty patch and invalid metadata atomically`() {
+        val owner = messagingUser("owner")
+        val bob = messagingUser("bob")
+        addContact(owner, bob.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, GROUP_DESCRIPTION, listOf(bob.id)))
+
+        val emptyPatch = patchGroup(owner, chatId, emptyMap())
+        assertThat(emptyPatch.statusCode)
+            .overridingErrorMessage(
+                "a №29 body with neither field must answer 400, got <%s>: %s",
+                emptyPatch.statusCode,
+                emptyPatch.body,
+            ).isEqualTo(HttpStatus.BAD_REQUEST)
+        assertProblem(emptyPatch, BODY_FIELD, EMPTY_PATCH)
+
+        for (invalidTitle in listOf("", BLANK_TITLE, "x".repeat(TITLE_TOO_LONG))) {
+            val response = patchGroup(owner, chatId, mapOf(TITLE_FIELD to invalidTitle))
+            assertThat(response.statusCode)
+                .overridingErrorMessage(
+                    "patch title <%s…> of length ${invalidTitle.length} must be refused 400, got <%s>: %s",
+                    invalidTitle.take(QUOTE_CONTEXT_LENGTH),
+                    response.statusCode,
+                    response.body,
+                ).isEqualTo(HttpStatus.BAD_REQUEST)
+            assertProblem(response, TITLE_FIELD, INVALID_TITLE)
+        }
+
+        val oversized =
+            patchGroup(owner, chatId, mapOf(DESCRIPTION_FIELD to "d".repeat(DESCRIPTION_TOO_LONG)))
+        assertThat(oversized.statusCode)
+            .overridingErrorMessage(
+                "a ${DESCRIPTION_TOO_LONG}-char patch description must be refused 400, got <%s>: %s",
+                oversized.statusCode,
+                oversized.body,
+            ).isEqualTo(HttpStatus.BAD_REQUEST)
+        assertProblem(oversized, DESCRIPTION_FIELD, INVALID_DESCRIPTION)
+
+        val mixed =
+            patchGroup(
+                owner,
+                chatId,
+                mapOf(TITLE_FIELD to ATOMIC_REJECTED_TITLE, DESCRIPTION_FIELD to "d".repeat(DESCRIPTION_TOO_LONG)),
+            )
+        assertThat(mixed.statusCode)
+            .overridingErrorMessage(
+                "a MIXED patch with any invalid field must be refused 400, got <%s>: %s",
+                mixed.statusCode,
+                mixed.body,
+            ).isEqualTo(HttpStatus.BAD_REQUEST)
+        assertProblem(mixed, DESCRIPTION_FIELD, INVALID_DESCRIPTION)
+        val unchanged = objectMapper.readTree(getGroup(owner, chatId).body)
+        assertThat(unchanged["title"].asText())
+            .overridingErrorMessage("a refused MIXED patch must land NOTHING — the whole №29 is atomic")
+            .isEqualTo(GROUP_TITLE)
+        assertThat(unchanged["description"].asText()).isEqualTo(GROUP_DESCRIPTION)
+        assertThat(adminLogActions(chatId, TITLE_CHANGED_ACTION, DESCRIPTION_CHANGED_ACTION))
+            .overridingErrorMessage("a refused patch journals nothing (FR-017)")
+            .isEmpty()
+    }
+
+    /**
+     * №29 role gate + privacy floor (FR-004/FR-008, api-contract.md №29/§1):
+     * a plain member does not manage metadata — `403 forbidden_role`
+     * (errors.group) with nothing journaled; a non-member and a
+     * nonexistent chatId get the SAME uniform `404 group_not_found` —
+     * existence is never disclosed.
+     */
+    @Test
+    fun `updateGroup refuses the member role and non-members`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        val stranger = messagingUser("erin")
+        addContact(owner, bob.id)
+        addContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = listOf(bob.id, carol.id)))
+
+        val byMember = patchGroup(carol, chatId, mapOf(TITLE_FIELD to MEMBER_REJECTED_TITLE))
+        assertThat(byMember.statusCode)
+            .overridingErrorMessage(
+                "a plain member must not manage metadata (FR-004/FR-007), got <%s>: %s",
+                byMember.statusCode,
+                byMember.body,
+            ).isEqualTo(HttpStatus.FORBIDDEN)
+        assertProblem(byMember, GROUP_FIELD, FORBIDDEN_ROLE)
+        assertThat(objectMapper.readTree(getGroup(owner, chatId).body)["title"].asText())
+            .overridingErrorMessage("the refused member patch must change nothing")
+            .isEqualTo(GROUP_TITLE)
+        assertThat(adminLogActions(chatId, TITLE_CHANGED_ACTION, DESCRIPTION_CHANGED_ACTION))
+            .overridingErrorMessage("the refused member patch journals nothing (FR-017)")
+            .isEmpty()
+
+        assertGroupNotFound(patchGroup(stranger, chatId, mapOf(TITLE_FIELD to MEMBER_REJECTED_TITLE)))
+        assertGroupNotFound(patchGroup(owner, UUID.randomUUID(), mapOf(TITLE_FIELD to MEMBER_REJECTED_TITLE)))
+    }
+
+    /**
+     * №29 simultaneous-patch edge (FR-007, api-contract.md №29, spec.md
+     * Edge «одновременное переименование»): two admins patch title AND
+     * description at the same moment — BOTH operations confirm with 200
+     * (the FOR UPDATE serialization orders them) and the stored
+     * (title, description) pair is EXACTLY one whole patch — the last
+     * confirmed — never a mix of the two; the journal carries BOTH
+     * confirmations (an action pair per admin) and every active receives
+     * BOTH `group.updated` frames, each repeating one whole patch payload.
+     */
+    @Test
+    fun `two admins patching concurrently land exactly one whole confirmed patch`() {
+        val owner = messagingUser("owner")
+        val (bob, carol, dave) = listOf("bob", "carol", "dave").map { messagingUser(it) }
+        val trio = listOf(bob, carol, dave)
+        trio.forEach { addContact(owner, it.id) }
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = trio.map { it.id }))
+        grantAdminOk(owner, chatId, bob.id)
+        grantAdminOk(owner, chatId, carol.id)
+        val bobPatch = mapOf(TITLE_FIELD to BOB_RENAME_TITLE, DESCRIPTION_FIELD to BOB_RENAME_DESCRIPTION)
+        val carolPatch = mapOf(TITLE_FIELD to CAROL_RENAME_TITLE, DESCRIPTION_FIELD to CAROL_RENAME_DESCRIPTION)
+        val wholePatches =
+            listOf(
+                BOB_RENAME_TITLE to BOB_RENAME_DESCRIPTION,
+                CAROL_RENAME_TITLE to CAROL_RENAME_DESCRIPTION,
+            )
+
+        openUserEvents(bob).use { bobStream ->
+            openUserEvents(carol).use { carolStream ->
+                openUserEvents(dave).use { daveStream ->
+                    fireConcurrentPatches(bob, bobPatch, carol, carolPatch, chatId)
+                    assertStoredWholePatch(dave, chatId, wholePatches)
+
+                    assertThat(adminLogActions(chatId, TITLE_CHANGED_ACTION, DESCRIPTION_CHANGED_ACTION))
+                        .overridingErrorMessage(
+                            "every confirmed №29 journals its action pair — both admins land (FR-017)",
+                        ).containsExactlyInAnyOrder(
+                            TITLE_CHANGED_ACTION to bob.id,
+                            DESCRIPTION_CHANGED_ACTION to bob.id,
+                            TITLE_CHANGED_ACTION to carol.id,
+                            DESCRIPTION_CHANGED_ACTION to carol.id,
+                        )
+
+                    awaitWholePatchFrames(listOf(bobStream, carolStream, daveStream), chatId, wholePatches)
+                }
+            }
+        }
+    }
+
+    /** Fires the two №29 patches of the edge simultaneously and asserts BOTH confirm with 200. */
+    private fun fireConcurrentPatches(
+        first: MessagingUser,
+        firstPatch: Map<String, Any>,
+        second: MessagingUser,
+        secondPatch: Map<String, Any>,
+        chatId: UUID,
+    ) {
+        val answers =
+            patchConcurrently(
+                listOf(
+                    { patchGroup(first, chatId, firstPatch) },
+                    { patchGroup(second, chatId, secondPatch) },
+                ),
+            )
+        answers.forEach { answer ->
+            assertThat(answer.statusCode)
+                .overridingErrorMessage(
+                    "both simultaneous №29 calls must confirm with 200 (serialized), got <%s>: %s",
+                    answer.statusCode,
+                    answer.body,
+                ).isEqualTo(HttpStatus.OK)
+        }
+    }
+
+    /** The stored №28 pair must be EXACTLY one whole confirmed patch — never a mix of the two. */
+    private fun assertStoredWholePatch(
+        reader: MessagingUser,
+        chatId: UUID,
+        wholePatches: List<Pair<String, String>>,
+    ) {
+        val view = objectMapper.readTree(getGroup(reader, chatId).body)
+        val stored = view["title"].asText() to view["description"].asText()
+        assertThat(stored)
+            .overridingErrorMessage(
+                "the last confirmed patch must land WHOLE — no mixing of the two, got <%s>",
+                stored,
+            ).isIn(*wholePatches.toTypedArray())
+    }
+
+    /**
+     * Every active receives BOTH §3.1 frames — each repeating ONE whole
+     * patch payload verbatim, the pair covering both confirmed patches.
+     */
+    private fun awaitWholePatchFrames(
+        streams: List<UserEventsStream>,
+        chatId: UUID,
+        wholePatches: List<Pair<String, String>>,
+    ) {
+        streams.forEach { stream ->
+            val frames =
+                listOf(
+                    stream.awaitEvent(GROUP_UPDATED_EVENT, deliveryBudget),
+                    stream.awaitEvent(GROUP_UPDATED_EVENT, deliveryBudget),
+                )
+            frames.forEach { frame ->
+                assertUpdatedFrameShape(frame, chatId)
+                val payload = frame["title"].asText() to frame["description"].asText()
+                assertThat(payload)
+                    .overridingErrorMessage(
+                        "every group.updated frame repeats ONE whole patch payload, got <%s>",
+                        payload,
+                    ).isIn(*wholePatches.toTypedArray())
+            }
+            assertThat(frames.map { it["title"].asText() }.toSet())
+                .overridingErrorMessage(
+                    "both confirmed patches broadcast to every active (§3.1), got titles <%s>",
+                    frames.map { it["title"].asText() },
+                ).isEqualTo(setOf(BOB_RENAME_TITLE, CAROL_RENAME_TITLE))
+        }
+    }
+
     /** Contract №27 `POST /api/v1/groups` — raw response for status/error assertions. */
     private fun createGroup(
         owner: MessagingUser,
@@ -963,6 +1303,63 @@ class GroupLifecycleIT(
             mapOf(USER_ID_FIELD to userId.toString()),
             user,
         )
+
+    /**
+     * Contract №29 `PATCH /api/v1/groups/{chatId}` — raw response. The
+     * call rides the JDK HttpClient on purpose: the build carries no
+     * Apache HTTP client (plan.md VII) and RestTemplate's default JDK
+     * factory refuses the PATCH method — the same deviation the SSE
+     * reader of MessagingTestSupport records. The response is rebuilt as
+     * a `ResponseEntity` (status + body + the served Content-Type), so
+     * every shared assertion helper keeps working verbatim.
+     */
+    private fun patchGroup(
+        user: MessagingUser,
+        chatId: UUID,
+        payload: Map<String, Any>,
+    ): ResponseEntity<String> {
+        val request =
+            HttpRequest
+                .newBuilder()
+                .uri(URI.create("http://localhost:$serverPort$GROUPS_PATH/$chatId"))
+                .header(HttpHeaders.AUTHORIZATION, "Bearer ${user.accessToken}")
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
+                .method(
+                    PATCH_METHOD,
+                    HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)),
+                ).build()
+        val response = patchHttpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        val headers =
+            HttpHeaders().apply {
+                response.headers().firstValue(HttpHeaders.CONTENT_TYPE).ifPresent { set(HttpHeaders.CONTENT_TYPE, it) }
+            }
+        return ResponseEntity.status(response.statusCode()).headers(headers).body(response.body())
+    }
+
+    /**
+     * Fires every №29 call of [calls] through its own worker behind ONE
+     * start gate — genuinely simultaneous PATCHes (the edge of
+     * api-contract.md №29) — and returns the answers in the call order.
+     */
+    private fun patchConcurrently(calls: List<() -> ResponseEntity<String>>): List<ResponseEntity<String>> {
+        val startGate = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(calls.size)
+        try {
+            val futures =
+                calls.map { call ->
+                    pool.submit<ResponseEntity<String>> {
+                        assertThat(startGate.await(START_GATE_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                            .overridingErrorMessage("the concurrent №29 workers must start together")
+                            .isTrue
+                        call()
+                    }
+                }
+            startGate.countDown()
+            return futures.map { future -> future.get(PATCH_CONCURRENCY_BUDGET_SECONDS, TimeUnit.SECONDS) }
+        } finally {
+            pool.shutdownNow()
+        }
+    }
 
     /** №34 happy-path fixture: the owner grants the admin role to [userId]. */
     private fun grantAdminOk(
@@ -1138,6 +1535,55 @@ class GroupLifecycleIT(
         assertThat(event["actorId"].asText()).isEqualTo(actorId.toString())
     }
 
+    /**
+     * Every active stream must receive the `group.updated` frame of one
+     * №29 patch (§3.1: the broadcast goes to ALL actives, actor included).
+     */
+    private fun awaitUpdatedOnAll(
+        streams: List<UserEventsStream>,
+        chatId: UUID,
+        title: String,
+        description: String,
+        actorId: UUID,
+    ) {
+        streams.forEach { stream ->
+            assertUpdatedFrame(
+                stream.awaitEvent(GROUP_UPDATED_EVENT, deliveryBudget),
+                chatId = chatId,
+                title = title,
+                description = description,
+                actorId = actorId,
+            )
+        }
+    }
+
+    /** A `group.updated` frame must repeat the §3.1 payload verbatim — field-by-field, no extras. */
+    private fun assertUpdatedFrame(
+        event: JsonNode,
+        chatId: UUID,
+        title: String,
+        description: String,
+        actorId: UUID,
+    ) {
+        assertUpdatedFrameShape(event, chatId)
+        assertThat(event["title"].asText()).isEqualTo(title)
+        assertThat(event["description"].asText()).isEqualTo(description)
+        assertThat(event["actorId"].asText()).isEqualTo(actorId.toString())
+    }
+
+    /** The §3.1 wire shape + group identity (payload values asserted by the caller — the edge varies them). */
+    private fun assertUpdatedFrameShape(
+        event: JsonNode,
+        chatId: UUID,
+    ) {
+        assertThat(fieldNames(event))
+            .overridingErrorMessage(
+                "group.updated must carry exactly the contract fields, got <%s>",
+                fieldNames(event),
+            ).containsExactlyInAnyOrderElementsOf(GROUP_UPDATED_EVENT_FIELDS)
+        assertThat(event["groupId"].asText()).isEqualTo(chatId.toString())
+    }
+
     /** The number of ACTIVE owner rows — the `ux_chat_participants_owner` invariant probe of №35. */
     private fun activeOwnerCount(chatId: UUID): Long =
         jdbcTemplate.queryForObject(
@@ -1148,6 +1594,21 @@ class GroupLifecycleIT(
             Long::class.java,
             chatId,
         ) ?: 0L
+
+    /** The group's journal entries of [actions] as `(action, actor)` pairs — the FR-017 probe of №29. */
+    private fun adminLogActions(
+        chatId: UUID,
+        vararg actions: String,
+    ): List<Pair<String, UUID>> =
+        jdbcTemplate.query(
+            """
+            SELECT action, actor_id FROM group_admin_log
+            WHERE group_id = ? AND action IN (${placeholders(actions.size)})
+            """.trimIndent(),
+            { rs, _ -> rs.getString("action") to UUID.fromString(rs.getString("actor_id")) },
+            chatId,
+            *actions,
+        )
 
     /** RFC 9457 refusal probe: `application/problem+json` with `errors.{field}=[code]` (convention 002). */
     private fun assertProblem(
@@ -1244,17 +1705,48 @@ class GroupLifecycleIT(
         const val ROLE_HIERARCHY_VIOLATION = "role_hierarchy_violation"
         const val TARGET_NOT_MEMBER = "target_not_member"
         const val INVALID_ROLE = "invalid_role"
+        const val EMPTY_PATCH = "empty_patch"
 
-        /** realtime-group-events.md §3 names — the №18 frames of the roles slice. */
+        /** api-contract.md №29: the empty-body refusal rides `errors.body`. */
+        const val BODY_FIELD = "body"
+
+        /** data-model.md §Сущность 4 — the №29 journal actions. */
+        const val TITLE_CHANGED_ACTION = "title_changed"
+        const val DESCRIPTION_CHANGED_ACTION = "description_changed"
+
+        /** realtime-group-events.md §3 names — the №18 frames of the roles/metadata slices. */
         const val GROUP_ROLE_CHANGED_EVENT = "group.role.changed"
         const val GROUP_MEMBER_REMOVED_EVENT = "group.member.removed"
         const val GROUP_YOU_REMOVED_EVENT = "group.you_removed"
+        const val GROUP_UPDATED_EVENT = "group.updated"
         const val KICKED_REASON = "kicked"
 
         /** A role frame must arrive well inside the CI-tolerant SC-004 budget. */
         const val DELIVERY_BUDGET_SECONDS = 5L
         const val KICK_SEEDED_MESSAGES = 1
         const val KICK_TEXT_PREFIX = "kick-target-message"
+
+        /** US4 metadata fixtures. */
+        const val RENAMED_TITLE = "US4 renamed title"
+        const val RENAMED_DESCRIPTION = "the US4 replacement description"
+        const val MEMBER_REJECTED_TITLE = "a member writes no titles"
+        const val ATOMIC_REJECTED_TITLE = "nothing of this title may land"
+        const val BOB_RENAME_TITLE = "bob's whole patch"
+        const val BOB_RENAME_DESCRIPTION = "bob's whole description"
+        const val CAROL_RENAME_TITLE = "carol's whole patch"
+        const val CAROL_RENAME_DESCRIPTION = "carol's whole description"
+
+        /**
+         * The №29 JDK-HttpClient leg: RestTemplate's default JDK factory
+         * refuses the PATCH method (no Apache client on the build — the
+         * MessagingTestSupport SSE-reader deviation note).
+         */
+        const val PATCH_METHOD = "PATCH"
+        const val PATCH_CONNECT_TIMEOUT_SECONDS = 5L
+        const val START_GATE_TIMEOUT_SECONDS = 10L
+        const val PATCH_CONCURRENCY_BUDGET_SECONDS = 30L
+
+        fun placeholders(count: Int): String = List(count) { "?" }.joinToString(", ")
 
         /** openapi.yaml 0.6.0 shapes — every group answer is pinned field-by-field. */
         val GROUP_VIEW_FIELDS = listOf("chatId", "title", "description", "myRole", "members")
@@ -1263,6 +1755,7 @@ class GroupLifecycleIT(
         val GROUP_ROLE_CHANGED_EVENT_FIELDS = listOf("groupId", "userId", "role", "actorId")
         val GROUP_MEMBER_REMOVED_EVENT_FIELDS = listOf("groupId", "userId", "actorId")
         val GROUP_YOU_REMOVED_EVENT_FIELDS = listOf("groupId", "reason")
+        val GROUP_UPDATED_EVENT_FIELDS = listOf("groupId", "title", "description", "actorId")
         val GROUP_CHAT_LIST_ITEM_FIELDS =
             listOf(
                 "chatId",
