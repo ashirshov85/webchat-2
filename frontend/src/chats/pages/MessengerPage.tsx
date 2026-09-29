@@ -155,6 +155,101 @@ function confirmCopy(action: PendingAction, peerName: string): ConfirmCopy {
   }
 }
 
+/**
+ * The DIRECT dialog header (T060): the peer title, the «заблокирован»
+ * mark and the «Действия» menu (№14 delete + №23/№24 block toggle).
+ * A group window carries none of these controls (T029).
+ */
+interface DirectChatHeaderProps {
+  readonly username: string
+  readonly blockedByMe: boolean
+  readonly menuOpen: boolean
+  readonly onToggleMenu: () => void
+  readonly onDeleteChat: () => void
+  readonly onToggleBlock: () => void
+}
+
+function DirectChatHeader({
+  username,
+  blockedByMe,
+  menuOpen,
+  onToggleMenu,
+  onDeleteChat,
+  onToggleBlock,
+}: DirectChatHeaderProps) {
+  return (
+    <>
+      <h2 className="dialog-title">{username}</h2>
+      {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
+      <div className="dialog-menu">
+        <button
+          type="button"
+          className="dialog-menu-toggle"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={onToggleMenu}
+        >
+          Действия
+        </button>
+        {menuOpen && (
+          <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
+            <button
+              type="button"
+              role="menuitem"
+              className="dialog-menu-item"
+              onClick={onDeleteChat}
+            >
+              Удалить чат
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="dialog-menu-item"
+              onClick={onToggleBlock}
+            >
+              {blockedByMe ? 'Разблокировать пользователя' : 'Заблокировать пользователя'}
+            </button>
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+/** The «диалоговое меню» confirmation of a pending T060 action. */
+interface ConfirmDialogProps {
+  readonly confirmation: ConfirmCopy
+  readonly pending: boolean
+  readonly onAccept: () => void
+  readonly onCancel: () => void
+}
+
+function ConfirmDialog({ confirmation, pending, onAccept, onCancel }: ConfirmDialogProps) {
+  return (
+    <dialog className="dialog-confirm" open aria-label={confirmation.title}>
+      <p className="dialog-confirm-text">{confirmation.text}</p>
+      <div className="dialog-confirm-actions">
+        <button
+          type="button"
+          className="dialog-confirm-accept"
+          disabled={pending}
+          onClick={onAccept}
+        >
+          {pending ? 'Выполняется…' : confirmation.confirmLabel}
+        </button>
+        <button
+          type="button"
+          className="dialog-confirm-cancel"
+          disabled={pending}
+          onClick={onCancel}
+        >
+          Отмена
+        </button>
+      </div>
+    </dialog>
+  )
+}
+
 export function MessengerPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [activeChat, setActiveChat] = useState<ActiveChat | null>(null)
@@ -550,53 +645,22 @@ export function MessengerPage() {
                   <h2 className="dialog-title">{activeChat.title}</h2>
                 </>
               ) : (
-                <>
-                  <h2 className="dialog-title">{activeChat.peer.username}</h2>
-                  {activeChat.blockedByMe && (
-                    <span className="chat-item-blocked">заблокирован</span>
-                  )}
-                  <div className="dialog-menu">
-                    <button
-                      type="button"
-                      className="dialog-menu-toggle"
-                      aria-haspopup="menu"
-                      aria-expanded={menuOpen}
-                      onClick={() => {
-                        setMenuOpen((open) => !open)
-                      }}
-                    >
-                      Действия
-                    </button>
-                    {menuOpen && (
-                      <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="dialog-menu-item"
-                          onClick={() => {
-                            setMenuOpen(false)
-                            setPendingAction('delete-chat')
-                          }}
-                        >
-                          Удалить чат
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="dialog-menu-item"
-                          onClick={() => {
-                            setMenuOpen(false)
-                            setPendingAction(activeChat.blockedByMe ? 'unblock' : 'block')
-                          }}
-                        >
-                          {activeChat.blockedByMe
-                            ? 'Разблокировать пользователя'
-                            : 'Заблокировать пользователя'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </>
+                <DirectChatHeader
+                  username={activeChat.peer.username}
+                  blockedByMe={activeChat.blockedByMe}
+                  menuOpen={menuOpen}
+                  onToggleMenu={() => {
+                    setMenuOpen((open) => !open)
+                  }}
+                  onDeleteChat={() => {
+                    setMenuOpen(false)
+                    setPendingAction('delete-chat')
+                  }}
+                  onToggleBlock={() => {
+                    setMenuOpen(false)
+                    setPendingAction(activeChat.blockedByMe ? 'unblock' : 'block')
+                  }}
+                />
               )}
             </header>
 
@@ -612,35 +676,18 @@ export function MessengerPage() {
             )}
 
             {confirmation !== null && pendingAction !== null && (
-              <dialog className="dialog-confirm" open aria-label={confirmation.title}>
-                <p className="dialog-confirm-text">{confirmation.text}</p>
-                <div className="dialog-confirm-actions">
-                  <button
-                    type="button"
-                    className="dialog-confirm-accept"
-                    disabled={actionPending}
-                    onClick={() => {
-                      if (pendingAction === 'delete-chat') {
-                        handleConfirmDeleteChat()
-                      } else {
-                        handleConfirmBlockToggle()
-                      }
-                    }}
-                  >
-                    {actionPending ? 'Выполняется…' : confirmation.confirmLabel}
-                  </button>
-                  <button
-                    type="button"
-                    className="dialog-confirm-cancel"
-                    disabled={actionPending}
-                    onClick={() => {
-                      setPendingAction(null)
-                    }}
-                  >
-                    Отмена
-                  </button>
-                </div>
-              </dialog>
+              <ConfirmDialog
+                confirmation={confirmation}
+                pending={actionPending}
+                onAccept={
+                  pendingAction === 'delete-chat'
+                    ? handleConfirmDeleteChat
+                    : handleConfirmBlockToggle
+                }
+                onCancel={() => {
+                  setPendingAction(null)
+                }}
+              />
             )}
 
             {status === 'error' && <ErrorBanner error={error} onDismiss={reload} />}
