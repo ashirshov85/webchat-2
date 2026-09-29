@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { act, renderHook } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
 import type { GroupRealtimeEvent, GroupRealtimeState } from '../useGroupRealtime'
-import { reduceGroupEvent } from '../useGroupRealtime'
+import { reduceGroupEvent, useGroupRealtime } from '../useGroupRealtime'
 
 /**
  * Group events reducer — the US1 starting slice (T019 → T027;
@@ -12,9 +13,37 @@ import { reduceGroupEvent } from '../useGroupRealtime'
  * never create a duplicate group — the reducer applies STATE (the
  * set of known groups keyed by `chatId = groupId`), never deltas.
  * Unknown group event types pass through untouched (forward
- * compatibility, §1); the US3/US4/US6 events join the reducer with
- * their own stories (T048/T053/T066).
+ * compatibility, §1).
+ *
+ * The US3 slice (T041 → T048) adds the FINAL frame of the kicked
+ * member: `group.you_removed` removes the group from «Чаты»
+ * deterministically, without polling (§5.2), and every LATER frame
+ * of that group — the §1 post-commit race may redeliver a message or
+ * roster frame committed before the kick — must be ignored, so the
+ * group can never resurrect client-side. `group.role.changed`/
+ * `group.member.removed` frames carry no list-level aggregates (the
+ * №12 refetch owns them), so their consumer is the №28 view of
+ * useGroup (T041 useGroup.test); US4/US6 events join with T053/T066.
  */
+
+const realtime = vi.hoisted(() => {
+  const groupListeners = new Set<(event: GroupRealtimeEvent) => void>()
+  return {
+    groupListeners,
+    stream: {
+      onGroupEvent(listener: (event: GroupRealtimeEvent) => void) {
+        groupListeners.add(listener)
+        return () => {
+          groupListeners.delete(listener)
+        }
+      },
+    },
+  }
+})
+
+vi.mock('../../../chats/hooks/useRealtime', () => ({
+  useRealtime: () => realtime.stream,
+}))
 
 type PublicUser = components['schemas']['PublicUser']
 
@@ -80,5 +109,78 @@ describe('reduceGroupEvent — group.member.added (US1 slice, §3.2)', () => {
     } as unknown as GroupRealtimeEvent
 
     expect(reduceGroupEvent(state, unknownEvent)).toBe(state)
+  })
+})
+
+function youRemoved(groupId: string, reason: 'kicked' | 'left'): GroupRealtimeEvent {
+  return { type: 'group.you_removed', groupId, reason }
+}
+
+function roleChanged(
+  groupId: string,
+  userId: string,
+  role: 'owner' | 'admin' | 'member',
+): GroupRealtimeEvent {
+  return { type: 'group.role.changed', groupId, userId, role, actorId: ACTOR }
+}
+
+function emitGroupEvent(event: GroupRealtimeEvent) {
+  act(() => {
+    for (const listener of realtime.groupListeners) {
+      listener(event)
+    }
+  })
+}
+
+const mounted: Array<{ unmount(): void }> = []
+
+function mountGroupRealtime() {
+  const rendered = renderHook(() => useGroupRealtime())
+  mounted.push(rendered)
+  return rendered
+}
+
+afterEach(() => {
+  for (const rendered of mounted.splice(0)) {
+    rendered.unmount()
+  }
+  vi.clearAllMocks()
+})
+
+describe('useGroupRealtime — group.you_removed (US3 slice → T048, §1/§3.6/§5.2)', () => {
+  it('removes the group from «Чаты» deterministically, without polling', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(memberAdded(GROUP_B, ME))
+    expect(result.current.groups.map((entry) => entry.chatId)).toEqual([GROUP_A, GROUP_B])
+
+    emitGroupEvent(youRemoved(GROUP_A, 'kicked'))
+    expect(result.current.groups.map((entry) => entry.chatId)).toEqual([GROUP_B])
+
+    // A redelivered final frame must not distort anything (FR-015)
+    emitGroupEvent(youRemoved(GROUP_A, 'kicked'))
+    expect(result.current.groups.map((entry) => entry.chatId)).toEqual([GROUP_B])
+  })
+
+  it('never resurrects the group: later frames of the removed group are ignored (race §1)', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(youRemoved(GROUP_A, 'kicked'))
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(roleChanged(GROUP_A, ME, 'admin'))
+    expect(result.current.groups).toEqual([])
+  })
+
+  it('is a no-op for a group the state never knew', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_B, ME))
+    const before = result.current.groups
+
+    emitGroupEvent(youRemoved(GROUP_A, 'kicked'))
+    expect(result.current.groups).toBe(before)
   })
 })
