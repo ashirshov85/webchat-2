@@ -946,3 +946,76 @@ p {
   font-size: 0.85rem;
   color: var(--muted);
 }
+
+/* Group roster (MemberList, feature 006, T045): role-labelled rows with
+   hierarchy-gated roster actions (№32/№34/№35); the in-flight row of the
+   useGroupMembers mutex renders disabled. */
+.member-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.member-row-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.member-row-role {
+  font-size: 0.8rem;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.member-row-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.member-action {
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+}
+
+.member-action:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.member-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.member-action-kick {
+  color: var(--danger, #b3352c);
+}
