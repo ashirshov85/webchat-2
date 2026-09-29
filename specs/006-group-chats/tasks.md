@@ -133,7 +133,7 @@ description: "Task list for feature implementation: групповые чаты 
 
 ### Tests for User Story 3 (писать ПЕРВЫМИ)
 
-- [ ] T040 [P] [US3] Расширить `backend/src/test/kotlin/webchat/backend/GroupLifecycleIT.kt` (roles slice): №34 назначение/снятие admin (только owner); №35 передача (demote→promote, ровно один owner — инвариант индекса), передача себе → `400 self_forbidden` (edge); №32 исключение: admin исключает только member (`403 role_hierarchy_violation`), member → `403 forbidden_role`; события `group.role.changed`/`group.member.removed`; `target_not_member`/`self_forbidden`; повторный №32 (цель уже не активна, группа существует) → `409 target_not_member` (api-contract.md §2 «Идемпотентность»)
+- [x] T040 [P] [US3] Расширить `backend/src/test/kotlin/webchat/backend/GroupLifecycleIT.kt` (roles slice): №34 назначение/снятие admin (только owner); №35 передача (demote→promote, ровно один owner — инвариант индекса), передача себе → `400 self_forbidden` (edge); №32 исключение: admin исключает только member (`403 role_hierarchy_violation`), member → `403 forbidden_role`; события `group.role.changed`/`group.member.removed`; `target_not_member`/`self_forbidden`; повторный №32 (цель уже не активна, группа существует) → `409 target_not_member` (api-contract.md §2 «Идемпотентность»)
 - [ ] T041 [P] [US3] Написать frontend-тесты: `frontend/src/groups/components/__tests__/MemberList.test.tsx` (роли, видимость действий по myRole), `frontend/src/groups/hooks/__tests__/useGroupMembers.test.ts` (мьютекс конкурирующих действий), `frontend/src/groups/hooks/__tests__/useGroup.test.ts` (№28 + оптимистичные обновления по событиям — covers T046a), обработка `group.role.changed`/`group.member.removed`
 
 ### Implementation for User Story 3

@@ -14,6 +14,7 @@ import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.jdbc.core.JdbcTemplate
 import webchat.backend.sync.SyncTestSupport
+import java.time.Duration
 import java.util.UUID
 
 /**
@@ -43,13 +44,39 @@ import java.util.UUID
  *    BOTH watermarks at the chat head, so the added member's №12 badge is 0
  *    (FR-013) even over pre-existing history.
  *
- * NOTE (TDD, constitution VI): written BEFORE the US1 implementation tasks
- * (T020–T024) — until they land, every №27/№28/№31 call answers 404 and the
- * group projections of №12/№13 stay direct-only, so every method here fails
- * (RED) by design. Limits (200/64/256/batch) and the №31 idempotency matrix
- * are owned by T018a (GroupLimitsIT); the roles/metadata/leave-delete slices
- * of this lifecycle (T040/T049/T059) EXTEND this class later — keep every
- * fixture self-contained per method.
+ * T040 (US3) later grew the ROLES SLICE on top of the same staging —
+ * one method per FR-003/FR-004 rule of api-contract.md §2:
+ *
+ *  * №34 `PUT /groups/{chatId}/members/{userId}/role` — ONLY the owner
+ *    grants/revokes the admin role (`403 not_group_owner` for everyone
+ *    else), never to himself (`400 self_forbidden`), only for an ACTIVE
+ *    target (`409 target_not_member`) and only the `admin|member` values
+ *    (`400 invalid_role` — the owner role is №35-only); every change is
+ *    broadcast to all actives as `group.role.changed`;
+ *  * №35 `POST /groups/{chatId}/owner` — ONE transaction demote THEN
+ *    promote: the answer carries the new owner and the former owner as
+ *    admin, the partial unique index keeps EXACTLY one owner row, the
+ *    transfer to self is `400 self_forbidden` (edge) and every active
+ *    receives the `group.role.changed` pair of frames;
+ *  * №32 `DELETE /groups/{chatId}/members/{userId}` — the kick: an admin
+ *    removes ONLY members (`403 role_hierarchy_violation` on an
+ *    admin/owner target), a plain member removes no one (`403
+ *    forbidden_role`), the self-kick is refused `400 self_forbidden`
+ *    BEFORE the role hierarchy (leaving is №33), the removed member
+ *    gets the final `group.you_removed {reason:'kicked'}` and the
+ *    remaining actives `group.member.removed`; his messages stay in the
+ *    history with attribution, his №28 collapses to the uniform 404 and
+ *    a repeated №32 on the LIVE group answers `409 target_not_member`
+ *    (api-contract.md §2 «Идемпотентность»).
+ *
+ * NOTE (TDD, constitution VI): the creation slice was written BEFORE the
+ * US1 implementation tasks (T020–T024); T040 grew the roles slice the same
+ * way — until the US3 implementation tasks (T042–T044) land, №32/№34/№35
+ * answer 404/405, so every roles method fails (RED) by design. Limits
+ * (200/64/256/batch) and the №31 idempotency matrix are owned by T018a
+ * (GroupLimitsIT); the metadata/leave-delete slices of this lifecycle
+ * (T049/T059) EXTEND this class later — keep every fixture self-contained
+ * per method.
  */
 @Suppress("TooManyFunctions", "LargeClass") // T018: one method per US1 rule of tasks.md
 class GroupLifecycleIT(
@@ -57,6 +84,9 @@ class GroupLifecycleIT(
     @Autowired private val objectMapper: ObjectMapper,
     @Autowired private val jdbcTemplate: JdbcTemplate,
 ) : SyncTestSupport() {
+    /** A role frame must arrive well inside this CI-tolerant budget (SC-004 functional leg). */
+    private val deliveryBudget: Duration = Duration.ofSeconds(DELIVERY_BUDGET_SECONDS)
+
     /** №27 happy path: 201 GroupView — creator owner, added contacts member (US1-1). */
     @Test
     fun `create answers 201 GroupView with the creator owner and the added contacts member`() {
@@ -370,6 +400,486 @@ class GroupLifecycleIT(
         assertGroupNotFound(addGroupMembers(stranger, chatId, listOf(bob.id)))
     }
 
+    /**
+     * №34 happy path (FR-003, api-contract.md №34): the owner grants bob
+     * the admin role — `200` with the bare `GroupMember` (role `admin`) —
+     * and №28 reflects the change immediately; the revoke (role `member`)
+     * mirrors it back. EVERY change is broadcast to all three actives as
+     * `group.role.changed` carrying the contract payload verbatim
+     * (realtime-group-events.md §3.4).
+     */
+    @Test
+    fun `setMemberRole grants and revokes the admin role for the owner with the role frames`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        addContact(owner, bob.id)
+        addContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = listOf(bob.id, carol.id)))
+
+        openUserEvents(owner).use { ownerStream ->
+            openUserEvents(bob).use { bobStream ->
+                openUserEvents(carol).use { carolStream ->
+                    val grantedMember = grantAdminAndAssertView(owner, bob, chatId)
+                    awaitRoleChangedOnAll(
+                        streams = listOf(ownerStream, bobStream, carolStream),
+                        chatId = chatId,
+                        userId = bob.id,
+                        role = ADMIN_ROLE,
+                        actorId = owner.id,
+                    )
+                    revokeAdminAndAssertView(owner, bob, chatId, grantedMember)
+                    assertRoleChangedFrame(
+                        ownerStream.awaitEvent(GROUP_ROLE_CHANGED_EVENT, deliveryBudget),
+                        chatId = chatId,
+                        userId = bob.id,
+                        role = MEMBER_ROLE,
+                        actorId = owner.id,
+                    )
+                }
+            }
+        }
+    }
+
+    /** The №34 grant leg: `200 GroupMember{role=admin}` and the immediate №28 reflection. */
+    private fun grantAdminAndAssertView(
+        owner: MessagingUser,
+        bob: MessagingUser,
+        chatId: UUID,
+    ): JsonNode {
+        val granted = setMemberRole(owner, chatId, bob.id, ADMIN_ROLE)
+        assertThat(granted.statusCode)
+            .overridingErrorMessage(
+                "№34 admin grant from the owner must answer 200, got <%s>: %s",
+                granted.statusCode,
+                granted.body,
+            ).isEqualTo(HttpStatus.OK)
+        val grantedMember = objectMapper.readTree(granted.body)
+        assertThat(fieldNames(grantedMember))
+            .overridingErrorMessage(
+                "the №34 answer must be exactly the GroupMember schema, got <%s>",
+                fieldNames(grantedMember),
+            ).containsExactlyInAnyOrderElementsOf(GROUP_MEMBER_FIELDS)
+        assertThat(grantedMember["user"]["id"].asText()).isEqualTo(bob.id.toString())
+        assertThat(grantedMember["role"].asText()).isEqualTo(ADMIN_ROLE)
+        val grantedView = objectMapper.readTree(getGroup(bob, chatId).body)
+        assertThat(roleOf(grantedView["members"].toList(), bob.id))
+            .overridingErrorMessage("№28 must reflect the granted admin role immediately")
+            .isEqualTo(ADMIN_ROLE)
+        return grantedMember
+    }
+
+    /** The №34 revoke leg: `200 GroupMember{role=member}` and the №28 reflection back. */
+    private fun revokeAdminAndAssertView(
+        owner: MessagingUser,
+        bob: MessagingUser,
+        chatId: UUID,
+        grantedMember: JsonNode,
+    ) {
+        val revoked = setMemberRole(owner, chatId, bob.id, MEMBER_ROLE)
+        assertThat(revoked.statusCode)
+            .overridingErrorMessage(
+                "№34 revoke to member must answer 200, got <%s>: %s",
+                revoked.statusCode,
+                revoked.body,
+            ).isEqualTo(HttpStatus.OK)
+        val revokedMember = objectMapper.readTree(revoked.body)
+        assertThat(revokedMember["role"].asText()).isEqualTo(MEMBER_ROLE)
+        assertThat(revokedMember["user"]["id"].asText())
+            .isEqualTo(grantedMember["user"]["id"].asText())
+        val revokedView = objectMapper.readTree(getGroup(owner, chatId).body)
+        assertThat(roleOf(revokedView["members"].toList(), bob.id)).isEqualTo(MEMBER_ROLE)
+    }
+
+    /**
+     * №34 refusals (FR-003/FR-008, api-contract.md №34): the owner-only
+     * rule — a plain member caller gets `403 not_group_owner`; the owner
+     * targeting himself gets `400 self_forbidden` (his role changes only
+     * through №35); a target outside the ACTIVE roster gets `409
+     * target_not_member`; the values beyond `admin|member` (including the
+     * №35-reserved `owner`) get `400 invalid_role`; a caller without an
+     * active membership hits the uniform privacy gate `404
+     * group_not_found` (existence is never disclosed).
+     */
+    @Test
+    fun `setMemberRole refuses non-owners self targets outside the roster and alien roles`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        val stranger = messagingUser("erin")
+        addContact(owner, bob.id)
+        addContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = listOf(bob.id, carol.id)))
+
+        val byMember = setMemberRole(bob, chatId, carol.id, ADMIN_ROLE)
+        assertThat(byMember.statusCode)
+            .overridingErrorMessage(
+                "a plain member must not change roles (FR-003), got <%s>: %s",
+                byMember.statusCode,
+                byMember.body,
+            ).isEqualTo(HttpStatus.FORBIDDEN)
+        assertProblem(byMember, GROUP_FIELD, NOT_GROUP_OWNER)
+
+        val selfRole = setMemberRole(owner, chatId, owner.id, ADMIN_ROLE)
+        assertThat(selfRole.statusCode)
+            .overridingErrorMessage(
+                "the owner must not change his own role through №34 (№35 only), got <%s>: %s",
+                selfRole.statusCode,
+                selfRole.body,
+            ).isEqualTo(HttpStatus.BAD_REQUEST)
+        assertProblem(selfRole, USER_ID_FIELD, SELF_FORBIDDEN)
+
+        val outsideRoster = setMemberRole(owner, chatId, stranger.id, ADMIN_ROLE)
+        assertThat(outsideRoster.statusCode)
+            .overridingErrorMessage(
+                "a target outside the active roster must be refused 409, got <%s>: %s",
+                outsideRoster.statusCode,
+                outsideRoster.body,
+            ).isEqualTo(HttpStatus.CONFLICT)
+        assertProblem(outsideRoster, USER_ID_FIELD, TARGET_NOT_MEMBER)
+
+        for (alienRole in listOf(OWNER_ROLE, ALIEN_ROLE)) {
+            val invalid = setMemberRole(owner, chatId, bob.id, alienRole)
+            assertThat(invalid.statusCode)
+                .overridingErrorMessage(
+                    "role <%s> is not settable through №34 (only admin|member), got <%s>: %s",
+                    alienRole,
+                    invalid.statusCode,
+                    invalid.body,
+                ).isEqualTo(HttpStatus.BAD_REQUEST)
+            assertProblem(invalid, ROLE_FIELD, INVALID_ROLE)
+        }
+
+        assertGroupNotFound(setMemberRole(stranger, chatId, bob.id, ADMIN_ROLE))
+    }
+
+    /**
+     * №35 happy path (FR-003, api-contract.md №35): ONE transaction demote
+     * THEN promote — the answer carries the caller's `GroupView` with his
+     * NEW `admin` role, the target as the single `owner`, and №28 of both
+     * sides converges; the partial unique index keeps EXACTLY one active
+     * owner row (the invariant of data-model.md §Миграция); every active
+     * participant receives the `group.role.changed` PAIR of frames — the
+     * new owner and the former owner demoted to admin
+     * (realtime-group-events.md §3.4).
+     */
+    @Test
+    fun `transferOwnership demotes then promotes keeping exactly one owner`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        addContact(owner, bob.id)
+        addContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = listOf(bob.id, carol.id)))
+
+        openUserEvents(owner).use { ownerStream ->
+            openUserEvents(bob).use { bobStream ->
+                openUserEvents(carol).use { carolStream ->
+                    assertTransferredView(owner, bob, carol, chatId)
+                    awaitTransferPairOnAll(
+                        streams = listOf(ownerStream, bobStream, carolStream),
+                        chatId = chatId,
+                        newOwner = bob,
+                        formerOwner = owner,
+                    )
+                }
+            }
+        }
+    }
+
+    /** The №35 answer + №28 convergence + the single-owner invariant (ux index). */
+    private fun assertTransferredView(
+        owner: MessagingUser,
+        bob: MessagingUser,
+        carol: MessagingUser,
+        chatId: UUID,
+    ) {
+        val response = transferOwnership(owner, chatId, bob.id)
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "№35 transfer from the owner must answer 200, got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.OK)
+        val view = objectMapper.readTree(response.body)
+        assertThat(fieldNames(view))
+            .overridingErrorMessage(
+                "the №35 answer must be exactly the GroupView schema, got <%s>",
+                fieldNames(view),
+            ).containsExactlyInAnyOrderElementsOf(GROUP_VIEW_FIELDS)
+        assertThat(view["myRole"].asText())
+            .overridingErrorMessage("the former owner reads his own view as the new admin")
+            .isEqualTo(ADMIN_ROLE)
+        val members = view["members"].toList()
+        assertThat(roleOf(members, bob.id)).isEqualTo(OWNER_ROLE)
+        assertThat(roleOf(members, owner.id)).isEqualTo(ADMIN_ROLE)
+        assertThat(roleOf(members, carol.id)).isEqualTo(MEMBER_ROLE)
+
+        assertThat(objectMapper.readTree(getGroup(bob, chatId).body)["myRole"].asText())
+            .overridingErrorMessage("the new owner must read №28 with myRole=owner")
+            .isEqualTo(OWNER_ROLE)
+        assertThat(objectMapper.readTree(getGroup(owner, chatId).body)["myRole"].asText())
+            .isEqualTo(ADMIN_ROLE)
+        assertThat(activeOwnerCount(chatId))
+            .overridingErrorMessage(
+                "the transfer must keep EXACTLY one active owner row (ux_chat_participants_owner)",
+            ).isEqualTo(1)
+    }
+
+    /**
+     * §3.4 wire leg: every active stream receives the `group.role.changed`
+     * PAIR — the new owner promoted and the former demoted to admin — as
+     * an unordered pair of frames carrying the contract fields verbatim.
+     */
+    private fun awaitTransferPairOnAll(
+        streams: List<UserEventsStream>,
+        chatId: UUID,
+        newOwner: MessagingUser,
+        formerOwner: MessagingUser,
+    ) {
+        streams.forEach { stream ->
+            val pair =
+                listOf(
+                    stream.awaitEvent(GROUP_ROLE_CHANGED_EVENT, deliveryBudget),
+                    stream.awaitEvent(GROUP_ROLE_CHANGED_EVENT, deliveryBudget),
+                )
+            assertThat(pair.map { it["userId"].asText() to it["role"].asText() })
+                .overridingErrorMessage(
+                    "every active must receive the role.changed PAIR — new owner + former demoted, got: %s",
+                    pair.map { it["userId"].asText() to it["role"].asText() },
+                ).containsExactlyInAnyOrder(
+                    newOwner.id.toString() to OWNER_ROLE,
+                    formerOwner.id.toString() to ADMIN_ROLE,
+                )
+            pair.forEach { frame ->
+                assertThat(fieldNames(frame))
+                    .overridingErrorMessage(
+                        "group.role.changed must carry exactly the contract fields, got <%s>",
+                        fieldNames(frame),
+                    ).containsExactlyInAnyOrderElementsOf(GROUP_ROLE_CHANGED_EVENT_FIELDS)
+                assertThat(frame["groupId"].asText()).isEqualTo(chatId.toString())
+                assertThat(frame["actorId"].asText()).isEqualTo(formerOwner.id.toString())
+            }
+        }
+    }
+
+    /**
+     * №35 refusals (FR-003/FR-008, api-contract.md №35): the transfer to
+     * self is the contract edge `400 self_forbidden`; an admin (a proven
+     * member of sufficient-for-nothing-here role) gets `403
+     * not_group_owner`; a target outside the ACTIVE roster gets `409
+     * target_not_member`; a non-member caller gets the uniform `404
+     * group_not_found`.
+     */
+    @Test
+    fun `transferOwnership refuses self non-owners and targets outside the roster`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        val stranger = messagingUser("erin")
+        addContact(owner, bob.id)
+        addContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = listOf(bob.id, carol.id)))
+        grantAdminOk(owner, chatId, bob.id)
+
+        val toSelf = transferOwnership(owner, chatId, owner.id)
+        assertThat(toSelf.statusCode)
+            .overridingErrorMessage(
+                "the transfer to self must be the contract edge 400 self_forbidden, got <%s>: %s",
+                toSelf.statusCode,
+                toSelf.body,
+            ).isEqualTo(HttpStatus.BAD_REQUEST)
+        assertProblem(toSelf, USER_ID_FIELD, SELF_FORBIDDEN)
+
+        val byAdmin = transferOwnership(bob, chatId, carol.id)
+        assertThat(byAdmin.statusCode)
+            .overridingErrorMessage(
+                "only the owner may transfer ownership (FR-003), got <%s>: %s",
+                byAdmin.statusCode,
+                byAdmin.body,
+            ).isEqualTo(HttpStatus.FORBIDDEN)
+        assertProblem(byAdmin, GROUP_FIELD, NOT_GROUP_OWNER)
+
+        val outsideRoster = transferOwnership(owner, chatId, stranger.id)
+        assertThat(outsideRoster.statusCode)
+            .overridingErrorMessage(
+                "a target outside the active roster must be refused 409, got <%s>: %s",
+                outsideRoster.statusCode,
+                outsideRoster.body,
+            ).isEqualTo(HttpStatus.CONFLICT)
+        assertProblem(outsideRoster, USER_ID_FIELD, TARGET_NOT_MEMBER)
+
+        assertGroupNotFound(transferOwnership(stranger, chatId, bob.id))
+    }
+
+    /**
+     * №32 happy path (FR-004/FR-010, api-contract.md №32): an admin kicks
+     * a plain member — `204`; the removed member's №28 collapses to the
+     * uniform `404 group_not_found`; he receives the FINAL
+     * `group.you_removed {reason:'kicked'}` while the remaining actives
+     * receive `group.member.removed` with the actor; the roster of the
+     * survivors no longer carries him; and his messages STAY in the №15
+     * history with attribution.
+     */
+    @Test
+    fun `kick removes a member closes his view and keeps his messages`() {
+        val owner = messagingUser("owner")
+        val (bob, carol, dave) = listOf("bob", "carol", "dave").map { messagingUser(it) }
+        val trio = listOf(bob, carol, dave)
+        trio.forEach { addContact(owner, it.id) }
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = trio.map { it.id }))
+        grantAdminOk(owner, chatId, bob.id)
+        val seeded = seedChatBacklog(chatId, KICK_SEEDED_MESSAGES, senderFor = { carol }, KICK_TEXT_PREFIX)
+        assertThat(seeded)
+            .overridingErrorMessage("the fixture must seed exactly one message of the kick target")
+            .hasSize(1)
+
+        openUserEvents(carol).use { carolStream ->
+            openUserEvents(dave).use { daveStream ->
+                val response = kickMember(bob, chatId, carol.id)
+                assertThat(response.statusCode)
+                    .overridingErrorMessage(
+                        "№32 kick of a member by an admin must answer 204, got <%s>: %s",
+                        response.statusCode,
+                        response.body,
+                    ).isEqualTo(HttpStatus.NO_CONTENT)
+
+                assertMemberRemovedFrame(
+                    daveStream.awaitEvent(GROUP_MEMBER_REMOVED_EVENT, deliveryBudget),
+                    chatId = chatId,
+                    userId = carol.id,
+                    actorId = bob.id,
+                )
+                val finalFrame = carolStream.awaitEvent(GROUP_YOU_REMOVED_EVENT, deliveryBudget)
+                assertThat(fieldNames(finalFrame))
+                    .overridingErrorMessage(
+                        "group.you_removed must carry exactly the contract fields, got <%s>",
+                        fieldNames(finalFrame),
+                    ).containsExactlyInAnyOrderElementsOf(GROUP_YOU_REMOVED_EVENT_FIELDS)
+                assertThat(finalFrame["groupId"].asText()).isEqualTo(chatId.toString())
+                assertThat(finalFrame["reason"].asText())
+                    .overridingErrorMessage("a №32 removal is the 'kicked' reason (realtime-group-events.md §3.6)")
+                    .isEqualTo(KICKED_REASON)
+
+                assertGroupNotFound(getGroup(carol, chatId))
+                val roster = objectMapper.readTree(getGroup(dave, chatId).body)["members"].toList()
+                assertThat(roster.map { it["user"]["id"].asText() })
+                    .overridingErrorMessage("the survivor roster must drop the kicked member")
+                    .containsExactlyInAnyOrder(
+                        owner.id.toString(),
+                        bob.id.toString(),
+                        dave.id.toString(),
+                    )
+
+                val history = listMessages(dave, chatId)
+                assertThat(history.statusCode)
+                    .overridingErrorMessage("№15 of a survivor must stay readable, got <%s>", history.statusCode)
+                    .isEqualTo(HttpStatus.OK)
+                assertThat(objectMapper.readTree(history.body)["messages"].map { it["id"].asText() })
+                    .overridingErrorMessage(
+                        "the kicked member's messages must REMAIN in the history (api-contract.md №32)",
+                    ).containsExactly(seeded.single().id.toString())
+            }
+        }
+    }
+
+    /**
+     * №32 hierarchy (FR-004, api-contract.md №32): an admin removes ONLY
+     * members — an admin/owner target is `403 role_hierarchy_violation`;
+     * a plain member removes no one at all (`403 forbidden_role`); the
+     * owner removes anyone but himself — here an admin — with `204`, and
+     * the removed admin's №28 collapses to the uniform 404.
+     */
+    @Test
+    fun `kick enforces the role hierarchy`() {
+        val owner = messagingUser("owner")
+        val (bob, carol, dave) = listOf("bob", "carol", "dave").map { messagingUser(it) }
+        val trio = listOf(bob, carol, dave)
+        trio.forEach { addContact(owner, it.id) }
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = trio.map { it.id }))
+        grantAdminOk(owner, chatId, bob.id)
+        grantAdminOk(owner, chatId, carol.id)
+
+        val adminOnAdmin = kickMember(bob, chatId, carol.id)
+        assertThat(adminOnAdmin.statusCode)
+            .overridingErrorMessage(
+                "an admin kicking an admin must hit the hierarchy rule, got <%s>: %s",
+                adminOnAdmin.statusCode,
+                adminOnAdmin.body,
+            ).isEqualTo(HttpStatus.FORBIDDEN)
+        assertProblem(adminOnAdmin, USER_ID_FIELD, ROLE_HIERARCHY_VIOLATION)
+
+        val adminOnOwner = kickMember(bob, chatId, owner.id)
+        assertThat(adminOnOwner.statusCode)
+            .overridingErrorMessage(
+                "an admin kicking the owner must hit the hierarchy rule, got <%s>: %s",
+                adminOnOwner.statusCode,
+                adminOnOwner.body,
+            ).isEqualTo(HttpStatus.FORBIDDEN)
+        assertProblem(adminOnOwner, USER_ID_FIELD, ROLE_HIERARCHY_VIOLATION)
+
+        val byMember = kickMember(dave, chatId, bob.id)
+        assertThat(byMember.statusCode)
+            .overridingErrorMessage(
+                "a plain member must remove no one (FR-004), got <%s>: %s",
+                byMember.statusCode,
+                byMember.body,
+            ).isEqualTo(HttpStatus.FORBIDDEN)
+        assertProblem(byMember, GROUP_FIELD, FORBIDDEN_ROLE)
+
+        val ownerOnAdmin = kickMember(owner, chatId, carol.id)
+        assertThat(ownerOnAdmin.statusCode)
+            .overridingErrorMessage(
+                "the owner removes any member but himself — here an admin, got <%s>: %s",
+                ownerOnAdmin.statusCode,
+                ownerOnAdmin.body,
+            ).isEqualTo(HttpStatus.NO_CONTENT)
+        assertGroupNotFound(getGroup(carol, chatId))
+    }
+
+    /**
+     * №32 self/idempotency/privacy (api-contract.md №2): the self-kick is
+     * refused `400 self_forbidden` BEFORE the role hierarchy — even a
+     * plain member kicking HIMSELF sees self_forbidden, never
+     * forbidden_role (leaving is №33 only); a repeated №32 on the LIVE
+     * group (the target already removed) answers `409 target_not_member`;
+     * a non-member caller gets the uniform `404 group_not_found`.
+     */
+    @Test
+    fun `kick refuses self before the hierarchy and a repeat as target_not_member`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        val stranger = messagingUser("erin")
+        addContact(owner, bob.id)
+        addContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = listOf(bob.id, carol.id)))
+
+        val selfKick = kickMember(bob, chatId, bob.id)
+        assertThat(selfKick.statusCode)
+            .overridingErrorMessage(
+                "the self-kick must be 400 self_forbidden BEFORE the hierarchy (never forbidden_role), got <%s>: %s",
+                selfKick.statusCode,
+                selfKick.body,
+            ).isEqualTo(HttpStatus.BAD_REQUEST)
+        assertProblem(selfKick, USER_ID_FIELD, SELF_FORBIDDEN)
+
+        val first = kickMember(owner, chatId, bob.id)
+        assertThat(first.statusCode)
+            .overridingErrorMessage(
+                "the owner's kick of a member must answer 204, got <%s>: %s",
+                first.statusCode,
+                first.body,
+            ).isEqualTo(HttpStatus.NO_CONTENT)
+
+        val repeat = kickMember(owner, chatId, bob.id)
+        assertThat(repeat.statusCode)
+            .overridingErrorMessage(
+                "a repeated №32 on the LIVE group (target already removed) must answer 409 " +
+                    "(api-contract.md §2), got <%s>: %s",
+                repeat.statusCode,
+                repeat.body,
+            ).isEqualTo(HttpStatus.CONFLICT)
+        assertProblem(repeat, USER_ID_FIELD, TARGET_NOT_MEMBER)
+
+        assertGroupNotFound(kickMember(stranger, chatId, carol.id))
+    }
+
     /** Contract №27 `POST /api/v1/groups` — raw response for status/error assertions. */
     private fun createGroup(
         owner: MessagingUser,
@@ -421,6 +931,54 @@ class GroupLifecycleIT(
             user,
         )
 
+    /** Contract №32 `DELETE /api/v1/groups/{chatId}/members/{userId}` — raw response. */
+    private fun kickMember(
+        user: MessagingUser,
+        chatId: UUID,
+        userId: UUID,
+    ): ResponseEntity<String> = exchangeWithAuth(HttpMethod.DELETE, "$GROUPS_PATH/$chatId/members/$userId", user)
+
+    /** Contract №34 `PUT /api/v1/groups/{chatId}/members/{userId}/role` — raw response. */
+    private fun setMemberRole(
+        user: MessagingUser,
+        chatId: UUID,
+        userId: UUID,
+        role: String,
+    ): ResponseEntity<String> =
+        exchangeJsonAuthorized(
+            HttpMethod.PUT,
+            "$GROUPS_PATH/$chatId/members/$userId/role",
+            mapOf(ROLE_FIELD to role),
+            user,
+        )
+
+    /** Contract №35 `POST /api/v1/groups/{chatId}/owner` — raw response. */
+    private fun transferOwnership(
+        user: MessagingUser,
+        chatId: UUID,
+        userId: UUID,
+    ): ResponseEntity<String> =
+        postJsonAuthorized(
+            "$GROUPS_PATH/$chatId/owner",
+            mapOf(USER_ID_FIELD to userId.toString()),
+            user,
+        )
+
+    /** №34 happy-path fixture: the owner grants the admin role to [userId]. */
+    private fun grantAdminOk(
+        owner: MessagingUser,
+        chatId: UUID,
+        userId: UUID,
+    ) {
+        val response = setMemberRole(owner, chatId, userId, ADMIN_ROLE)
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "fixture №34 admin grant must answer 200, got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.OK)
+    }
+
     /** Contract №21 `POST /api/v1/contacts` — fixture contact for the №27/№31 gates. */
     private fun addContact(
         user: MessagingUser,
@@ -462,6 +1020,25 @@ class GroupLifecycleIT(
             String::class.java,
         )
 
+    private fun exchangeJsonAuthorized(
+        method: HttpMethod,
+        path: String,
+        payload: Map<String, Any>,
+        user: MessagingUser,
+    ): ResponseEntity<String> =
+        restTemplate.exchange(
+            path,
+            method,
+            HttpEntity(
+                payload,
+                HttpHeaders().apply {
+                    contentType = MediaType.APPLICATION_JSON
+                    setBearerAuth(user.accessToken)
+                },
+            ),
+            String::class.java,
+        )
+
     private fun chatIdOf(view: JsonNode): UUID = UUID.fromString(view["chatId"].asText())
 
     private fun roleOf(
@@ -499,6 +1076,78 @@ class GroupLifecycleIT(
             ).isEqualTo(HttpStatus.NOT_FOUND)
         assertProblem(response, GROUP_FIELD, GROUP_NOT_FOUND)
     }
+
+    /**
+     * Every active stream must receive the `group.role.changed` frame of
+     * one №34 change (§3.4: the broadcast goes to ALL actives).
+     */
+    private fun awaitRoleChangedOnAll(
+        streams: List<UserEventsStream>,
+        chatId: UUID,
+        userId: UUID,
+        role: String,
+        actorId: UUID,
+    ) {
+        streams.forEach { stream ->
+            assertRoleChangedFrame(
+                stream.awaitEvent(GROUP_ROLE_CHANGED_EVENT, deliveryBudget),
+                chatId = chatId,
+                userId = userId,
+                role = role,
+                actorId = actorId,
+            )
+        }
+    }
+
+    /**
+     * A `group.role.changed` frame must repeat the contract payload of
+     * realtime-group-events.md §3.4 verbatim — field-by-field, no extras.
+     */
+    private fun assertRoleChangedFrame(
+        event: JsonNode,
+        chatId: UUID,
+        userId: UUID,
+        role: String,
+        actorId: UUID,
+    ) {
+        assertThat(fieldNames(event))
+            .overridingErrorMessage(
+                "group.role.changed must carry exactly the contract fields, got <%s>",
+                fieldNames(event),
+            ).containsExactlyInAnyOrderElementsOf(GROUP_ROLE_CHANGED_EVENT_FIELDS)
+        assertThat(event["groupId"].asText()).isEqualTo(chatId.toString())
+        assertThat(event["userId"].asText()).isEqualTo(userId.toString())
+        assertThat(event["role"].asText()).isEqualTo(role)
+        assertThat(event["actorId"].asText()).isEqualTo(actorId.toString())
+    }
+
+    /** A `group.member.removed` frame of §3.3 — field-by-field, actorId is the kicker here. */
+    private fun assertMemberRemovedFrame(
+        event: JsonNode,
+        chatId: UUID,
+        userId: UUID,
+        actorId: UUID,
+    ) {
+        assertThat(fieldNames(event))
+            .overridingErrorMessage(
+                "group.member.removed must carry exactly the contract fields, got <%s>",
+                fieldNames(event),
+            ).containsExactlyInAnyOrderElementsOf(GROUP_MEMBER_REMOVED_EVENT_FIELDS)
+        assertThat(event["groupId"].asText()).isEqualTo(chatId.toString())
+        assertThat(event["userId"].asText()).isEqualTo(userId.toString())
+        assertThat(event["actorId"].asText()).isEqualTo(actorId.toString())
+    }
+
+    /** The number of ACTIVE owner rows — the `ux_chat_participants_owner` invariant probe of №35. */
+    private fun activeOwnerCount(chatId: UUID): Long =
+        jdbcTemplate.queryForObject(
+            """
+            SELECT count(*) FROM chat_participants
+            WHERE chat_id = ? AND role = 'owner' AND state = 'active'
+            """.trimIndent(),
+            Long::class.java,
+            chatId,
+        ) ?: 0L
 
     /** RFC 9457 refusal probe: `application/problem+json` with `errors.{field}=[code]` (convention 002). */
     private fun assertProblem(
@@ -576,6 +1225,14 @@ class GroupLifecycleIT(
         const val USER_IDS_FIELD = "userIds"
         const val USER_ID_FIELD = "userId"
         const val GROUP_FIELD = "group"
+        const val ROLE_FIELD = "role"
+
+        const val ADMIN_ROLE = "admin"
+        const val MEMBER_ROLE = "member"
+        const val OWNER_ROLE = "owner"
+
+        /** A value no contract operation accepts — the `invalid_role` probe. */
+        const val ALIEN_ROLE = "boss"
 
         const val INVALID_TITLE = "invalid_title"
         const val INVALID_DESCRIPTION = "invalid_description"
@@ -583,11 +1240,29 @@ class GroupLifecycleIT(
         const val SELF_FORBIDDEN = "self_forbidden"
         const val FORBIDDEN_ROLE = "forbidden_role"
         const val GROUP_NOT_FOUND = "group_not_found"
+        const val NOT_GROUP_OWNER = "not_group_owner"
+        const val ROLE_HIERARCHY_VIOLATION = "role_hierarchy_violation"
+        const val TARGET_NOT_MEMBER = "target_not_member"
+        const val INVALID_ROLE = "invalid_role"
+
+        /** realtime-group-events.md §3 names — the №18 frames of the roles slice. */
+        const val GROUP_ROLE_CHANGED_EVENT = "group.role.changed"
+        const val GROUP_MEMBER_REMOVED_EVENT = "group.member.removed"
+        const val GROUP_YOU_REMOVED_EVENT = "group.you_removed"
+        const val KICKED_REASON = "kicked"
+
+        /** A role frame must arrive well inside the CI-tolerant SC-004 budget. */
+        const val DELIVERY_BUDGET_SECONDS = 5L
+        const val KICK_SEEDED_MESSAGES = 1
+        const val KICK_TEXT_PREFIX = "kick-target-message"
 
         /** openapi.yaml 0.6.0 shapes — every group answer is pinned field-by-field. */
         val GROUP_VIEW_FIELDS = listOf("chatId", "title", "description", "myRole", "members")
         val GROUP_MEMBER_FIELDS = listOf("user", "role", "joinedAt")
         val PUBLIC_USER_FIELDS = listOf("id", "username", "email", "status", "createdAt")
+        val GROUP_ROLE_CHANGED_EVENT_FIELDS = listOf("groupId", "userId", "role", "actorId")
+        val GROUP_MEMBER_REMOVED_EVENT_FIELDS = listOf("groupId", "userId", "actorId")
+        val GROUP_YOU_REMOVED_EVENT_FIELDS = listOf("groupId", "reason")
         val GROUP_CHAT_LIST_ITEM_FIELDS =
             listOf(
                 "chatId",
