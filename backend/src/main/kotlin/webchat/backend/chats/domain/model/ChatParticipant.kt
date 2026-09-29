@@ -97,20 +97,31 @@ data class ChatParticipant(
 }
 
 /**
- * One №26 catch-up candidate (005, T013): the projection of the caller's
- * `chat_participants` row JOIN `chats` — the server delivery position
- * [deliveredUpToSeq] (the client cursor is folded in by the service as
- * the effective cursor `max(client, server)`), the per-user deletion
- * watermark (the lower bound / truncation point of catch-up) and
- * `chats.last_seq` (the `lastSeq` answer field plus `hasMore`/desync
- * detection). A READ model: derived in the single `loadForSync` query;
- * nothing here mutates dialog state.
+ * One №26 catch-up candidate (005, T013; extended by 006 T037): the
+ * projection of the caller's `chat_participants` row JOIN `chats` — the
+ * server delivery position [deliveredUpToSeq] (the client cursor is
+ * folded in by the service as the effective cursor `max(client,
+ * server)`), the per-user deletion watermark (the lower bound /
+ * truncation point of catch-up) and `chats.last_seq` (the `lastSeq`
+ * answer field plus `hasMore`/desync detection). A READ model: derived
+ * in the single `loadForSync` query; nothing here mutates dialog state.
+ *
+ * The 006 group projection rides the same row (api-contract.md 006 §3
+ * №26): [kind] discriminates the delta — a GROUP candidate carries
+ * [title], the ACTIVE [memberCount] and the FR-012 ✓✓ bound
+ * [othersReadUpToSeq] (`MIN(last_read_seq)` of the other active
+ * members, 0 in a group of one), while a DIRECT candidate keeps them
+ * `null` (the fields stay ABSENT in its delta — backward-friendly).
  */
 data class UndeliveredChat(
     val chatId: UUID,
     val deliveredUpToSeq: Long,
     val deletedUpToSeq: Long,
     val chatLastSeq: Long,
+    val kind: ChatKind = ChatKind.DIRECT,
+    val title: String? = null,
+    val memberCount: Long? = null,
+    val othersReadUpToSeq: Long? = null,
 )
 
 /**

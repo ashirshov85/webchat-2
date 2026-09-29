@@ -9,6 +9,7 @@ import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.api.dto.ChatPeerView
 import webchat.backend.chats.api.dto.MessageView
+import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.UndeliveredChat
 import webchat.backend.chats.domain.port.MessageRepository
@@ -76,11 +77,23 @@ data class ClientCursor(
  *     the ONE reusable calculator [ParticipantRepository.countUnread]
  *     (delivery-bounded: the current page does not count until the ack).
  *
+ * 006 T037 (api-contract.md 006 §3 №26, FR-008/FR-012): the candidacy
+ * is the caller's ACTIVE memberships only — a REMOVED member receives
+ * NO group delta (the `state='active'` filter of
+ * [ParticipantRepository.loadForSync]); a GROUP delta answers the 006
+ * projection `type:'group'` + `title` + `memberCount` +
+ * `othersReadUpToSeq` (the FR-012 MIN-fold over the other actives — the
+ * offline ✓✓ catch-up of own outgoing) with the peer fields as EXPLICIT
+ * `null`s, while a DIRECT delta keeps the exact 0.5.0 shape verbatim
+ * (the replay rules of 005 serve a group unchanged — a group is a
+ * `chats` row with shared history, plan.md 006).
+ *
  * All-or-refusal (the «сервер частично доступен» edge): every per-chat
  * read failure propagates and refuses the WHOLE request — a partial chat
  * list may never parade as the full one («частичный список как полный»
  * исключён); the refusal is temporary, the identical repeat answers fully.
  */
+@Suppress("TooManyFunctions") // one function per №26 rule + the 006 kind split (T013/T037)
 @Service
 class SyncService(
     private val participantRepository: ParticipantRepository,
@@ -132,6 +145,14 @@ class SyncService(
      * stay ABSENT (NON_NULL) when the phenomenon did not occur. The
      * candidate always carries a visible undelivered head (the candidacy
      * bound), so the page is never empty here.
+     *
+     * 006 T037 (api-contract.md 006 §3 №26): the delta is kind-discriminated
+     * — a GROUP candidate projects the roster aggregates of the SAME read
+     * snapshot ([UndeliveredChat.title]/[memberCount]/[othersReadUpToSeq])
+     * with the peer fields as EXPLICIT `null`s, a DIRECT candidate keeps
+     * the exact 0.5.0 shape (no peer resolution, no block lookup — a
+     * group has no peer by the V14 shape-CHECK, blocks never apply,
+     * Assumptions 006).
      */
     private fun deltaOf(
         callerId: UUID,
@@ -144,12 +165,53 @@ class SyncService(
             if (desynced) candidate.deliveredUpToSeq else maxOf(clientCursor, candidate.deliveredUpToSeq)
         val startAfter = maxOf(effective, candidate.deletedUpToSeq)
         val truncatedUpToSeq = (startAfter > effective).takeIf { it }?.let { startAfter }
+        logRepairPhenomena(candidate, truncatedUpToSeq, desynced)
 
-        // research.md §8 (T045): the repair records of a №26 sweep — INFO,
-        // chat id and the point only, never the message text (the PII
-        // minimization of 004): the truncation floor and the future-cursor
-        // rewind are the two operator-visible «почему история не с нуля»
-        // phenomena of quickstart §3.2.
+        val messages = messageRepository.findVisiblePageAfter(candidate.chatId, callerId, startAfter, messageLimit)
+        val pageHead = messages.lastOrNull()?.seq ?: startAfter
+        val common =
+            SyncChatDelta(
+                chatId = candidate.chatId,
+                startAfterSeq = startAfter,
+                truncatedUpToSeq = truncatedUpToSeq,
+                messages = messages.map(::messageView),
+                hasMore = candidate.chatLastSeq > pageHead,
+                unreadCount = participantRepository.countUnread(callerId, candidate.chatId),
+                lastSeq = candidate.chatLastSeq,
+                desynced = desynced.takeIf { it },
+                serverUpToSeq = candidate.deliveredUpToSeq.takeIf { desynced },
+            )
+        return when (candidate.kind) {
+            // 006 T037 (api-contract.md 006 §3 №26): the GROUP delta — the
+            // snapshot-borne roster projection with the required-nullable
+            // peer fields as EXPLICIT `null`s (a group has no peer by the
+            // V14 shape-CHECK; blocks never apply, Assumptions 006).
+            ChatKind.GROUP ->
+                common.copy(
+                    type = candidate.kind.name.lowercase(),
+                    title = candidate.title,
+                    memberCount = candidate.memberCount,
+                    othersReadUpToSeq = candidate.othersReadUpToSeq,
+                    peer = null,
+                    blockedByMe = null,
+                    peerReadUpToSeq = null,
+                )
+            ChatKind.DIRECT -> directDelta(common, candidate, callerId)
+        }
+    }
+
+    /**
+     * research.md §8 (T045): the repair records of a №26 sweep — INFO,
+     * chat id and the point only, never the message text (the PII
+     * minimization of 004): the truncation floor and the future-cursor
+     * rewind are the two operator-visible «почему история не с нуля»
+     * phenomena of quickstart §3.2.
+     */
+    private fun logRepairPhenomena(
+        candidate: UndeliveredChat,
+        truncatedUpToSeq: Long?,
+        desynced: Boolean,
+    ) {
         truncatedUpToSeq?.let { floor ->
             log.info(
                 "sync delta truncated: chat <{}>, visibility floor <{}> - messages below are inaccessible, " +
@@ -165,29 +227,29 @@ class SyncService(
                 candidate.deliveredUpToSeq,
             )
         }
+    }
 
-        val messages = messageRepository.findVisiblePageAfter(candidate.chatId, callerId, startAfter, messageLimit)
-        val pageHead = messages.lastOrNull()?.seq ?: startAfter
+    /**
+     * The DIRECT delta — the exact 0.5.0 shape: the peer side resolved
+     * through the dialog's OTHER participant row (the 004 semantics
+     * verbatim, `peerReadUpToSeq` stays the peer ✓✓ watermark and
+     * `blockedByMe` the only block projection of the API).
+     */
+    private fun directDelta(
+        common: SyncChatDelta,
+        candidate: UndeliveredChat,
+        callerId: UUID,
+    ): SyncChatDelta {
         val peerParticipant =
             participantRepository.findForChat(candidate.chatId).firstOrNull { it.userId != callerId }
                 ?: error("chat ${candidate.chatId} must carry the peer participant row of the dialog")
         val peer =
             userRepository.findById(peerParticipant.userId)
                 ?: error("chat ${candidate.chatId} peer ${peerParticipant.userId} does not resolve")
-
-        return SyncChatDelta(
-            chatId = candidate.chatId,
+        return common.copy(
             peer = peerView(peer),
             blockedByMe = blockRepository.exists(callerId, peer.id),
-            startAfterSeq = startAfter,
-            truncatedUpToSeq = truncatedUpToSeq,
-            messages = messages.map(::messageView),
-            hasMore = candidate.chatLastSeq > pageHead,
             peerReadUpToSeq = peerParticipant.lastReadSeq,
-            unreadCount = participantRepository.countUnread(callerId, candidate.chatId),
-            lastSeq = candidate.chatLastSeq,
-            desynced = desynced.takeIf { it },
-            serverUpToSeq = candidate.deliveredUpToSeq.takeIf { desynced },
         )
     }
 
