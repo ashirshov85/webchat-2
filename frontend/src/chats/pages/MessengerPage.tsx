@@ -107,6 +107,7 @@ import { useRealtime } from '../hooks/useRealtime'
 import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
 import { GroupInfoPanel } from '../../groups/components/GroupInfoPanel'
 import { useGroup } from '../../groups/hooks/useGroup'
+import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 
 /** The open direct dialog: everything the header actions need (T060). */
 interface DirectChatView {
@@ -325,6 +326,16 @@ export function MessengerPage() {
   } = useGroup(activeGroupChatId)
   const activeGroupMembers =
     activeGroup !== null && activeGroup.chatId === activeChatId ? activeGroup.members : undefined
+
+  // №32/№34/№35 roster actions of the open group card (US3, T047):
+  // useGroupMembers runs every roster mutation through ONE local
+  // mutex — `pendingUserId` disables the in-flight MemberList row, a
+  // problem (`role_hierarchy_violation`, `not_group_owner`, network)
+  // surfaces as the card's rosterError and unblocks the roster. A
+  // successful action converges the №28 card through `reload()` (the
+  // `group.member.removed`/`group.role.changed` frames land on top,
+  // idempotently — T048).
+  const rosterActions = useGroupMembers(activeGroupChatId, reloadActiveGroup)
 
   const {
     messages,
@@ -587,13 +598,6 @@ export function MessengerPage() {
     reloadActiveGroup()
   }, [reloadActiveGroup])
 
-  /**
-   * №32/№34/№35 roster actions (T046a PLACEHOLDER): the calls and
-   * their mutex mount with useGroupMembers (T047) — until then the
-   * card renders the hierarchy VIEW only and the handlers stay inert.
-   */
-  const noopRosterAction = useCallback(() => {}, [])
-
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
   const dialogOpen = activeChat !== null
@@ -736,9 +740,17 @@ export function MessengerPage() {
                     members={activeGroup.members}
                     myRole={activeGroup.myRole}
                     currentUserId={currentUserId ?? ''}
-                    onKick={noopRosterAction}
-                    onSetRole={noopRosterAction}
-                    onTransferOwnership={noopRosterAction}
+                    onKick={(userId) => {
+                      void rosterActions.kick(userId)
+                    }}
+                    onSetRole={(userId, role) => {
+                      void rosterActions.setRole(userId, role)
+                    }}
+                    onTransferOwnership={(userId) => {
+                      void rosterActions.transferOwnership(userId)
+                    }}
+                    pendingUserId={rosterActions.pendingUserId}
+                    rosterError={rosterActions.error}
                     onMembersAdded={handleMembersAdded}
                   />
                 )}
