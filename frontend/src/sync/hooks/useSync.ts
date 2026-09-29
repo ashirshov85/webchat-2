@@ -42,6 +42,14 @@
  * SyncIndicator (T020); the ack batcher is the per-user shared
  * instance (ack.ts), so realtime frames and applied pages confirm
  * through the same №25 batches.
+ *
+ * Group deltas (feature 006, US2, T039): №26 group answers (only
+ * active memberships, T037) flow through the SAME cycle — the null
+ * peer metadata normalizes to "absent" and the group watermark
+ * `othersReadUpToSeq` rides the update, so the reconnect converges
+ * the open group window's ✓✓ (offline reads of the other members)
+ * together with the unread badge (FR-012 + the server `unreadCount`
+ * anchor of T035 — the US2 checkpoint convergence).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listMessagesAfter, markChatRead, sync } from '../../api/chats'
@@ -73,6 +81,13 @@ export interface SyncChatUpdate {
   readonly blockedByMe?: boolean
   /** Offline ✓✓ watermark of own messages (US3, T036). */
   readonly peerReadUpToSeq?: number
+  /**
+   * Offline ✓✓ watermark of own GROUP messages (feature 006, US2,
+   * T039): `othersReadUpToSeq` of the №26 group delta — the MIN of
+   * the other active members' read marks, applied monotonically
+   * (max) by the open dialog (FR-012).
+   */
+  readonly othersReadUpToSeq?: number
   /** Server-authoritative unread counter of the snapshot (US3, T035). */
   readonly unreadCount?: number
   /**
@@ -217,10 +232,12 @@ async function runCatchUp(
         chatId: delta.chatId,
         messages: delta.messages,
         // 006: group deltas carry null peer metadata (research.md §5) —
-        // normalized to "absent" until the group list projection (T028/T037).
+        // normalized to "absent"; their №26 watermark rides the group
+        // field below instead (T039).
         peer: delta.peer ?? undefined,
         blockedByMe: delta.blockedByMe ?? undefined,
         peerReadUpToSeq: delta.peerReadUpToSeq ?? undefined,
+        othersReadUpToSeq: delta.othersReadUpToSeq,
         unreadCount: delta.unreadCount,
         truncatedUpToSeq: delta.truncatedUpToSeq,
       })

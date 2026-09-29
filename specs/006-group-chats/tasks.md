@@ -119,7 +119,7 @@ description: "Task list for feature implementation: групповые чаты 
 - [x] T036 [US2] Эволюционировать `backend/src/main/kotlin/webchat/backend/chats/domain/service/ReadService.kt`: №17 в группе — `chat.read` всем активным кроме читавшего; `othersReadUpToSeq` пересчитывается по активным (FR-012); приёмка: зелёный T031
 - [x] T037 [US2] Эволюционировать `backend/src/main/kotlin/webchat/backend/sync/domain/service/SyncService.kt`: №26 отбирает только active-членства (исключённому дельты не приходят); group-дельта (`type:'group'`, `title`, `memberCount`, `othersReadUpToSeq`); приёмка: зелёные T032/T054 (№26)
 - [x] T038 [US2] Эволюционировать `frontend/src/chats/components/MessageList.tsx`: group-вариант — атрибуция отправителей, ✓✓ по `othersReadUpToSeq` (№13/№26) + `chat.read`-кадрам, монотонно (max), история постранично (depends T033); приёмка: зелёный T033
-- [ ] T039 [US2] Эволюционировать `frontend/src/chats/hooks/useRealtime.ts`: диспетчер `chat.read` для групп (пересчёт ✓✓ по MIN), счётчик непрочитанных группы сходится после reconnect (depends T038); приёмка: зелёный T033; сходимость счётчика — checkpoint US2
+- [x] T039 [US2] Эволюционировать `frontend/src/chats/hooks/useRealtime.ts`: диспетчер `chat.read` для групп (пересчёт ✓✓ по MIN), счётчик непрочитанных группы сходится после reconnect (depends T038); приёмка: зелёный T033; сходимость счётчика — checkpoint US2
 
 **Checkpoint**: US1 и US2 независимо работоспособны: переписка в группе с гарантиями exactly-once, ✓✓ и синхронизацией; GroupRealtimeIT/GroupReadStatusIT зелёные
 

@@ -577,6 +577,82 @@ describe('useSync — truncation never restores deleted history (US1-5)', () => 
   })
 })
 
+describe('useSync — №26 group deltas (feature 006, US2, T039)', () => {
+  it('carries the group othersReadUpToSeq watermark to the open dialog (FR-012 offline ✓✓)', async () => {
+    mockedSync
+      .mockResolvedValueOnce(
+        syncResponse([
+          delta({
+            chatId: CHAT_A,
+            type: 'group',
+            title: 'Проект Альфа',
+            memberCount: 3,
+            othersReadUpToSeq: 12,
+            peer: null,
+            blockedByMe: null,
+            peerReadUpToSeq: null,
+            messages: messages(CHAT_A, 9, 10),
+            lastSeq: 10,
+            unreadCount: 2,
+          }),
+        ]),
+      )
+      .mockResolvedValue(syncResponse([]))
+    const received: SyncChatUpdate[] = []
+    const result = mountSync()
+    subscribe(
+      {
+        apply(update) {
+          received.push(update)
+        },
+      },
+      result,
+    )
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    // The reconnect catch-up is the US2-3 convergence leg: the MIN
+    // watermark of the other active members read while the user was
+    // offline must reach the open group window (MessengerPage feeds
+    // the update straight into applySyncPage), and the 004 peer
+    // projections normalize to "absent" for a group delta.
+    expect(received).toHaveLength(1)
+    expect(received[0]?.othersReadUpToSeq).toBe(12)
+    expect(received[0]?.peer).toBeUndefined()
+    expect(received[0]?.peerReadUpToSeq).toBeUndefined()
+    expect(received[0]?.blockedByMe).toBeUndefined()
+    expect(received[0]?.unreadCount).toBe(2)
+  })
+
+  it('keeps the direct delta watermark on peerReadUpToSeq and othersReadUpToSeq absent', async () => {
+    mockedSync
+      .mockResolvedValueOnce(
+        syncResponse([delta({ chatId: CHAT_A, peerReadUpToSeq: 7, messages: [], lastSeq: 7 })]),
+      )
+      .mockResolvedValue(syncResponse([]))
+    const received: SyncChatUpdate[] = []
+    const result = mountSync()
+    subscribe(
+      {
+        apply(update) {
+          received.push(update)
+        },
+      },
+      result,
+    )
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.peerReadUpToSeq).toBe(7)
+    expect(received[0]?.othersReadUpToSeq).toBeUndefined()
+  })
+})
+
 describe('useSync — flushPendingReads pre-step (§3.1/§6, T034)', () => {
   it('flushes every pending offline read via №17 BEFORE the №26 catch-up and confirms on 204', async () => {
     recordPendingRead(USER, CHAT_A, 12)
