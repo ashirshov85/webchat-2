@@ -54,10 +54,24 @@
  * reconnect flush replays it through the idempotent, monotonic №17
  * (server GREATEST): the server counter converges with what the user
  * actually read while offline, and senders get their ✓✓ (US3-7).
+ *
+ * Group variant (feature 006, US2, T038, FR-012): passing the №28
+ * roster switches the hook to the group semantics. `chat.read`
+ * frames advance ONE member's mark each (`byUserId`, fan-out to
+ * everyone except the reader — realtime-group-events.md §3.7), and
+ * the ✓✓ candidate is the MIN over the OTHER roster members — the
+ * mark flips only when EVERY other active member has read. The
+ * rendered `othersReadUpToSeq` holds the maximum (FR-012): a stale
+ * frame or a reconnect №13 refetch with a lower server projection
+ * (the re-add exception) never rolls a rendered ✓✓ back. №17 read
+ * marks fire for ANY other member's rendered message (there is no
+ * single peer in a group), and №26 group deltas carry
+ * `othersReadUpToSeq` for the offline catch-up.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getChat, listMessages, markChatRead } from '../../api/chats'
 import type { Message, MessagePage } from '../../api/chats'
+import type { GroupMember } from '../../api/groups'
 import { getCursor } from '../../sync/cursors'
 import { confirmPendingRead, recordPendingRead } from '../../sync/pendingReads'
 import { useRealtime } from './useRealtime'
@@ -78,6 +92,12 @@ export interface SyncPageUpdate {
   readonly messages: Message[]
   readonly truncatedUpToSeq?: number
   readonly peerReadUpToSeq?: number
+  /**
+   * Group delta watermark (feature 006, US2): `othersReadUpToSeq` of
+   * the №26 group variant — the MIN of the other active members' read
+   * marks, applied monotonically (max).
+   */
+  readonly othersReadUpToSeq?: number
 }
 
 export interface UseChatMessagesResult {
@@ -110,6 +130,14 @@ export interface UseChatMessagesResult {
    * ChatView refetches, never regresses.
    */
   readonly peerReadUpToSeq: number
+  /**
+   * Group read watermark of the open chat (feature 006, US2, T038):
+   * own messages with `seq ≤ othersReadUpToSeq` render ✓✓ — the MIN
+   * of the other active members' marks (№13/№26 + `chat.read`
+   * frames), held monotonic (max, FR-012). Direct chats keep 0 — the
+   * ✓✓ rendering there reads `peerReadUpToSeq`.
+   */
+  readonly othersReadUpToSeq: number
   /**
    * Merges an applied catch-up page of THIS chat into the rendered
    * window (feature 005, T023): dedup by `message.id`, stable `seq`
@@ -160,6 +188,7 @@ function reconcileMessages(existing: Message[], incoming: Message[]): Message[] 
 export function useChatMessages(
   chatId: string | null,
   userId: string | null = null,
+  groupMembers?: readonly GroupMember[],
 ): UseChatMessagesResult {
   const realtime = useRealtime()
   const [messages, setMessages] = useState<Message[]>([])
@@ -182,6 +211,17 @@ export function useChatMessages(
   const [peerUserId, setPeerUserId] = useState<string | null>(null)
   /** Peer's read watermark for the ✓✓ rendering (US4) — monotonic. */
   const [peerReadUpToSeq, setPeerReadUpToSeq] = useState(0)
+  /**
+   * Group read watermark for the ✓✓ rendering (US2, T038) — the
+   * monotonic (max) projection of the MIN over the other members.
+   */
+  const [othersReadUpToSeq, setOthersReadUpToSeq] = useState(0)
+  /**
+   * Per-member read marks assembled from `chat.read` frames (US2,
+   * FR-012): the ✓✓ candidate is the MIN over the OTHER roster
+   * members — members without a frame read nothing (0) yet.
+   */
+  const othersMarksRef = useRef<Map<string, number>>(new Map())
   /** Highest seq already marked read locally (monotonic, per open chat). */
   const lastSentReadSeqRef = useRef(0)
   /** Coalesced read-mark target waiting for the throttle window (US4). */
@@ -200,6 +240,8 @@ export function useChatMessages(
     epochRef.current += 1
     setPeerUserId(null)
     setPeerReadUpToSeq(0)
+    setOthersReadUpToSeq(0)
+    othersMarksRef.current.clear()
     if (readTimerRef.current !== null) {
       clearTimeout(readTimerRef.current)
       readTimerRef.current = null
@@ -221,9 +263,14 @@ export function useChatMessages(
    * Applies a latest-page fetch (initial load / onOpen convergence):
    * merges the messages and moves the cursor back only — a refetch
    * never re-opens history that was already explored by `loadOlder`.
+   * The page fields are read EAGERLY: a malformed answer throws inside
+   * the caller's try/catch (error status, rendered window preserved)
+   * instead of escaping from the deferred state updater and tearing
+   * the tree down.
    */
   const applyLatestPage = useCallback((page: MessagePage) => {
-    setMessages((previous) => reconcileMessages(previous, page.messages))
+    const incoming = page.messages
+    setMessages((previous) => reconcileMessages(previous, incoming))
     const nextBefore = page.nextBefore
     if (nextBefore === undefined) {
       setOldestSeq(null)
@@ -284,6 +331,13 @@ export function useChatMessages(
         if (peerReadUpToSeq !== null) {
           setPeerReadUpToSeq((previous) => Math.max(previous, peerReadUpToSeq))
         }
+        // №13 group variant (US2, T038): `othersReadUpToSeq` seeds the
+        // group ✓✓ watermark the same monotonic way — a frame missed
+        // during the disconnect is compensated here (FR-009).
+        const othersReadUpToSeq = view.othersReadUpToSeq
+        if (view.type === 'group' && othersReadUpToSeq !== undefined) {
+          setOthersReadUpToSeq((previous) => Math.max(previous, othersReadUpToSeq))
+        }
         lastSentReadSeqRef.current = Math.max(lastSentReadSeqRef.current, view.myReadUpToSeq)
       } catch {
         // Read marks and ✓✓ are background enhancements: the history
@@ -335,20 +389,27 @@ export function useChatMessages(
   )
 
   /**
-   * Read marks on display (US4, T044): every change of the rendered
-   * window (initial page, realtime appends, prepended older pages of
-   * T039) advances the watermark to the highest displayed incoming
-   * `seq` — throttled to ≤500 ms, coalescing rapid updates into the
-   * maximal target. Nothing is sent until the peer id is known and the
-   * mark actually advances beyond what the server already has.
+   * Read marks on display (US4, T044; groups — US2, T038): every
+   * change of the rendered window (initial page, realtime appends,
+   * prepended older pages of T039) advances the watermark to the
+   * highest displayed incoming `seq` — throttled to ≤500 ms,
+   * coalescing rapid updates into the maximal target. A direct chat
+   * waits until the peer id is known; a GROUP has no single peer —
+   * any other member's rendered message counts. Nothing is sent
+   * until the mark actually advances beyond what the server already
+   * has.
    */
   useEffect(() => {
-    if (chatId === null || peerUserId === null) {
+    const groupMode = groupMembers !== undefined
+    if (chatId === null || (!groupMode && peerUserId === null)) {
       return
     }
     let target = 0
     for (const message of messages) {
-      if (message.senderId === peerUserId && message.seq > target) {
+      const incoming = groupMode
+        ? userId !== null && message.senderId !== userId
+        : message.senderId === peerUserId
+      if (incoming && message.seq > target) {
         target = message.seq
       }
     }
@@ -365,7 +426,7 @@ export function useChatMessages(
       readTimerRef.current = null
       flushReadReceipt(chatId)
     }, READ_RECEIPT_THROTTLE_MS - elapsed)
-  }, [chatId, peerUserId, messages, flushReadReceipt])
+  }, [chatId, peerUserId, messages, flushReadReceipt, groupMembers, userId])
 
   useEffect(() => {
     if (chatId === null) {
@@ -384,14 +445,40 @@ export function useChatMessages(
       if (event.chatId !== chatId) {
         return
       }
-      setPeerReadUpToSeq((previous) => Math.max(previous, event.readUpToSeq))
+      if (groupMembers === undefined) {
+        setPeerReadUpToSeq((previous) => Math.max(previous, event.readUpToSeq))
+        return
+      }
+      // Group (US2, T038, FR-012): the frame advances ONE member's
+      // mark; ✓✓ flips only when EVERY other active member has read —
+      // the MIN over the roster, held monotonic (max) against stale
+      // or lower projections. A lone member never gets ✓✓ (the MIN
+      // condition is empty — spec FR-012).
+      if (userId !== null && event.byUserId === userId) {
+        return
+      }
+      const marks = othersMarksRef.current
+      marks.set(event.byUserId, Math.max(marks.get(event.byUserId) ?? 0, event.readUpToSeq))
+      let min = Number.POSITIVE_INFINITY
+      let others = 0
+      for (const member of groupMembers) {
+        if (userId !== null && member.user.id === userId) {
+          continue
+        }
+        others += 1
+        min = Math.min(min, marks.get(member.user.id) ?? 0)
+      }
+      if (others === 0) {
+        return
+      }
+      setOthersReadUpToSeq((previous) => Math.max(previous, min))
     })
     return () => {
       unsubscribeOpen()
       unsubscribeCreated()
       unsubscribeRead()
     }
-  }, [chatId, realtime])
+  }, [chatId, realtime, groupMembers, userId])
 
   const reload = useCallback(() => {
     setRefreshCount((count) => count + 1)
@@ -417,6 +504,13 @@ export function useChatMessages(
       const peerReadUpToSeq = update.peerReadUpToSeq
       if (peerReadUpToSeq !== undefined) {
         setPeerReadUpToSeq((previous) => Math.max(previous, peerReadUpToSeq))
+      }
+      // №26 group delta (US2, T038): offline read marks arrive with
+      // the catch-up through `othersReadUpToSeq` — applied the same
+      // monotonic (max) way (FR-012).
+      const othersReadUpToSeq = update.othersReadUpToSeq
+      if (othersReadUpToSeq !== undefined) {
+        setOthersReadUpToSeq((previous) => Math.max(previous, othersReadUpToSeq))
       }
     },
     [chatId],
@@ -463,6 +557,7 @@ export function useChatMessages(
     loadingOlder,
     loadOlder,
     peerReadUpToSeq,
+    othersReadUpToSeq,
     applySyncPage,
   }
 }
