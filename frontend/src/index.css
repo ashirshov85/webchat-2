@@ -1019,3 +1019,94 @@ p {
 .member-action-kick {
   color: var(--danger, #b3352c);
 }
+
+/* Group info card (GroupInfoPanel, feature 006, T046): header over the
+   №28 roster, the №31 add-members entry and the US6 LeaveDeleteControls
+   slot — the shared surface/row typography of the group module. */
+.group-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.group-info-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.group-info-title {
+  margin: 0;
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.group-info-members {
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.group-info-description {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.group-info-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.group-info-add-toggle {
+  align-self: flex-start;
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+}
+
+.group-info-add-toggle:hover {
+  border-color: var(--accent);
+}
+
+.group-info-add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.group-info-add-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.group-info-add-submit {
+  font: inherit;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  cursor: pointer;
+}
+
+.group-info-add-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.group-info-leave-delete {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
