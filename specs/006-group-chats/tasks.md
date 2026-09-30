@@ -165,7 +165,7 @@ description: "Task list for feature implementation: групповые чаты 
 
 ### Implementation for User Story 4
 
-- [ ] T051 [US4] Реализовать `update` в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` (№29: гейт роли owner/admin, валидация FR-001, атомарный UPDATE «последняя подтверждённая», журнал, post-commit `group.updated`); приёмка: зелёный T049
+- [x] T051 [US4] Реализовать `update` в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` (№29: гейт роли owner/admin, валидация FR-001, атомарный UPDATE «последняя подтверждённая», журнал, post-commit `group.updated`); приёмка: зелёный T049
 - [ ] T052 [US4] Реализовать №29 `PATCH /api/v1/groups/{chatId}` в `backend/src/main/kotlin/webchat/backend/groups/api/GroupController.kt` (depends T051); приёмка: зелёный T049
 - [ ] T052a [P] [US4] Расширить `frontend/src/api/groups.ts`: `updateGroup` (№29 PATCH) — типы из `schema.d.ts` 0.6.0; приёмка: `pnpm --dir frontend typecheck` зелёный; сигнатура соответствует операции №29 контракта 0.6.0; используется в T053 (depends T002, T025)
 - [ ] T053 [US4] Реализовать UI переименования в `frontend/src/groups/components/GroupInfoPanel.tsx` + обработчик `group.updated` в `frontend/src/groups/hooks/useGroupRealtime.ts` (обновление title в списке «Чатов» и заголовке) (depends T050, T052a); приёмка: зелёный T050

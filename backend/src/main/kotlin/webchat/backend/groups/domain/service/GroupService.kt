@@ -12,6 +12,7 @@ import webchat.backend.chats.domain.port.GroupMemberRemovedEvent
 import webchat.backend.chats.domain.port.GroupMemberUser
 import webchat.backend.chats.domain.port.GroupRemovalReason
 import webchat.backend.chats.domain.port.GroupRoleChangedEvent
+import webchat.backend.chats.domain.port.GroupUpdatedEvent
 import webchat.backend.chats.domain.port.GroupYouRemovedEvent
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
@@ -21,6 +22,7 @@ import webchat.backend.contacts.domain.model.UserProfile
 import webchat.backend.contacts.domain.port.ContactRepository
 import webchat.backend.contacts.domain.port.UserLookupPort
 import webchat.backend.groups.GroupMetrics
+import webchat.backend.groups.api.EmptyPatchException
 import webchat.backend.groups.api.dto.GroupMember
 import webchat.backend.groups.api.dto.GroupView
 import webchat.backend.groups.api.dto.PublicUserView
@@ -45,6 +47,11 @@ import java.util.UUID
  * T043 later grew the №32/№34/№35 role scenarios of User Story 3
  * (FR-003/FR-004/FR-010) on the same collaborators — [setRole],
  * [transferOwnership] and [kick] below.
+ *
+ * T051 grew the №29 metadata scenario of User Story 4 (FR-007) —
+ * [update] below: the owner/admin patch of title/description with the
+ * atomic last-confirmed UPDATE, the FR-017 journal pair and the
+ * post-commit `group.updated` broadcast.
  *
  * Ordering discipline (pinned red-first by T018/T018a):
  *  * №27 — `400 self_forbidden` for the creator inside the roster is
@@ -179,6 +186,111 @@ class GroupService(
             chatId = group.id,
             title = group.title.value,
             description = group.description?.value,
+            myRole = memberRoleLabel(myRole),
+            members = roster.map { row -> memberView(row, profiles) },
+        )
+    }
+
+    /**
+     * №29 `PATCH /api/v1/groups/{chatId}` (api-contract.md 006 №29,
+     * FR-007, T051): the metadata patch. The refusal order is the
+     * contract's own, every leg BEFORE any write: the patch shape (`400
+     * empty_patch` on `errors.body` — a body with NEITHER field has
+     * nothing to apply; the same before-the-gate placement the №34
+     * `invalid_role` leg holds), the membership gate (`404
+     * group_not_found`, counted — a stranger, a removed former member,
+     * an unknown id AND the chatId of a direct dialog are the SAME
+     * answer), the `FOR UPDATE` group resolve, then the metadata role
+     * gate — owner and admin manage the metadata, a plain member is
+     * `403 forbidden_role` (FR-004).
+     *
+     * The FR-001 bounds are carried by the [GroupTitle]/
+     * [GroupDescription] value objects themselves (the api layer builds
+     * them per the T016 DTO, the same split as №27), so an invalid field
+     * dies as its typed `400 invalid_title`/`invalid_description`
+     * BEFORE the service — a MIXED patch (one valid, one invalid field)
+     * is refused ATOMICALLY: nothing lands, nothing journals. The patch
+     * MERGES with the locked row's metadata — an absent field keeps the
+     * current value, a present one replaces it, and an EXPLICITLY EMPTY
+     * description clears to «no description» (the №27 convention: an
+     * empty string never persists). The single conditional
+     * UPDATE…RETURNING of [GroupRepository.updateMetadata] then lands
+     * the WHOLE merged pair atomically — «последняя подтверждённая
+     * операция» (data-model 006 §Сущность 1): two admins patching
+     * SIMULTANEOUSLY serialize on the row lock, BOTH confirm with 200
+     * and the stored (title, description) pair is EXACTLY the last
+     * confirmed whole patch, never a mix of the two (spec.md Edge
+     * «одновременное переименование»).
+     *
+     * Durable effects in ONE transaction: one `title_changed` fact per
+     * patched title and one `description_changed` fact per patched
+     * description (`targetUserId = null` — the metadata facts of
+     * FR-017). Post-commit, strictly after the commit, EVERY active
+     * participant (the actor included) receives the `group.updated`
+     * frame of realtime-group-events.md 006 §3.1 carrying the merged
+     * payload verbatim.
+     *
+     * @param title the patched title, or `null` to keep the current one;
+     * @param description the patched description, or `null` to keep the
+     * current one (an empty value CLEARS it — FR-001's optional field
+     * never persists as an empty string).
+     * @return the caller's [GroupView] over the updated metadata — the
+     * `200` answer body of №29.
+     */
+    @Suppress("ThrowsCount") // the throw legs ARE the №29 refusal ladder of api-contract.md 006 §2
+    @Transactional
+    fun update(
+        callerId: UUID,
+        chatId: UUID,
+        title: GroupTitle?,
+        description: GroupDescription?,
+    ): GroupView {
+        if (title == null && description == null) throw EmptyPatchException()
+        val membership =
+            membershipGate.requireActiveMembership(chatId, callerId, GroupMetrics.AuthzOperation.UPDATE)
+        val current = resolveGroupForUpdate(chatId)
+        rolePolicy.requireCanUpdateMetadata(membership)
+        val updated =
+            groupRepository.updateMetadata(
+                chatId,
+                title = title ?: current.title,
+                description = mergedDescription(description, current.description),
+            ) ?: throw GroupNotFoundException()
+        if (title != null) {
+            adminLog.append(
+                GroupAdminLogEntry(chatId, callerId, targetUserId = null, action = GroupAdminAction.TITLE_CHANGED),
+            )
+        }
+        if (description != null) {
+            adminLog.append(
+                GroupAdminLogEntry(
+                    chatId,
+                    callerId,
+                    targetUserId = null,
+                    action = GroupAdminAction.DESCRIPTION_CHANGED,
+                ),
+            )
+        }
+        val roster = participants.activeMembers(chatId)
+        val profiles = profilesOf(roster)
+        fanoutGroupEventAfterCommit(
+            chatId,
+            roster.map(ChatParticipant::userId),
+            GroupUpdatedEvent(
+                groupId = chatId,
+                title = updated.title.value,
+                description = updated.description?.value,
+                actorId = callerId,
+            ),
+        )
+        val myRole =
+            requireNotNull(membership.role) {
+                "the gate row of an active group membership must carry a role (V14 ck_chat_participants_role)"
+            }
+        return GroupView(
+            chatId = updated.id,
+            title = updated.title.value,
+            description = updated.description?.value,
             myRole = memberRoleLabel(myRole),
             members = roster.map { row -> memberView(row, profiles) },
         )
@@ -500,6 +612,23 @@ class GroupService(
     ) {
         if (activeCount + joiningCount > properties.maxMembers) throw GroupFullException()
     }
+
+    /**
+     * The №29 description merge against the locked row: an ABSENT field
+     * ([patch] == null) keeps the current value; a present one applies,
+     * with the №27 empty-value convention — an EXPLICITLY EMPTY patch
+     * description CLEARS the stored one to «no description» (the
+     * optional FR-001 field never persists a meaningless empty string).
+     */
+    private fun mergedDescription(
+        patch: GroupDescription?,
+        current: GroupDescription?,
+    ): GroupDescription? =
+        when {
+            patch == null -> current
+            patch.value.isEmpty() -> null
+            else -> patch
+        }
 
     /**
      * One №31 candidate inside the locked section (data-model 006
