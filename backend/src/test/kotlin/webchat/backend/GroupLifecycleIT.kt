@@ -96,14 +96,37 @@ import java.util.concurrent.TimeUnit
  *    (title, description) pair is EXACTLY one of the two patches — the
  *    last confirmed — never a mix of the two.
  *
+ * T059 (US6) grew the LEAVE/DELETE SLICE on top of the same staging —
+ * №33/№30 of api-contract.md §2 (FR-005/FR-006):
+ *
+ *  * №33 `DELETE /groups/{chatId}/membership` — the owner leaving is the
+ *    contract edge `403 owner_must_transfer` (he must transfer ownership
+ *    or delete the group first); after a №35 transfer the FORMER owner
+ *    (now admin) leaves штатно with `204`, receives the final
+ *    `group.you_removed {reason:'left'}` while every remaining active
+ *    receives `group.member.removed` with `actorId: null` (the voluntary
+ *    leave, realtime-group-events.md §3.3/§3.6); his messages STAY in
+ *    the №15 history with attribution; a repeated №33 answers `404`
+ *    (api-contract.md §2 «Идемпотентность»);
+ *  * №30 `DELETE /groups/{chatId}` — only the owner (a plain member gets
+ *    `403 not_group_owner`); the hard-delete erases the group WHOLE:
+ *    `chats`/`messages`/`chat_participants` rows are all GONE (the SQL
+ *    probe — CASCADE by the V10 FKs) while every former active of the
+ *    pre-delete snapshot receives `group.deleted` (§3.5, actorId = the
+ *    deleting owner); repeated №30 AND №33 of the deleted group answer
+ *    `404` (§2 «Идемпотентность» — the object is gone).
+ *
  * NOTE (TDD, constitution VI): the creation slice was written BEFORE the
- * US1 implementation tasks (T020–T024); T040 grew the roles slice and T049
- * the metadata slice the same way — until the US4 implementation tasks
- * (T051/T052) land, №29 answers 405, so every metadata method fails (RED)
- * by design. Limits (200/64/256/batch) and the №31 idempotency matrix are
- * owned by T018a (GroupLimitsIT); the leave-delete slice of this lifecycle
- * (T059) EXTENDS this class later — keep every fixture self-contained per
- * method.
+ * US1 implementation tasks (T020–T024); T040 grew the roles slice, T049
+ * the metadata slice and T059 the leave/delete slice the same way — until
+ * the US6 implementation tasks (T063–T065) land, №33 answers the plain
+ * Spring 404 and №30 the 405 of a missing handler, so every leave/delete
+ * method fails (RED) by design (T063–T065 acceptance is this class
+ * green). Limits
+ * (200/64/256/batch) and the №31 idempotency matrix are owned by T018a
+ * (GroupLimitsIT); the №33/№30 privacy-matrix rows are closed in
+ * GroupPrivacyIT (T059, SC-003); the journal chronology is T060
+ * (GroupAdminLogIT). Keep every fixture self-contained per method.
  */
 @Suppress("TooManyFunctions", "LargeClass") // T018: one method per US1 rule of tasks.md
 class GroupLifecycleIT(
@@ -1148,6 +1171,206 @@ class GroupLifecycleIT(
         }
     }
 
+    /**
+     * №33 happy path + the owner edge (FR-005, api-contract.md №33): the
+     * OWNER leaving is refused `403 owner_must_transfer` (transfer or
+     * delete first); after a №35 transfer the former owner — now admin —
+     * leaves штатно with `204`, and a repeated №33 answers `404` (§2
+     * «Идемпотентность»). The wire legs (§3.3/§3.6) and the kept-history
+     * leg are pinned by the helpers below.
+     */
+    @Test
+    fun `leave refuses the owner until the transfer then leaves normally`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        addContact(owner, bob.id)
+        addContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = listOf(bob.id, carol.id)))
+        val seeded = seedChatBacklog(chatId, LEAVE_SEEDED_MESSAGES, senderFor = { owner }, LEAVE_TEXT_PREFIX)
+        assertThat(seeded)
+            .overridingErrorMessage("the fixture must seed exactly one message of the leaving member")
+            .hasSize(1)
+
+        val ownerLeaves = leaveGroup(owner, chatId)
+        assertThat(ownerLeaves.statusCode)
+            .overridingErrorMessage(
+                "the owner leaving must be refused until the transfer (api-contract.md №33), got <%s>: %s",
+                ownerLeaves.statusCode,
+                ownerLeaves.body,
+            ).isEqualTo(HttpStatus.FORBIDDEN)
+        assertProblem(ownerLeaves, GROUP_FIELD, OWNER_MUST_TRANSFER)
+
+        openUserEvents(owner).use { leaverStream ->
+            openUserEvents(bob).use { bobStream ->
+                openUserEvents(carol).use { carolStream ->
+                    val transfer = transferOwnership(owner, chatId, bob.id)
+                    assertThat(transfer.statusCode)
+                        .overridingErrorMessage(
+                            "fixture №35 transfer staging must answer 200, got <%s>: %s",
+                            transfer.statusCode,
+                            transfer.body,
+                        ).isEqualTo(HttpStatus.OK)
+
+                    val response = leaveGroup(owner, chatId)
+                    assertThat(response.statusCode)
+                        .overridingErrorMessage(
+                            "№33 leave of the former owner (now admin) must answer 204, got <%s>: %s",
+                            response.statusCode,
+                            response.body,
+                        ).isEqualTo(HttpStatus.NO_CONTENT)
+
+                    awaitLeaveFramesOnAll(leaverStream, listOf(bobStream, carolStream), chatId, owner.id)
+                    assertLeaverKeptOnlyInHistory(bob, chatId, owner, seeded.single().id, listOf(bob.id, carol.id))
+                    assertGroupNotFound(leaveGroup(owner, chatId))
+                }
+            }
+        }
+    }
+
+    /**
+     * The №33 wire legs (realtime-group-events.md §3.3/§3.6): the leaver
+     * receives the FINAL `group.you_removed {reason:'left'}` while every
+     * remaining active receives `group.member.removed` with `actorId:
+     * null` — the voluntary leave carries no actor.
+     */
+    private fun awaitLeaveFramesOnAll(
+        leaverStream: UserEventsStream,
+        survivorStreams: List<UserEventsStream>,
+        chatId: UUID,
+        leaverId: UUID,
+    ) {
+        val finalFrame = leaverStream.awaitEvent(GROUP_YOU_REMOVED_EVENT, deliveryBudget)
+        assertThat(fieldNames(finalFrame))
+            .overridingErrorMessage(
+                "group.you_removed must carry exactly the contract fields, got <%s>",
+                fieldNames(finalFrame),
+            ).containsExactlyInAnyOrderElementsOf(GROUP_YOU_REMOVED_EVENT_FIELDS)
+        assertThat(finalFrame["groupId"].asText()).isEqualTo(chatId.toString())
+        assertThat(finalFrame["reason"].asText())
+            .overridingErrorMessage("a №33 leave is the 'left' reason (realtime-group-events.md §3.6)")
+            .isEqualTo(LEFT_REASON)
+
+        survivorStreams.forEach { stream ->
+            assertMemberRemovedFrame(
+                stream.awaitEvent(GROUP_MEMBER_REMOVED_EVENT, deliveryBudget),
+                chatId = chatId,
+                userId = leaverId,
+                actorId = null,
+            )
+        }
+    }
+
+    /**
+     * The post-leave state (api-contract.md №33): the leaver's №28
+     * collapses to the uniform 404, the survivor roster drops him and his
+     * messages STAY in the №15 history WITH ATTRIBUTION.
+     */
+    private fun assertLeaverKeptOnlyInHistory(
+        reader: MessagingUser,
+        chatId: UUID,
+        leaver: MessagingUser,
+        keptMessageId: UUID,
+        expectedRoster: List<UUID>,
+    ) {
+        assertGroupNotFound(getGroup(leaver, chatId))
+        val roster = objectMapper.readTree(getGroup(reader, chatId).body)["members"].toList()
+        assertThat(roster.map { it["user"]["id"].asText() })
+            .overridingErrorMessage("the survivor roster must drop the member who left")
+            .containsExactlyInAnyOrderElementsOf(expectedRoster.map(UUID::toString))
+
+        val history = listMessages(reader, chatId)
+        assertThat(history.statusCode)
+            .overridingErrorMessage("№15 of a survivor must stay readable, got <%s>", history.statusCode)
+            .isEqualTo(HttpStatus.OK)
+        val messages = objectMapper.readTree(history.body)["messages"].toList()
+        assertThat(messages.map { it["id"].asText() })
+            .overridingErrorMessage("the leaver's messages must REMAIN in the history (api-contract.md №33)")
+            .containsExactly(keptMessageId.toString())
+        assertThat(messages.single()["senderId"].asText())
+            .overridingErrorMessage(
+                "the kept message must keep the LEAVER's attribution (senderId), got <%s>",
+                messages.single()["senderId"].asText(),
+            ).isEqualTo(leaver.id.toString())
+    }
+
+    /**
+     * №30 hard-delete (FR-006, api-contract.md №30): only the owner — a
+     * plain member gets `403 not_group_owner`; the owner's `204` erases
+     * the group WHOLE (the SQL probe below) while every former active of
+     * the pre-delete snapshot receives `group.deleted` (§3.5); repeated
+     * №30 and №33 of the deleted group both answer `404` (§2
+     * «Идемпотентность» — the object is gone).
+     */
+    @Test
+    fun `delete erases the group whole and notifies every former member`() {
+        val owner = messagingUser("owner")
+        val (bob, carol) = messagingUser("bob") to messagingUser("carol")
+        addContact(owner, bob.id)
+        addContact(owner, carol.id)
+        val chatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, memberUserIds = listOf(bob.id, carol.id)))
+        seedChatBacklog(chatId, DELETE_SEEDED_MESSAGES, senderFor = { if (it == 0) owner else bob }, DELETE_TEXT_PREFIX)
+
+        val memberDelete = deleteGroup(carol, chatId)
+        assertThat(memberDelete.statusCode)
+            .overridingErrorMessage(
+                "№30 of a plain member must be refused 403 not_group_owner, got <%s>: %s",
+                memberDelete.statusCode,
+                memberDelete.body,
+            ).isEqualTo(HttpStatus.FORBIDDEN)
+        assertProblem(memberDelete, GROUP_FIELD, NOT_GROUP_OWNER)
+
+        openUserEvents(owner).use { ownerStream ->
+            openUserEvents(bob).use { bobStream ->
+                openUserEvents(carol).use { carolStream ->
+                    val response = deleteGroup(owner, chatId)
+                    assertThat(response.statusCode)
+                        .overridingErrorMessage(
+                            "№30 hard-delete by the owner must answer 204, got <%s>: %s",
+                            response.statusCode,
+                            response.body,
+                        ).isEqualTo(HttpStatus.NO_CONTENT)
+
+                    awaitDeletedFrameOnAll(listOf(ownerStream, bobStream, carolStream), chatId, owner.id)
+
+                    val residue = hardDeleteResidueOf(chatId)
+                    assertThat(residue)
+                        .overridingErrorMessage(
+                            "№30 must erase chats/messages/chat_participants WHOLE (FR-006 CASCADE), got <%s>",
+                            residue,
+                        ).isEqualTo(Triple(0L, 0L, 0L))
+
+                    assertGroupNotFound(getGroup(bob, chatId))
+                    assertGroupNotFound(deleteGroup(owner, chatId))
+                    assertGroupNotFound(leaveGroup(bob, chatId))
+                }
+            }
+        }
+    }
+
+    /**
+     * Every former active of the pre-delete snapshot — the deleting
+     * owner included — receives `group.deleted` with the exact §3.5
+     * payload (actorId = the deleting owner).
+     */
+    private fun awaitDeletedFrameOnAll(
+        streams: List<UserEventsStream>,
+        chatId: UUID,
+        actorId: UUID,
+    ) {
+        streams.forEach { stream ->
+            val frame = stream.awaitEvent(GROUP_DELETED_EVENT, deliveryBudget)
+            assertThat(fieldNames(frame))
+                .overridingErrorMessage(
+                    "group.deleted must carry exactly the contract fields, got <%s>",
+                    fieldNames(frame),
+                ).containsExactlyInAnyOrderElementsOf(GROUP_DELETED_EVENT_FIELDS)
+            assertThat(frame["groupId"].asText()).isEqualTo(chatId.toString())
+            assertThat(frame["actorId"].asText())
+                .overridingErrorMessage("the §3.5 actor is the deleting owner")
+                .isEqualTo(actorId.toString())
+        }
+    }
+
     /** Fires the two №29 patches of the edge simultaneously and asserts BOTH confirm with 200. */
     private fun fireConcurrentPatches(
         first: MessagingUser,
@@ -1303,6 +1526,18 @@ class GroupLifecycleIT(
             mapOf(USER_ID_FIELD to userId.toString()),
             user,
         )
+
+    /** Contract №33 `DELETE /api/v1/groups/{chatId}/membership` — raw response. */
+    private fun leaveGroup(
+        user: MessagingUser,
+        chatId: UUID,
+    ): ResponseEntity<String> = exchangeWithAuth(HttpMethod.DELETE, "$GROUPS_PATH/$chatId/membership", user)
+
+    /** Contract №30 `DELETE /api/v1/groups/{chatId}` — raw response. */
+    private fun deleteGroup(
+        user: MessagingUser,
+        chatId: UUID,
+    ): ResponseEntity<String> = exchangeWithAuth(HttpMethod.DELETE, "$GROUPS_PATH/$chatId", user)
 
     /**
      * Contract №29 `PATCH /api/v1/groups/{chatId}` — raw response. The
@@ -1518,12 +1753,15 @@ class GroupLifecycleIT(
         assertThat(event["actorId"].asText()).isEqualTo(actorId.toString())
     }
 
-    /** A `group.member.removed` frame of §3.3 — field-by-field, actorId is the kicker here. */
+    /**
+     * A `group.member.removed` frame of §3.3 — field-by-field, actorId is
+     * the kicker for №32 and `null` for a voluntary №33 leave.
+     */
     private fun assertMemberRemovedFrame(
         event: JsonNode,
         chatId: UUID,
         userId: UUID,
-        actorId: UUID,
+        actorId: UUID?,
     ) {
         assertThat(fieldNames(event))
             .overridingErrorMessage(
@@ -1532,7 +1770,15 @@ class GroupLifecycleIT(
             ).containsExactlyInAnyOrderElementsOf(GROUP_MEMBER_REMOVED_EVENT_FIELDS)
         assertThat(event["groupId"].asText()).isEqualTo(chatId.toString())
         assertThat(event["userId"].asText()).isEqualTo(userId.toString())
-        assertThat(event["actorId"].asText()).isEqualTo(actorId.toString())
+        if (actorId == null) {
+            assertThat(event["actorId"].isNull)
+                .overridingErrorMessage(
+                    "a voluntary №33 leave publishes actorId:null (realtime-group-events.md §3.3), got <%s>",
+                    event["actorId"],
+                ).isTrue
+        } else {
+            assertThat(event["actorId"].asText()).isEqualTo(actorId.toString())
+        }
     }
 
     /**
@@ -1594,6 +1840,24 @@ class GroupLifecycleIT(
             Long::class.java,
             chatId,
         ) ?: 0L
+
+    /**
+     * The №30 hard-delete residue as `(chats, messages, chat_participants)`
+     * row counts — the FR-006 SQL probe: a whole-erased group leaves ZERO
+     * rows in every one of the three tables (CASCADE by the V10 FKs).
+     */
+    private fun hardDeleteResidueOf(chatId: UUID): Triple<Long, Long, Long> =
+        jdbcTemplate.queryForObject(
+            """
+            SELECT (SELECT count(*) FROM chats WHERE id = ?) AS chats_left,
+                   (SELECT count(*) FROM messages WHERE chat_id = ?) AS messages_left,
+                   (SELECT count(*) FROM chat_participants WHERE chat_id = ?) AS participants_left
+            """.trimIndent(),
+            { rs, _ -> Triple(rs.getLong("chats_left"), rs.getLong("messages_left"), rs.getLong("participants_left")) },
+            chatId,
+            chatId,
+            chatId,
+        ) ?: Triple(-1L, -1L, -1L)
 
     /** The group's journal entries of [actions] as `(action, actor)` pairs — the FR-017 probe of №29. */
     private fun adminLogActions(
@@ -1706,6 +1970,7 @@ class GroupLifecycleIT(
         const val TARGET_NOT_MEMBER = "target_not_member"
         const val INVALID_ROLE = "invalid_role"
         const val EMPTY_PATCH = "empty_patch"
+        const val OWNER_MUST_TRANSFER = "owner_must_transfer"
 
         /** api-contract.md №29: the empty-body refusal rides `errors.body`. */
         const val BODY_FIELD = "body"
@@ -1719,12 +1984,18 @@ class GroupLifecycleIT(
         const val GROUP_MEMBER_REMOVED_EVENT = "group.member.removed"
         const val GROUP_YOU_REMOVED_EVENT = "group.you_removed"
         const val GROUP_UPDATED_EVENT = "group.updated"
+        const val GROUP_DELETED_EVENT = "group.deleted"
         const val KICKED_REASON = "kicked"
+        const val LEFT_REASON = "left"
 
         /** A role frame must arrive well inside the CI-tolerant SC-004 budget. */
         const val DELIVERY_BUDGET_SECONDS = 5L
         const val KICK_SEEDED_MESSAGES = 1
         const val KICK_TEXT_PREFIX = "kick-target-message"
+        const val LEAVE_SEEDED_MESSAGES = 1
+        const val LEAVE_TEXT_PREFIX = "leave-target-message"
+        const val DELETE_SEEDED_MESSAGES = 2
+        const val DELETE_TEXT_PREFIX = "delete-target-message"
 
         /** US4 metadata fixtures. */
         const val RENAMED_TITLE = "US4 renamed title"
@@ -1756,6 +2027,7 @@ class GroupLifecycleIT(
         val GROUP_MEMBER_REMOVED_EVENT_FIELDS = listOf("groupId", "userId", "actorId")
         val GROUP_YOU_REMOVED_EVENT_FIELDS = listOf("groupId", "reason")
         val GROUP_UPDATED_EVENT_FIELDS = listOf("groupId", "title", "description", "actorId")
+        val GROUP_DELETED_EVENT_FIELDS = listOf("groupId", "actorId")
         val GROUP_CHAT_LIST_ITEM_FIELDS =
             listOf(
                 "chatId",

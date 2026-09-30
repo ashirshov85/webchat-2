@@ -41,11 +41,11 @@ import java.util.UUID
  *    `GET /chats` and №26 sync answer neither to a stranger nor to the
  *    removed member — no group element, no group delta (api-contract.md
  *    §3; the removed row is filtered by the active-membership rule);
- *  * the groups operations №28/№29/№31/№32/№34/№35 answer the ONE
- *    uniform `404 group_not_found` to a stranger, a removed member and
- *    an unknown chat id (api-contract.md §1) — existence is never
- *    disclosed (SC-003; the №33/№30 rows of the matrix join with T059
- *    of US6, №27 is never gated — the group does not exist yet);
+ *  * the groups operations №28/№29/№31/№32/№33/№34/№35/№30 answer the
+ *    ONE uniform `404 group_not_found` to a stranger, a removed member
+ *    and an unknown chat id (api-contract.md §1) — existence is never
+ *    disclosed (SC-003; the №33/№30 rows closed the matrix with T059 of
+ *    US6, №27 is never gated — the group does not exist yet);
  *  * №18 SSE: group events never reach the stream of a non-member — a
  *    stranger's stream stays silent while a member's stream receives
  *    every frame of the SAME activity (message.created, group.updated,
@@ -69,8 +69,9 @@ import java.util.UUID
  * T044/T052), so this class pins them END-TO-END; T056/T057 close any
  * gap it may find. The frontend privacy rules (№25 batch exclusion, the
  * «Чаты» removal without polling) are T055/T058 and are NOT retested
- * here; the №33/№30 matrix rows and `group.deleted` are T059–T066 of
- * US6.
+ * here; the №33/№30 matrix rows were closed by T059 (US6) and stay RED
+ * (the plain 404/405 of missing handlers) until the №33/№30
+ * implementation lands (T063–T065); `group.deleted` is T059–T066 of US6.
  */
 @Suppress("TooManyFunctions", "LargeClass") // T054: one method per US5 rule of tasks.md
 class GroupPrivacyIT(
@@ -270,11 +271,11 @@ class GroupPrivacyIT(
 
     /**
      * The groups matrix of api-contract.md §1 (SC-003): every operation
-     * №28/№29/№31/№32/№34/№35 answers the ONE uniform `404
-     * group_not_found` to a stranger, a removed member and an unknown
-     * chat id — the membership gate runs before any role distinction,
-     * so existence is never disclosed (FR-008/FR-009). №33/№30 join the
-     * matrix with T059 (US6); №27 is never gated.
+     * №28/№29/№31/№32/№34/№35 AND the №33/№30 pair of US6 (T059 — the
+     * matrix closure) answers the ONE uniform `404 group_not_found` to a
+     * stranger, a removed member and an unknown chat id — the membership
+     * gate runs before any role distinction, so existence is never
+     * disclosed (FR-008/FR-009). №27 is never gated.
      */
     @Test
     fun `groups operations answer the uniform 404 to strangers the removed and unknown ids`() {
@@ -299,8 +300,10 @@ class GroupPrivacyIT(
     }
 
     /**
-     * The six gated operations of the matrix row [identity] — every body
-     * is valid, so the caller's membership is the ONLY refusal reason.
+     * The eight gated operations of the matrix row [identity] — every
+     * body is valid, so the caller's membership is the ONLY refusal
+     * reason. The №33/№30 legs (T059, the SC-003 closure) need no body
+     * at all: the membership gate refuses before any role distinction.
      */
     private fun assertGroupsMatrixRefused(
         caller: MessagingUser,
@@ -314,6 +317,8 @@ class GroupPrivacyIT(
         assertGroupNotFound(kickMember(caller, chatId, targetId), "№32 kick by $identity")
         assertGroupNotFound(setMemberRole(caller, chatId, targetId, ADMIN_ROLE), "№34 set role by $identity")
         assertGroupNotFound(transferOwnership(caller, chatId, targetId), "№35 transfer by $identity")
+        assertGroupNotFound(leaveGroup(caller, chatId), "№33 leave by $identity")
+        assertGroupNotFound(deleteGroup(caller, chatId), "№30 delete by $identity")
     }
 
     /**
@@ -675,6 +680,18 @@ class GroupPrivacyIT(
             user,
         )
 
+    /** Contract №33 `DELETE /api/v1/groups/{chatId}/membership` — raw response. */
+    private fun leaveGroup(
+        user: MessagingUser,
+        chatId: UUID,
+    ): ResponseEntity<String> = exchangeWithAuth(HttpMethod.DELETE, "$GROUPS_PATH/$chatId/membership", user)
+
+    /** Contract №30 `DELETE /api/v1/groups/{chatId}` — raw response. */
+    private fun deleteGroup(
+        user: MessagingUser,
+        chatId: UUID,
+    ): ResponseEntity<String> = exchangeWithAuth(HttpMethod.DELETE, "$GROUPS_PATH/$chatId", user)
+
     /**
      * Contract №29 `PATCH /api/v1/groups/{chatId}` — raw response. The
      * call rides the JDK HttpClient on purpose: the build carries no
@@ -739,6 +756,7 @@ class GroupPrivacyIT(
         )
 
     /** Contract №20 `GET /api/v1/contacts` — raw response. */
+    @Suppress("MaxLineLength") // ktlint's function-signature rule (140 cols) forces this 129-col one-liner
     private fun listContacts(user: MessagingUser): ResponseEntity<String> = exchangeWithAuth(HttpMethod.GET, CONTACTS_PATH, user)
 
     // ------------------------------------------------------------------
