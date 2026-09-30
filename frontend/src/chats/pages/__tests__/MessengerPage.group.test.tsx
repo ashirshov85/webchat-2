@@ -286,7 +286,7 @@ describe('MessengerPage group.you_removed with the group window open (US5, T055 
     })
     expect(screen.queryByRole('button', { name: /Проект Альфа/ })).toBeNull()
     // Deterministic removal — no №12 refetch round (§5.2 без поллинга).
-    expect(mockChats.listChats.mock.calls.length).toBe(callsBeforeRemoval)
+    expect(mockChats.listChats.mock.calls).toHaveLength(callsBeforeRemoval)
     // The direct dialog of the same list keeps flowing.
     expect(screen.getByRole('button', { name: /^alice/ })).toBeInTheDocument()
   })
@@ -324,7 +324,7 @@ describe('MessengerPage group.deleted with the group window open (US6, T062 → 
     })
     expect(screen.queryByRole('button', { name: /Проект Альфа/ })).toBeNull()
     // Deterministic removal — no №12 refetch round (§3.5 без поллинга).
-    expect(mockChats.listChats.mock.calls.length).toBe(callsBeforeDelete)
+    expect(mockChats.listChats.mock.calls).toHaveLength(callsBeforeDelete)
     // The direct dialog of the same list keeps flowing.
     expect(screen.getByRole('button', { name: /^alice/ })).toBeInTheDocument()
   })

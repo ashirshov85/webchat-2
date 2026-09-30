@@ -133,7 +133,9 @@ import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
 import { GroupInfoPanel } from '../../groups/components/GroupInfoPanel'
 import { LeaveDeleteControls } from '../../groups/components/LeaveDeleteControls'
 import { useGroup } from '../../groups/hooks/useGroup'
+import type { GroupStatus } from '../../groups/hooks/useGroup'
 import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
+import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
 
 /** The open direct dialog: everything the header actions need (T060). */
 interface DirectChatView {
@@ -285,6 +287,150 @@ function ConfirmDialog({ confirmation, pending, onAccept, onCancel }: ConfirmDia
         </button>
       </div>
     </dialog>
+  )
+}
+
+/**
+ * The group card (T046a): the №28 GroupInfoPanel under the header —
+ * loading/error states of the №28 lifecycle stay local to the card,
+ * the №16 history below is the window's own error surface.
+ */
+interface GroupCardProps {
+  readonly group: GroupView | null
+  readonly chatId: string
+  readonly status: GroupStatus
+  readonly error: unknown
+  readonly currentUserId: string
+  readonly onReload: () => void
+  readonly rosterActions: UseGroupMembersResult
+  readonly onMembersAdded: () => void
+  readonly onUpdated: () => void
+  readonly onLeft: () => void
+  readonly onDeleted: () => void
+}
+
+function GroupCard({
+  group,
+  chatId,
+  status,
+  error,
+  currentUserId,
+  onReload,
+  rosterActions,
+  onMembersAdded,
+  onUpdated,
+  onLeft,
+  onDeleted,
+}: GroupCardProps) {
+  return (
+    <div className="dialog-group-card" id="dialog-group-card">
+      {status === 'loading' && <p className="messenger-empty">Загрузка группы…</p>}
+      {status === 'error' && (
+        <div className="chat-panel-error">
+          <ErrorBanner error={error} />
+          <button type="button" className="chat-panel-retry" onClick={onReload}>
+            Повторить
+          </button>
+        </div>
+      )}
+      {group?.chatId === chatId && status === 'ready' && (
+        <GroupInfoPanel
+          chatId={group.chatId}
+          title={group.title}
+          description={group.description}
+          members={group.members}
+          myRole={group.myRole}
+          currentUserId={currentUserId}
+          onKick={(userId) => {
+            void rosterActions.kick(userId)
+          }}
+          onSetRole={(userId, role) => {
+            void rosterActions.setRole(userId, role)
+          }}
+          onTransferOwnership={(userId) => {
+            void rosterActions.transferOwnership(userId)
+          }}
+          pendingUserId={rosterActions.pendingUserId}
+          rosterError={rosterActions.error}
+          onMembersAdded={onMembersAdded}
+          onUpdated={onUpdated}
+          leaveDeleteControls={
+            // US6 (T066): the №33 leave / №30 hard-delete controls of
+            // the card — the reachable half by `myRole`, the 403 hints
+            // of a stale role race render inside the component.
+            <LeaveDeleteControls
+              chatId={group.chatId}
+              myRole={group.myRole}
+              onLeft={onLeft}
+              onDeleted={onDeleted}
+            />
+          }
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * The open window header (T029): one window, two headers — the GROUP
+ * window carries the №28 title and the «Информация о группе» toggle
+ * (US3, T046a), the direct dialog the peer title + the «Действия»
+ * menu (T060).
+ */
+interface DialogHeaderProps {
+  readonly chat: ActiveChat
+  readonly group: GroupView | null
+  readonly groupInfoOpen: boolean
+  readonly menuOpen: boolean
+  readonly onToggleGroupInfo: () => void
+  readonly onToggleMenu: () => void
+  readonly onDeleteChat: () => void
+  readonly onToggleBlock: () => void
+}
+
+function DialogHeader({
+  chat,
+  group,
+  groupInfoOpen,
+  menuOpen,
+  onToggleGroupInfo,
+  onToggleMenu,
+  onDeleteChat,
+  onToggleBlock,
+}: DialogHeaderProps) {
+  if (chat.kind === 'group') {
+    return (
+      <>
+        <span className="chat-item-avatar" aria-hidden="true">
+          #
+        </span>
+        <h2 className="dialog-title">
+          {/* №28 title while the view is live (the optimistic
+              `group.updated` half of the header), the №12/№27
+              title until then. */}
+          {group?.chatId === chat.chatId ? group.title : chat.title}
+        </h2>
+        <button
+          type="button"
+          className="dialog-group-info-toggle"
+          aria-expanded={groupInfoOpen}
+          aria-controls="dialog-group-card"
+          onClick={onToggleGroupInfo}
+        >
+          Информация о группе
+        </button>
+      </>
+    )
+  }
+  return (
+    <DirectChatHeader
+      username={chat.peer.username}
+      blockedByMe={chat.blockedByMe}
+      menuOpen={menuOpen}
+      onToggleMenu={onToggleMenu}
+      onDeleteChat={onDeleteChat}
+      onToggleBlock={onToggleBlock}
+    />
   )
 }
 
@@ -771,104 +917,44 @@ export function MessengerPage() {
         {dialogOpen && activeChat !== null ? (
           <>
             <header className="dialog-header">
-              {activeChat.kind === 'group' ? (
-                <>
-                  <span className="chat-item-avatar" aria-hidden="true">
-                    #
-                  </span>
-                  <h2 className="dialog-title">
-                    {/* №28 title while the view is live (the optimistic
-                        `group.updated` half of the header), the №12/№27
-                        title until then. */}
-                    {activeGroup?.chatId === activeChat.chatId
-                      ? activeGroup.title
-                      : activeChat.title}
-                  </h2>
-                  <button
-                    type="button"
-                    className="dialog-group-info-toggle"
-                    aria-expanded={groupInfoOpen}
-                    aria-controls="dialog-group-card"
-                    onClick={() => {
-                      setGroupInfoOpen((open) => !open)
-                    }}
-                  >
-                    Информация о группе
-                  </button>
-                </>
-              ) : (
-                <DirectChatHeader
-                  username={activeChat.peer.username}
-                  blockedByMe={activeChat.blockedByMe}
-                  menuOpen={menuOpen}
-                  onToggleMenu={() => {
-                    setMenuOpen((open) => !open)
-                  }}
-                  onDeleteChat={() => {
-                    setMenuOpen(false)
-                    setPendingAction('delete-chat')
-                  }}
-                  onToggleBlock={() => {
-                    setMenuOpen(false)
-                    setPendingAction(activeChat.blockedByMe ? 'unblock' : 'block')
-                  }}
-                />
-              )}
+              <DialogHeader
+                chat={activeChat}
+                group={activeGroup}
+                groupInfoOpen={groupInfoOpen}
+                menuOpen={menuOpen}
+                onToggleGroupInfo={() => {
+                  setGroupInfoOpen((open) => !open)
+                }}
+                onToggleMenu={() => {
+                  setMenuOpen((open) => !open)
+                }}
+                onDeleteChat={() => {
+                  setMenuOpen(false)
+                  setPendingAction('delete-chat')
+                }}
+                onToggleBlock={() => {
+                  setMenuOpen(false)
+                  setPendingAction(
+                    activeChat.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block',
+                  )
+                }}
+              />
             </header>
 
-            {/* The group card (T046a): the №28 GroupInfoPanel under the
-                header — loading/error states of the №28 lifecycle stay
-                local to the card, the №16 history below is the window's
-                own error surface. */}
             {activeChat.kind === 'group' && groupInfoOpen && (
-              <div className="dialog-group-card" id="dialog-group-card">
-                {activeGroupStatus === 'loading' && (
-                  <p className="messenger-empty">Загрузка группы…</p>
-                )}
-                {activeGroupStatus === 'error' && (
-                  <div className="chat-panel-error">
-                    <ErrorBanner error={activeGroupError} />
-                    <button type="button" className="chat-panel-retry" onClick={reloadActiveGroup}>
-                      Повторить
-                    </button>
-                  </div>
-                )}
-                {activeGroup?.chatId === activeChat.chatId && activeGroupStatus === 'ready' && (
-                  <GroupInfoPanel
-                    chatId={activeGroup.chatId}
-                    title={activeGroup.title}
-                    description={activeGroup.description}
-                    members={activeGroup.members}
-                    myRole={activeGroup.myRole}
-                    currentUserId={currentUserId ?? ''}
-                    onKick={(userId) => {
-                      void rosterActions.kick(userId)
-                    }}
-                    onSetRole={(userId, role) => {
-                      void rosterActions.setRole(userId, role)
-                    }}
-                    onTransferOwnership={(userId) => {
-                      void rosterActions.transferOwnership(userId)
-                    }}
-                    pendingUserId={rosterActions.pendingUserId}
-                    rosterError={rosterActions.error}
-                    onMembersAdded={handleMembersAdded}
-                    onUpdated={handleGroupUpdated}
-                    leaveDeleteControls={
-                      // US6 (T066): the №33 leave / №30 hard-delete
-                      // controls of the card — the reachable half by
-                      // `myRole`, the 403 hints of a stale role race
-                      // render inside the component.
-                      <LeaveDeleteControls
-                        chatId={activeGroup.chatId}
-                        myRole={activeGroup.myRole}
-                        onLeft={handleLeftGroup}
-                        onDeleted={handleDeletedGroup}
-                      />
-                    }
-                  />
-                )}
-              </div>
+              <GroupCard
+                group={activeGroup}
+                chatId={activeChat.chatId}
+                status={activeGroupStatus}
+                error={activeGroupError}
+                currentUserId={currentUserId ?? ''}
+                onReload={reloadActiveGroup}
+                rosterActions={rosterActions}
+                onMembersAdded={handleMembersAdded}
+                onUpdated={handleGroupUpdated}
+                onLeft={handleLeftGroup}
+                onDeleted={handleDeletedGroup}
+              />
             )}
 
             {actionError !== null && (

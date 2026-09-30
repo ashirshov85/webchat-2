@@ -381,7 +381,7 @@ function mergeRefetchedChats(items: ChatListItem[], previous: ChatListItem[]): C
 function applyGroupRenamed(chats: ChatListItem[], groupId: string, title: string): ChatListItem[] {
   const index = chats.findIndex((item) => item.chatId === groupId)
   const current = index === -1 ? undefined : chats[index]
-  if (current === undefined || current.type !== 'group' || current.title === title) {
+  if (current?.type !== 'group' || current.title === title) {
     return chats
   }
   const next = [...chats]

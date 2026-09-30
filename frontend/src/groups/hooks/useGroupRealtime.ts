@@ -92,100 +92,109 @@ export interface GroupRealtimeSlice {
 const NO_REMOVED_CHAT_IDS: ReadonlySet<string> = new Set()
 
 /**
+ * `group.member.added` (§3.2, US1-2): materializes an unknown group;
+ * a known one is a no-op, a tombstoned one ignores the stale frame
+ * (a frame published after the kick must not resurrect the group).
+ */
+function applyMemberAdded(slice: GroupRealtimeSlice, groupId: string): GroupRealtimeSlice {
+  if (slice.removedChatIds.has(groupId) || slice.groups.some((entry) => entry.chatId === groupId)) {
+    return slice
+  }
+  return { ...slice, groups: [...slice.groups, { chatId: groupId }] }
+}
+
+/** Drops the group's row and tombstones its chatId (§5.2 final frame). */
+function dropAndTombstone(slice: GroupRealtimeSlice, groupId: string): GroupRealtimeSlice {
+  const removedChatIds = new Set(slice.removedChatIds)
+  removedChatIds.add(groupId)
+  return {
+    groups: slice.groups.filter((entry) => entry.chatId !== groupId),
+    removedChatIds,
+  }
+}
+
+/**
+ * `group.you_removed` (§3.6, any `reason`): removes the group from
+ * «Чаты» and tombstones it; a redelivered final frame is a no-op, and
+ * a group the state never knew is left untouched.
+ */
+function applyYouRemoved(slice: GroupRealtimeSlice, groupId: string): GroupRealtimeSlice {
+  if (
+    slice.removedChatIds.has(groupId) ||
+    !slice.groups.some((entry) => entry.chatId === groupId)
+  ) {
+    return slice
+  }
+  return dropAndTombstone(slice, groupId)
+}
+
+/**
+ * `group.updated` (§3.1, FR-007): the frame's title IS the group's new
+ * state (US4) — rename a known row in place; the frame describes no
+ * other aggregate, so `memberCount` and №12-only fields pass through.
+ */
+function applyUpdated(
+  slice: GroupRealtimeSlice,
+  groupId: string,
+  title: string,
+): GroupRealtimeSlice {
+  if (slice.removedChatIds.has(groupId)) {
+    return slice
+  }
+  const index = slice.groups.findIndex((entry) => entry.chatId === groupId)
+  const current = index === -1 ? undefined : slice.groups[index]
+  if (current === undefined) {
+    // №12 owns row materialization (US1-2 precedent).
+    return slice
+  }
+  if (current.title === title) {
+    return slice
+  }
+  const groups = [...slice.groups]
+  groups[index] = { ...current, title }
+  return { ...slice, groups }
+}
+
+/**
+ * `group.deleted` (§3.5, FR-006): the hard-delete broadcast to every
+ * FORMER active member — the row leaves «Чаты» deterministically and
+ * the id is tombstoned FOREVER (№12 can never return the chat, so
+ * there is no re-add revival path). The tombstone covers a group the
+ * list never knew: the materializing frame may have been lost
+ * (at-most-once, §1), making this the group's first frame here — a
+ * later stale redelivery must stay dead.
+ */
+function applyDeleted(slice: GroupRealtimeSlice, groupId: string): GroupRealtimeSlice {
+  const known = slice.groups.some((entry) => entry.chatId === groupId)
+  if (!known && slice.removedChatIds.has(groupId)) {
+    return slice
+  }
+  return dropAndTombstone(slice, groupId)
+}
+
+/**
  * Idempotent reducer of one №18 group frame onto the live slice
- * (FR-015: state, not deltas; §1 order race):
- * — `group.member.added` materializes an unknown group, is a no-op
- *   for a known one and is IGNORED for a tombstoned one (a stale
- *   frame published after the kick must not resurrect the group);
- * — `group.member.removed`/`group.role.changed` are recognized
- *   roster/role frames without list-level aggregates — an idempotent
- *   no-op here (same reference, React bails out; the №28 view of
- *   useGroup is their consumer);
- * — `group.updated` (§3.1, FR-007) renames a KNOWN group in place:
- *   the frame's `title` is the described state (US4), everything the
- *   frame does not describe (`memberCount`, №12-only fields) stays
- *   untouched; a duplicate frame with the same title returns the same
- *   reference, an unknown group is a no-op (№12 materializes rows) and
- *   a tombstoned group ignores the frame (§1 race — no resurrection);
- * — `group.you_removed` (§3.6, any `reason`) removes the group from
- *   «Чаты» and tombstones it (§5.2); a redelivered final frame is a
- *   no-op, and a group the state never knew is left untouched;
- * — `group.deleted` (§3.5, FR-006) removes the group from «Чаты» and
- *   tombstones it PERMANENTLY — even a group the list never knew (the
- *   at-most-once channel may have lost the materializing frame, so the
- *   delete frame may be the group's first here; №12 can never return a
- *   hard-deleted chat, so no later frame may resurrect a ghost row);
- *   a redelivered frame of an already-tombstoned-and-dropped group
- *   returns the SAME slice reference.
- * A frame that changes nothing returns the SAME slice reference.
+ * (FR-015: state, not deltas; §1 order race) — the per-type rules
+ * above; `group.member.removed`/`group.role.changed` are recognized
+ * roster/role frames without list-level aggregates — an idempotent
+ * no-op here (same reference, React bails out; the №28 view of
+ * useGroup is their consumer) — and unknown future types (§1) pass
+ * through untouched. A frame that changes nothing returns the SAME
+ * slice reference.
  */
 export function reduceGroupSlice(
   slice: GroupRealtimeSlice,
   event: GroupRealtimeEvent,
 ): GroupRealtimeSlice {
   switch (event.type) {
-    case 'group.member.added': {
-      if (
-        slice.removedChatIds.has(event.groupId) ||
-        slice.groups.some((entry) => entry.chatId === event.groupId)
-      ) {
-        return slice
-      }
-      return { ...slice, groups: [...slice.groups, { chatId: event.groupId }] }
-    }
-    case 'group.you_removed': {
-      if (slice.removedChatIds.has(event.groupId)) {
-        return slice
-      }
-      if (!slice.groups.some((entry) => entry.chatId === event.groupId)) {
-        return slice
-      }
-      const removedChatIds = new Set(slice.removedChatIds)
-      removedChatIds.add(event.groupId)
-      return {
-        groups: slice.groups.filter((entry) => entry.chatId !== event.groupId),
-        removedChatIds,
-      }
-    }
-    case 'group.updated': {
-      // §3.1 (FR-007): the frame's title IS the group's new state —
-      // rename a known row in place; the frame describes no other
-      // aggregate, so `memberCount` and №12-only fields pass through.
-      if (slice.removedChatIds.has(event.groupId)) {
-        return slice
-      }
-      const index = slice.groups.findIndex((entry) => entry.chatId === event.groupId)
-      const current = index === -1 ? undefined : slice.groups[index]
-      if (current === undefined) {
-        // №12 owns row materialization (US1-2 precedent).
-        return slice
-      }
-      if (current.title === event.title) {
-        return slice
-      }
-      const groups = [...slice.groups]
-      groups[index] = { ...current, title: event.title }
-      return { ...slice, groups }
-    }
-    case 'group.deleted': {
-      // §3.5 (FR-006): the hard-delete broadcast to every FORMER
-      // active member — the row leaves «Чаты» deterministically and
-      // the id is tombstoned FOREVER (№12 can never return the chat,
-      // so there is no re-add revival path). The tombstone covers a
-      // group the list never knew: the materializing frame may have
-      // been lost (at-most-once, §1), making this the group's first
-      // frame here — a later stale redelivery must stay dead.
-      const known = slice.groups.some((entry) => entry.chatId === event.groupId)
-      if (!known && slice.removedChatIds.has(event.groupId)) {
-        return slice
-      }
-      const removedChatIds = new Set(slice.removedChatIds)
-      removedChatIds.add(event.groupId)
-      return {
-        groups: slice.groups.filter((entry) => entry.chatId !== event.groupId),
-        removedChatIds,
-      }
-    }
+    case 'group.member.added':
+      return applyMemberAdded(slice, event.groupId)
+    case 'group.you_removed':
+      return applyYouRemoved(slice, event.groupId)
+    case 'group.updated':
+      return applyUpdated(slice, event.groupId, event.title)
+    case 'group.deleted':
+      return applyDeleted(slice, event.groupId)
     case 'group.member.removed':
     case 'group.role.changed':
       // §3.3/§3.4: no list-level aggregates — №12/№28 converge them;
