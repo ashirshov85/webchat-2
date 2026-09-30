@@ -6,6 +6,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
 import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
@@ -19,6 +20,7 @@ import webchat.backend.groups.api.dto.GroupMembersResponse
 import webchat.backend.groups.api.dto.GroupView
 import webchat.backend.groups.api.dto.SetMemberRoleRequest
 import webchat.backend.groups.api.dto.TransferOwnershipRequest
+import webchat.backend.groups.api.dto.UpdateGroupRequest
 import webchat.backend.groups.domain.service.GroupService
 import java.util.UUID
 
@@ -32,8 +34,8 @@ import java.util.UUID
  * resolves the token owner, runs the request-shape validation of the
  * T016 DTOs (whose value objects carry the FR-001 bounds) and maps the
  * scenario results to the contract codes — №27 `201 GroupView`, №28
- * `200 GroupView`, №31 `200 {members: […]}`, №32 `204`, №34 `200
- * GroupMember`, №35 `200 GroupView`.
+ * `200 GroupView`, №29 `200 GroupView`, №31 `200 {members: […]}`,
+ * №32 `204`, №34 `200 GroupMember`, №35 `200 GroupView`.
  *
  * The security chain has ALREADY authenticated the request (the same
  * Bearer gate as every 001 endpoint); the owner id is the token `sub`
@@ -45,8 +47,7 @@ import java.util.UUID
  * `userId` (path variable or №35 body field) carries the SAME split
  * through `parseUserId`.
  *
- * The later stories grow THIS class in place: №29 with US4 (T052),
- * №33/№30 with US6 (T065).
+ * The later stories grow THIS class in place: №33/№30 with US6 (T065).
  */
 @RestController
 @RequestMapping("/api/v1/groups")
@@ -90,6 +91,39 @@ class GroupController(
         @PathVariable chatId: String,
         @AuthenticationPrincipal accessToken: Jwt,
     ): GroupView = groupService.get(callerId(accessToken), parseChatId(chatId))
+
+    /**
+     * Contract №29 `PATCH /api/v1/groups/{chatId}` (api-contract.md 006
+     * №29, FR-007, T052): the metadata patch. The request-shape gates
+     * run in the contract's own order BEFORE the service — the raw
+     * `chatId` path gate (`400 … [invalid_uuid]`, the №28 convention),
+     * the patch shape of the T016 `UpdateGroupRequest` (`400
+     * empty_patch` on a body with NEITHER field) and the FR-001 bounds
+     * of the PRESENT fields through the T005 value objects (`400
+     * invalid_title`/`invalid_description` — a MIXED patch dies
+     * atomically HERE, before anything lands) — and the scenario
+     * answers `200` with the caller's [GroupView] over the MERGED
+     * metadata. The caller-dependent refusals (the uniform `404
+     * group_not_found` membership gate, the `403 forbidden_role` of a
+     * plain member) and the `title_changed`/`description_changed`
+     * journal facts with the post-commit `group.updated` broadcast stay
+     * in [GroupService.update] (T051).
+     */
+    @PatchMapping("/{chatId}")
+    fun update(
+        @PathVariable chatId: String,
+        @RequestBody request: UpdateGroupRequest,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): GroupView {
+        val parsedChatId = parseChatId(chatId)
+        request.requirePatch()
+        return groupService.update(
+            callerId = callerId(accessToken),
+            chatId = parsedChatId,
+            title = request.patchedTitle(),
+            description = request.validatedDescription(),
+        )
+    }
 
     /**
      * Contract №31 `POST /api/v1/groups/{chatId}/members`: the batch
