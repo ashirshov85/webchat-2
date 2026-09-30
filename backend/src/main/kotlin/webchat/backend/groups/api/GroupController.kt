@@ -34,8 +34,9 @@ import java.util.UUID
  * resolves the token owner, runs the request-shape validation of the
  * T016 DTOs (whose value objects carry the FR-001 bounds) and maps the
  * scenario results to the contract codes — №27 `201 GroupView`, №28
- * `200 GroupView`, №29 `200 GroupView`, №31 `200 {members: […]}`,
- * №32 `204`, №34 `200 GroupMember`, №35 `200 GroupView`.
+ * `200 GroupView`, №29 `200 GroupView`, №30 `204`, №31 `200 {members:
+ * […]}`, №32 `204`, №33 `204`, №34 `200 GroupMember`, №35 `200
+ * GroupView`.
  *
  * The security chain has ALREADY authenticated the request (the same
  * Bearer gate as every 001 endpoint); the owner id is the token `sub`
@@ -47,8 +48,10 @@ import java.util.UUID
  * `userId` (path variable or №35 body field) carries the SAME split
  * through `parseUserId`.
  *
- * The later stories grow THIS class in place: №33/№30 with US6 (T065).
+ * The class is COMPLETE through US6 (T065): №33/№30 close the group
+ * lifecycle — the leave and the hard delete below.
  */
+@Suppress("TooManyFunctions") // one handler per №27–№35 contract operation (№30/№33 of T065 tip the count)
 @RestController
 @RequestMapping("/api/v1/groups")
 class GroupController(
@@ -126,6 +129,32 @@ class GroupController(
     }
 
     /**
+     * Contract №30 `DELETE /api/v1/groups/{chatId}` (api-contract.md 006
+     * №30, FR-006, T065): the OWNER-ONLY hard delete — a thin adapter
+     * over [GroupService.delete]. The request-shape gate is the raw
+     * `chatId` path pair of the №28 convention (a malformed value is the
+     * contract `400 errors: {chatId: [invalid_uuid]}` BEFORE the
+     * service), and every caller-dependent rule stays in the service:
+     * the uniform `404 group_not_found` membership gate (a stranger, a
+     * removed former member AND the REPEATED №30 — the CASCADE of the
+     * first delete already took the caller's row away, api-contract.md
+     * 006 §2 «Идемпотентность»), the `403 not_group_owner` refusal of an
+     * admin or a plain member. Success is the bodyless `204`; the
+     * CASCADE erasure of `chats`/`messages`/`chat_participants`, the
+     * content-free `group_deleted` journal fact and the post-commit
+     * `group.deleted` to every pre-delete snapshot member ride the
+     * service transaction.
+     */
+    @DeleteMapping("/{chatId}")
+    fun deleteGroup(
+        @PathVariable chatId: String,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Void> {
+        groupService.delete(callerId(accessToken), parseChatId(chatId))
+        return ResponseEntity.noContent().build()
+    }
+
+    /**
      * Contract №31 `POST /api/v1/groups/{chatId}/members`: the batch
      * shape gate (`400 invalid_user_ids` on an absent/empty/non-uuid/
      * duplicate/oversized batch) runs BEFORE the service, then the
@@ -173,6 +202,32 @@ class GroupController(
             chatId = parseChatId(chatId),
             targetUserId = parseUserId(userId),
         )
+        return ResponseEntity.noContent().build()
+    }
+
+    /**
+     * Contract №33 `DELETE /api/v1/groups/{chatId}/membership`
+     * (api-contract.md 006 №33, FR-005, T065): the VOLUNTARY exit — a
+     * thin adapter over [GroupService.leave]. The request-shape gate is
+     * the raw `chatId` path pair of the №28 convention (a malformed
+     * value is the contract `400 errors: {chatId: [invalid_uuid]}`
+     * BEFORE the service), and every caller-dependent rule stays in the
+     * service: the uniform `404 group_not_found` membership gate (a
+     * stranger AND the REPEATED №33 — the membership row is already
+     * `removed`, api-contract.md 006 §2 «Идемпотентность») and the `403
+     * owner_must_transfer` refusal of an owner leaving without a №35
+     * hand-over. Success is the bodyless `204`; the surviving
+     * watermarks, the leaver's attributed messages, the `member_left`
+     * journal fact and the post-commit `group.you_removed
+     * {reason:'left'}` + `group.member.removed` pair ride the service
+     * transaction.
+     */
+    @DeleteMapping("/{chatId}/membership")
+    fun leaveMembership(
+        @PathVariable chatId: String,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Void> {
+        groupService.leave(callerId(accessToken), parseChatId(chatId))
         return ResponseEntity.noContent().build()
     }
 

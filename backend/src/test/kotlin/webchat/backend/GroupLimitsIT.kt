@@ -321,6 +321,7 @@ class GroupLimitsIT(
      * `group.member.removed` — never both pairs.
      */
     @Test
+    @Suppress("LongMethod") // T061 pins the whole «kick×leave» race scenario to this single test body
     fun `concurrent kick and leave converge to a single removal without duplicates`() {
         val owner = messagingUser("owner")
         val bob = messagingUser("bob")
