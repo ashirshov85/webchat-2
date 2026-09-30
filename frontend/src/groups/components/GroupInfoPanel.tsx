@@ -38,8 +38,9 @@
  * The roster mutations stay with the parent — the №32/№34/№35 calls and
  * their mutex live in useGroupMembers (T047): `pendingUserId` (the
  * in-flight row) and `rosterError` (the last action problem) are the
- * panel's reflection of that hook. The LeaveDeleteControls entry is a
- * PLACEHOLDER slot until US6 (T066) mounts the №33/№30 controls there.
+ * panel's reflection of that hook. The US6 №33/№30 LeaveDeleteControls
+ * (T066) arrive through the `leaveDeleteControls` slot — the parent
+ * (MessengerPage) mounts the reachable half by `myRole` there.
  *
  * Purely presentational otherwise: the №28 data comes via props — the
  * useGroup wiring (T046a) feeds the snapshot and its optimistic
@@ -89,9 +90,9 @@ export interface GroupInfoPanelProps {
    */
   readonly onUpdated?: (group: GroupView) => void
   /**
-   * LeaveDeleteControls entry (US6/T066 PLACEHOLDER): the №33 leave /
-   * №30 delete controls mount here when US6 lands — until then nothing
-   * renders in the slot.
+   * LeaveDeleteControls entry (US6, T066): the parent mounts the №33
+   * leave / №30 hard-delete controls here (MessengerPage passes the
+   * component with its success callbacks); undefined renders no slot.
    */
   readonly leaveDeleteControls?: ReactNode
 }

@@ -98,7 +98,14 @@
  * resurrection). The tombstone is group-scoped (direct chats and other
  * groups keep flowing) and lives until №12 returns the group again
  * (the US6 re-add path: server truth outranks the local tombstone).
- * `group.deleted` joins with the same shape in US6 (T062/T066).
+ *
+ * `group.deleted` (feature 006, T066; US6, §3.5/§5.2, FR-006) joins
+ * with the same shape: the №30 hard-delete broadcast to every FORMER
+ * active member removes the row without a refetch round and tombstones
+ * the `groupId` against the §1 order race — but the tombstone is
+ * PERMANENT for this id: №30 erased the chat, so №12 can never return
+ * it (no re-add revival path, unlike `group.you_removed`). The removal
+ * stays group-scoped (a direct chat sharing the id is never dropped).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listChats } from '../../api/chats'
@@ -500,12 +507,14 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
       applyChats((previous) => resetUnread(previous, event.chatId))
     })
     const unsubscribeGroup = realtime.onGroupEvent((event) => {
-      if (event.type === 'group.you_removed') {
-        // §3.6/§5.2 (T058): the FINAL frame — the row leaves «Чаты»
-        // deterministically without a refetch round, and the group is
-        // tombstoned against the §1 order race. The removal is
-        // group-scoped: a direct chat sharing the id (synthetic only —
-        // ids are unique across the single chats table) stays.
+      if (event.type === 'group.you_removed' || event.type === 'group.deleted') {
+        // §3.6/§5.2 (T058) and §3.5 (T066): the FINAL frames — the row
+        // leaves «Чаты» deterministically without a refetch round, and
+        // the group is tombstoned against the §1 order race (for
+        // `group.deleted` the tombstone is permanent: №12 can never
+        // return a hard-deleted chat). The removal is group-scoped: a
+        // direct chat sharing the id (synthetic only — ids are unique
+        // across the single chats table) stays.
         removedGroupIdsRef.current.add(event.groupId)
         applyChats((previous) => {
           if (!previous.some((item) => item.type === 'group' && item.chatId === event.groupId)) {

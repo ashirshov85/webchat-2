@@ -95,7 +95,18 @@
  * would reject the WHOLE batch with 403 not_participant — the
  * batcher-side tombstone also absorbs the late acks useSync/
  * useChatMessages may still feed through the §1 order race.
- * `group.deleted` joins with the same wiring in US6 (T066).
+ *
+ * US6 leave/delete wiring (feature 006, T066; FR-005/FR-006): the
+ * group card mounts the №33/№30 LeaveDeleteControls in its slot —
+ * leave for admin/member, hard-delete for the owner, the 403 problem
+ * codes (`owner_must_transfer`/`not_group_owner`) surfacing as the
+ * card's error hints — and a 204 closes the window at once (the §3.6
+ * `group.you_removed {reason:'left'}` / §3.5 `group.deleted` frames of
+ * the same commit converge «Чаты» and the batcher tombstone
+ * deterministically; the №12 reload the handler fires covers the
+ * at-most-once loss of the frame). The `group.deleted` frame itself
+ * rides the SAME T058 wiring: it closes an OPEN group window of the
+ * hard-deleted chat and tombstones the chatId in the №25 batcher.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentUser } from '../../api/auth'
@@ -120,6 +131,7 @@ import { useOutbox } from '../hooks/useOutbox'
 import { useRealtime } from '../hooks/useRealtime'
 import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
 import { GroupInfoPanel } from '../../groups/components/GroupInfoPanel'
+import { LeaveDeleteControls } from '../../groups/components/LeaveDeleteControls'
 import { useGroup } from '../../groups/hooks/useGroup'
 import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 
@@ -427,9 +439,10 @@ export function MessengerPage() {
     })
   }, [currentUserId, realtime])
 
-  // US5 privacy rules (T058, realtime-group-events.md §5.2/§5.5):
-  // the FINAL `group.you_removed` frame closes an OPEN group window
-  // at once (the chat switch effect above folds the card/menu with it;
+  // US5/US6 final-frame wiring (T058/T066, realtime-group-events.md
+  // §5.2/§5.5/§3.5): the FINAL `group.you_removed` frame — and the №30
+  // `group.deleted` broadcast alike — closes an OPEN group window at
+  // once (the chat switch effect above folds the card/menu with it;
   // useGroup/useChatMessages reset on the null chatId — no «зависшие»
   // states) and tombstones the group's chatId in the shared №25
   // batcher — a pending or racing ack of a non-participant chat would
@@ -440,7 +453,7 @@ export function MessengerPage() {
     }
     const batcher = getAckBatcher(currentUserId)
     return realtime.onGroupEvent((event) => {
-      if (event.type !== 'group.you_removed') {
+      if (event.type !== 'group.you_removed' && event.type !== 'group.deleted') {
         return
       }
       batcher.drop(event.groupId)
@@ -647,6 +660,45 @@ export function MessengerPage() {
     reloadActiveGroup()
   }, [reloadActiveGroup])
 
+  /**
+   * №33/№30 success (US6, T066; FR-005/FR-006): the 204 means the
+   * viewer's membership (№33) or the whole chat (№30) is gone
+   * server-side — the window closes at once, the chatId leaves the
+   * shared №25 batcher (§5.5 — the caller is a non-participant now,
+   * №25 is all-or-refusal), and №12 re-runs: the row's deterministic
+   * removal normally arrives through the §3.6 `group.you_removed
+   * {reason:'left'}` / §3.5 `group.deleted` frames of the same commit,
+   * the reload covers an at-most-once loss of the frame.
+   */
+  const handleWindowGroupGone = useCallback(
+    (chatId: string) => {
+      if (currentUserId !== null) {
+        getAckBatcher(currentUserId).drop(chatId)
+      }
+      setActiveChat((previous) =>
+        previous !== null && previous.kind === 'group' && previous.chatId === chatId
+          ? null
+          : previous,
+      )
+      reloadChatList()
+    },
+    [currentUserId, reloadChatList],
+  )
+
+  /** №33 leave success of the open group window (LeaveDeleteControls). */
+  const handleLeftGroup = useCallback(() => {
+    if (activeGroupChatId !== null) {
+      handleWindowGroupGone(activeGroupChatId)
+    }
+  }, [activeGroupChatId, handleWindowGroupGone])
+
+  /** №30 hard-delete success of the open group window (LeaveDeleteControls). */
+  const handleDeletedGroup = useCallback(() => {
+    if (activeGroupChatId !== null) {
+      handleWindowGroupGone(activeGroupChatId)
+    }
+  }, [activeGroupChatId, handleWindowGroupGone])
+
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
   const dialogOpen = activeChat !== null
@@ -802,6 +854,18 @@ export function MessengerPage() {
                     rosterError={rosterActions.error}
                     onMembersAdded={handleMembersAdded}
                     onUpdated={handleGroupUpdated}
+                    leaveDeleteControls={
+                      // US6 (T066): the №33 leave / №30 hard-delete
+                      // controls of the card — the reachable half by
+                      // `myRole`, the 403 hints of a stale role race
+                      // render inside the component.
+                      <LeaveDeleteControls
+                        chatId={activeGroup.chatId}
+                        myRole={activeGroup.myRole}
+                        onLeft={handleLeftGroup}
+                        onDeleted={handleDeletedGroup}
+                      />
+                    }
                   />
                 )}
               </div>

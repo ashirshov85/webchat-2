@@ -1204,3 +1204,30 @@ p {
   border-top: 1px solid var(--border);
   padding-top: 10px;
 }
+
+/* №33/№30 controls (LeaveDeleteControls, feature 006, T066): the
+   leave button of admin/member and the owner's hard-delete — the
+   destructive tone follows the roster kick. */
+.group-leave-delete-button {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+}
+
+.group-leave-delete-button:hover:not(:disabled) {
+  border-color: var(--danger, #b3352c);
+}
+
+.group-leave-delete-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.group-leave-delete-delete {
+  color: var(--danger, #b3352c);
+}

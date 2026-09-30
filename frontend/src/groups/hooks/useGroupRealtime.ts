@@ -43,9 +43,19 @@
  * application (T046a); the №28 description travels only in the frame,
  * not in the list row — №12 carries no description.
  *
+ * The US6 slice (T066) is `group.deleted` (§3.5, FR-006): the №30
+ * hard-delete broadcast to every FORMER active member removes the row
+ * from «Чаты» deterministically and tombstones the `groupId` against
+ * the §1 order race exactly like `group.you_removed` — with the
+ * tombstone covering a group the list never knew too: the channel is
+ * at-most-once, the materializing `group.member.added` frame may have
+ * been LOST, and then `group.deleted` is the group's FIRST frame on
+ * this device — a later redelivery of the stale frame must not
+ * materialize a ghost row of a group №12 will never return (unlike a
+ * removed membership, a hard-deleted chat has no re-add revival path).
+ *
  * Unknown group `event:` types pass through untouched (§1 forward
- * compatibility). The remaining §3 events join the reducer with their
- * own stories: `group.deleted` — T066 (US6).
+ * compatibility).
  */
 import { useEffect, useState } from 'react'
 import type { GroupRealtimeEvent } from '../../api/groups'
@@ -99,7 +109,14 @@ const NO_REMOVED_CHAT_IDS: ReadonlySet<string> = new Set()
  *   a tombstoned group ignores the frame (§1 race — no resurrection);
  * — `group.you_removed` (§3.6, any `reason`) removes the group from
  *   «Чаты» and tombstones it (§5.2); a redelivered final frame is a
- *   no-op, and a group the state never knew is left untouched.
+ *   no-op, and a group the state never knew is left untouched;
+ * — `group.deleted` (§3.5, FR-006) removes the group from «Чаты» and
+ *   tombstones it PERMANENTLY — even a group the list never knew (the
+ *   at-most-once channel may have lost the materializing frame, so the
+ *   delete frame may be the group's first here; №12 can never return a
+ *   hard-deleted chat, so no later frame may resurrect a ghost row);
+ *   a redelivered frame of an already-tombstoned-and-dropped group
+ *   returns the SAME slice reference.
  * A frame that changes nothing returns the SAME slice reference.
  */
 export function reduceGroupSlice(
@@ -150,14 +167,32 @@ export function reduceGroupSlice(
       groups[index] = { ...current, title: event.title }
       return { ...slice, groups }
     }
+    case 'group.deleted': {
+      // §3.5 (FR-006): the hard-delete broadcast to every FORMER
+      // active member — the row leaves «Чаты» deterministically and
+      // the id is tombstoned FOREVER (№12 can never return the chat,
+      // so there is no re-add revival path). The tombstone covers a
+      // group the list never knew: the materializing frame may have
+      // been lost (at-most-once, §1), making this the group's first
+      // frame here — a later stale redelivery must stay dead.
+      const known = slice.groups.some((entry) => entry.chatId === event.groupId)
+      if (!known && slice.removedChatIds.has(event.groupId)) {
+        return slice
+      }
+      const removedChatIds = new Set(slice.removedChatIds)
+      removedChatIds.add(event.groupId)
+      return {
+        groups: slice.groups.filter((entry) => entry.chatId !== event.groupId),
+        removedChatIds,
+      }
+    }
     case 'group.member.removed':
     case 'group.role.changed':
       // §3.3/§3.4: no list-level aggregates — №12/№28 converge them;
       // recognized so the stories stay explicit and idempotent.
       return slice
     default:
-      // Unknown future types (§1) and the not-yet-wired §3 stories —
-      // `group.deleted` T066 (US6).
+      // Unknown future types (§1) pass through untouched.
       return slice
   }
 }
