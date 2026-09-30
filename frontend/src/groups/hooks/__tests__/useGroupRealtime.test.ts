@@ -24,6 +24,14 @@ import { reduceGroupEvent, useGroupRealtime } from '../useGroupRealtime'
  * `group.member.removed` frames carry no list-level aggregates (the
  * №12 refetch owns them), so their consumer is the №28 view of
  * useGroup (T041 useGroup.test); US4/US6 events join with T053/T066.
+ *
+ * The US4 slice (T050 → T053) is `group.updated` (§3.1, FR-007): the
+ * frame describes the group's NEW metadata as state, so a known
+ * group's `title` in «Чаты» follows the frame at once — every
+ * viewer sees the rename in the list WITHOUT a reload; the №28
+ * header half (the open window's title) converges through useGroup's
+ * own optimistic application (T041 useGroup.test §3.1) and the
+ * remaining aggregates (`memberCount`) stay №12-owned.
  */
 
 const realtime = vi.hoisted(() => {
@@ -116,6 +124,14 @@ function youRemoved(groupId: string, reason: 'kicked' | 'left'): GroupRealtimeEv
   return { type: 'group.you_removed', groupId, reason }
 }
 
+function groupUpdated(
+  groupId: string,
+  title: string,
+  description: string | null,
+): GroupRealtimeEvent {
+  return { type: 'group.updated', groupId, title, description, actorId: ACTOR }
+}
+
 function roleChanged(
   groupId: string,
   userId: string,
@@ -182,5 +198,59 @@ describe('useGroupRealtime — group.you_removed (US3 slice → T048, §1/§3.6/
 
     emitGroupEvent(youRemoved(GROUP_A, 'kicked'))
     expect(result.current.groups).toBe(before)
+  })
+})
+
+describe('reduceGroupEvent — group.updated (US4 slice → T053, §3.1/FR-007)', () => {
+  it('updates the title of a known group — state, not delta; memberCount stays №12-owned', () => {
+    const seeded: GroupRealtimeState = [{ chatId: GROUP_A, title: 'Проект Альфа', memberCount: 3 }]
+
+    const next = reduceGroupEvent(seeded, groupUpdated(GROUP_A, 'Новое название', null))
+
+    expect(next).toEqual([{ chatId: GROUP_A, title: 'Новое название', memberCount: 3 }])
+  })
+
+  it('a duplicate frame with the same title returns the SAME reference (FR-015)', () => {
+    const seeded: GroupRealtimeState = [
+      { chatId: GROUP_A, title: 'Новое название', memberCount: 3 },
+    ]
+
+    expect(reduceGroupEvent(seeded, groupUpdated(GROUP_A, 'Новое название', null))).toBe(seeded)
+  })
+
+  it('fills the title of a bare member.added row — the frame describes the state', () => {
+    const bare = reduceGroupEvent([], memberAdded(GROUP_A, CAROL))
+    expect(bare[0]?.title).toBeUndefined()
+
+    const next = reduceGroupEvent(bare, groupUpdated(GROUP_A, 'Новое название', 'рабочая группа'))
+
+    expect(next).toEqual([{ chatId: GROUP_A, title: 'Новое название' }])
+  })
+
+  it('is a no-op for a group the list never knew — №12 owns row materialization', () => {
+    const seeded: GroupRealtimeState = [{ chatId: GROUP_B, title: 'Проект Бета' }]
+
+    expect(reduceGroupEvent(seeded, groupUpdated(GROUP_A, 'Новое название', null))).toBe(seeded)
+  })
+})
+
+describe('useGroupRealtime — group.updated (US4 slice → T053: the «Чаты» list half)', () => {
+  it('renames the group in the live list without a refetch', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(groupUpdated(GROUP_A, 'Новое название', null))
+
+    expect(result.current.groups).toEqual([{ chatId: GROUP_A, title: 'Новое название' }])
+  })
+
+  it('a group.updated frame after group.you_removed cannot resurrect the group (race §1)', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(youRemoved(GROUP_A, 'kicked'))
+
+    emitGroupEvent(groupUpdated(GROUP_A, 'Новое название', null))
+    expect(result.current.groups).toEqual([])
   })
 })

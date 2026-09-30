@@ -161,7 +161,7 @@ description: "Task list for feature implementation: групповые чаты 
 ### Tests for User Story 4 (писать ПЕРВЫМИ)
 
 - [x] T049 [P] [US4] Расширить `backend/src/test/kotlin/webchat/backend/GroupLifecycleIT.kt` (metadata slice): №29 валидация (`empty_patch`, `invalid_title`/`invalid_description`), member → `403 forbidden_role`, одновременное переименование двух admin — атомарно применяется одна (edge), событие `group.updated`, журнал `title_changed`/`description_changed`
-- [ ] T050 [P] [US4] Написать frontend-тесты: переименование в GroupInfoPanel (доступно admin+), обработчик `group.updated` (список «Чаты» + заголовок без перезагрузки)
+- [x] T050 [P] [US4] Написать frontend-тесты: переименование в GroupInfoPanel (доступно admin+), обработчик `group.updated` (список «Чаты» + заголовок без перезагрузки)
 
 ### Implementation for User Story 4
 
