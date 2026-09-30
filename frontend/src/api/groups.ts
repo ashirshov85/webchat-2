@@ -83,6 +83,17 @@ export async function getGroup(chatId: string): Promise<GroupView> {
 }
 
 /**
+ * №29 `PATCH /groups/{chatId}`: changes group metadata (owner/admin,
+ * FR-005) — at least one field or the server rejects with
+ * `400 empty_patch`; applied atomically, `200` GroupView and a
+ * `group.updated` broadcast to members.
+ */
+export async function updateGroup(chatId: string, body: UpdateGroupRequest): Promise<GroupView> {
+  const response = await authedRequest(`/groups/${encodeURIComponent(chatId)}`, 'PATCH', body)
+  return (await response.json()) as GroupView
+}
+
+/**
  * №31 `POST /groups/{chatId}/members`: batch add of members from the
  * ADDER's contacts (owner/admin, FR-002/FR-004). The batch is atomic
  * (any rejected item rejects it all), idempotent for already-active
