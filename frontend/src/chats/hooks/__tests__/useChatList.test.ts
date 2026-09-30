@@ -587,6 +587,162 @@ describe('useChatList sync unread convergence (US3, T035, FR-007)', () => {
   })
 })
 
+const GROUP_ID = '7dc5dc5d-dc5d-4dc5-8dc5-dc5dc5dc5dc5'
+const OTHER_GROUP_ID = '9a2c9a2c-9a2c-49a2-89a2-c9a2c9a2c9a2'
+const ACTOR = '55555555-5555-5555-5555-555555555555'
+
+function groupRow(overrides: Partial<ChatListItem> = {}): ChatListItem {
+  return {
+    chatId: GROUP_ID,
+    type: 'group',
+    title: 'Проект Альфа',
+    memberCount: 3,
+    myRole: 'member',
+    peer: null,
+    lastMessage: null,
+    unreadCount: 0,
+    blockedByMe: null,
+    ...overrides,
+  }
+}
+
+function emitGroupEvent(stream: MockStream, eventType: string, payload: unknown): void {
+  act(() => {
+    stream.emit(eventType, JSON.stringify(payload))
+  })
+}
+
+/**
+ * US5 privacy slice (T055 → T058; realtime-group-events.md §5.2/§1,
+ * FR-010/FR-015): `group.you_removed` is the FINAL frame of the group
+ * for this user — the №12-sourced row must leave «Чаты»
+ * deterministically, WITHOUT a refetch/polling round (the server has
+ * already answered: the membership row is dead), and every LATER
+ * frame of the group — the §1 post-commit order race may publish a
+ * message/roster frame committed before the removal after it — must
+ * be ignored: no №12 refetch (the US1-2 unknown-group path would
+ * otherwise fire), no resurrection, no rename. The tombstone is
+ * per-group and group-scoped: other groups/direct chats keep flowing.
+ * `group.deleted` joins with the same shape in US6 (T062/T066).
+ */
+describe('useChatList group.you_removed (US5, T055 → T058, §5.2/§1)', () => {
+  it('removes the group row deterministically, without a №12 refetch (без поллинга)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'kicked' })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a late group.member.added frame of the removed group — no refetch, no resurrection (§1 race)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'kicked' })
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+
+    // The US1-2 unknown-group path would refetch №12 here — for the
+    // tombstoned group it must stay silent.
+    emitGroupEvent(stream, 'group.member.added', {
+      groupId: GROUP_ID,
+      user: peer(STRANGER, 'carol'),
+      actorId: ACTOR,
+    })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('a late group.updated frame of the removed group changes nothing (§1 race)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'kicked' })
+    emitGroupEvent(stream, 'group.updated', {
+      groupId: GROUP_ID,
+      title: 'Новое название',
+      description: null,
+      actorId: ACTOR,
+    })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('a redelivered final frame is idempotent — both §3.6 reasons converge to the same removal (FR-015)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'kicked' })
+    const afterRemoval = result.current.chats
+    expect(afterRemoval.map((item) => item.chatId)).toEqual(['chat-1'])
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'left' })
+
+    expect(result.current.chats).toBe(afterRemoval)
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('never drops a direct chat on a you_removed frame — the removal is group-scoped', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: 'chat-1', reason: 'kicked' })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('the tombstone is scoped: another group still materializes through the №12 refetch (US1-2 intact)', async () => {
+    const stream = installStream()
+    const otherGroup = groupRow({ chatId: OTHER_GROUP_ID, title: 'Проект Бета' })
+    mockedListChats
+      .mockResolvedValueOnce([groupRow(), chatItem()])
+      .mockResolvedValueOnce([chatItem(), otherGroup])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'kicked' })
+    emitGroupEvent(stream, 'group.member.added', {
+      groupId: OTHER_GROUP_ID,
+      user: peer(STRANGER, 'carol'),
+      actorId: ACTOR,
+    })
+
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1', OTHER_GROUP_ID])
+    })
+  })
+})
+
 describe('useChatList blocked badge freeze (US3-5, FR-020 of 004)', () => {
   function blockedChatItem(): ChatListItem {
     return chatItem({

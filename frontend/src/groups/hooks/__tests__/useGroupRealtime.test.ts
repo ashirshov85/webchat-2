@@ -190,6 +190,17 @@ describe('useGroupRealtime — group.you_removed (US3 slice → T048, §1/§3.6/
     expect(result.current.groups).toEqual([])
   })
 
+  it('treats reason "left" like "kicked" — §3.6: the removal is reason-agnostic (US5 slice, US6 emits left)', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(youRemoved(GROUP_A, 'left'))
+    expect(result.current.groups).toEqual([])
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    expect(result.current.groups).toEqual([])
+  })
+
   it('is a no-op for a group the state never knew', () => {
     const { result } = mountGroupRealtime()
 
