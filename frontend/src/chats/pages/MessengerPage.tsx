@@ -82,6 +82,20 @@
  * through `reload()`; the №32/№34/№35 roster actions mount their
  * mutex with useGroupMembers (T047). The full realtime set
  * (`group.you_removed` etc.) lands with T048/T058.
+ *
+ * US5 privacy wiring (feature 006, T058; realtime-group-events.md
+ * §5.2/§5.5, FR-010): the FINAL `group.you_removed` frame closes an
+ * OPEN group window at once — no «зависший» заголовок/композер of a
+ * chat the user has no membership in anymore; the chat switch effect
+ * above folds the group card/menu together with the window, and
+ * useGroup/useChatMessages reset on the null chatId, so nothing of
+ * the removed group keeps rendering. The same frame tombstones the
+ * group's chatId in the SHARED №25 batcher (`drop`, §5.5): №25 is
+ * all-or-refusal, so a pending or racing ack of the removed group
+ * would reject the WHOLE batch with 403 not_participant — the
+ * batcher-side tombstone also absorbs the late acks useSync/
+ * useChatMessages may still feed through the §1 order race.
+ * `group.deleted` joins with the same wiring in US6 (T066).
  */
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentUser } from '../../api/auth'
@@ -410,6 +424,31 @@ export function MessengerPage() {
     return realtime.onMessageCreated(null, (event) => {
       batcher.ack(event.chatId, event.message.seq)
       advanceCursor(currentUserId, event.chatId, event.message.seq)
+    })
+  }, [currentUserId, realtime])
+
+  // US5 privacy rules (T058, realtime-group-events.md §5.2/§5.5):
+  // the FINAL `group.you_removed` frame closes an OPEN group window
+  // at once (the chat switch effect above folds the card/menu with it;
+  // useGroup/useChatMessages reset on the null chatId — no «зависшие»
+  // states) and tombstones the group's chatId in the shared №25
+  // batcher — a pending or racing ack of a non-participant chat would
+  // reject the WHOLE batch (403 not_participant, all-or-refusal).
+  useEffect(() => {
+    if (currentUserId === null) {
+      return
+    }
+    const batcher = getAckBatcher(currentUserId)
+    return realtime.onGroupEvent((event) => {
+      if (event.type !== 'group.you_removed') {
+        return
+      }
+      batcher.drop(event.groupId)
+      setActiveChat((previous) =>
+        previous !== null && previous.kind === 'group' && previous.chatId === event.groupId
+          ? null
+          : previous,
+      )
     })
   }, [currentUserId, realtime])
 

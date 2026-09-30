@@ -87,6 +87,18 @@
  * frame returns the previous reference (FR-015). The frame's
  * `description` has no №12 projection — only the №28 view (useGroup)
  * renders it.
+ *
+ * `group.you_removed` (feature 006, T058; US5, §5.2/§1, FR-010/FR-015):
+ * the FINAL frame of the group for this user — the №12-sourced row
+ * leaves «Чаты» deterministically, WITHOUT a refetch round (the server
+ * has already answered: the membership row is dead), and the group is
+ * tombstoned: every LATER frame of it — the §1 post-commit order race
+ * may publish a message/roster frame committed before the removal
+ * after it — is ignored (no US1-2 refetch, no rename, no
+ * resurrection). The tombstone is group-scoped (direct chats and other
+ * groups keep flowing) and lives until №12 returns the group again
+ * (the US6 re-add path: server truth outranks the local tombstone).
+ * `group.deleted` joins with the same shape in US6 (T062/T066).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listChats } from '../../api/chats'
@@ -394,12 +406,22 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
    * server value converges whatever it missed.
    */
   const countedIncomingSeqRef = useRef(new Map<string, number>())
+  /**
+   * Tombstones of `group.you_removed` groups (T058, §5.2/§1): chatIds
+   * whose later frames — the post-commit order race may still deliver
+   * message/roster frames committed before the removal — must be
+   * ignored (no US1-2 refetch, no rename, no resurrection). Cleared
+   * for a group №12 returns again (the US6 re-add path) and on a user
+   * switch, like every per-chat bookkeeping above.
+   */
+  const removedGroupIdsRef = useRef(new Set<string>())
 
   useEffect(() => {
     // A user switch invalidates every per-chat watermark: the new
     // user's chats (even id-identical ones — the same dialog seen
     // from the peer side) must not inherit the old session's counts.
     countedIncomingSeqRef.current = new Map()
+    removedGroupIdsRef.current = new Set()
   }, [currentUserId])
 
   const applyChats = useCallback((updater: (previous: ChatListItem[]) => ChatListItem[]) => {
@@ -417,6 +439,16 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
         const items = await listChats()
         if (cancelled) {
           return
+        }
+        // №12 is the truth about memberships: a group the server
+        // RETURNS revives its frame handling (the US6 re-add path —
+        // the tombstone of a previous removal must not outlive the
+        // restored membership), while an absent group stays
+        // tombstoned (the removal keeps winning the §1 race).
+        for (const item of items) {
+          if (item.type === 'group') {
+            removedGroupIdsRef.current.delete(item.chatId)
+          }
         }
         setError(null)
         setStatus('ready')
@@ -439,6 +471,12 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
       setRefreshCount((count) => count + 1)
     })
     const unsubscribeCreated = realtime.onMessageCreated(null, (event) => {
+      if (removedGroupIdsRef.current.has(event.chatId)) {
+        // §1 race (T058): a frame committed before the removal — the
+        // row is gone, the US1-2/FR-019 refetch path must stay silent
+        // for a tombstoned group.
+        return
+      }
       if (!chatsRef.current.some((item) => item.chatId === event.chatId)) {
         // FR-019/US5-4: a first incoming message from a stranger — the
         // chat is not in the list yet, so only the server aggregate can
@@ -462,6 +500,30 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
       applyChats((previous) => resetUnread(previous, event.chatId))
     })
     const unsubscribeGroup = realtime.onGroupEvent((event) => {
+      if (event.type === 'group.you_removed') {
+        // §3.6/§5.2 (T058): the FINAL frame — the row leaves «Чаты»
+        // deterministically without a refetch round, and the group is
+        // tombstoned against the §1 order race. The removal is
+        // group-scoped: a direct chat sharing the id (synthetic only —
+        // ids are unique across the single chats table) stays.
+        removedGroupIdsRef.current.add(event.groupId)
+        applyChats((previous) => {
+          if (!previous.some((item) => item.type === 'group' && item.chatId === event.groupId)) {
+            // Already removed (a redelivered final frame) or never
+            // known — FR-015: the SAME reference, no re-render.
+            return previous
+          }
+          return previous.filter(
+            (item) => !(item.type === 'group' && item.chatId === event.groupId),
+          )
+        })
+        return
+      }
+      if (removedGroupIdsRef.current.has(event.groupId)) {
+        // §1 race (T058): a late roster/metadata frame of the removed
+        // group — ignored, no refetch, no rename, no resurrection.
+        return
+      }
       if (event.type === 'group.updated') {
         // US4/T053 (§3.1): the frame's title IS the group's new state —
         // rename the known row in place; №12 owns the rest of it.
@@ -505,6 +567,11 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
 
   const applySyncUpdate = useCallback(
     (update: SyncChatListUpdate) => {
+      if (removedGroupIdsRef.current.has(update.chatId)) {
+        // §1 race (T058): a №26/№15 page computed before the removal
+        // and applied after it must not resurrect the row.
+        return
+      }
       applyChats((previous) =>
         applySyncDelta(previous, update, currentUserIdRef.current, countedIncomingSeqRef.current),
       )
