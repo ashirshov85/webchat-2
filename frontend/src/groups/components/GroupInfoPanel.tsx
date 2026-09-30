@@ -19,6 +19,22 @@
  * roster: already-active members are not offered again (the server-side
  * half of the №31 idempotency).
  *
+ * The US4 rename UI (T053; FR-007/FR-001) rides the header: the
+ * «Переименовать» entry is offered to owner/admin only (a member's №29
+ * is a server `403 forbidden_role`, hidden client-side like the №31
+ * section above). The form carries the CLIENT half of the №29
+ * validation (groups/validation.ts — the same rules the №27 dialog
+ * uses), so an invalid draft never reaches the API; submission is ONE
+ * atomic №29 `updateGroup` (T052a) — the trimmed title always travels
+ * (the form requires it, so the `empty_patch` 400 is unreachable
+ * through the UI), the description only when non-empty after trim. A
+ * server problem (`forbidden_role` after a role raced away, network)
+ * renders in an ErrorBanner WITHOUT closing the form, and the №29
+ * GroupView is handed up through `onUpdated` — the parent's №28 state
+ * (useGroup) converges at once, then the §3.1 `group.updated` frames
+ * keep the OTHER viewers' lists and headers live (T053's realtime
+ * half: useGroupRealtime/useChatList).
+ *
  * The roster mutations stay with the parent — the №32/№34/№35 calls and
  * their mutex live in useGroupMembers (T047): `pendingUserId` (the
  * in-flight row) and `rosterError` (the last action problem) are the
@@ -30,12 +46,13 @@
  * `group.*` updates, so this component stays free of any fetching
  * besides the adder's contact list.
  */
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useState, type ReactNode, type SubmitEvent } from 'react'
 import { listContacts } from '../../api/chats'
 import type { ContactView } from '../../api/chats'
-import { addMembers } from '../../api/groups'
-import type { GroupMember } from '../../api/groups'
+import { addMembers, updateGroup } from '../../api/groups'
+import type { GroupMember, GroupView, UpdateGroupRequest } from '../../api/groups'
 import { membersLabel } from '../membersLabel'
+import { validateGroupDescription, validateGroupTitle } from '../validation'
 import { ErrorBanner } from '../../chats/components/ErrorBanner'
 import { AddMembersPicker } from './AddMembersPicker'
 import { MemberList } from './MemberList'
@@ -66,6 +83,12 @@ export interface GroupInfoPanelProps {
   /** №31 success: the returned active roster — the parent converges its №28 state at once. */
   readonly onMembersAdded?: (members: readonly GroupMember[]) => void
   /**
+   * №29 success (US4, T053): the updated GroupView — the parent
+   * converges its №28 state at once; the `group.updated` frames keep
+   * the other viewers live.
+   */
+  readonly onUpdated?: (group: GroupView) => void
+  /**
    * LeaveDeleteControls entry (US6/T066 PLACEHOLDER): the №33 leave /
    * №30 delete controls mount here when US6 lands — until then nothing
    * renders in the slot.
@@ -88,10 +111,13 @@ export function GroupInfoPanel({
   pendingUserId = null,
   rosterError = null,
   onMembersAdded,
+  onUpdated,
   leaveDeleteControls,
 }: GroupInfoPanelProps) {
   /** №31 entry visibility — owner/admin (FR-004); a member never sees it. */
   const canAddMembers = myRole === 'owner' || myRole === 'admin'
+  /** №29 entry visibility — the same owner/admin gate (FR-007). */
+  const canRename = canAddMembers
 
   const [addOpen, setAddOpen] = useState(false)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set<string>())
@@ -103,6 +129,80 @@ export function GroupInfoPanel({
   const [contactsStatus, setContactsStatus] = useState<ContactsStatus>('idle')
   const [contactsError, setContactsError] = useState<unknown>(null)
   const [contactsReload, setContactsReload] = useState(0)
+
+  // The №29 rename form (US4, T053): opening snapshots the CURRENT №28
+  // metadata into the draft, so a rename racing an incoming
+  // `group.updated` frame never leaks the stale server title into the
+  // input mid-edit — the form always starts from what the card shows.
+  const [renameOpen, setRenameOpen] = useState(false)
+  const [titleDraft, setTitleDraft] = useState('')
+  const [descriptionDraft, setDescriptionDraft] = useState('')
+  /** Client-side FR-001 rejection of the №29 draft (never reaches the API). */
+  const [renameValidationError, setRenameValidationError] = useState<string | null>(null)
+  /** Server problem of the last №29 attempt; the form stays open. */
+  const [renameError, setRenameError] = useState<unknown>(null)
+  const [renamePending, setRenamePending] = useState(false)
+  const renameTitleId = useId()
+  const renameDescriptionId = useId()
+
+  const openRenameForm = useCallback(() => {
+    setTitleDraft(title)
+    setDescriptionDraft(description ?? '')
+    setRenameValidationError(null)
+    setRenameError(null)
+    setRenameOpen(true)
+  }, [title, description])
+
+  const handleCancelRename = useCallback(() => {
+    setRenameOpen(false)
+    setRenameValidationError(null)
+    setRenameError(null)
+  }, [])
+
+  const handleSubmitRename = useCallback(
+    (event: SubmitEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      if (renamePending) {
+        return
+      }
+      // The client half of the №29 validation (FR-001) — shared with
+      // the №27 dialog, so an invalid draft never reaches the API.
+      const validatedTitle = validateGroupTitle(titleDraft)
+      if (!validatedTitle.ok) {
+        setRenameError(null)
+        setRenameValidationError(validatedTitle.error)
+        return
+      }
+      const validatedDescription = validateGroupDescription(descriptionDraft)
+      if (!validatedDescription.ok) {
+        setRenameError(null)
+        setRenameValidationError(validatedDescription.error)
+        return
+      }
+      // The title is required by the form, so №29 always carries it
+      // (`empty_patch` is unreachable through the UI); the description
+      // travels only when non-empty after trim.
+      const body: UpdateGroupRequest = { title: validatedTitle.title }
+      if (validatedDescription.description !== undefined) {
+        body.description = validatedDescription.description
+      }
+      setRenameValidationError(null)
+      setRenameError(null)
+      setRenamePending(true)
+      void (async () => {
+        try {
+          const view = await updateGroup(chatId, body)
+          setRenameOpen(false)
+          onUpdated?.(view)
+        } catch (cause) {
+          setRenameError(cause)
+        } finally {
+          setRenamePending(false)
+        }
+      })()
+    },
+    [renamePending, titleDraft, descriptionDraft, chatId, onUpdated],
+  )
 
   // The adder's №20 contacts load LAZILY — only when the №31 section
   // first opens (a plain member never fetches); the cancelled guard
@@ -181,8 +281,69 @@ export function GroupInfoPanel({
         <span className="group-info-members">
           {members.length} {membersLabel(members.length)}
         </span>
+        {canRename && (
+          <button
+            type="button"
+            className="group-info-rename-toggle"
+            aria-expanded={renameOpen}
+            onClick={renameOpen ? handleCancelRename : openRenameForm}
+          >
+            {renameOpen ? 'Скрыть переименование' : 'Переименовать'}
+          </button>
+        )}
       </header>
-      {description !== null && <p className="group-info-description">{description}</p>}
+      {renameOpen && (
+        <form className="group-info-rename" onSubmit={handleSubmitRename}>
+          {renameValidationError !== null && (
+            <p className="error-banner-text" role="alert">
+              {renameValidationError}
+            </p>
+          )}
+          {renameError !== null && <ErrorBanner error={renameError} />}
+          <div className="group-dialog-field">
+            <label htmlFor={renameTitleId}>Название группы</label>
+            <input
+              id={renameTitleId}
+              name="title"
+              type="text"
+              autoComplete="off"
+              value={titleDraft}
+              onChange={(event) => {
+                setTitleDraft(event.target.value)
+              }}
+            />
+          </div>
+          <div className="group-dialog-field">
+            <label htmlFor={renameDescriptionId}>Описание группы</label>
+            <input
+              id={renameDescriptionId}
+              name="description"
+              type="text"
+              autoComplete="off"
+              value={descriptionDraft}
+              onChange={(event) => {
+                setDescriptionDraft(event.target.value)
+              }}
+            />
+          </div>
+          <div className="group-info-rename-actions">
+            <button type="submit" className="group-info-rename-submit" disabled={renamePending}>
+              {renamePending ? 'Сохраняется…' : 'Сохранить'}
+            </button>
+            <button
+              type="button"
+              className="group-info-rename-cancel"
+              disabled={renamePending}
+              onClick={handleCancelRename}
+            >
+              Отмена
+            </button>
+          </div>
+        </form>
+      )}
+      {description !== null && !renameOpen && (
+        <p className="group-info-description">{description}</p>
+      )}
 
       {rosterError !== null && <ErrorBanner error={rosterError} />}
 

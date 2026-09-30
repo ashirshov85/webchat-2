@@ -30,10 +30,22 @@
  * consumer is the №28 roster view of useGroup (T046a), where the
  * ownership-transfer PAIR of §3.4 frames converges idempotently.
  *
+ * The US4 slice (T053) is `group.updated` (§3.1, FR-007): the frame
+ * carries the group's NEW metadata as state, so a known group's row
+ * adopts the fresh `title` at once — every viewer sees the rename in
+ * «Чаты» WITHOUT a reload (US4). The bare aggregates the frame does
+ * not describe stay untouched: `memberCount` (and any №12-only field)
+ * remains server-authoritative and converges on the next №12 refetch.
+ * A frame of a group the list never knew is a no-op — №12 owns row
+ * materialization (the FR-019 stranger precedent), and a frame of a
+ * TOMBSTONED group is ignored like any other late frame (§1 race).
+ * The header half of §3.1 converges through useGroup's own optimistic
+ * application (T046a); the №28 description travels only in the frame,
+ * not in the list row — №12 carries no description.
+ *
  * Unknown group `event:` types pass through untouched (§1 forward
  * compatibility). The remaining §3 events join the reducer with their
- * own stories: `group.updated` — T053 (US4), `group.deleted` — T066
- * (US6).
+ * own stories: `group.deleted` — T066 (US6).
  */
 import { useEffect, useState } from 'react'
 import type { GroupRealtimeEvent } from '../../api/groups'
@@ -79,6 +91,12 @@ const NO_REMOVED_CHAT_IDS: ReadonlySet<string> = new Set()
  *   roster/role frames without list-level aggregates — an idempotent
  *   no-op here (same reference, React bails out; the №28 view of
  *   useGroup is their consumer);
+ * — `group.updated` (§3.1, FR-007) renames a KNOWN group in place:
+ *   the frame's `title` is the described state (US4), everything the
+ *   frame does not describe (`memberCount`, №12-only fields) stays
+ *   untouched; a duplicate frame with the same title returns the same
+ *   reference, an unknown group is a no-op (№12 materializes rows) and
+ *   a tombstoned group ignores the frame (§1 race — no resurrection);
  * — `group.you_removed` (§3.6, any `reason`) removes the group from
  *   «Чаты» and tombstones it (§5.2); a redelivered final frame is a
  *   no-op, and a group the state never knew is left untouched.
@@ -112,6 +130,26 @@ export function reduceGroupSlice(
         removedChatIds,
       }
     }
+    case 'group.updated': {
+      // §3.1 (FR-007): the frame's title IS the group's new state —
+      // rename a known row in place; the frame describes no other
+      // aggregate, so `memberCount` and №12-only fields pass through.
+      if (slice.removedChatIds.has(event.groupId)) {
+        return slice
+      }
+      const index = slice.groups.findIndex((entry) => entry.chatId === event.groupId)
+      const current = index === -1 ? undefined : slice.groups[index]
+      if (current === undefined) {
+        // №12 owns row materialization (US1-2 precedent).
+        return slice
+      }
+      if (current.title === event.title) {
+        return slice
+      }
+      const groups = [...slice.groups]
+      groups[index] = { ...current, title: event.title }
+      return { ...slice, groups }
+    }
     case 'group.member.removed':
     case 'group.role.changed':
       // §3.3/§3.4: no list-level aggregates — №12/№28 converge them;
@@ -119,7 +157,7 @@ export function reduceGroupSlice(
       return slice
     default:
       // Unknown future types (§1) and the not-yet-wired §3 stories —
-      // `group.updated` T053 (US4), `group.deleted` T066 (US6).
+      // `group.deleted` T066 (US6).
       return slice
   }
 }

@@ -76,6 +76,17 @@
  * applies STATE, never deltas (FR-015) — `memberCount` converges on
  * the next №12 refetch. The removal/role events of the later stories
  * join here with their own reducers (T048/T053/T058/T066).
+ *
+ * `group.updated` (feature 006, T053; US4, FR-007): the §3.1 frame
+ * carries the group's NEW metadata as state, so a known group row
+ * adopts the fresh `title` in place — the rename shows in «Чаты»
+ * WITHOUT a reload (US4 test), for the actor too (§3.1 fans the frame
+ * out to every active participant). The rest of the row is №12-owned
+ * and passes through untouched; a frame of an unknown group is a no-op
+ * (the row materializes via №12, the US1-2 precedent), and a duplicate
+ * frame returns the previous reference (FR-015). The frame's
+ * `description` has no №12 projection — only the №28 view (useGroup)
+ * renders it.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listChats } from '../../api/chats'
@@ -340,6 +351,25 @@ function mergeRefetchedChats(items: ChatListItem[], previous: ChatListItem[]): C
   return sortChatListItems(merged)
 }
 
+/**
+ * Applies one §3.1 `group.updated` frame to the list (feature 006,
+ * T053; US4, FR-007): a KNOWN group row adopts the frame's `title` as
+ * state — the rename shows in «Чаты» without a reload; everything the
+ * frame does not describe stays №12-owned. Returns the previous
+ * reference when nothing changed (unknown/direct chatId, same title) —
+ * idempotent under redelivery (FR-015).
+ */
+function applyGroupRenamed(chats: ChatListItem[], groupId: string, title: string): ChatListItem[] {
+  const index = chats.findIndex((item) => item.chatId === groupId)
+  const current = index === -1 ? undefined : chats[index]
+  if (current === undefined || current.type !== 'group' || current.title === title) {
+    return chats
+  }
+  const next = [...chats]
+  next[index] = { ...current, title }
+  return next
+}
+
 export function useChatList(currentUserId: string | null): UseChatListResult {
   const realtime = useRealtime()
   const [chats, setChats] = useState<ChatListItem[]>([])
@@ -432,6 +462,12 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
       applyChats((previous) => resetUnread(previous, event.chatId))
     })
     const unsubscribeGroup = realtime.onGroupEvent((event) => {
+      if (event.type === 'group.updated') {
+        // US4/T053 (§3.1): the frame's title IS the group's new state —
+        // rename the known row in place; №12 owns the rest of it.
+        applyChats((previous) => applyGroupRenamed(previous, event.groupId, event.title))
+        return
+      }
       if (event.type !== 'group.member.added') {
         return
       }

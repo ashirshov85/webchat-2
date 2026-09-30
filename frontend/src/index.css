@@ -1090,6 +1090,66 @@ p {
   overflow-wrap: anywhere;
 }
 
+/* №29 rename form (feature 006, T053): the group-dialog field
+   typography over the card's own action styles. */
+.group-info-rename-toggle {
+  margin-left: auto;
+  align-self: flex-start;
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  cursor: pointer;
+}
+
+.group-info-rename-toggle:hover {
+  border-color: var(--accent);
+}
+
+.group-info-rename {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.group-info-rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.group-info-rename-submit {
+  font: inherit;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  cursor: pointer;
+}
+
+.group-info-rename-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.group-info-rename-cancel {
+  font: inherit;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.group-info-rename-cancel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .group-info-add {
   display: flex;
   flex-direction: column;

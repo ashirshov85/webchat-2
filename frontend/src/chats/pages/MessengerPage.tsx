@@ -598,6 +598,16 @@ export function MessengerPage() {
     reloadActiveGroup()
   }, [reloadActiveGroup])
 
+  /**
+   * №29 success (US4, T053): the №28 `reload()` converges the card and
+   * the window header to the server metadata at once; the §3.1
+   * `group.updated` frame of the same commit lands on the «Чаты» row
+   * (useChatList) and every other viewer's state optimistically.
+   */
+  const handleGroupUpdated = useCallback(() => {
+    reloadActiveGroup()
+  }, [reloadActiveGroup])
+
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
   const dialogOpen = activeChat !== null
@@ -752,6 +762,7 @@ export function MessengerPage() {
                     pendingUserId={rosterActions.pendingUserId}
                     rosterError={rosterActions.error}
                     onMembersAdded={handleMembersAdded}
+                    onUpdated={handleGroupUpdated}
                   />
                 )}
               </div>
