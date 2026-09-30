@@ -743,6 +743,138 @@ describe('useChatList group.you_removed (US5, T055 → T058, §5.2/§1)', () => 
   })
 })
 
+/**
+ * US6 delete slice (T062 → T066; realtime-group-events.md §3.5/§5.2,
+ * FR-006): `group.deleted` — the №30 hard-delete broadcast to every
+ * former active member — removes the №12-sourced group row from
+ * «Чаты» deterministically, WITHOUT a refetch/polling round (the
+ * server has already erased the chat), and tombstones the `groupId`
+ * against the §1 order race exactly like `group.you_removed`: every
+ * LATER frame of the group (a message/roster frame committed before
+ * the delete) is ignored — no US1-2 refetch, no rename, no
+ * resurrection. Unlike you_removed the tombstone is permanent for
+ * this group id: №30 erased the chat, so №12 can never return it
+ * (no re-add revival path). The removal stays group-scoped and the
+ * tombstone per-group.
+ */
+describe('useChatList group.deleted (US6, T062 → T066, §3.5/§5.2)', () => {
+  it('removes the group row deterministically, without a №12 refetch (без поллинга)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+
+    emitGroupEvent(stream, 'group.deleted', { groupId: GROUP_ID, actorId: ACTOR })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a late group.member.added frame of the deleted group — no refetch, no resurrection (§1 race)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.deleted', { groupId: GROUP_ID, actorId: ACTOR })
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+
+    // The US1-2 unknown-group path would refetch №12 here — for the
+    // tombstoned group it must stay silent.
+    emitGroupEvent(stream, 'group.member.added', {
+      groupId: GROUP_ID,
+      user: peer(STRANGER, 'carol'),
+      actorId: ACTOR,
+    })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('a late group.updated frame of the deleted group changes nothing (§1 race)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.deleted', { groupId: GROUP_ID, actorId: ACTOR })
+    emitGroupEvent(stream, 'group.updated', {
+      groupId: GROUP_ID,
+      title: 'Новое название',
+      description: null,
+      actorId: ACTOR,
+    })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('a redelivered group.deleted frame is idempotent — the same list reference (FR-015)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.deleted', { groupId: GROUP_ID, actorId: ACTOR })
+    const afterDelete = result.current.chats
+    expect(afterDelete.map((item) => item.chatId)).toEqual(['chat-1'])
+
+    emitGroupEvent(stream, 'group.deleted', { groupId: GROUP_ID, actorId: ACTOR })
+
+    expect(result.current.chats).toBe(afterDelete)
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('never drops a direct chat on a group.deleted frame — the removal is group-scoped', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.deleted', { groupId: 'chat-1', actorId: ACTOR })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('the tombstone is scoped: another group still materializes through the №12 refetch (US1-2 intact)', async () => {
+    const stream = installStream()
+    const otherGroup = groupRow({ chatId: OTHER_GROUP_ID, title: 'Проект Бета' })
+    mockedListChats
+      .mockResolvedValueOnce([groupRow(), chatItem()])
+      .mockResolvedValueOnce([chatItem(), otherGroup])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.deleted', { groupId: GROUP_ID, actorId: ACTOR })
+    emitGroupEvent(stream, 'group.member.added', {
+      groupId: OTHER_GROUP_ID,
+      user: peer(STRANGER, 'carol'),
+      actorId: ACTOR,
+    })
+
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1', OTHER_GROUP_ID])
+    })
+  })
+})
+
 describe('useChatList blocked badge freeze (US3-5, FR-020 of 004)', () => {
   function blockedChatItem(): ChatListItem {
     return chatItem({

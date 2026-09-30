@@ -256,3 +256,31 @@ describe('the shared per-account batcher carries the §5.5 drop (T058 realtime w
     }
   })
 })
+
+/**
+ * §5.5 group.deleted half (US6, T062 → T066; the case T055 deferred
+ * to T062): №30 hard-delete makes the caller a non-participant of the
+ * group's chatId exactly like `group.you_removed` — №25 stays
+ * all-or-refusal, so the deleted group's chatId leaves the pending
+ * batches through the SAME `drop(chatId)` (the MessengerPage wiring
+ * drops it on the `group.deleted` frame, T066): the pending position
+ * is discarded and the §1 race's late acks — frames committed before
+ * the delete may still be published after it — are suppressed.
+ */
+describe('§5.5: a chat dropped after group.deleted leaves the pending №25 batches too', () => {
+  it('the hard-deleted group (№30) never reaches №25 — pending discarded, late acks suppressed', async () => {
+    mockedDeliveryAck.mockResolvedValue(undefined)
+    batcher.ack(chatId(1), 5)
+    batcher.ack(chatId(2), 9)
+
+    batcher.drop(chatId(1))
+    // §1 race: a frame committed before the delete acks after it.
+    batcher.ack(chatId(1), 7)
+
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+
+    expect(mockedDeliveryAck).toHaveBeenCalledTimes(1)
+    expect(mockedDeliveryAck).toHaveBeenCalledWith(ackItems({ [chatId(2)]: 9 }))
+    expect(batcher.pendingSize()).toBe(0)
+  })
+})

@@ -265,3 +265,75 @@ describe('useGroupRealtime — group.updated (US4 slice → T053: the «Чаты
     expect(result.current.groups).toEqual([])
   })
 })
+
+function groupDeleted(groupId: string): GroupRealtimeEvent {
+  return { type: 'group.deleted', groupId, actorId: ACTOR }
+}
+
+/**
+ * US6 slice (T062 → T066; realtime-group-events.md §3.5/§5.2, FR-006):
+ * `group.deleted` is №30 hard-delete broadcast to every FORMER active
+ * member — for each of them the group is gone server-side, never to
+ * come back through №12 (unlike `group.you_removed`, whose group may
+ * return via the re-add path). The frame therefore removes the row
+ * from «Чаты» deterministically, without polling, and tombstones the
+ * `groupId` — a frame committed before the delete may still be
+ * PUBLISHED (or redelivered) after it (§1 order race), so no later
+ * frame may materialize a ghost of the hard-deleted group. The
+ * tombstone covers a group the list never knew too: the channel is
+ * at-most-once, the materializing `group.member.added` frame may have
+ * been LOST, and then `group.deleted` is the group's FIRST frame on
+ * this device — the dead id must stay dead anyway.
+ */
+describe('useGroupRealtime — group.deleted (US6 slice → T066, §3.5/§5.2)', () => {
+  it('removes the group from «Чаты» deterministically, without polling', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(memberAdded(GROUP_B, ME))
+    expect(result.current.groups.map((entry) => entry.chatId)).toEqual([GROUP_A, GROUP_B])
+
+    emitGroupEvent(groupDeleted(GROUP_A))
+    expect(result.current.groups.map((entry) => entry.chatId)).toEqual([GROUP_B])
+
+    // A redelivered final frame must not distort anything (FR-015)
+    emitGroupEvent(groupDeleted(GROUP_A))
+    expect(result.current.groups.map((entry) => entry.chatId)).toEqual([GROUP_B])
+  })
+
+  it('never resurrects the group: later frames of the deleted group are ignored (race §1)', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(groupDeleted(GROUP_A))
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(groupUpdated(GROUP_A, 'Новое название', null))
+    emitGroupEvent(roleChanged(GROUP_A, ME, 'admin'))
+    expect(result.current.groups).toEqual([])
+  })
+
+  it('tombstones even a group the list never knew — a hard-deleted group stays dead (FR-006)', () => {
+    const { result } = mountGroupRealtime()
+
+    // The materializing member.added frame may have been LOST
+    // (at-most-once, §1): group.deleted is then the group's first
+    // frame here — a later redelivery of the stale added frame must
+    // not materialize a ghost row of a group №12 will never return.
+    emitGroupEvent(groupDeleted(GROUP_A))
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+
+    expect(result.current.groups).toEqual([])
+  })
+
+  it('is scoped: another group keeps flowing after the delete', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(memberAdded(GROUP_B, ME))
+    emitGroupEvent(groupDeleted(GROUP_A))
+    emitGroupEvent(groupUpdated(GROUP_B, 'Проект Бета', null))
+
+    expect(result.current.groups).toEqual([{ chatId: GROUP_B, title: 'Проект Бета' }])
+  })
+})

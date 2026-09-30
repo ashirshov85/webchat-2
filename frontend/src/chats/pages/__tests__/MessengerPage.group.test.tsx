@@ -291,3 +291,41 @@ describe('MessengerPage group.you_removed with the group window open (US5, T055 
     expect(screen.getByRole('button', { name: /^alice/ })).toBeInTheDocument()
   })
 })
+
+/**
+ * US6 delete slice (T062 → T066; realtime-group-events.md §3.5, FR-006):
+ * `group.deleted` — the №30 hard-delete broadcast to every former
+ * active member, the deleter included — closes an OPEN group window at
+ * once (no «зависший» заголовок/композер of a chat that no longer
+ * exists server-side), drops the row from «Чаты» WITHOUT a №12
+ * refetch round and tombstones the chatId in the §5.5 №25 batcher,
+ * while the rest of the messenger stays usable — the same shape the
+ * US5 you_removed wiring established (T058).
+ */
+describe('MessengerPage group.deleted with the group window open (US6, T062 → T066, §3.5)', () => {
+  it('closes the open group window, drops the row without polling and keeps the rest usable', async () => {
+    const stream = installEmittingStream()
+    await renderPage([groupRow(), directRow()], () => {})
+
+    fireEvent.click(screen.getByRole('button', { name: /Проект Альфа/ }))
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Проект Альфа' }),
+    ).toBeInTheDocument()
+    const callsBeforeDelete = mockChats.listChats.mock.calls.length
+
+    stream.emit(
+      'group.deleted',
+      JSON.stringify({ groupId: GROUP_ID, actorId: '55555555-5555-5555-5555-555555555555' }),
+    )
+
+    // The window closed — no dangling group header; the row is gone.
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { level: 2, name: 'Проект Альфа' })).toBeNull()
+    })
+    expect(screen.queryByRole('button', { name: /Проект Альфа/ })).toBeNull()
+    // Deterministic removal — no №12 refetch round (§3.5 без поллинга).
+    expect(mockChats.listChats.mock.calls.length).toBe(callsBeforeDelete)
+    // The direct dialog of the same list keeps flowing.
+    expect(screen.getByRole('button', { name: /^alice/ })).toBeInTheDocument()
+  })
+})
