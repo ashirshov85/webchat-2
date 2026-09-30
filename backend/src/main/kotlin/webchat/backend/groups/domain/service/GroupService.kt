@@ -6,6 +6,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import webchat.backend.chats.domain.model.ChatParticipant
+import webchat.backend.chats.domain.port.GroupDeletedEvent
 import webchat.backend.chats.domain.port.GroupEvent
 import webchat.backend.chats.domain.port.GroupMemberAddedEvent
 import webchat.backend.chats.domain.port.GroupMemberRemovedEvent
@@ -58,6 +59,12 @@ import java.util.UUID
  * convergence of the single removal UPDATE, the `member_left` journal
  * fact and the post-commit `group.you_removed {reason:'left'}` +
  * `group.member.removed {actorId:null}` pair.
+ *
+ * T064 grew the №30 hard delete of User Story 6 (FR-006) — [delete]
+ * below: the owner-only gate, the pre-delete ACTIVE-roster snapshot,
+ * the single CASCADE delete, the `group_deleted` journal fact WITHOUT
+ * content and the post-commit `group.deleted` broadcast to every
+ * former member.
  *
  * Ordering discipline (pinned red-first by T018/T018a):
  *  * №27 — `400 self_forbidden` for the creator inside the roster is
@@ -605,6 +612,70 @@ class GroupService(
             group.id,
             survivors.map(ChatParticipant::userId),
             GroupMemberRemovedEvent(group.id, callerId, actorId = null),
+        )
+    }
+
+    /**
+     * №30 `DELETE /api/v1/groups/{chatId}` (api-contract.md 006 №30,
+     * FR-006, T064): the OWNER-ONLY hard delete — the only durable
+     * removal of a group. The refusal order is the contract's own, each
+     * step BEFORE any write: the membership gate (`404 group_not_found`,
+     * counted — a stranger, a removed former member, an unknown chat id
+     * AND the chatId of a direct dialog are the SAME answer; the
+     * repeated №30 of api-contract.md 006 §2 dies HERE — the CASCADE of
+     * the first delete took the caller's row away), then the `FOR
+     * UPDATE` group resolve (the same `chats` row lock the №31/№35
+     * scenarios serialize on — a racing add queues behind the delete
+     * and re-reads a world without the group, so the snapshot below is
+     * the EXACT set of rows the CASCADE erases), then
+     * [GroupRolePolicy.requireOwner] — an admin or a plain member is
+     * `403 not_group_owner` (FR-003).
+     *
+     * Inside ONE transaction, in this exact order: the ACTIVE-roster
+     * snapshot is taken FIRST (the `group.deleted` addressees of
+     * realtime-group-events.md 006 §3.5 — every former member INCLUDING
+     * the deleting owner), then the single `DELETE FROM chats WHERE
+     * kind='group'` lands and `chat_participants` and `messages`
+     * CASCADE away on the V10 FKs (FR-006: the history, the
+     * memberships, the watermarks and the counters are all erased
+     * TOGETHER — a partial removal never survives), and the journal
+     * fact is appended AFTER the delete in the SAME transaction —
+     * `group_admin_log` deliberately carries NO FK on `chats` (V14,
+     * data-model 006 §Сущность 4), so the append lands against the
+     * already gone group id and SURVIVES as `group_deleted` WITHOUT
+     * CONTENT (`targetUserId = null` — the FACT of the deletion only,
+     * never the deleted roster or metadata, clarify 2026-09-25,
+     * FR-017). A zero rowcount renders as the same uniform 404 (the
+     * race with a twin №30 already resolved by the CASCADE).
+     *
+     * Post-commit, strictly after the commit: ONE `group.deleted` frame
+     * with `actorId` = the deleting owner to EVERY member of the
+     * pre-delete snapshot (§3.5 — recipients drop the group from
+     * «Чаты», close its window and ignore every later frame of it).
+     * No `webchat_group_size` sample rides this path: the histogram of
+     * research.md 006 §8 samples the add/remove transitions of a
+     * LIVING group's roster — the №30 delete ends the group itself,
+     * its roster does not «shrink» to zero one member at a time.
+     */
+    @Suppress("ThrowsCount") // the throw legs ARE the №30 refusal ladder of api-contract.md 006 §2
+    @Transactional
+    fun delete(
+        callerId: UUID,
+        chatId: UUID,
+    ) {
+        val membership =
+            membershipGate.requireActiveMembership(chatId, callerId, GroupMetrics.AuthzOperation.DELETE)
+        val group = resolveGroupForUpdate(chatId)
+        rolePolicy.requireOwner(membership)
+        val formers = participants.activeMembers(group.id)
+        if (!groupRepository.deleteHard(group.id)) throw GroupNotFoundException()
+        adminLog.append(
+            GroupAdminLogEntry(group.id, callerId, targetUserId = null, action = GroupAdminAction.GROUP_DELETED),
+        )
+        fanoutGroupEventAfterCommit(
+            group.id,
+            formers.map(ChatParticipant::userId),
+            GroupDeletedEvent(group.id, callerId),
         )
     }
 
