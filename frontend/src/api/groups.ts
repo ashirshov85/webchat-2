@@ -94,6 +94,16 @@ export async function updateGroup(chatId: string, body: UpdateGroupRequest): Pro
 }
 
 /**
+ * №30 `DELETE /groups/{chatId}`: hard-deletes the group (owner-only,
+ * FR-006) — chats/messages/participants go with CASCADE, the admin
+ * log survives without message content; everyone who was active gets
+ * `group.deleted`. Non-owner members get `403 not_group_owner`.
+ */
+export async function deleteGroup(chatId: string): Promise<void> {
+  await authedRequest(`/groups/${encodeURIComponent(chatId)}`, 'DELETE')
+}
+
+/**
  * №31 `POST /groups/{chatId}/members`: batch add of members from the
  * ADDER's contacts (owner/admin, FR-002/FR-004). The batch is atomic
  * (any rejected item rejects it all), idempotent for already-active
@@ -120,6 +130,18 @@ export async function kickMember(chatId: string, userId: string): Promise<void> 
     `/groups/${encodeURIComponent(chatId)}/members/${encodeURIComponent(userId)}`,
     'DELETE',
   )
+}
+
+/**
+ * №33 `DELETE /groups/{chatId}/membership`: the caller leaves the
+ * group (FR-005) — messages stay attributed, the leaver gets
+ * `group.you_removed {reason:'left'}`, the rest `group.member.removed`.
+ * The owner must transfer ownership (№35) or delete the group (№30)
+ * first — otherwise `403 owner_must_transfer`; leaving twice is the
+ * unified `404 group_not_found`.
+ */
+export async function leaveGroup(chatId: string): Promise<void> {
+  await authedRequest(`/groups/${encodeURIComponent(chatId)}/membership`, 'DELETE')
 }
 
 /**
