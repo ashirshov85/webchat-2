@@ -53,6 +53,12 @@ import java.util.UUID
  * atomic last-confirmed UPDATE, the FR-017 journal pair and the
  * post-commit `group.updated` broadcast.
  *
+ * T063 grew the №33 voluntary exit of User Story 6 (FR-005) — [leave]
+ * below: the owner `403 owner_must_transfer` edge, the rowcount-race
+ * convergence of the single removal UPDATE, the `member_left` journal
+ * fact and the post-commit `group.you_removed {reason:'left'}` +
+ * `group.member.removed {actorId:null}` pair.
+ *
  * Ordering discipline (pinned red-first by T018/T018a):
  *  * №27 — `400 self_forbidden` for the creator inside the roster is
  *    decided BEFORE the contact gate (the caller can never be his own
@@ -539,6 +545,66 @@ class GroupService(
             group.id,
             survivors.map(ChatParticipant::userId),
             GroupMemberRemovedEvent(group.id, targetUserId, callerId),
+        )
+    }
+
+    /**
+     * №33 `DELETE /api/v1/groups/{chatId}/membership` (api-contract.md 006
+     * №33, FR-005, T063): the VOLUNTARY exit — the mirror of [kick] with
+     * the caller as his own target. The refusal order is the contract's
+     * own, each step BEFORE any write: the membership gate (`404
+     * group_not_found`, counted — a stranger, an already-removed former
+     * member, an unknown chat id AND the chatId of a direct dialog are
+     * the SAME answer; the repeated №33 of api-contract.md 006 §2 dies
+     * HERE — the membership row is already `removed`), then the
+     * lock-free `kind='group'` resolve, then the FR-005 owner edge — an
+     * owner leaving would orphan the group, so he is refused `403
+     * owner_must_transfer` UNTIL a №35 transfer (or the №30 delete):
+     * after the hand-over the FORMER owner is a plain admin and leaves
+     * штатно.
+     *
+     * The exit itself is the single conditional UPDATE of
+     * [ParticipantRepository.removeMember] (`state='removed'`,
+     * `role='member'`) resolved by rowcount — a concurrent №32 kick of
+     * the same user (or a twin №33) already resolved the race, and the
+     * loser re-converges on the SAME uniform 404 (api-contract.md 006 §2
+     * edge «исключение×выход» — №32 sees `409 target_not_member`, №33
+     * sees the 404 of a membership that is no more). The watermarks
+     * survive in the row for the FR-002 re-add and the leaver's messages
+     * keep their attribution (`messages` rows are never touched).
+     *
+     * Durable effects in ONE transaction: the journal `member_left` fact
+     * (actor = target = the leaver — nobody removed him, data-model 006
+     * §Сущность 4) and the shrunken-roster size sample. Post-commit,
+     * strictly after the commit: the FINAL `group.you_removed
+     * {reason:'left'}` to the leaver ALONE (§3.6 — after this frame no
+     * group event reaches his channel again) and `group.member.removed`
+     * with `actorId = null` — the voluntary exit carries no actor
+     * (§3.3) — to every REMAINING active participant.
+     */
+    @Suppress("ThrowsCount") // the throw legs ARE the №33 refusal ladder of api-contract.md 006 §2
+    @Transactional
+    fun leave(
+        callerId: UUID,
+        chatId: UUID,
+    ) {
+        val membership =
+            membershipGate.requireActiveMembership(chatId, callerId, GroupMetrics.AuthzOperation.LEAVE)
+        val group = resolveGroup(chatId)
+        if (membership.role == MemberRole.OWNER) throw OwnerMustTransferException()
+        if (!participants.removeMember(group.id, callerId)) throw GroupNotFoundException()
+        adminLog.append(GroupAdminLogEntry(group.id, callerId, callerId, GroupAdminAction.MEMBER_LEFT))
+        val survivors = participants.activeMembers(group.id)
+        metrics.recordGroupSize(survivors.size)
+        fanoutGroupEventAfterCommit(
+            group.id,
+            listOf(callerId),
+            GroupYouRemovedEvent(group.id, GroupRemovalReason.LEFT),
+        )
+        fanoutGroupEventAfterCommit(
+            group.id,
+            survivors.map(ChatParticipant::userId),
+            GroupMemberRemovedEvent(group.id, callerId, actorId = null),
         )
     }
 
