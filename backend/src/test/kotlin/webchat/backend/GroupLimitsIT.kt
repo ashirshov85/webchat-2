@@ -9,12 +9,17 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.client.TestRestTemplate
 import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
+import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.jdbc.core.JdbcTemplate
 import webchat.backend.sync.SyncTestSupport
+import java.time.Duration
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** quickstart.md §2 «Новые настройки»: the stress profile lowers the 200 cap to 3 for this whole context. */
 private const val LOWERED_MAX_MEMBERS = 3
@@ -44,13 +49,23 @@ private const val LOWERED_MAX_MEMBERS = 3
  *    batch is refused ATOMICALLY: no group row appears (№27), the
  *    roster is unchanged (№31, FR-002);
  *  * №31 idempotency: re-adding an already-ACTIVE member answers 200
- *    with no roster duplicate and a single participant row.
+ *    with no roster duplicate and a single participant row;
+ *  * T061 edge «исключение×выход» (api-contract.md §2, data-model.md §2
+ *    №32/№33): the owner's №32 kick and the member's own №33 leave
+ *    fired simultaneously converge on the single
+ *    `UPDATE … WHERE state='active'` — exactly ONE operation wins, the
+ *    loser answers the convergence code, the participant table holds
+ *    exactly ONE removed row and the wire carries exactly ONE final
+ *    frame pair.
  *
  * NOTE (TDD, constitution VI): written BEFORE the US1 implementation
  * tasks (T020–T022) — until they land, every №27/№31 call answers 404
  * (no controller mapping yet), so every method here fails (RED) by
- * design. The kick×leave concurrency edge of T061 EXTENDS this class
- * later — keep every fixture self-contained per method.
+ * design. The T061 kick×leave edge additionally rides №33 leave —
+ * written BEFORE the US6 implementation task T063, so until it lands
+ * the leave leg answers the empty 404 of the missing mapping and the
+ * method stays RED by design. Keep every fixture self-contained per
+ * method.
  */
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
@@ -62,6 +77,12 @@ class GroupLimitsIT(
     @Autowired private val objectMapper: ObjectMapper,
     @Autowired private val jdbcTemplate: JdbcTemplate,
 ) : SyncTestSupport() {
+    /** First group frame of the T061 edge must arrive well inside this CI-tolerant budget (SC-004). */
+    private val deliveryBudget: Duration = Duration.ofSeconds(DELIVERY_BUDGET_SECONDS)
+
+    /** Bounded quiet window proving the single-frame legs publish nothing more. */
+    private val quietPeriod: Duration = Duration.ofMillis(QUIET_PERIOD_MILLIS)
+
     /**
      * №27 capacity (api-contract.md §2 note): with the cap lowered to 3 an
      * initial roster of three contacts + creator exceeds it — the SAME
@@ -288,6 +309,107 @@ class GroupLimitsIT(
             .isZero
     }
 
+    /**
+     * T061 edge «исключение×выход» (api-contract.md §2, data-model.md §2
+     * №32/№33): the owner's №32 kick and the member's own №33 leave fired
+     * simultaneously converge on the SINGLE `UPDATE … WHERE state='active'`
+     * — exactly ONE operation wins (204), the loser answers the
+     * convergence code (`409 target_not_member` for №32 / the uniform
+     * `404 group_not_found` for №33), the participant table holds exactly
+     * ONE removed row (no duplicates, role reset to member) and the wire
+     * carries exactly ONE final `group.you_removed` + ONE
+     * `group.member.removed` — never both pairs.
+     */
+    @Test
+    fun `concurrent kick and leave converge to a single removal without duplicates`() {
+        val owner = messagingUser("owner")
+        val bob = messagingUser("bob")
+        addContact(owner, bob.id)
+        val chatId = chatIdOf(createGroupOk(owner, memberUserIds = listOf(bob.id.toString())))
+
+        openUserEvents(owner).use { ownerStream ->
+            openUserEvents(bob).use { bobStream ->
+                val answers =
+                    fireConcurrently(
+                        { kickMember(owner, chatId, bob.id) },
+                        { leaveGroup(bob, chatId) },
+                    )
+                val kick = answers.first()
+                val leave = answers[1]
+
+                val kicked: Boolean
+                if (kick.statusCode == HttpStatus.NO_CONTENT) {
+                    kicked = true
+                    assertThat(leave.statusCode)
+                        .overridingErrorMessage(
+                            "the lost №33 must answer the uniform 404 (api-contract.md §2 edge), got <%s>: %s",
+                            leave.statusCode,
+                            leave.body,
+                        ).isEqualTo(HttpStatus.NOT_FOUND)
+                    assertProblem(leave, GROUP_FIELD, GROUP_NOT_FOUND)
+                } else {
+                    kicked = false
+                    assertThat(leave.statusCode)
+                        .overridingErrorMessage(
+                            "the won №33 must answer 204, got <%s>: %s",
+                            leave.statusCode,
+                            leave.body,
+                        ).isEqualTo(HttpStatus.NO_CONTENT)
+                    assertThat(kick.statusCode)
+                        .overridingErrorMessage(
+                            "the lost №32 must answer 409 target_not_member (api-contract.md §2 edge), got <%s>: %s",
+                            kick.statusCode,
+                            kick.body,
+                        ).isEqualTo(HttpStatus.CONFLICT)
+                    assertProblem(kick, USER_ID_FIELD, TARGET_NOT_MEMBER)
+                }
+
+                assertThat(participantRowsOf(chatId, bob.id))
+                    .overridingErrorMessage("the edge must converge on the SINGLE existing row — no duplicates")
+                    .isEqualTo(1L)
+                assertThat(activeMemberCount(chatId))
+                    .overridingErrorMessage("bob must leave the active roster exactly once")
+                    .isEqualTo(SOLO_ACTIVE_ROSTER)
+                assertThat(membershipEndStateOf(chatId, bob.id))
+                    .overridingErrorMessage(
+                        "the converged row must be state='removed' with the role reset to member (data-model.md §2)",
+                    ).isEqualTo(REMOVED_STATE to MEMBER_ROLE)
+
+                val youRemoved = bobStream.awaitEvent(GROUP_YOU_REMOVED_EVENT, deliveryBudget)
+                assertThat(fieldNames(youRemoved))
+                    .overridingErrorMessage(
+                        "group.you_removed must carry exactly the contract fields, got <%s>",
+                        fieldNames(youRemoved),
+                    ).containsExactlyInAnyOrderElementsOf(GROUP_YOU_REMOVED_EVENT_FIELDS)
+                assertThat(youRemoved["groupId"].asText()).isEqualTo(chatId.toString())
+                assertThat(youRemoved["reason"].asText())
+                    .overridingErrorMessage("the single final frame must carry the WINNER's reason")
+                    .isEqualTo(if (kicked) KICKED_REASON else LEFT_REASON)
+
+                val memberRemoved = ownerStream.awaitEvent(GROUP_MEMBER_REMOVED_EVENT, deliveryBudget)
+                assertThat(fieldNames(memberRemoved))
+                    .overridingErrorMessage(
+                        "group.member.removed must carry exactly the contract fields, got <%s>",
+                        fieldNames(memberRemoved),
+                    ).containsExactlyInAnyOrderElementsOf(GROUP_MEMBER_REMOVED_EVENT_FIELDS)
+                assertThat(memberRemoved["groupId"].asText()).isEqualTo(chatId.toString())
+                assertThat(memberRemoved["userId"].asText()).isEqualTo(bob.id.toString())
+                if (kicked) {
+                    assertThat(memberRemoved["actorId"].asText())
+                        .overridingErrorMessage("the winning kick names the kicking owner as actorId (§3.3)")
+                        .isEqualTo(owner.id.toString())
+                } else {
+                    assertThat(memberRemoved["actorId"].isNull)
+                        .overridingErrorMessage("a voluntary leave carries actorId null (§3.3)")
+                        .isTrue
+                }
+
+                assertNoGroupEvent(bobStream, GROUP_YOU_REMOVED_EVENT)
+                assertNoGroupEvent(ownerStream, GROUP_MEMBER_REMOVED_EVENT)
+            }
+        }
+    }
+
     /** Registers [labels] and makes each a contact of the [owner] — the №27/№31 FR-002 source. */
     private fun contactsOf(
         owner: MessagingUser,
@@ -343,6 +465,88 @@ class GroupLimitsIT(
             mapOf(USER_IDS_FIELD to userIds),
             user,
         )
+
+    /** Contract №32 `DELETE /api/v1/groups/{chatId}/members/{userId}` — raw response. */
+    private fun kickMember(
+        user: MessagingUser,
+        chatId: UUID,
+        userId: UUID,
+    ): ResponseEntity<String> = exchangeWithAuth(HttpMethod.DELETE, "$GROUPS_PATH/$chatId/members/$userId", user)
+
+    /** Contract №33 `DELETE /api/v1/groups/{chatId}/membership` — raw response (US6, T063). */
+    private fun leaveGroup(
+        user: MessagingUser,
+        chatId: UUID,
+    ): ResponseEntity<String> = exchangeWithAuth(HttpMethod.DELETE, "$GROUPS_PATH/$chatId/membership", user)
+
+    private fun exchangeWithAuth(
+        method: HttpMethod,
+        path: String,
+        user: MessagingUser,
+    ): ResponseEntity<String> =
+        restTemplate.exchange(
+            path,
+            method,
+            HttpEntity<Unit>(Unit, HttpHeaders().apply { setBearerAuth(user.accessToken) }),
+            String::class.java,
+        )
+
+    /**
+     * Fires every call of [calls] through its own worker behind ONE start
+     * gate — genuinely simultaneous №32/№33 (the GroupLifecycleIT №29-edge
+     * precedent) — and returns the answers in the call order.
+     */
+    private fun fireConcurrently(vararg calls: () -> ResponseEntity<String>): List<ResponseEntity<String>> {
+        val startGate = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(calls.size)
+        try {
+            val futures =
+                calls.map { call ->
+                    pool.submit<ResponseEntity<String>> {
+                        assertThat(startGate.await(START_GATE_TIMEOUT_SECONDS, TimeUnit.SECONDS))
+                            .overridingErrorMessage("the concurrent №32/№33 workers must start together")
+                            .isTrue
+                        call()
+                    }
+                }
+            startGate.countDown()
+            return futures.map { future -> future.get(CONCURRENCY_BUDGET_SECONDS, TimeUnit.SECONDS) }
+        } finally {
+            pool.shutdownNow()
+        }
+    }
+
+    /** The `(state, role)` of the single membership row — the edge convergence probe. */
+    private fun membershipEndStateOf(
+        chatId: UUID,
+        userId: UUID,
+    ): Pair<String, String> =
+        jdbcTemplate
+            .query(
+                "SELECT state, role FROM chat_participants WHERE chat_id = ? AND user_id = ?",
+                { rs, _ -> rs.getString("state") to rs.getString("role") },
+                chatId,
+                userId,
+            ).single()
+
+    private fun fieldNames(node: JsonNode): List<String> = node.fieldNames().asSequence().toList()
+
+    /**
+     * The «no second frame» leg: the winner's publication must be the
+     * ONLY one — a bounded quiet window after the consumed frame.
+     */
+    private fun assertNoGroupEvent(
+        stream: UserEventsStream,
+        eventType: String,
+    ) {
+        val unexpected = runCatching { stream.awaitEvent(eventType, quietPeriod) }
+        assertThat(unexpected.exceptionOrNull())
+            .overridingErrorMessage(
+                "no second <%s> frame may arrive — the edge publishes exactly once, got <%s>",
+                eventType,
+                unexpected.getOrNull(),
+            ).isNotNull
+    }
 
     /** Contract №21 `POST /api/v1/contacts` — fixture contact for the №27/№31 gates. */
     private fun addContact(
@@ -462,6 +666,30 @@ class GroupLimitsIT(
         const val INVALID_MEMBER_IDS = "invalid_member_ids"
         const val INVALID_USER_IDS = "invalid_user_ids"
         const val GROUP_FULL = "group_full"
+
+        /** T061 edge: the №33 loser's uniform refusal and the №32 loser's convergence code. */
+        const val GROUP_NOT_FOUND = "group_not_found"
+        const val TARGET_NOT_MEMBER = "target_not_member"
+
+        /** The converged row of the edge — data-model.md §2 №32/№33. */
+        const val REMOVED_STATE = "removed"
+        const val MEMBER_ROLE = "member"
+
+        /** The roster left after bob's single removal — the owner alone. */
+        const val SOLO_ACTIVE_ROSTER = 1L
+
+        /** realtime-group-events.md §3 names — the T061 edge frames. */
+        const val GROUP_YOU_REMOVED_EVENT = "group.you_removed"
+        const val GROUP_MEMBER_REMOVED_EVENT = "group.member.removed"
+        val GROUP_YOU_REMOVED_EVENT_FIELDS = listOf("groupId", "reason")
+        val GROUP_MEMBER_REMOVED_EVENT_FIELDS = listOf("groupId", "userId", "actorId")
+        const val KICKED_REASON = "kicked"
+        const val LEFT_REASON = "left"
+
+        const val DELIVERY_BUDGET_SECONDS = 5L
+        const val QUIET_PERIOD_MILLIS = 1_500L
+        const val START_GATE_TIMEOUT_SECONDS = 10L
+        const val CONCURRENCY_BUDGET_SECONDS = 30L
 
         /** FR-001 boundary fixtures: exactly the accepted caps (the refusals are T018's). */
         val BOUNDARY_TITLE = "g".repeat(TITLE_MAX_LENGTH)

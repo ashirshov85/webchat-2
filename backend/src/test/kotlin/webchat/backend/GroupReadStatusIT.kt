@@ -40,7 +40,19 @@ import java.util.UUID
  *  * `chat.read` fanout: a №17 advance in a group publishes the 004
  *    `ChatReadEvent` payload verbatim (`chatId`, `readUpToSeq`,
  *    `byUserId`) to EVERY active member EXCEPT the reader — the reader's
- *    own stream stays silent (§3.7).
+ *    own stream stays silent (§3.7);
+ *  * T061 re-add edges (FR-002/FR-012, clarify 2026-09-25): the member
+ *    leaving WITHOUT reading drops out of the ✓✓ condition (the MIN is
+ *    recalculated over the CURRENT roster — the projection jumps to the
+ *    head), and his №31 re-add restores him WITH his PRESERVED
+ *    watermark, repinning №13 to the old MIN — a contract-legal
+ *    server-side drop the live client rides out holding its max
+ *    (realtime-group-events.md §3.7/§5.3);
+ *  * T061 badge/history edge (FR-002/FR-02): a re-add is NOT a first
+ *    addition — BOTH watermarks survive the removal→re-add cycle, the
+ *    WHOLE history stays readable from the preserved mark and the
+ *    delivery-bounded №12 badge counts EVERYTHING sent after his last
+ *    read once he acks №25 — the absence period included.
  *
  * NOTE (TDD, constitution VI): written BEFORE the US2 implementation
  * task T036 — until it lands, №17 in a group is refused before any
@@ -48,7 +60,11 @@ import java.util.UUID
  * method stages its own users/contacts/chats over the real 001 flows
  * (Testcontainers PG 17 + Redis 7, real HTTP, no mocks); message
  * backlogs ride the [seedChatBacklog] JDBC fixture, so no method spends
- * a single №16 send of the 30/min FR-011 allowance.
+ * a single №16 send of the 30/min FR-011 allowance. The T061 legs
+ * additionally ride №33 `DELETE /membership` — written BEFORE the US6
+ * implementation task T063, so until it lands the leave answers the
+ * empty 404 of the missing mapping and both T061 methods stay RED by
+ * design.
  */
 @Suppress("TooManyFunctions") // T031: one helper per fixture/probe of the read-status rules
 class GroupReadStatusIT(
@@ -217,6 +233,121 @@ class GroupReadStatusIT(
         }
     }
 
+    /**
+     * FR-012 edge №2 (T061, clarify 2026-09-25): the ✓✓ condition is
+     * recalculated over the CURRENT roster — the member leaving without
+     * reading DROPS OUT of the MIN, so the sender's double tick becomes
+     * reachable the moment he is gone. His №31 re-add restores him WITH
+     * his PRESERVED watermark (FR-002), repinning №13 to the old MIN —
+     * a contract-legal server-side drop the live client must ride out
+     * holding its max (realtime-group-events.md §3.7/§5.3) — and the
+     * per-member GREATEST marks never roll back: once everyone has read
+     * to the new head, №13 answers the head again.
+     */
+    @Test
+    fun `the unread member leaving frees the double tick and his re-add repins the min to the preserved mark`() {
+        val group = trioGroup()
+        val owner = group.owner
+        val bob = group.bob
+        val carol = group.carol
+        val chatId = group.chatId
+        val seqs = seedChatBacklog(chatId, READD_TICK_MESSAGES, { owner }, READD_TICK_TEXT_PREFIX).map { it.seq }
+        val mark = seqs[READD_MARK_INDEX]
+        val head = seqs.last()
+
+        markReadOk(bob, chatId, mark)
+        markReadOk(carol, chatId, head)
+        assertOthersReadUpToSeq(owner, chatId, mark)
+
+        leaveGroupOk(bob, chatId)
+
+        assertOthersReadUpToSeq(owner, chatId, head)
+
+        val absence = seedChatBacklog(chatId, READD_TICK_ABSENCE_MESSAGES, { owner }, READD_TICK_ABSENCE_TEXT_PREFIX)
+        val newHead = absence.last().seq
+
+        addMembersOk(owner, chatId, bob.id)
+
+        assertOthersReadUpToSeq(owner, chatId, mark)
+
+        markReadOk(bob, chatId, newHead)
+        markReadOk(carol, chatId, newHead)
+        assertOthersReadUpToSeq(owner, chatId, newHead)
+    }
+
+    /**
+     * FR-002/FR-02 badge edge (T061, data-model.md §Сущность 2 «№31
+     * добавление»): a re-added member is NOT a first addition — BOTH
+     * watermarks survive the removal→re-add cycle (no re-initialization
+     * at the head), the WHOLE history stays readable from his preserved
+     * mark (№15 `?after=`) and the delivery-bounded №12 badge (the 005
+     * formula) counts EVERYTHING sent after his last read once he acks
+     * №25 — the absence period included; reading to the new head
+     * converges the badge back to 0.
+     */
+    @Test
+    fun `re-adding preserves both watermarks and the badge counts the absence backlog`() {
+        val group = trioGroup()
+        val owner = group.owner
+        val bob = group.bob
+        val chatId = group.chatId
+        val seeded = seedChatBacklog(chatId, READD_BADGE_MESSAGES, { owner }, READD_BADGE_TEXT_PREFIX)
+        val mark = seeded[READD_MARK_INDEX].seq
+        val head = seeded.last().seq
+        val ackedUnread = seeded.count { it.seq > mark }.toLong()
+
+        deliveryAckOk(bob, chatId, head)
+        markReadOk(bob, chatId, mark)
+        assertThat(readUpToSeq(bob.id, chatId))
+            .overridingErrorMessage("fixture: bob's read watermark must sit at his mark")
+            .isEqualTo(mark)
+        assertThat(deliveredUpToSeq(bob.id, chatId))
+            .overridingErrorMessage("fixture: bob's delivery position must sit at the head")
+            .isEqualTo(head)
+        assertThat(unreadBadgeOf(bob, chatId))
+            .overridingErrorMessage("baseline: the badge counts the acked-but-unread messages above bob's mark")
+            .isEqualTo(ackedUnread)
+
+        leaveGroupOk(bob, chatId)
+        val absence = seedChatBacklog(chatId, READD_BADGE_ABSENCE_MESSAGES, { owner }, READD_BADGE_ABSENCE_TEXT_PREFIX)
+        val newHead = absence.last().seq
+        val unreadBacklog = seeded.filter { it.seq > mark } + absence
+
+        addMembersOk(owner, chatId, bob.id)
+        assertThat(readUpToSeq(bob.id, chatId))
+            .overridingErrorMessage(
+                "a re-add must PRESERVE the read watermark — no re-initialization at the head (FR-002)",
+            ).isEqualTo(mark)
+        assertThat(deliveredUpToSeq(bob.id, chatId))
+            .overridingErrorMessage("a re-add must PRESERVE the delivery position (FR-002)")
+            .isEqualTo(head)
+        assertThat(unreadBadgeOf(bob, chatId))
+            .overridingErrorMessage(
+                "the badge must cross the removal→re-add cycle unchanged — the acked-but-unread backlog survives",
+            ).isEqualTo(ackedUnread)
+
+        val page = listMessagesAfterOk(bob, chatId, mark)
+        assertThat(page.map { UUID.fromString(it["id"].asText()) })
+            .overridingErrorMessage(
+                "the re-added member must read the WHOLE history after his preserved mark (FR-02)",
+            ).containsExactlyElementsOf(unreadBacklog.map { it.id })
+
+        assertThat(requestSync(bob, listOf(chatId to mark)).statusCode)
+            .overridingErrorMessage("№26 catch-up from the preserved mark must answer 200")
+            .isEqualTo(HttpStatus.OK)
+        deliveryAckOk(bob, chatId, newHead)
+        assertThat(unreadBadgeOf(bob, chatId))
+            .overridingErrorMessage(
+                "after the №25 ack the badge must count EVERYTHING after the preserved mark — " +
+                    "the absence period included (FR-002)",
+            ).isEqualTo(unreadBacklog.size.toLong())
+
+        markReadOk(bob, chatId, newHead)
+        assertThat(unreadBadgeOf(bob, chatId))
+            .overridingErrorMessage("reading to the new head must converge the badge back to 0")
+            .isZero
+    }
+
     // ------------------------------------------------------------------
     // fixtures
     // ------------------------------------------------------------------
@@ -278,6 +409,84 @@ class GroupReadStatusIT(
                 response.statusCode,
                 response.body,
             ).isEqualTo(HttpStatus.OK)
+    }
+
+    /**
+     * Contract №33 `DELETE /api/v1/groups/{chatId}/membership` — the US6
+     * voluntary leave of a plain member (T061 writes it BEFORE the T063
+     * implementation — RED by design until the mapping exists).
+     */
+    private fun leaveGroupOk(
+        user: MessagingUser,
+        chatId: UUID,
+    ) {
+        val response =
+            restTemplate.exchange(
+                "$GROUPS_PATH/$chatId/membership",
+                HttpMethod.DELETE,
+                HttpEntity<Unit>(Unit, HttpHeaders().apply { setBearerAuth(user.accessToken) }),
+                String::class.java,
+            )
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "№33 leave of a plain member must answer 204 (api-contract.md №33), got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.NO_CONTENT)
+    }
+
+    /** Contract №25 happy path: the single-chat delivery ack must answer 204 (005). */
+    private fun deliveryAckOk(
+        user: MessagingUser,
+        chatId: UUID,
+        upToSeq: Long,
+    ) {
+        val response = deliveryAck(user, listOf(chatId to upToSeq))
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "№25 ack of <%s> in <%s> up to <%d> must answer 204, got <%s>: %s",
+                user.username,
+                chatId,
+                upToSeq,
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.NO_CONTENT)
+    }
+
+    /** The caller's №12 `unreadCount` of the group — the FR-013/FR-002 badge probe. */
+    private fun unreadBadgeOf(
+        user: MessagingUser,
+        chatId: UUID,
+    ): Long {
+        val response = listChats(user)
+        assertThat(response.statusCode)
+            .overridingErrorMessage("№12 must answer 200, got <%s>: %s", response.statusCode, response.body)
+            .isEqualTo(HttpStatus.OK)
+        val item =
+            objectMapper
+                .readTree(response.body)["chats"]
+                .toList()
+                .singleOrNull { it["chatId"].asText() == chatId.toString() }
+        assertThat(item)
+            .overridingErrorMessage("the №12 list of <%s> must contain the group <%s>", user.username, chatId)
+            .isNotNull
+        return item!!["unreadCount"].asLong()
+    }
+
+    /** Contract №15 ascending page `?after=` — the re-added member's history probe. */
+    private fun listMessagesAfterOk(
+        user: MessagingUser,
+        chatId: UUID,
+        after: Long,
+    ): List<JsonNode> {
+        val response = listMessagesAfter(user, chatId, after)
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "№15 ?after= of a re-added member must answer 200, got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.OK)
+        return objectMapper.readTree(response.body)["messages"].toList()
     }
 
     /** Contract №21 `POST /api/v1/contacts` — fixture contact for the №27/№31 gates. */
@@ -444,6 +653,17 @@ class GroupReadStatusIT(
         const val SOLO_TEXT_PREFIX = "solo"
         const val MONOTONE_TEXT_PREFIX = "monotone"
         const val FANOUT_TEXT_PREFIX = "fanout-read"
+
+        /** T061 re-add fixtures: bob's preserved mark sits at index 1 of the pre-absence backlog. */
+        const val READD_MARK_INDEX = 1
+        const val READD_TICK_MESSAGES = 4
+        const val READD_TICK_ABSENCE_MESSAGES = 2
+        const val READD_BADGE_MESSAGES = 4
+        const val READD_BADGE_ABSENCE_MESSAGES = 3
+        const val READD_TICK_TEXT_PREFIX = "readmin-tick"
+        const val READD_TICK_ABSENCE_TEXT_PREFIX = "readmin-tick-absence"
+        const val READD_BADGE_TEXT_PREFIX = "readmin-badge"
+        const val READD_BADGE_ABSENCE_TEXT_PREFIX = "readmin-badge-absence"
 
         /** Openapi 0.6.0 №13: 0 — nobody else has read yet. */
         const val FRESH_PROJECTION = 0L
