@@ -208,7 +208,16 @@ export function GroupInfoPanel({
   // The adder's №20 contacts load LAZILY — only when the №31 section
   // first opens (a plain member never fetches); the cancelled guard
   // keeps a fast toggle from racing the answer (CreateGroupDialog
-  // precedent).
+  // precedent). `contactsStatus` is deliberately NOT a dep (T073): the
+  // effect's own `idle → loading` write would re-run it, and the
+  // cleanup of that own iteration would mark the in-flight №20 request
+  // `cancelled` and discard the answer — the section hung on
+  // «Загрузка контактов…» forever. The stale-closure risk is nil: the
+  // only paths that re-run the effect (open toggle, «Повторить»)
+  // render with an up-to-date status — 'idle' on first open (React
+  // batches the retry's `setContactsStatus('idle')` with the
+  // `contactsReload` bump), 'ready'/'error' on later opens (cached, no
+  // refetch — the laziness holds).
   useEffect(() => {
     if (!addOpen || contactsStatus !== 'idle') {
       return
@@ -235,7 +244,8 @@ export function GroupInfoPanel({
     return () => {
       cancelled = true
     }
-  }, [addOpen, contactsStatus, contactsReload])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- contactsStatus intentionally excluded (see above, T073)
+  }, [addOpen, contactsReload])
 
   const toggleMember = useCallback((userId: string) => {
     setSelectedIds((previous) => {
