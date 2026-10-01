@@ -254,16 +254,18 @@ interface ParticipantRepository {
     ): ChatParticipant?
 
     /**
-     * The ✓✓ rule of a group (FR-012): `MIN(last_read_seq)` over the
-     * ACTIVE members EXCEPT [userId] — an index-only fold over the same
-     * V14 partial index (`INCLUDE (user_id, role, last_read_seq)`); a
-     * REMOVED reader drops out of the condition naturally and a group
-     * of one folds to 0 (✓✓ unreachable, data-model 006 §Правила
-     * видимости). Monotone per reader by the GREATEST-discipline of
-     * [advanceReadUpTo] — the MIN over monotone legs never regresses,
-     * and a re-added member's PRESERVED watermark (FR-002) keeps it so.
+     * The ✓✓ rule of a group (FR-012, MAX semantics — «read by at least
+     * one»): `MAX(last_read_seq)` over the ACTIVE members EXCEPT [userId] —
+     * an index-only fold over the same V14 partial index (`INCLUDE (user_id,
+     * role, last_read_seq)`); a REMOVED reader drops out of the condition
+     * naturally and a group of one folds to 0 (✓✓ unreachable, data-model
+     * 006 §Правила видимости). Monotone per reader by the GREATEST-discipline
+     * of [advanceReadUpTo] — a joiner's FR-013 `last_seq` anchor and a
+     * re-added member's PRESERVED watermark (FR-002) can only raise the MAX;
+     * the sole regression window is the departure of the furthest reader,
+     * held client-side by the monotone (max) projection.
      */
-    fun minOtherReadUpToSeq(
+    fun maxOtherReadUpToSeq(
         chatId: UUID,
         userId: UUID,
     ): Long

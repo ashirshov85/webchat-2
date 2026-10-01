@@ -109,8 +109,8 @@ data class ChatParticipant(
  * The 006 group projection rides the same row (api-contract.md 006 §3
  * №26): [kind] discriminates the delta — a GROUP candidate carries
  * [title], the ACTIVE [memberCount] and the FR-012 ✓✓ bound
- * [othersReadUpToSeq] (`MIN(last_read_seq)` of the other active
- * members, 0 in a group of one), while a DIRECT candidate keeps them
+ * [othersReadUpToSeq] (`MAX(last_read_seq)` of the other active
+ * members — ✓✓ once any one of them has read; 0 in a group of one), while a DIRECT candidate keeps them
  * `null` (the fields stay ABSENT in its delta — backward-friendly).
  */
 data class UndeliveredChat(

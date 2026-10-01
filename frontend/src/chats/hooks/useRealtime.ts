@@ -21,8 +21,8 @@
  * covers every ACTIVE member EXCEPT the reader — so a group listener
  * sees one frame per reading MEMBER (`byUserId`), and the group
  * consumer (useChatMessages with the №28 roster) folds the marks into
- * the ✓✓ candidate MIN(other members' watermarks), held monotonically
- * (max, FR-012). The reader's own stream stays silent about his own
+ * the ✓✓ candidate MAX(other members' watermarks — ✓✓ once any one
+ * of them has read), held monotonically (max, FR-012). The reader's own stream stays silent about his own
  * read, and the unread badge of the reading side resets locally
  * (markChatReadLocally); everything the at-most-once channel missed —
  * badges, watermarks, roster state — converges on (re)connect through

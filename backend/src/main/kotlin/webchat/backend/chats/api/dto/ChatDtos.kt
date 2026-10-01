@@ -51,8 +51,9 @@ data class ChatPeerView(
  * The GROUP variant answers `type:'group'` with [title]/[description]
  * and the roster projection: [myRole] of the caller, [memberCount] of
  * the ACTIVE roster (1–200) and the ✓✓ rule of FR-012 —
- * [othersReadUpToSeq] is `MIN(last_read_seq)` of the active members
- * EXCEPT the caller (0 in a group of one — ✓✓ is never set), while
+ * [othersReadUpToSeq] is `MAX(last_read_seq)` of the active members
+ * EXCEPT the caller (✓✓ once at least one other member has read; 0 in
+ * a group of one — ✓✓ is never set), while
  * [myReadUpToSeq] stays the caller's own mark. The required-nullable
  * peer fields render as EXPLICIT `null`s: blocks never apply to groups
  * (Assumptions 006) and `peerReadUpToSeq` is REPLACED by

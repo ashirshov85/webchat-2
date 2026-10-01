@@ -45,17 +45,19 @@ type GroupSyncPageUpdate = SyncPageUpdate & {
  * in — every INCOMING message is attributed to its sender's username
  * (several peers are distinguishable), own messages keep only the
  * status marks. ✓✓ follows the group watermark `othersReadUpToSeq` =
- * MIN(last_read_seq) of the OTHER active members (№13/№26): own
- * messages with `seq ≤ othersReadUpToSeq` render «прочитано ✓✓».
+ * MAX(last_read_seq) of the OTHER active members (№13/№26; semantics
+ * 2026-10-01 «read by at least one»): own messages with
+ * `seq ≤ othersReadUpToSeq` render «прочитано ✓✓».
  *
  * The wired tests drive the US2 chat.read semantics through the real
  * hook exactly like MessengerPage: №13 seeds the watermark, every
  * `chat.read` frame advances THAT member's mark, and the ✓✓ candidate
- * is the MIN over the other roster members — the mark flips only when
- * EVERY other active member has read (spec US2-5). The client holds
+ * is the MAX over the other roster members — the mark flips as soon
+ * as ANY other active member has read (spec US2-5). The client holds
  * the maximum (FR-012): a stale frame or a reconnect refetch with a
- * lower projection (the re-add exception) never rolls a rendered ✓✓
- * back. №17 read marks flow for group windows as for direct ones
+ * lower projection (the departure-of-the-furthest-reader exception)
+ * never rolls a rendered ✓✓ back. №17 read marks flow for group
+ * windows as for direct ones
  * (US2-3 convergence), and №26 deltas carry `othersReadUpToSeq` for
  * the offline catch-up.
  */
@@ -294,7 +296,8 @@ describe('MessageList group ✓✓ by othersReadUpToSeq (№13/№26, FR-012)', 
     )
 
     // The boundary is inclusive: seq ≤ othersReadUpToSeq counts as read
-    // by every other active member (MIN of their watermarks).
+    // once ANY other active member has read that far (MAX of their
+    // watermarks).
     expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓', 'доставлено ✓'])
     expect(container.querySelectorAll('.message-status-read')).toHaveLength(1)
   })
@@ -337,7 +340,7 @@ describe('MessageList group ✓✓ by othersReadUpToSeq (№13/№26, FR-012)', 
 })
 
 describe('MessageList group chat.read handling (US2, T039; realtime-group-events.md §3.7)', () => {
-  it('flips ✓ to ✓✓ only once EVERY other member has read: the watermark is the MIN over the roster', async () => {
+  it('flips ✓ to ✓✓ as soon as ANY other member has read: the watermark is the MAX over the roster', async () => {
     const stream = installStream()
     mockedListMessages.mockResolvedValueOnce(groupPage([groupMessage('out-1', 2, ME)]))
 
@@ -349,17 +352,18 @@ describe('MessageList group chat.read handling (US2, T039; realtime-group-events
       expect(statusTexts(container)).toEqual(['доставлено ✓'])
     })
 
-    // Alice alone has read up to 2 — bob has not, so the MIN of the
-    // others' watermarks stays below 2 and the mark must not flip
-    // (spec US2-5: «все остальные текущие участники просмотрели»).
+    // Alice alone has read up to 2 — bob has not, yet the mark flips:
+    // the MAX of the others' watermarks already reaches the message
+    // (spec US2-5: «хотя бы один другой участник просмотрел»).
     emitGroupRead(stream, GROUP_ID, ALICE, 2)
-    expect(statusTexts(container)).toEqual(['доставлено ✓'])
-
-    emitGroupRead(stream, GROUP_ID, BOB, 2)
-
     await waitFor(() => {
       expect(statusTexts(container)).toEqual(['прочитано ✓✓'])
     })
+
+    // A later, lower mark from another member never rolls it back —
+    // the client holds the maximum (FR-012).
+    emitGroupRead(stream, GROUP_ID, BOB, 1)
+    expect(statusTexts(container)).toEqual(['прочитано ✓✓'])
   })
 
   it('seeds ✓✓ from the №13 group watermark and keeps it on a stale smaller chat.read frame', async () => {
@@ -386,7 +390,7 @@ describe('MessageList group chat.read handling (US2, T039; realtime-group-events
     const stream = installStream()
     mockedListMessages.mockResolvedValueOnce(groupPage([groupMessage('out-1', 2, ME)]))
     mockedGetChat.mockResolvedValueOnce(groupChatView({ othersReadUpToSeq: 2 }))
-    // A re-added member with a stale mark drags the server projection
+    // The departure of the furthest reader drags the server projection
     // DOWN (the FR-012 exception) — the live session keeps its maximum.
     mockedGetChat.mockResolvedValue(groupChatView({ othersReadUpToSeq: 1 }))
 
@@ -459,7 +463,7 @@ describe('MessageList group read marks and sync deltas (US2; №17/№26)', () =
     })
 
     // The others read up to seq 2 while the user was offline; the №26
-    // group delta carries the fresh MIN watermark and the statuses of
+    // group delta carries the fresh MAX watermark and the statuses of
     // already rendered messages flip in place (US2-3).
     rerender(
       <SyncGroupWindow

@@ -613,8 +613,8 @@ describe('useSync — №26 group deltas (feature 006, US2, T039)', () => {
       await result.current.syncNow()
     })
 
-    // The reconnect catch-up is the US2-3 convergence leg: the MIN
-    // watermark of the other active members read while the user was
+    // The reconnect catch-up is the US2-3 convergence leg: the MAX
+    // watermark (read by at least one) of the other active members read while the user was
     // offline must reach the open group window (MessengerPage feeds
     // the update straight into applySyncPage), and the 004 peer
     // projections normalize to "absent" for a group delta.

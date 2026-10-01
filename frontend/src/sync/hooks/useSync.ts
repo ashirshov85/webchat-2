@@ -83,9 +83,10 @@ export interface SyncChatUpdate {
   readonly peerReadUpToSeq?: number
   /**
    * Offline ✓✓ watermark of own GROUP messages (feature 006, US2,
-   * T039): `othersReadUpToSeq` of the №26 group delta — the MIN of
-   * the other active members' read marks, applied monotonically
-   * (max) by the open dialog (FR-012).
+   * T039): `othersReadUpToSeq` of the №26 group delta — the MAX of
+   * the other active members' read marks (✓✓ once any one of them
+   * has read), applied monotonically (max) by the open dialog
+   * (FR-012).
    */
   readonly othersReadUpToSeq?: number
   /** Server-authoritative unread counter of the snapshot (US3, T035). */

@@ -431,7 +431,7 @@ class MessageControllerTest {
             role: MemberRole,
         ): ChatParticipant? = null
 
-        override fun minOtherReadUpToSeq(
+        override fun maxOtherReadUpToSeq(
             chatId: UUID,
             userId: UUID,
         ): Long = 0L

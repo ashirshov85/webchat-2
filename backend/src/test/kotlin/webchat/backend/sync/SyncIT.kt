@@ -563,10 +563,11 @@ class SyncIT(
      * T032 (api-contract.md 006 §3, FR-012): the GROUP delta of №26 — the
      * exact contract field set with the group projection: `type:'group'`,
      * `title`, `memberCount` of the active roster and
-     * `othersReadUpToSeq` = MIN of the OTHER actives' read watermarks
-     * (staged straight on `chat_participants` — the end state the №17
-     * GREATEST-update of T036 produces; the caller's own mark never folds
-     * in), while the peer projection renders as EXPLICIT nulls:
+     * `othersReadUpToSeq` = MAX of the OTHER actives' read watermarks
+     * (✓✓ once any one of them has read; staged straight on
+     * `chat_participants` — the end state the №17 GREATEST-update of
+     * T036 produces; the caller's own mark never folds in), while the
+     * peer projection renders as EXPLICIT nulls:
      * `peer`/`blockedByMe`/`peerReadUpToSeq`. The 005 replay rules stay
      * verbatim over the group: ascending by `seq`, seeded ids verbatim,
      * the caller's own outgoing included, delivery-bounded `unreadCount`,
@@ -605,9 +606,9 @@ class SyncIT(
             .isEqualTo(3)
         assertThat(delta["othersReadUpToSeq"].asLong())
             .overridingErrorMessage(
-                "othersReadUpToSeq is the MIN of the OTHER actives' watermarks (FR-012) — the caller's own " +
-                    "mark never folds in",
-            ).isEqualTo(seeded[GROUP_OTHER_READ_INDEX].seq)
+                "othersReadUpToSeq is the MAX of the OTHER actives' watermarks (FR-012, «read by at least " +
+                    "one») — the caller's own mark never folds in",
+            ).isEqualTo(seeded[GROUP_HIGHER_READ_INDEX].seq)
         assertNullField(delta, "peer")
         assertNullField(delta, "blockedByMe")
         assertNullField(delta, "peerReadUpToSeq")

@@ -66,8 +66,9 @@ import kotlin.concurrent.thread
  *    chat head; re-adding a removed member PRESERVES them and resets
  *    `role='member'`, `hidden=false` — FR-002/FR-013), `removeMember`
  *    (ONE conditional UPDATE `state='removed', role='member'` resolved by
- *    rowcount — the kick×leave convergence), `minOtherReadUpToSeq`
- *    (MIN of the OTHER ACTIVE readers — the ✓✓ rule of FR-012);
+ *    rowcount — the kick×leave convergence), `maxOtherReadUpToSeq`
+ *    (MAX of the OTHER ACTIVE readers — the ✓✓ rule of FR-012, «read by
+ *    at least one»);
  *  * T007/T013 [GroupAdminLogRepository]: the append-only audit of the ten
  *    contract actions (FR-017; the chronology index `(group_id, created_at)`);
  *  * T009/T014 [RedisRealtimePublisher]: the fan-out port legs
@@ -391,31 +392,33 @@ class GroupRepositoryIT : AbstractIntegrationTest() {
     }
 
     @Test
-    fun `minOtherReadUpToSeq folds the active members besides the reader`() {
+    fun `maxOtherReadUpToSeq folds the active members besides the reader`() {
         val owner = newUser()
         val first = newUser()
         val second = newUser()
-        val group = groupRepository.create(GroupTitle.normalize("Минимум"), null, owner, listOf(first, second))
+        val group = groupRepository.create(GroupTitle.normalize("Максимум"), null, owner, listOf(first, second))
         stageHead(group.id, insertMessages(group.id, owner, FOLD_MESSAGES).last())
         participantRepository.advanceReadUpTo(group.id, owner, OWNER_READ)
         participantRepository.advanceReadUpTo(group.id, first, FIRST_READ)
         participantRepository.advanceReadUpTo(group.id, second, SECOND_READ)
 
-        assertThat(participantRepository.minOtherReadUpToSeq(group.id, owner)).isEqualTo(FIRST_READ)
-        assertThat(participantRepository.minOtherReadUpToSeq(group.id, first)).isEqualTo(SECOND_READ)
-        assertThat(participantRepository.minOtherReadUpToSeq(group.id, second))
+        assertThat(participantRepository.maxOtherReadUpToSeq(group.id, owner))
             .overridingErrorMessage(
-                "the fold is the MIN of the OTHER readers (FR-012): besides second only owner and " +
-                    "first remain, MIN(OWNER_READ, FIRST_READ) = FIRST_READ",
+                "the fold is the MAX of the OTHER readers (FR-012, «read by at least one»): " +
+                    "MAX(FIRST_READ, SECOND_READ) = SECOND_READ — the earliest reader already sets ✓✓",
+            ).isEqualTo(SECOND_READ)
+        assertThat(participantRepository.maxOtherReadUpToSeq(group.id, first)).isEqualTo(OWNER_READ)
+        assertThat(participantRepository.maxOtherReadUpToSeq(group.id, second)).isEqualTo(OWNER_READ)
+
+        participantRepository.removeMember(group.id, second)
+        assertThat(participantRepository.maxOtherReadUpToSeq(group.id, owner))
+            .overridingErrorMessage(
+                "the departure of the furthest reader lowers the MAX — new sessions pin to the " +
+                    "lower bound; a live client holds its achieved maximum (FR-012)",
             ).isEqualTo(FIRST_READ)
 
         participantRepository.removeMember(group.id, first)
-        assertThat(participantRepository.minOtherReadUpToSeq(group.id, owner))
-            .overridingErrorMessage("a removed reader drops out of the fold naturally (FR-012)")
-            .isEqualTo(SECOND_READ)
-
-        participantRepository.removeMember(group.id, second)
-        assertThat(participantRepository.minOtherReadUpToSeq(group.id, owner))
+        assertThat(participantRepository.maxOtherReadUpToSeq(group.id, owner))
             .overridingErrorMessage("a group of one never reaches ✓✓ — 0 (data-model §Правила видимости)")
             .isZero
     }
