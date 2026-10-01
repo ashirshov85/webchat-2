@@ -6,7 +6,7 @@
 
 - Локальный стек: `deploy/local/docker-compose.yml` (PG 17, Redis 7) поднят; backend и frontend запускаются как в README репозитория.
 - Два тестовых пользователя A и B с подтверждённым email (флоу 002), между ними есть личный чат (004 №11), у A есть B в контактах (004 №20).
-- Тестовые окна: тест-профиль ужимает `presence`-параметры (TTL 90 c → 3 c, гистерезис 45 c → 2 c) — значения CI ниже используют их; против локального дефолта умножьте ожидания соответственно (135 c worst case).
+- Тестовые окна: тест-профиль ужимает `presence`-параметры (TTL 90 c → 3 c, гистерезис 45 c → 2 c) — значения CI ниже используют их; против локального дефолта умножьте ожидания соответственно (137 c worst case: TTL 90 + гистерезис 45 + 2×poller 1 c — SC-003).
 
 ## Ручные сценарии (браузер: окно A — SPA, окно B — второе устройство/инкогнито-сессия)
 
@@ -39,13 +39,13 @@
 
 ```bash
 # backend: интеграционные сценарии фичи (мультидевайс, метро, self-expiry, приватность, снапшот, rev-merge)
-./gradlew :backend:test --tests 'webchat.backend.presence.*'
+./gradlew test --tests 'webchat.backend.presence.*'   # workdir backend/ (паттерн 002/003)
 
 # frontend: rev-слияние, нейтральный индикатор, a11y-метка
 pnpm --dir frontend test
 
 # контракты: валидация + отсутствие breaking-изменений + drift типов
-./scripts/validate-contracts.sh   # vacuum validate + oasdiff breaking-check (0.6.0 → 0.7.0 additive)
+./scripts/validate-contracts.sh   # vacuum lint -e + oasdiff breaking-check (0.6.0 → 0.7.0 additive)
 
 # нагрузочный smoke (SC-007): подключения + heartbeat + переключения; delivery-метрики messaging не деградируют
 k6 run load/k6/presence.smoke.js
