@@ -228,7 +228,7 @@ description: "Task list for feature implementation: групповые чаты 
 - [x] T068 [P] Валидация наблюдаемости (FR-017/SC-008, quickstart §3.8): `group_admin_log` хронология по группе; `http://localhost:8080/actuator/prometheus` — `webchat_group_authz_denials_total`, `webchat_group_message_fanout_total`/`_seconds`, `webchat_group_size` растут в сценариях; приёмка: все метрики присутствуют в `/actuator/prometheus` и монотонно растут
 - [x] T069 Прогнать полный backend-цикл: `./gradlew check` (workdir `backend/`) — все IT зелёные (GroupLifecycleIT, GroupPrivacyIT, GroupReadStatusIT, GroupRealtimeIT, GroupLimitsIT, GroupAdminLogIT, эволюция ChatList/Sync); приёмка: `./gradlew check` — 0 падений, все IT зелёные
 - [x] T070 [P] Прогнать frontend-цикл: `pnpm --dir frontend test && pnpm --dir frontend lint && pnpm --dir frontend typecheck` — зелёно; приёмка: test/lint/typecheck — все зелёные
-- [ ] T071 Финальная сквозная валидация по `specs/006-group-chats/quickstart.md` (§3.1–§3.9 вручную/E2E) + контрактный конвейер (`vacuum`/`generate:api` drift/`oasdiff breaking`) — все критерии приёмки подтверждены; приёмка: шаги quickstart §3.1–§3.9 пройдены, конвейер drift-free (0 ERR)
+- [x] T071 Финальная сквозная валидация по `specs/006-group-chats/quickstart.md` (§3.1–§3.9 вручную/E2E) + контрактный конвейер (`vacuum`/`generate:api` drift/`oasdiff breaking`) — все критерии приёмки подтверждены; приёмка: шаги quickstart §3.1–§3.9 пройдены, конвейер drift-free (0 ERR)
 
 ---
 
