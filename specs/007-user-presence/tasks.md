@@ -29,7 +29,7 @@
 
 - [ ] T001 [P] Обновить `contracts/openapi.yaml` 0.6.0 → 0.7.0 аддитивно: пути №36 `GET /api/v1/users/me/presence?userIds=` (batch ≤ 200, `{items:[{userId,status:online|offline|unknown,rev}]}`), №37 `POST /api/v1/users/me/presence/heartbeat` (`{connectionId}` → 204), №38 `GET|PUT /api/v1/users/me/presence/settings` (`{incognito}`); SSE-кадры №18 `connected {connectionId}` и `presence.updated {userId,status,rev}`; problem-коды RFC 9457 `presence_ids_too_many` (400), `presence_connection_not_found` (404), `flood_limit` (429, переиспользование)
 - [ ] T002 [P] Создать миграцию `backend/src/main/resources/db/migration/V15__presence_settings.sql`: `ALTER TABLE users ADD COLUMN presence_hidden BOOLEAN NOT NULL DEFAULT FALSE` (data-model §2)
-- [ ] T003 [P] Добавить свойства `presence.*` в `backend/src/main/resources/application.yml` (ttl=90s, hysteresis=45s, heartbeat-interval=30s, poller-interval=1s, snapshot-batch-limit=200 — research §G) и ужать окна в тест-профиле `backend/src/test/resources/application-test.yml` (TTL→3s, гистерезис→2s)
+- [ ] T003 [P] Добавить свойства `presence.*` в `backend/src/main/resources/application.yml` (ttl=90s, hysteresis=45s, heartbeat-interval=30s, poller-interval=1s, snapshot-batch-limit=200 — research §G) и ужать окна в тест-профиле `backend/src/test/resources/application-test.yml` (TTL→3s, гистерезис→2s, poller-interval→200ms — чтобы бюджет SC-003 не флакал из-за slack поллеров)
 
 ---
 
@@ -91,7 +91,7 @@
 
 ### Implementation for User Story 2
 
-- [ ] T024 [US2] Реализовать гистерезис-планирование в `backend/src/main/kotlin/webchat/backend/presence/domain/PresenceService.kt` + `RedisPresenceStore.kt`: потеря последней регистрации (SSE close / явное закрытие) НИКОГДА не публикует сразу — ZADD `presence:offq` с score=now+гистерезис (data-model §1.2, research B1)
+- [ ] T024 [US2] Реализовать гистерезис-планирование в `backend/src/main/kotlin/webchat/backend/presence/domain/PresenceService.kt` + `RedisPresenceStore.kt`: потеря последней регистрации (SSE close / закрытие устройства; ИСКЛЮЧЕНИЕ — logout последней сессии: немедленный «офлайн» без окна, см. T029) НИКОГДА не публикует сразу — ZADD `presence:offq` с score=now+гистерезис (data-model §1.2, research B1)
 - [ ] T025 [US2] Реализовать offq-поллер в `backend/src/main/kotlin/webchat/backend/presence/scheduler/PresenceTransitionScheduler.kt`: fixed-delay 1 c, батчево ZRANGEBYSCORE; на исполнении — есть живая регистрация → отмена + `hysteresis_suppressed_total`++; нет → атомарный CAS online→offline + rev++ + публикация аудитории (идемпотентность конкуренции инстансов — CAS)
 
 **Checkpoint**: US2 независимо проверяем (PresenceHysteresisIT зелёный, QS-2 руками)
@@ -106,7 +106,7 @@
 
 ### Tests for User Story 3 (писать первыми)
 
-- [ ] T026 [P] [US3] Написать `PresenceExpiryIT` в `backend/src/test/kotlin/webchat/backend/presence/PresenceExpiryIT.kt`: тишина heartbeat без явного disconnect → «офлайн» ≤ TTL+гистерезис в 100% случаев (SC-003); регистрации одного пользователя на двух инстансах — единый статус, падение одного инстанса не «дребезжит»; осиротевшая регистрация реконнекта самоистекает, дубль не искажает статус (edges); мультидевайс-logout: logout одной сессии при живой второй → статус «онлайн», logout последней → немедленный «офлайн» без окна (edge); после истечения rev-TTL новая ревизия строго больше прежней (эпоха now_ms) — слияние не ломается
+- [ ] T026 [P] [US3] Написать `PresenceExpiryIT` в `backend/src/test/kotlin/webchat/backend/presence/PresenceExpiryIT.kt`: тишина heartbeat без явного disconnect → «офлайн» ≤ TTL+гистерезис+2×poller-interval в 100% случаев (SC-003, slack поллеров); регистрации одного пользователя на двух инстансах — единый статус, падение одного инстанса не «дребезжит»; осиротевшая регистрация реконнекта самоистекает, дубль не искажает статус (edges); мультидевайс-logout: logout одной сессии при живой второй → статус «онлайн», logout последней → немедленный «офлайн» без окна (edge); после истечения rev-TTL новая ревизия строго больше прежней (эпоха now_ms) — слияние не ломается
 
 ### Implementation for User Story 3
 
@@ -228,6 +228,7 @@ Task: "T018 [P] / T019 [P] / T021 [P] frontend: presenceStore.ts, presenceApi.ts
 ## Notes
 
 - [P] = разные файлы, нет зависимостей от незавершённых задач; параллелизм — только между исполнителями, один агент идёт последовательно (конституция, Development Workflow)
+- Терминология: «снапшот» ≡ «снимок» (spec.md) — один и тот же batch-запрос №36
 - [Story]-метка связывает задачу с user story для трассировки
 - Все числовые параметры (TTL 90 c, heartbeat 30 c, гистерезис 45 c, немедленная публикация «онлайн») — из contracts/presence-api.md §2, contracts/presence-events.md §3 (каноническая фиксация FR-004) и research §G; тест-профиль ужимает окна
 - Тесты красные до реализации (VI); Definition of Done: реализация + зелёные тесты + lint + контракт (если затронут)
