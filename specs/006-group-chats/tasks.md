@@ -232,6 +232,15 @@ description: "Task list for feature implementation: групповые чаты 
 
 ---
 
+## Phase 10: Bugfixes
+
+**Purpose**: Регрессионные фиксы дефектов реализации фичи (требования/контракт не меняются — spec.md/plan.md/contracts не трогаются; конституция I: код только через задачи tasks.md)
+
+- [ ] T072 [US3] Написать регрессионный тест `frontend/src/groups/components/__tests__/GroupInfoPanel.add-members.test.tsx` (Vitest + Testing Library, мок `listContacts`): клик «Добавить участников» → после resolve запроса `AddMembersPicker` рендерится, срез «Загрузка контактов…» не зависает (собственная запись эффекта в свои deps не отменяет запрос); приёмка: тест КРАСНЫЙ на текущем коде (воспроизводит баг: статус навсегда `loading`)
+- [ ] T073 [US3] Исправить эффект ленивой загрузки контактов в `frontend/src/groups/components/GroupInfoPanel.tsx` (строки 212–238): исключить `contactsStatus` из deps эффекта `[addOpen, contactsStatus, contactsReload]` → `[addOpen, contactsReload]` (эффект сам ставит `contactsStatus='loading'` → cleanup own-итерации помечает `cancelled` и отбрасывает результат `listContacts`); сохранить ленивость (загрузка только при первом открытии секции) и ретрай «Повторить» (сброс в `idle` + инкремент `contactsReload`); приёмка: зелёный T072, `pnpm --dir frontend test && pnpm --dir frontend lint && pnpm --dir frontend typecheck` (depends T072)
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -240,6 +249,7 @@ description: "Task list for feature implementation: групповые чаты 
 - **Foundational (Phase 2)**: зависит от Phase 1 — БЛОКИРУЕТ все stories
 - **User Stories (Phases 3–8)**: все зависят от Phase 2; далее — в порядке приоритета P1 → P2 → P3 (US1 → US2 → US3 → US4 → US5 → US6); независимы в проверке, но реализуются последовательно одним агентом (конституция, Workflow)
 - **Polish (Phase 9)**: зависит от завершения всех stories
+- **Bugfixes (Phase 10)**: после Phase 9; T072 → T073 строго последовательно (тест первым — конституция VI)
 
 ### User Story Dependencies
 
