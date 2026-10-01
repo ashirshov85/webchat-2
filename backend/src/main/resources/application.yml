@@ -3,6 +3,9 @@ spring:
     name: backend
   main:
     banner-mode: "off"
+  threads:
+    virtual:
+      enabled: true
   datasource:
     # Dev defaults mirror deploy/local/docker-compose.yml; real credentials come from env / K8s Secrets (SC-005)
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/webchat}

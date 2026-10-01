@@ -15,6 +15,8 @@ import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * The per-user SSE connection table of the realtime channel (T018;
@@ -60,6 +62,15 @@ class SseConnectionRegistry(
 
     private val listeners = CopyOnWriteArraySet<ConnectionListener>()
 
+    /**
+     * ReentrantLock instead of `@Synchronized`: on Java 21, a virtual
+     * thread BLOCKED on a monitor pins its carrier — a reconnect storm
+     * (thousands of SSE clients re-registering at once) would pin every
+     * carrier and stall the whole virtual-thread scheduler (JEP 491
+     * removes this only from JDK 24 on).
+     */
+    private val monitor = ReentrantLock()
+
     private val heartbeatScheduler: ScheduledExecutorService =
         Executors
             .newSingleThreadScheduledExecutor { runnable ->
@@ -78,11 +89,10 @@ class SseConnectionRegistry(
      * user notifies [ConnectionListener.onFirstConnection] (the T019
      * subscribe hook); re-registrations of a known emitter are no-ops.
      */
-    @Synchronized
     fun register(
         userId: UUID,
         emitter: SseEmitter,
-    ) {
+    ) = monitor.withLock {
         val userEmitters = emittersByUser.computeIfAbsent(userId) { CopyOnWriteArraySet() }
         val firstConnection = userEmitters.isEmpty()
         userEmitters.add(emitter)
@@ -98,12 +108,11 @@ class SseConnectionRegistry(
      * notifies [ConnectionListener.onLastConnectionClosed] (the T019
      * unsubscribe hook); unknown pairs are silent no-ops.
      */
-    @Synchronized
     fun unregister(
         userId: UUID,
         emitter: SseEmitter,
-    ) {
-        val userEmitters = emittersByUser[userId] ?: return
+    ) = monitor.withLock {
+        val userEmitters = emittersByUser[userId] ?: return@withLock
         userEmitters.remove(emitter)
         if (userEmitters.isEmpty()) {
             emittersByUser.remove(userId, userEmitters)
