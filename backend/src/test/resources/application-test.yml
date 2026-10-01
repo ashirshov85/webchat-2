@@ -1,0 +1,8 @@
+# 007 tasks.md T003: tightened presence windows for the IT profile —
+# SC-003 budget must not flake on poller slack, and registrations must not
+# expire mid-scenario longer than TTL; read by T011/T023/T026
+presence:
+  ttl: 3s
+  hysteresis: 2s
+  heartbeat-interval: 1s
+  poller-interval: 200ms

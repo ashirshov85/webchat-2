@@ -2,6 +2,7 @@ package webchat.backend
 
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
+import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.testcontainers.containers.GenericContainer
@@ -13,6 +14,7 @@ import java.security.spec.ECGenParameterSpec
 import java.util.Base64
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("test")
 @Suppress("UtilityClassWithPublicConstructor")
 abstract class AbstractIntegrationTest {
     companion object {
