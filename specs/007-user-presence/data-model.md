@@ -14,6 +14,7 @@
 |---|---|---|
 | connectionId | UUID | Сгенерирован сервером при открытии SSE; виден клиенту в фрейме `connected`; идентификатор heartbeat'а (№37) |
 | userId | UUID | Владелец (sub токена) |
+| sessionId | UUID | Сессия подключения (sid из access-токена SSE); связь для per-session logout-очистки (002: logout отзывает одну сессию; edge «мультидевайс-logout») |
 | expiresAt | epoch-ms | Горизонт жизни; продлевается heartbeat'ом (+90 c), research §G |
 | createdAt | epoch-ms | Момент регистрации (диагностика) |
 
@@ -45,7 +46,8 @@
    ├── восстановление ≥1 регистрации в окне → отмена (suppressed++), назад [online] без события
    └── окно истекло, регистраций 0 → CAS online→offline, rev++ ──► [published=offline] ── событие аудитории
 [published=*]
-   │ logout (REST 002) ──► очистка всех регистраций + немедленный CAS→offline (обход offq)  [edge: без окна]
+   │ logout (REST 002, per-session) ──► очистка регистраций этой сессии (по sessionId);
+   │   остались живые регистрации → статус не меняется; регистраций 0 → немедленный CAS→offline (обход offq)  [edge: без окна]
 [published=online]
    │ включение «невидимки» ──► немедленный CAS→offline (rev++, одно переключение), заморозка событий
    │ выключение «невидимки» ──► публикация фактического статуса (rev++)
@@ -103,8 +105,8 @@ ALTER TABLE users ADD COLUMN presence_hidden BOOLEAN NOT NULL DEFAULT FALSE;
 | `presence:alive:{userId}` | ZSET | member=connectionId, score=expiresAt | Ленивая чистка ZREMRANGEBYSCORE −inf..now при каждом чтении; удаление ключа при пустоте |
 | `presence:watch` | ZSET (глобальный) | member=userId, score=max(expiresAt) регистраций | Триггер watcher'а тихих истечений; обновляется при каждом изменении регистраций |
 | `presence:offq` | ZSET (глобальный) | member=userId, score=publishAt | Гистерезис-очередь; отменяется восстановлением, исполняется CAS-переходом |
-| `presence:pub:{userId}` | String | `online` \| `offline` | Последний опубликованный статус; TTL 25 ч |
-| `presence:rev:{userId}` | String (int) | Монотонная ревизия | TTL 7 ч, продлевается при инкременте |
+| `presence:pub:{userId}` | String | `online` \| `offline` | Последний опубликованный статус; TTL 25 ч, продлевается heartbeat-ом и переходами; отсутствие ключа трактуется как `offline` (CAS nil→online валиден) |
+| `presence:rev:{userId}` | String (int) | Монотонная ревизия | TTL 7 ч, продлевается при инкременте; при nil/истечении Lua инициализирует ревизию меткой now_ms (int64) — глобальная монотонность между «эпохами», клиентское правило «строго больше» сохраняется |
 | `presence:online:count` | String (int) | Число опубликованных «онлайн» | Атомарно инкрементится/декрементируется в Lua-переходах; экспорт gauge FR-009 |
 
 Атомарность: переходы (CAS pub + INCR rev + арифметика счётчика + offq-мутации) — Lua-скрипты; конкуренция поллеров/инстансов безопасна (повтор — no-op). Ключи перечисляемых множеств (watch/offq) батчево обрабатываются поллерами (LIMIT за тик) — O(log n) на операцию, без KEYS/SCAN (research A2).
