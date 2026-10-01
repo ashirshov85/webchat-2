@@ -30,20 +30,20 @@
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+*GATE: Обязателен до research-раунда SDD; повторная проверка — после design-раунда.*
 
 | Принцип | Статус | Обоснование |
 |---|---|---|
-| I. Spec-Driven | PASS | Артефакты spec→plan→research→data-model→contracts→quickstart до кода; задачи — в tasks.md (Phase 2) |
+| I. Spec-Driven | PASS | Артефакты spec→plan→research→data-model→contracts→quickstart до кода; задачи — в tasks.md (раунд /speckit.tasks) |
 | II. Stateless + бюджеты | PASS | Всё состояние присутствия — Redis (TTL/score-expiry) + одна колонка PG; инстансы не держат статус; расчёт нагрузки — §Load Estimate. Падение инстанса не искажает сигнал (US3): регистрации самоистекают ≤ TTL+гистерезис |
-| III. Exactly-once доставки | PASS* | Принцип о сообщениях чатов; события присутствия — сигналы состояния в at-most-once канале №18 (та же дисциплина, что `chat.read` в 004): дубли/потери кадра сходятся снапшотом и идемпотентным rev-слиянием (FR-006). История не накапливается (FR-001) |
+| III. Exactly-once доставки | PASS | Принцип регламентирует доставку сообщений (durable-сущности); события присутствия — сигналы состояния в at-most-once канале №18 (конвенция 004 `chat.read`). Мандат «тесты на потерю/дубль/порядок для любого пути доставки» исполнен: дубль и потеря presence-кадра покрыты PresenceIT/Vitest (T011/T012: сходимость снапшотом по max(rev)); сам путь №18 покрыт loss/order-тестами 004/005 (delivery-resilience.js, реконнект-цикл). История не накапливается (FR-001) |
 | IV. API-First | PASS | Новые эндпоинты №36–38 + SSE-событие `presence.updated` + opening-фрейм `connected` — только аддитивно в `contracts/openapi.yaml` 0.7.0; TS-типы генерируются; unknown `event:` игнорируются (обратная совместимость) |
 | V. Security/Privacy | PASS | Аудитория видимости вычисляется на сервере (PG: чаты ∪ контакты − блок-пары); «невидимка» неотличима от офлайна; «нет доступа» без различения «офлайн»/«скрыто» (FR-007); Bearer-only, токен не в URL |
 | VI. Test-First | PASS | Интеграционные тесты: мультидевайс, метро-серия, self-expiry, приватность/адресация, невидимка, гонка снапшот/событие; Vitest на rev-merge и нейтральный индикатор; k6 presence-smoke (SC-007) |
-| VII. YAGNI | PASS | Без нового брокера/канала (reuse Redis Pub/Sub + SSE №18); без группового UI, истории, last-seen; отвергнутые альтернативы — research.md §A1–A7 |
+| VII. YAGNI | PASS | Без нового брокера/канала (reuse Redis Pub/Sub + SSE №18); без группового UI, истории, last-seen; отвергнутые альтернативы — research.md §A1–A3 (хранение, механика истечения, heartbeat) и §B1/§C1/§C3/§D1 |
 | VIII. SOLID | PASS | Пакет `presence/`: домен зависит от портов `PresenceStore` / `VisibilityAudienceReader` (DIP), Redis/JDBC — адаптеры; один пакет — одна фича (SRP); новое событие — расширение существующего канала без правки ядра доставки |
 
-*PASS* — не является нарушением: принцип III регламентирует доставку сообщений (durable-сущности); для эфемерных сигналов состояния конвенция at-most-once + сходимость установлена 004 и переиспользуется.
+*Примечание к принципу III* — не является нарушением: принцип III регламентирует доставку сообщений (durable-сущности); для эфемерных сигналов состояния конвенция at-most-once + сходимость установлена 004 и переиспользуется. Complexity Tracking не заполняется — нарушение конституции отсутствует, интерпретация зафиксирована здесь.
 
 ## Load Estimate (SC-007, конституция II)
 
@@ -109,11 +109,13 @@ frontend/src/presence/
 └── __tests__/
 
 frontend/src/chats/components/        # интеграция: ChatListItem (direct), ContactList; заголовок 1:1 — DirectChatHeader в chats/pages/MessengerPage.tsx
+frontend/src/settings/pages/
+└── PresenceSettingsPage.tsx          # №38: переключатель «невидимки» в настройках профиля (T034; по образцу SecurityPage.tsx, регистрация в роутинге настроек)
 load/k6/
 └── presence.smoke.js                 # k6: подключения+heartbeat+переключения; отсутствие деградации messaging
 ```
 
-**Structure Decision**: Конвенция monorepo 001–006: package-by-feature в `backend/…/webchat/backend/`, фича-модуль `frontend/src/presence/` с точечной интеграцией в существующие компоненты; contracts — аддитивная правка корневого `contracts/openapi.yaml` (0.6.0 → 0.7.0). Точечные интеграции вне `presence/`: `backend/…/realtime/` (opening-фрейм `connected` + хуки жизненного цикла подключений — T013), `backend/…/auth/` (logout-очистка регистраций сессии — T029).
+**Structure Decision**: Конвенция monorepo 001–006: package-by-feature в `backend/…/webchat/backend/`, фича-модуль `frontend/src/presence/` с точечной интеграцией в существующие компоненты; contracts — аддитивная правка корневого `contracts/openapi.yaml` (0.6.0 → 0.7.0). Точечные интеграции вне `presence/`: `backend/…/realtime/` (opening-фрейм `connected` + хуки жизненного цикла подключений — T013), `backend/…/auth/` (logout-очистка регистраций сессии — T029), `frontend/src/settings/pages/` (страница «невидимки» №38 — T034). Единообразие виджета — shared-модулями `frontend/src/presence/` (общая библиотека, конституция IV), отдельная widget-задача не выделяется.
 
 ## Complexity Tracking
 
