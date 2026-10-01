@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deliveryAck } from '../../api/chats'
-import { ACK_BATCH_LIMIT, ACK_DEBOUNCE_MS, createAckBatcher } from '../ack'
+import { ACK_BATCH_LIMIT, ACK_DEBOUNCE_MS, createAckBatcher, getAckBatcher } from '../ack'
 import type { AckBatcher } from '../ack'
 
 vi.mock('../../api/chats', () => ({ deliveryAck: vi.fn() }))
@@ -178,6 +178,109 @@ describe('dispose cancels the timer and drops the tail', () => {
     await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
 
     expect(mockedDeliveryAck).not.toHaveBeenCalled()
+    expect(batcher.pendingSize()).toBe(0)
+  })
+})
+
+/**
+ * §5.5 drop (feature 006, US5, T055 → T058; realtime-group-events.md
+ * §5.5 + api-contract.md №25): after `group.you_removed` the server
+ * treats the caller as a non-participant for the group's chatId — an
+ * ack batch carrying it is refused WHOLE (403 not_participant,
+ * all-or-refusal), so the removed group's chatId must leave the
+ * pending №25 batches: `drop(chatId)` tombstones the chat — its
+ * pending position is discarded (never sent) and acks arriving AFTER
+ * the removal are suppressed too (the §1 order race may still feed
+ * frames committed before the removal through useChatMessages/useSync).
+ * The `group.deleted` case joins with the same call in US6 (T062).
+ */
+describe('§5.5: a chat dropped after group.you_removed leaves the pending №25 batches', () => {
+  it('a pending position of the removed group is never sent — otherwise the whole batch gets 403 not_participant', async () => {
+    mockedDeliveryAck.mockResolvedValue(undefined)
+    batcher.ack(chatId(1), 5)
+    batcher.ack(chatId(2), 9)
+
+    batcher.drop(chatId(1))
+
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+
+    expect(mockedDeliveryAck).toHaveBeenCalledTimes(1)
+    expect(mockedDeliveryAck).toHaveBeenCalledWith(ackItems({ [chatId(2)]: 9 }))
+    expect(batcher.pendingSize()).toBe(0)
+  })
+
+  it('a late ack of the removed chat is suppressed — the §1 race may still deliver frames committed before the removal', async () => {
+    mockedDeliveryAck.mockResolvedValue(undefined)
+    batcher.drop(chatId(1))
+
+    batcher.ack(chatId(1), 5)
+
+    expect(batcher.pendingSize()).toBe(0)
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+    expect(mockedDeliveryAck).not.toHaveBeenCalled()
+  })
+
+  it('drop is idempotent and tombstones even a chat with nothing pending (FR-015)', async () => {
+    mockedDeliveryAck.mockResolvedValue(undefined)
+    batcher.ack(chatId(1), 5)
+    batcher.drop(chatId(1))
+    batcher.drop(chatId(1))
+
+    batcher.drop(chatId(2))
+    batcher.ack(chatId(2), 7)
+
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+
+    expect(mockedDeliveryAck).not.toHaveBeenCalled()
+    expect(batcher.pendingSize()).toBe(0)
+  })
+})
+
+describe('the shared per-account batcher carries the §5.5 drop (T058 realtime wiring)', () => {
+  it("getAckBatcher(user).drop excludes the chat from that account's pending №25 batches", async () => {
+    mockedDeliveryAck.mockResolvedValue(undefined)
+    const shared = getAckBatcher('00000000-0000-4000-8000-00000000000a')
+    try {
+      shared.ack(chatId(1), 5)
+      shared.ack(chatId(2), 9)
+
+      shared.drop(chatId(1))
+
+      await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+
+      expect(mockedDeliveryAck).toHaveBeenCalledTimes(1)
+      expect(mockedDeliveryAck).toHaveBeenCalledWith(ackItems({ [chatId(2)]: 9 }))
+      expect(shared.pendingSize()).toBe(0)
+    } finally {
+      shared.dispose()
+    }
+  })
+})
+
+/**
+ * §5.5 group.deleted half (US6, T062 → T066; the case T055 deferred
+ * to T062): №30 hard-delete makes the caller a non-participant of the
+ * group's chatId exactly like `group.you_removed` — №25 stays
+ * all-or-refusal, so the deleted group's chatId leaves the pending
+ * batches through the SAME `drop(chatId)` (the MessengerPage wiring
+ * drops it on the `group.deleted` frame, T066): the pending position
+ * is discarded and the §1 race's late acks — frames committed before
+ * the delete may still be published after it — are suppressed.
+ */
+describe('§5.5: a chat dropped after group.deleted leaves the pending №25 batches too', () => {
+  it('the hard-deleted group (№30) never reaches №25 — pending discarded, late acks suppressed', async () => {
+    mockedDeliveryAck.mockResolvedValue(undefined)
+    batcher.ack(chatId(1), 5)
+    batcher.ack(chatId(2), 9)
+
+    batcher.drop(chatId(1))
+    // §1 race: a frame committed before the delete acks after it.
+    batcher.ack(chatId(1), 7)
+
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+
+    expect(mockedDeliveryAck).toHaveBeenCalledTimes(1)
+    expect(mockedDeliveryAck).toHaveBeenCalledWith(ackItems({ [chatId(2)]: 9 }))
     expect(batcher.pendingSize()).toBe(0)
   })
 })

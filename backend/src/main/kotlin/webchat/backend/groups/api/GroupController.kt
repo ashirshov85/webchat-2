@@ -4,16 +4,23 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import webchat.backend.groups.api.dto.AddMembersRequest
 import webchat.backend.groups.api.dto.CreateGroupRequest
+import webchat.backend.groups.api.dto.GroupMember
 import webchat.backend.groups.api.dto.GroupMembersResponse
 import webchat.backend.groups.api.dto.GroupView
+import webchat.backend.groups.api.dto.SetMemberRoleRequest
+import webchat.backend.groups.api.dto.TransferOwnershipRequest
+import webchat.backend.groups.api.dto.UpdateGroupRequest
 import webchat.backend.groups.domain.service.GroupService
 import java.util.UUID
 
@@ -27,7 +34,9 @@ import java.util.UUID
  * resolves the token owner, runs the request-shape validation of the
  * T016 DTOs (whose value objects carry the FR-001 bounds) and maps the
  * scenario results to the contract codes — №27 `201 GroupView`, №28
- * `200 GroupView`, №31 `200 {members: […]}`.
+ * `200 GroupView`, №29 `200 GroupView`, №30 `204`, №31 `200 {members:
+ * […]}`, №32 `204`, №33 `204`, №34 `200 GroupMember`, №35 `200
+ * GroupView`.
  *
  * The security chain has ALREADY authenticated the request (the same
  * Bearer gate as every 001 endpoint); the owner id is the token `sub`
@@ -35,11 +44,14 @@ import java.util.UUID
  * by [GroupsExceptionHandler]; the path `chatId` arrives as a RAW
  * string on purpose (the №11 `peerUserId` convention) so a malformed
  * value dies as the contract `400 errors: {chatId: [invalid_uuid]}`,
- * never the default error page.
+ * never the default error page — and the №32/№34/№35 single-target
+ * `userId` (path variable or №35 body field) carries the SAME split
+ * through `parseUserId`.
  *
- * The later stories grow THIS class in place: №32/№34/№35 with US3
- * (T044), №29 with US4 (T052), №33/№30 with US6 (T065).
+ * The class is COMPLETE through US6 (T065): №33/№30 close the group
+ * lifecycle — the leave and the hard delete below.
  */
+@Suppress("TooManyFunctions") // one handler per №27–№35 contract operation (№30/№33 of T065 tip the count)
 @RestController
 @RequestMapping("/api/v1/groups")
 class GroupController(
@@ -84,6 +96,65 @@ class GroupController(
     ): GroupView = groupService.get(callerId(accessToken), parseChatId(chatId))
 
     /**
+     * Contract №29 `PATCH /api/v1/groups/{chatId}` (api-contract.md 006
+     * №29, FR-007, T052): the metadata patch. The request-shape gates
+     * run in the contract's own order BEFORE the service — the raw
+     * `chatId` path gate (`400 … [invalid_uuid]`, the №28 convention),
+     * the patch shape of the T016 `UpdateGroupRequest` (`400
+     * empty_patch` on a body with NEITHER field) and the FR-001 bounds
+     * of the PRESENT fields through the T005 value objects (`400
+     * invalid_title`/`invalid_description` — a MIXED patch dies
+     * atomically HERE, before anything lands) — and the scenario
+     * answers `200` with the caller's [GroupView] over the MERGED
+     * metadata. The caller-dependent refusals (the uniform `404
+     * group_not_found` membership gate, the `403 forbidden_role` of a
+     * plain member) and the `title_changed`/`description_changed`
+     * journal facts with the post-commit `group.updated` broadcast stay
+     * in [GroupService.update] (T051).
+     */
+    @PatchMapping("/{chatId}")
+    fun update(
+        @PathVariable chatId: String,
+        @RequestBody request: UpdateGroupRequest,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): GroupView {
+        val parsedChatId = parseChatId(chatId)
+        request.requirePatch()
+        return groupService.update(
+            callerId = callerId(accessToken),
+            chatId = parsedChatId,
+            title = request.patchedTitle(),
+            description = request.validatedDescription(),
+        )
+    }
+
+    /**
+     * Contract №30 `DELETE /api/v1/groups/{chatId}` (api-contract.md 006
+     * №30, FR-006, T065): the OWNER-ONLY hard delete — a thin adapter
+     * over [GroupService.delete]. The request-shape gate is the raw
+     * `chatId` path pair of the №28 convention (a malformed value is the
+     * contract `400 errors: {chatId: [invalid_uuid]}` BEFORE the
+     * service), and every caller-dependent rule stays in the service:
+     * the uniform `404 group_not_found` membership gate (a stranger, a
+     * removed former member AND the REPEATED №30 — the CASCADE of the
+     * first delete already took the caller's row away, api-contract.md
+     * 006 §2 «Идемпотентность»), the `403 not_group_owner` refusal of an
+     * admin or a plain member. Success is the bodyless `204`; the
+     * CASCADE erasure of `chats`/`messages`/`chat_participants`, the
+     * content-free `group_deleted` journal fact and the post-commit
+     * `group.deleted` to every pre-delete snapshot member ride the
+     * service transaction.
+     */
+    @DeleteMapping("/{chatId}")
+    fun deleteGroup(
+        @PathVariable chatId: String,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Void> {
+        groupService.delete(callerId(accessToken), parseChatId(chatId))
+        return ResponseEntity.noContent().build()
+    }
+
+    /**
      * Contract №31 `POST /api/v1/groups/{chatId}/members`: the batch
      * shape gate (`400 invalid_user_ids` on an absent/empty/non-uuid/
      * duplicate/oversized batch) runs BEFORE the service, then the
@@ -106,6 +177,112 @@ class GroupController(
                 ),
         )
 
+    /**
+     * Contract №32 `DELETE /api/v1/groups/{chatId}/members/{userId}`
+     * (api-contract.md 006 №32, FR-004/FR-010, T044): the kick — a thin
+     * adapter over [GroupService.kick]; the request-shape gate is the raw
+     * `chatId`/`userId` pair (each a contract `400 … [invalid_uuid]`
+     * BEFORE the service), and every caller-dependent rule (the `404`
+     * gate, the `400 self_forbidden` self-kick refusal decided BEFORE the
+     * hierarchy, the `403 forbidden_role`/`role_hierarchy_violation` role
+     * ladder, the `409 target_not_member` convergence of the repeated
+     * №32/«исключение×выход» race) stays in the service. Success is the
+     * bodyless `204`; the `group.you_removed {reason:'kicked'}` final
+     * frame to the kicked user and `group.member.removed` to the survivors
+     * ride the post-commit leg of the service.
+     */
+    @DeleteMapping("/{chatId}/members/{userId}")
+    fun kickMember(
+        @PathVariable chatId: String,
+        @PathVariable userId: String,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Void> {
+        groupService.kick(
+            callerId = callerId(accessToken),
+            chatId = parseChatId(chatId),
+            targetUserId = parseUserId(userId),
+        )
+        return ResponseEntity.noContent().build()
+    }
+
+    /**
+     * Contract №33 `DELETE /api/v1/groups/{chatId}/membership`
+     * (api-contract.md 006 №33, FR-005, T065): the VOLUNTARY exit — a
+     * thin adapter over [GroupService.leave]. The request-shape gate is
+     * the raw `chatId` path pair of the №28 convention (a malformed
+     * value is the contract `400 errors: {chatId: [invalid_uuid]}`
+     * BEFORE the service), and every caller-dependent rule stays in the
+     * service: the uniform `404 group_not_found` membership gate (a
+     * stranger AND the REPEATED №33 — the membership row is already
+     * `removed`, api-contract.md 006 §2 «Идемпотентность») and the `403
+     * owner_must_transfer` refusal of an owner leaving without a №35
+     * hand-over. Success is the bodyless `204`; the surviving
+     * watermarks, the leaver's attributed messages, the `member_left`
+     * journal fact and the post-commit `group.you_removed
+     * {reason:'left'}` + `group.member.removed` pair ride the service
+     * transaction.
+     */
+    @DeleteMapping("/{chatId}/membership")
+    fun leaveMembership(
+        @PathVariable chatId: String,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Void> {
+        groupService.leave(callerId(accessToken), parseChatId(chatId))
+        return ResponseEntity.noContent().build()
+    }
+
+    /**
+     * Contract №34 `PUT /api/v1/groups/{chatId}/members/{userId}/role`
+     * (api-contract.md 006 №34, FR-003, T044): the admin grant/revoke —
+     * the request-shape gates run in the contract's own order (the raw
+     * path pair first, then the T016 `SetMemberRoleRequest` refusing
+     * everything but `admin`|`member` as `400 invalid_role` — `owner`
+     * moves only through №35), and the scenario answers `200` with the
+     * UPDATED [GroupMember]. The caller-dependent refusals (`404` gate,
+     * `400 self_forbidden` for the owner's own row, `403
+     * not_group_owner`, `409 target_not_member`) and the
+     * `group.role.changed` post-commit broadcast stay in the service.
+     */
+    @PutMapping("/{chatId}/members/{userId}/role")
+    fun setMemberRole(
+        @PathVariable chatId: String,
+        @PathVariable userId: String,
+        @RequestBody request: SetMemberRoleRequest,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): GroupMember =
+        groupService.setRole(
+            callerId = callerId(accessToken),
+            chatId = parseChatId(chatId),
+            targetUserId = parseUserId(userId),
+            role = request.validatedRole(),
+        )
+
+    /**
+     * Contract №35 `POST /api/v1/groups/{chatId}/owner`
+     * (api-contract.md 006 №35, FR-003, T044): the ownership transfer —
+     * the request-shape gate is the T016 `TransferOwnershipRequest` raw
+     * `userId` body field (a malformed value is the contract `400
+     * errors: {userId: [invalid_uuid]}` decided HERE, the №11
+     * `peerUserId` convention), and the scenario answers `200` with the
+     * caller's [GroupView] — HIS `myRole` is now `admin`, the roster
+     * carries the single new owner. The `404` gate, the `400
+     * self_forbidden` transfer-to-self edge, `403 not_group_owner`, the
+     * `409 target_not_member` target gate and the `group.role.changed`
+     * frame PAIR of the demote-then-promote transaction stay in the
+     * service.
+     */
+    @PostMapping("/{chatId}/owner")
+    fun transferOwnership(
+        @PathVariable chatId: String,
+        @RequestBody request: TransferOwnershipRequest,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): GroupView =
+        groupService.transferOwnership(
+            callerId = callerId(accessToken),
+            chatId = parseChatId(chatId),
+            targetUserId = parseUserId(request.userId),
+        )
+
     private fun callerId(accessToken: Jwt): UUID = UUID.fromString(accessToken.subject)
 
     /**
@@ -121,6 +298,26 @@ class GroupController(
             UUID.fromString(value)
         } catch (failure: IllegalArgumentException) {
             throw InvalidGroupChatIdException(failure)
+        }
+    }
+
+    /**
+     * The №32/№34/№35 single-target gate (api-contract.md 006 §2): a
+     * malformed `userId` — the PATH variable of №32/№34, the body
+     * field of №35 — becomes the contract `400 errors: {userId:
+     * [invalid_uuid]}` BEFORE the service is touched, exactly the two
+     * refusal kinds the №28/№31 `chatId` gate above keeps apart: a
+     * WELL-FORMED but foreign/removed target rides along and is
+     * refused by the service's own `409 target_not_member` (or the
+     * uniform 404 of the group gate), so the shape refusal and the
+     * roster refusal never blur.
+     */
+    private fun parseUserId(raw: String?): UUID {
+        val value = raw ?: throw InvalidGroupUserIdException()
+        return try {
+            UUID.fromString(value)
+        } catch (failure: IllegalArgumentException) {
+            throw InvalidGroupUserIdException(failure)
         }
     }
 }

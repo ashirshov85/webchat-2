@@ -76,6 +76,36 @@
  * applies STATE, never deltas (FR-015) — `memberCount` converges on
  * the next №12 refetch. The removal/role events of the later stories
  * join here with their own reducers (T048/T053/T058/T066).
+ *
+ * `group.updated` (feature 006, T053; US4, FR-007): the §3.1 frame
+ * carries the group's NEW metadata as state, so a known group row
+ * adopts the fresh `title` in place — the rename shows in «Чаты»
+ * WITHOUT a reload (US4 test), for the actor too (§3.1 fans the frame
+ * out to every active participant). The rest of the row is №12-owned
+ * and passes through untouched; a frame of an unknown group is a no-op
+ * (the row materializes via №12, the US1-2 precedent), and a duplicate
+ * frame returns the previous reference (FR-015). The frame's
+ * `description` has no №12 projection — only the №28 view (useGroup)
+ * renders it.
+ *
+ * `group.you_removed` (feature 006, T058; US5, §5.2/§1, FR-010/FR-015):
+ * the FINAL frame of the group for this user — the №12-sourced row
+ * leaves «Чаты» deterministically, WITHOUT a refetch round (the server
+ * has already answered: the membership row is dead), and the group is
+ * tombstoned: every LATER frame of it — the §1 post-commit order race
+ * may publish a message/roster frame committed before the removal
+ * after it — is ignored (no US1-2 refetch, no rename, no
+ * resurrection). The tombstone is group-scoped (direct chats and other
+ * groups keep flowing) and lives until №12 returns the group again
+ * (the US6 re-add path: server truth outranks the local tombstone).
+ *
+ * `group.deleted` (feature 006, T066; US6, §3.5/§5.2, FR-006) joins
+ * with the same shape: the №30 hard-delete broadcast to every FORMER
+ * active member removes the row without a refetch round and tombstones
+ * the `groupId` against the §1 order race — but the tombstone is
+ * PERMANENT for this id: №30 erased the chat, so №12 can never return
+ * it (no re-add revival path, unlike `group.you_removed`). The removal
+ * stays group-scoped (a direct chat sharing the id is never dropped).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { listChats } from '../../api/chats'
@@ -340,6 +370,25 @@ function mergeRefetchedChats(items: ChatListItem[], previous: ChatListItem[]): C
   return sortChatListItems(merged)
 }
 
+/**
+ * Applies one §3.1 `group.updated` frame to the list (feature 006,
+ * T053; US4, FR-007): a KNOWN group row adopts the frame's `title` as
+ * state — the rename shows in «Чаты» without a reload; everything the
+ * frame does not describe stays №12-owned. Returns the previous
+ * reference when nothing changed (unknown/direct chatId, same title) —
+ * idempotent under redelivery (FR-015).
+ */
+function applyGroupRenamed(chats: ChatListItem[], groupId: string, title: string): ChatListItem[] {
+  const index = chats.findIndex((item) => item.chatId === groupId)
+  const current = index === -1 ? undefined : chats[index]
+  if (current?.type !== 'group' || current.title === title) {
+    return chats
+  }
+  const next = [...chats]
+  next[index] = { ...current, title }
+  return next
+}
+
 export function useChatList(currentUserId: string | null): UseChatListResult {
   const realtime = useRealtime()
   const [chats, setChats] = useState<ChatListItem[]>([])
@@ -364,12 +413,22 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
    * server value converges whatever it missed.
    */
   const countedIncomingSeqRef = useRef(new Map<string, number>())
+  /**
+   * Tombstones of `group.you_removed` groups (T058, §5.2/§1): chatIds
+   * whose later frames — the post-commit order race may still deliver
+   * message/roster frames committed before the removal — must be
+   * ignored (no US1-2 refetch, no rename, no resurrection). Cleared
+   * for a group №12 returns again (the US6 re-add path) and on a user
+   * switch, like every per-chat bookkeeping above.
+   */
+  const removedGroupIdsRef = useRef(new Set<string>())
 
   useEffect(() => {
     // A user switch invalidates every per-chat watermark: the new
     // user's chats (even id-identical ones — the same dialog seen
     // from the peer side) must not inherit the old session's counts.
     countedIncomingSeqRef.current = new Map()
+    removedGroupIdsRef.current = new Set()
   }, [currentUserId])
 
   const applyChats = useCallback((updater: (previous: ChatListItem[]) => ChatListItem[]) => {
@@ -387,6 +446,16 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
         const items = await listChats()
         if (cancelled) {
           return
+        }
+        // №12 is the truth about memberships: a group the server
+        // RETURNS revives its frame handling (the US6 re-add path —
+        // the tombstone of a previous removal must not outlive the
+        // restored membership), while an absent group stays
+        // tombstoned (the removal keeps winning the §1 race).
+        for (const item of items) {
+          if (item.type === 'group') {
+            removedGroupIdsRef.current.delete(item.chatId)
+          }
         }
         setError(null)
         setStatus('ready')
@@ -409,6 +478,12 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
       setRefreshCount((count) => count + 1)
     })
     const unsubscribeCreated = realtime.onMessageCreated(null, (event) => {
+      if (removedGroupIdsRef.current.has(event.chatId)) {
+        // §1 race (T058): a frame committed before the removal — the
+        // row is gone, the US1-2/FR-019 refetch path must stay silent
+        // for a tombstoned group.
+        return
+      }
       if (!chatsRef.current.some((item) => item.chatId === event.chatId)) {
         // FR-019/US5-4: a first incoming message from a stranger — the
         // chat is not in the list yet, so only the server aggregate can
@@ -432,6 +507,38 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
       applyChats((previous) => resetUnread(previous, event.chatId))
     })
     const unsubscribeGroup = realtime.onGroupEvent((event) => {
+      if (event.type === 'group.you_removed' || event.type === 'group.deleted') {
+        // §3.6/§5.2 (T058) and §3.5 (T066): the FINAL frames — the row
+        // leaves «Чаты» deterministically without a refetch round, and
+        // the group is tombstoned against the §1 order race (for
+        // `group.deleted` the tombstone is permanent: №12 can never
+        // return a hard-deleted chat). The removal is group-scoped: a
+        // direct chat sharing the id (synthetic only — ids are unique
+        // across the single chats table) stays.
+        removedGroupIdsRef.current.add(event.groupId)
+        applyChats((previous) => {
+          if (!previous.some((item) => item.type === 'group' && item.chatId === event.groupId)) {
+            // Already removed (a redelivered final frame) or never
+            // known — FR-015: the SAME reference, no re-render.
+            return previous
+          }
+          return previous.filter(
+            (item) => !(item.type === 'group' && item.chatId === event.groupId),
+          )
+        })
+        return
+      }
+      if (removedGroupIdsRef.current.has(event.groupId)) {
+        // §1 race (T058): a late roster/metadata frame of the removed
+        // group — ignored, no refetch, no rename, no resurrection.
+        return
+      }
+      if (event.type === 'group.updated') {
+        // US4/T053 (§3.1): the frame's title IS the group's new state —
+        // rename the known row in place; №12 owns the rest of it.
+        applyChats((previous) => applyGroupRenamed(previous, event.groupId, event.title))
+        return
+      }
       if (event.type !== 'group.member.added') {
         return
       }
@@ -469,6 +576,11 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
 
   const applySyncUpdate = useCallback(
     (update: SyncChatListUpdate) => {
+      if (removedGroupIdsRef.current.has(update.chatId)) {
+        // §1 race (T058): a №26/№15 page computed before the removal
+        // and applied after it must not resurrect the row.
+        return
+      }
       applyChats((previous) =>
         applySyncDelta(previous, update, currentUserIdRef.current, countedIncomingSeqRef.current),
       )

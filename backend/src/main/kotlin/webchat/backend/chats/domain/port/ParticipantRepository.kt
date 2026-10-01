@@ -234,6 +234,26 @@ interface ParticipantRepository {
     ): Boolean
 
     /**
+     * №34 role change / №35 ownership transfer (data-model 006
+     * §Сущность 2): the single conditional `UPDATE … SET role = :role
+     * WHERE chat_id = ? AND user_id = ? AND state='active' RETURNING …`
+     * — the ONLY writer of `role` on an ACTIVE row. `null` on rowcount
+     * 0 (never a member, or a concurrent №32/№33 removed him between
+     * the caller's ACTIVE read and this statement — the rowcount-race
+     * convergence of the kick×setRole edge); no side effects either
+     * way. The №35 discipline rides this leg: demote THEN promote
+     * inside ONE service transaction, so the partial unique index
+     * `ux_chat_participants_owner` never observes two owners — nor
+     * zero — at any statement boundary (FR-003); №34 never reaches here
+     * with `owner` (the DTO refuses the label, api-contract.md 006 №34).
+     */
+    fun updateRole(
+        chatId: UUID,
+        userId: UUID,
+        role: MemberRole,
+    ): ChatParticipant?
+
+    /**
      * The ✓✓ rule of a group (FR-012): `MIN(last_read_seq)` over the
      * ACTIVE members EXCEPT [userId] — an index-only fold over the same
      * V14 partial index (`INCLUDE (user_id, role, last_read_seq)`); a

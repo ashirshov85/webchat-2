@@ -81,8 +81,13 @@ data class UpdateGroupRequest(
         if (title == null && description == null) throw EmptyPatchException()
     }
 
-    /** FR-001 title check of the patch via the T005 value object (as №27). */
-    fun validatedTitle(): GroupTitle = GroupTitle.normalize(title.orEmpty())
+    /**
+     * FR-001 title check of the patch via the T005 value object (as №27):
+     * an ABSENT field stays `null` — the patch keeps the current title —
+     * while a PRESENT one (an empty string included) validates exactly
+     * as №27, so a description-only patch never trips the title rules.
+     */
+    fun patchedTitle(): GroupTitle? = title?.let { GroupTitle.normalize(it) }
 
     /** FR-001 optional description check of the patch via the T005 value object (as №27). */
     fun validatedDescription(): GroupDescription? = description?.let { GroupDescription.normalize(it) }

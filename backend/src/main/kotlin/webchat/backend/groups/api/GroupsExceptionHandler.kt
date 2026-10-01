@@ -161,6 +161,19 @@ class GroupsExceptionHandler {
         problem(HttpStatus.BAD_REQUEST, INVALID_CHAT_ID_DETAIL)
             .apply { setProperty(ERRORS_PROPERTY, mapOf(CHAT_ID_FIELD to listOf(INVALID_UUID_CODE))) }
 
+    /**
+     * 400 (api-contract.md №32/№34/№35): the single-target `userId` —
+     * the PATH variable of №32/№34, the body field of №35 — is not a
+     * UUID; rendered as `errors: {userId: [invalid_uuid]}`. A
+     * well-formed but foreign/unknown userId never reaches here — the
+     * service answers `409 target_not_member` against the roster
+     * instead (or the uniform 404 of the gate for the whole group).
+     */
+    @ExceptionHandler(InvalidGroupUserIdException::class)
+    fun onInvalidGroupUserId(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, INVALID_USER_ID_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(USER_ID_FIELD to listOf(INVALID_UUID_CODE))) }
+
     /** 400 (api-contract.md №29, FR-007): a PATCH body carrying none of `title`/`description`. */
     @ExceptionHandler(EmptyPatchException::class)
     fun onEmptyPatch(): ProblemDetail =
@@ -218,6 +231,7 @@ class GroupsExceptionHandler {
         const val INVALID_MEMBER_IDS_DETAIL = "memberUserIds must be unique UUIDs (at most 199)"
         const val INVALID_USER_IDS_DETAIL = "userIds must be a non-empty array of unique UUIDs (at most 199)"
         const val INVALID_CHAT_ID_DETAIL = "chatId must be a UUID"
+        const val INVALID_USER_ID_DETAIL = "userId must be a UUID"
         const val EMPTY_PATCH_DETAIL = "PATCH body must carry at least one of title, description"
     }
 }

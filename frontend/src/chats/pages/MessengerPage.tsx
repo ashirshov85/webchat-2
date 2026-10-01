@@ -65,19 +65,53 @@
  * usual «не отправлено» + retry.
  *
  * US2 wiring (feature 006, T038, FR-012): opening a group window
- * fetches its №28 roster once and feeds it to the chatId-agnostic
- * dialog pair — MessageList switches to the group variant (sender
+ * fetches its №28 roster and feeds it to the chatId-agnostic dialog
+ * pair — MessageList switches to the group variant (sender
  * attribution + ✓✓ by `othersReadUpToSeq`) and useChatMessages
  * switches its `chat.read`/№17 semantics to the group MIN watermark.
  * The roster is guarded by chatId, so a direct dialog opened next
- * never sees the stale group roster. Live roster changes land with
- * the US3 `useGroup`/`useGroupRealtime` wiring (T046a/T048).
+ * never sees the stale group roster.
+ *
+ * US3 group card (feature 006, T046a; FR-015): the №28 lifecycle of
+ * the open group window — the snapshot AND the live roster/metadata —
+ * moved into `useGroup` (one №28 per open, optimistic `group.*`
+ * frames on the shared №18 stream, `reload()` convergence), which
+ * feeds BOTH the dialog pair (attribution/✓✓, the T038 need) and the
+ * GroupInfoPanel card (T046): the header's «Информация о группе»
+ * toggle opens the card under the header. The №31 success converges
+ * through `reload()`; the №32/№34/№35 roster actions mount their
+ * mutex with useGroupMembers (T047). The full realtime set
+ * (`group.you_removed` etc.) lands with T048/T058.
+ *
+ * US5 privacy wiring (feature 006, T058; realtime-group-events.md
+ * §5.2/§5.5, FR-010): the FINAL `group.you_removed` frame closes an
+ * OPEN group window at once — no «зависший» заголовок/композер of a
+ * chat the user has no membership in anymore; the chat switch effect
+ * above folds the group card/menu together with the window, and
+ * useGroup/useChatMessages reset on the null chatId, so nothing of
+ * the removed group keeps rendering. The same frame tombstones the
+ * group's chatId in the SHARED №25 batcher (`drop`, §5.5): №25 is
+ * all-or-refusal, so a pending or racing ack of the removed group
+ * would reject the WHOLE batch with 403 not_participant — the
+ * batcher-side tombstone also absorbs the late acks useSync/
+ * useChatMessages may still feed through the §1 order race.
+ *
+ * US6 leave/delete wiring (feature 006, T066; FR-005/FR-006): the
+ * group card mounts the №33/№30 LeaveDeleteControls in its slot —
+ * leave for admin/member, hard-delete for the owner, the 403 problem
+ * codes (`owner_must_transfer`/`not_group_owner`) surfacing as the
+ * card's error hints — and a 204 closes the window at once (the §3.6
+ * `group.you_removed {reason:'left'}` / §3.5 `group.deleted` frames of
+ * the same commit converge «Чаты» and the batcher tombstone
+ * deterministically; the №12 reload the handler fires covers the
+ * at-most-once loss of the frame). The `group.deleted` frame itself
+ * rides the SAME T058 wiring: it closes an OPEN group window of the
+ * hard-deleted chat and tombstones the chatId in the №25 batcher.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
-import { getGroup } from '../../api/groups'
-import type { GroupMember, GroupView } from '../../api/groups'
+import type { GroupView } from '../../api/groups'
 import { blockUser, deleteChat, getChat, unblockUser } from '../../api/chats'
 import type { Message } from '../../api/chats'
 import { getAckBatcher } from '../../sync/ack'
@@ -96,6 +130,12 @@ import { useChatMessages } from '../hooks/useChatMessages'
 import { useOutbox } from '../hooks/useOutbox'
 import { useRealtime } from '../hooks/useRealtime'
 import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
+import { GroupInfoPanel } from '../../groups/components/GroupInfoPanel'
+import { LeaveDeleteControls } from '../../groups/components/LeaveDeleteControls'
+import { useGroup } from '../../groups/hooks/useGroup'
+import type { GroupStatus } from '../../groups/hooks/useGroup'
+import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
+import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
 
 /** The open direct dialog: everything the header actions need (T060). */
 interface DirectChatView {
@@ -250,6 +290,150 @@ function ConfirmDialog({ confirmation, pending, onAccept, onCancel }: ConfirmDia
   )
 }
 
+/**
+ * The group card (T046a): the №28 GroupInfoPanel under the header —
+ * loading/error states of the №28 lifecycle stay local to the card,
+ * the №16 history below is the window's own error surface.
+ */
+interface GroupCardProps {
+  readonly group: GroupView | null
+  readonly chatId: string
+  readonly status: GroupStatus
+  readonly error: unknown
+  readonly currentUserId: string
+  readonly onReload: () => void
+  readonly rosterActions: UseGroupMembersResult
+  readonly onMembersAdded: () => void
+  readonly onUpdated: () => void
+  readonly onLeft: () => void
+  readonly onDeleted: () => void
+}
+
+function GroupCard({
+  group,
+  chatId,
+  status,
+  error,
+  currentUserId,
+  onReload,
+  rosterActions,
+  onMembersAdded,
+  onUpdated,
+  onLeft,
+  onDeleted,
+}: GroupCardProps) {
+  return (
+    <div className="dialog-group-card" id="dialog-group-card">
+      {status === 'loading' && <p className="messenger-empty">Загрузка группы…</p>}
+      {status === 'error' && (
+        <div className="chat-panel-error">
+          <ErrorBanner error={error} />
+          <button type="button" className="chat-panel-retry" onClick={onReload}>
+            Повторить
+          </button>
+        </div>
+      )}
+      {group?.chatId === chatId && status === 'ready' && (
+        <GroupInfoPanel
+          chatId={group.chatId}
+          title={group.title}
+          description={group.description}
+          members={group.members}
+          myRole={group.myRole}
+          currentUserId={currentUserId}
+          onKick={(userId) => {
+            void rosterActions.kick(userId)
+          }}
+          onSetRole={(userId, role) => {
+            void rosterActions.setRole(userId, role)
+          }}
+          onTransferOwnership={(userId) => {
+            void rosterActions.transferOwnership(userId)
+          }}
+          pendingUserId={rosterActions.pendingUserId}
+          rosterError={rosterActions.error}
+          onMembersAdded={onMembersAdded}
+          onUpdated={onUpdated}
+          leaveDeleteControls={
+            // US6 (T066): the №33 leave / №30 hard-delete controls of
+            // the card — the reachable half by `myRole`, the 403 hints
+            // of a stale role race render inside the component.
+            <LeaveDeleteControls
+              chatId={group.chatId}
+              myRole={group.myRole}
+              onLeft={onLeft}
+              onDeleted={onDeleted}
+            />
+          }
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * The open window header (T029): one window, two headers — the GROUP
+ * window carries the №28 title and the «Информация о группе» toggle
+ * (US3, T046a), the direct dialog the peer title + the «Действия»
+ * menu (T060).
+ */
+interface DialogHeaderProps {
+  readonly chat: ActiveChat
+  readonly group: GroupView | null
+  readonly groupInfoOpen: boolean
+  readonly menuOpen: boolean
+  readonly onToggleGroupInfo: () => void
+  readonly onToggleMenu: () => void
+  readonly onDeleteChat: () => void
+  readonly onToggleBlock: () => void
+}
+
+function DialogHeader({
+  chat,
+  group,
+  groupInfoOpen,
+  menuOpen,
+  onToggleGroupInfo,
+  onToggleMenu,
+  onDeleteChat,
+  onToggleBlock,
+}: DialogHeaderProps) {
+  if (chat.kind === 'group') {
+    return (
+      <>
+        <span className="chat-item-avatar" aria-hidden="true">
+          #
+        </span>
+        <h2 className="dialog-title">
+          {/* №28 title while the view is live (the optimistic
+              `group.updated` half of the header), the №12/№27
+              title until then. */}
+          {group?.chatId === chat.chatId ? group.title : chat.title}
+        </h2>
+        <button
+          type="button"
+          className="dialog-group-info-toggle"
+          aria-expanded={groupInfoOpen}
+          aria-controls="dialog-group-card"
+          onClick={onToggleGroupInfo}
+        >
+          Информация о группе
+        </button>
+      </>
+    )
+  }
+  return (
+    <DirectChatHeader
+      username={chat.peer.username}
+      blockedByMe={chat.blockedByMe}
+      menuOpen={menuOpen}
+      onToggleMenu={onToggleMenu}
+      onDeleteChat={onDeleteChat}
+      onToggleBlock={onToggleBlock}
+    />
+  )
+}
+
 export function MessengerPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [activeChat, setActiveChat] = useState<ActiveChat | null>(null)
@@ -264,13 +448,11 @@ export function MessengerPage() {
   /** The CreateGroupDialog lifetime (T029): closed = the entry button. */
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
   /**
-   * №28 roster of the open group window (US2, T038): `{chatId,
-   * members}` — the guard keeps a direct dialog opened next free of
-   * the stale group roster before the reset lands.
+   * The GroupInfoPanel card of the open group window (T046a): the
+   * header toggle opens/closes it; a chat switch closes it together
+   * with the action menu below.
    */
-  const [groupRoster, setGroupRoster] = useState<{ chatId: string; members: GroupMember[] } | null>(
-    null,
-  )
+  const [groupInfoOpen, setGroupInfoOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -300,8 +482,32 @@ export function MessengerPage() {
   } = useChatList(currentUserId)
 
   const activeChatId = activeChat?.chatId ?? null
+
+  // №28 lifecycle of the open group window (US3, T046a): useGroup owns
+  // the GroupView — one №28 per open, optimistic `group.*` frames,
+  // `reload()` convergence — feeding both the dialog pair (the T038
+  // attribution/✓✓ roster) and the GroupInfoPanel card below. The
+  // chatId guard keeps a direct dialog opened next free of the stale
+  // group view before useGroup's switch reset lands.
+  const activeGroupChatId = activeChat?.kind === 'group' ? activeChat.chatId : null
+  const {
+    group: activeGroup,
+    status: activeGroupStatus,
+    error: activeGroupError,
+    reload: reloadActiveGroup,
+  } = useGroup(activeGroupChatId)
   const activeGroupMembers =
-    groupRoster !== null && groupRoster.chatId === activeChatId ? groupRoster.members : undefined
+    activeGroup !== null && activeGroup.chatId === activeChatId ? activeGroup.members : undefined
+
+  // №32/№34/№35 roster actions of the open group card (US3, T047):
+  // useGroupMembers runs every roster mutation through ONE local
+  // mutex — `pendingUserId` disables the in-flight MemberList row, a
+  // problem (`role_hierarchy_violation`, `not_group_owner`, network)
+  // surfaces as the card's rosterError and unblocks the roster. A
+  // successful action converges the №28 card through `reload()` (the
+  // `group.member.removed`/`group.role.changed` frames land on top,
+  // idempotently — T048).
+  const rosterActions = useGroupMembers(activeGroupChatId, reloadActiveGroup)
 
   const {
     messages,
@@ -317,36 +523,23 @@ export function MessengerPage() {
     applySyncPage: applyDialogSync,
   } = useChatMessages(activeChatId, currentUserId, activeGroupMembers)
 
-  // №28 roster of the open group window (US2, T038): fetched once per
-  // open — it switches the dialog pair to the group variant (sender
-  // attribution, group ✓✓/№17 semantics). Live roster changes are the
-  // US3 realtime wiring (T046a/T048).
-  useEffect(() => {
-    if (activeChat?.kind !== 'group') {
-      return
-    }
-    let cancelled = false
-    void (async () => {
-      try {
-        const group = await getGroup(activeChat.chatId)
-        if (!cancelled) {
-          setGroupRoster({ chatId: group.chatId, members: group.members })
-        }
-      } catch {
-        // The roster only enriches the group window (attribution,
-        // ✓✓): the №16 history stays the dialog's error surface, and
-        // №13 still converges the watermark inside useChatMessages.
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [activeChat])
-
   // The §3.1 catch-up loop (feature 005): runs on every SSE (re)open,
   // its `syncing` drives the SyncIndicator below.
   const { syncing, onChatUpdate } = useSync(currentUserId)
   const realtime = useRealtime()
+
+  // №28 reconnect convergence of the open group window (T046a,
+  // realtime-group-events.md §5.4): the at-most-once channel may have
+  // missed roster/role/metadata frames while disconnected — every SSE
+  // (re)open re-runs №28, the same convergence useChatList gives №12.
+  useEffect(() => {
+    if (activeGroupChatId === null) {
+      return
+    }
+    return realtime.onOpen(() => {
+      reloadActiveGroup()
+    })
+  }, [activeGroupChatId, realtime, reloadActiveGroup])
 
   const handleConfirmed = useCallback(
     (message: Message) => {
@@ -357,10 +550,12 @@ export function MessengerPage() {
   const outbox = useOutbox(currentUserId, { onConfirmed: handleConfirmed })
 
   // Chat switches close the action menu and its confirmation; a stale
-  // dialog must never act on a chat that is no longer open.
+  // dialog must never act on a chat that is no longer open. The group
+  // card folds together with its window.
   useEffect(() => {
     setMenuOpen(false)
     setPendingAction(null)
+    setGroupInfoOpen(false)
   }, [activeChatId])
 
   // Applied catch-up pages (feature 005, T023): the list adopts
@@ -387,6 +582,32 @@ export function MessengerPage() {
     return realtime.onMessageCreated(null, (event) => {
       batcher.ack(event.chatId, event.message.seq)
       advanceCursor(currentUserId, event.chatId, event.message.seq)
+    })
+  }, [currentUserId, realtime])
+
+  // US5/US6 final-frame wiring (T058/T066, realtime-group-events.md
+  // §5.2/§5.5/§3.5): the FINAL `group.you_removed` frame — and the №30
+  // `group.deleted` broadcast alike — closes an OPEN group window at
+  // once (the chat switch effect above folds the card/menu with it;
+  // useGroup/useChatMessages reset on the null chatId — no «зависшие»
+  // states) and tombstones the group's chatId in the shared №25
+  // batcher — a pending or racing ack of a non-participant chat would
+  // reject the WHOLE batch (403 not_participant, all-or-refusal).
+  useEffect(() => {
+    if (currentUserId === null) {
+      return
+    }
+    const batcher = getAckBatcher(currentUserId)
+    return realtime.onGroupEvent((event) => {
+      if (event.type !== 'group.you_removed' && event.type !== 'group.deleted') {
+        return
+      }
+      batcher.drop(event.groupId)
+      setActiveChat((previous) =>
+        previous !== null && previous.kind === 'group' && previous.chatId === event.groupId
+          ? null
+          : previous,
+      )
     })
   }, [currentUserId, realtime])
 
@@ -565,6 +786,65 @@ export function MessengerPage() {
     [outbox],
   )
 
+  /**
+   * №31 success (T046a): the panel hands up the returned active roster
+   * — the №28 `reload()` converges the card (and the attribution
+   * roster) to the server truth at once; the `group.member.added`
+   * frames of the same commit land optimistically meanwhile.
+   */
+  const handleMembersAdded = useCallback(() => {
+    reloadActiveGroup()
+  }, [reloadActiveGroup])
+
+  /**
+   * №29 success (US4, T053): the №28 `reload()` converges the card and
+   * the window header to the server metadata at once; the §3.1
+   * `group.updated` frame of the same commit lands on the «Чаты» row
+   * (useChatList) and every other viewer's state optimistically.
+   */
+  const handleGroupUpdated = useCallback(() => {
+    reloadActiveGroup()
+  }, [reloadActiveGroup])
+
+  /**
+   * №33/№30 success (US6, T066; FR-005/FR-006): the 204 means the
+   * viewer's membership (№33) or the whole chat (№30) is gone
+   * server-side — the window closes at once, the chatId leaves the
+   * shared №25 batcher (§5.5 — the caller is a non-participant now,
+   * №25 is all-or-refusal), and №12 re-runs: the row's deterministic
+   * removal normally arrives through the §3.6 `group.you_removed
+   * {reason:'left'}` / §3.5 `group.deleted` frames of the same commit,
+   * the reload covers an at-most-once loss of the frame.
+   */
+  const handleWindowGroupGone = useCallback(
+    (chatId: string) => {
+      if (currentUserId !== null) {
+        getAckBatcher(currentUserId).drop(chatId)
+      }
+      setActiveChat((previous) =>
+        previous !== null && previous.kind === 'group' && previous.chatId === chatId
+          ? null
+          : previous,
+      )
+      reloadChatList()
+    },
+    [currentUserId, reloadChatList],
+  )
+
+  /** №33 leave success of the open group window (LeaveDeleteControls). */
+  const handleLeftGroup = useCallback(() => {
+    if (activeGroupChatId !== null) {
+      handleWindowGroupGone(activeGroupChatId)
+    }
+  }, [activeGroupChatId, handleWindowGroupGone])
+
+  /** №30 hard-delete success of the open group window (LeaveDeleteControls). */
+  const handleDeletedGroup = useCallback(() => {
+    if (activeGroupChatId !== null) {
+      handleWindowGroupGone(activeGroupChatId)
+    }
+  }, [activeGroupChatId, handleWindowGroupGone])
+
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
   const dialogOpen = activeChat !== null
@@ -637,32 +917,45 @@ export function MessengerPage() {
         {dialogOpen && activeChat !== null ? (
           <>
             <header className="dialog-header">
-              {activeChat.kind === 'group' ? (
-                <>
-                  <span className="chat-item-avatar" aria-hidden="true">
-                    #
-                  </span>
-                  <h2 className="dialog-title">{activeChat.title}</h2>
-                </>
-              ) : (
-                <DirectChatHeader
-                  username={activeChat.peer.username}
-                  blockedByMe={activeChat.blockedByMe}
-                  menuOpen={menuOpen}
-                  onToggleMenu={() => {
-                    setMenuOpen((open) => !open)
-                  }}
-                  onDeleteChat={() => {
-                    setMenuOpen(false)
-                    setPendingAction('delete-chat')
-                  }}
-                  onToggleBlock={() => {
-                    setMenuOpen(false)
-                    setPendingAction(activeChat.blockedByMe ? 'unblock' : 'block')
-                  }}
-                />
-              )}
+              <DialogHeader
+                chat={activeChat}
+                group={activeGroup}
+                groupInfoOpen={groupInfoOpen}
+                menuOpen={menuOpen}
+                onToggleGroupInfo={() => {
+                  setGroupInfoOpen((open) => !open)
+                }}
+                onToggleMenu={() => {
+                  setMenuOpen((open) => !open)
+                }}
+                onDeleteChat={() => {
+                  setMenuOpen(false)
+                  setPendingAction('delete-chat')
+                }}
+                onToggleBlock={() => {
+                  setMenuOpen(false)
+                  setPendingAction(
+                    activeChat.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block',
+                  )
+                }}
+              />
             </header>
+
+            {activeChat.kind === 'group' && groupInfoOpen && (
+              <GroupCard
+                group={activeGroup}
+                chatId={activeChat.chatId}
+                status={activeGroupStatus}
+                error={activeGroupError}
+                currentUserId={currentUserId ?? ''}
+                onReload={reloadActiveGroup}
+                rosterActions={rosterActions}
+                onMembersAdded={handleMembersAdded}
+                onUpdated={handleGroupUpdated}
+                onLeft={handleLeftGroup}
+                onDeleted={handleDeletedGroup}
+              />
+            )}
 
             {actionError !== null && (
               <div className="dialog-action-error">

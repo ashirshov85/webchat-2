@@ -227,6 +227,25 @@ class JdbcParticipantRepository(
     ): Boolean = jdbcTemplate.update(REMOVE_MEMBER_SQL, chatId, userId) == 1
 
     /**
+     * T043 (№34/№35, data-model 006 §Сущность 2): the single
+     * conditional role UPDATE on an ACTIVE row — the statement-level
+     * unit of both the №34 admin grant/revoke and the №35 demote/promote
+     * pair; rowcount 0 (a concurrent removal won the race) reads as
+     * `null` with no side effects. The partial unique index
+     * `ux_chat_participants_owner` arbitrates every OWNER promotion:
+     * the №35 caller demotes the former owner FIRST in the same
+     * transaction, so the index never sees two active owners.
+     */
+    override fun updateRole(
+        chatId: UUID,
+        userId: UUID,
+        role: MemberRole,
+    ): ChatParticipant? =
+        jdbcTemplate
+            .query(UPDATE_ROLE_SQL, ROW_MAPPER, role.name.lowercase(), chatId, userId)
+            .firstOrNull()
+
+    /**
      * T008 (FR-012): the ✓✓ fold — `MIN(last_read_seq)` of the ACTIVE
      * members except the reader, an index-only aggregation over the
      * same partial index (removed readers drop out naturally); a group
@@ -346,6 +365,15 @@ class JdbcParticipantRepository(
             UPDATE chat_participants
             SET state = 'removed', role = 'member'
             WHERE chat_id = ? AND user_id = ? AND state = 'active'
+            """.trimIndent()
+
+        /** T043: the single conditional №34/№35 role change on an ACTIVE row. */
+        val UPDATE_ROLE_SQL =
+            """
+            UPDATE chat_participants
+            SET role = ?
+            WHERE chat_id = ? AND user_id = ? AND state = 'active'
+            RETURNING $PARTICIPANT_COLUMNS
             """.trimIndent()
 
         /** T008: the ✓✓ fold of FR-012 over the active roster except the reader. */

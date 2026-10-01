@@ -27,6 +27,18 @@
  * useRealtime) keep one user's acks from ever being sent under another
  * user's token across a logout→login switch; dispose() cancels the
  * timer and drops the tail.
+ *
+ * §5.5 drop (feature 006, US5, T058; realtime-group-events.md §5.5):
+ * after `group.you_removed` (and `group.deleted` — US6, T066) the
+ * server treats the caller as a non-participant for the group's
+ * chatId, and №25 is all-or-refusal — a batch carrying it is rejected
+ * WHOLE (403 not_participant). `drop(chatId)` therefore tombstones the
+ * chat: its pending position is discarded (never sent) and acks
+ * arriving AFTER the removal are suppressed too — the §1 order race
+ * may still feed frames committed before the removal through
+ * useChatMessages/useSync, and those late acks must not poison the
+ * batch. The tombstone is session-local like the pending map itself;
+ * dispose() drops it together with the tail.
  */
 import { deliveryAck } from '../api/chats'
 import type { DeliveryAckItem } from '../api/chats'
@@ -46,6 +58,17 @@ export interface AckBatcher {
    */
   ack(chatId: string, seq: number): void
   /**
+   * §5.5 (realtime-group-events.md): tombstones a chat the user lost
+   * the membership of (`group.you_removed`; `group.deleted` joins with
+   * the same call in US6) — its pending position is discarded and
+   * acks arriving after the removal are suppressed, because №25 is
+   * all-or-refusal: a batch carrying a non-participant chatId would
+   * be rejected whole (403 not_participant). Idempotent; a chat with
+   * nothing pending is tombstoned all the same (the §1 race may feed
+   * late acks later).
+   */
+  drop(chatId: string): void
+  /**
    * Sends everything pending now (sequential ≤100-item requests).
    * Resolves when the whole tail is confirmed; rejects on the first
    * failed request — the entries stay pending and the retry timer is
@@ -61,11 +84,19 @@ export interface AckBatcher {
 
 class DeliveryAckBatcher implements AckBatcher {
   private readonly pending = new Map<string, number>()
+  /** §5.5 tombstones: chatIds whose acks must never reach №25 again. */
+  private readonly dropped = new Set<string>()
   private timer: number | null = null
   private inFlight: Promise<void> | null = null
 
   ack(chatId: string, seq: number): void {
     if (typeof chatId !== 'string' || chatId.length === 0) {
+      return
+    }
+    if (this.dropped.has(chatId)) {
+      // §5.5: a late ack of a removed chat is suppressed — the §1
+      // order race may still deliver frames committed before the
+      // removal, and №25 is all-or-refusal.
       return
     }
     if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || seq < 1) {
@@ -77,6 +108,14 @@ class DeliveryAckBatcher implements AckBatcher {
     }
     this.pending.set(chatId, seq)
     this.schedule()
+  }
+
+  drop(chatId: string): void {
+    if (typeof chatId !== 'string' || chatId.length === 0) {
+      return
+    }
+    this.dropped.add(chatId)
+    this.pending.delete(chatId)
   }
 
   flush(): Promise<void> {
@@ -100,6 +139,7 @@ class DeliveryAckBatcher implements AckBatcher {
       this.timer = null
     }
     this.pending.clear()
+    this.dropped.clear()
   }
 
   /**
@@ -171,6 +211,7 @@ export function getAckBatcher(userId: string): AckBatcher {
   const instance = createAckBatcher()
   const batcher: AckBatcher = {
     ack: (chatId, seq) => instance.ack(chatId, seq),
+    drop: (chatId) => instance.drop(chatId),
     flush: () => instance.flush(),
     pendingSize: () => instance.pendingSize(),
     dispose: () => {
