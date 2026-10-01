@@ -68,7 +68,8 @@
  * fetches its №28 roster and feeds it to the chatId-agnostic dialog
  * pair — MessageList switches to the group variant (sender
  * attribution + ✓✓ by `othersReadUpToSeq`) and useChatMessages
- * switches its `chat.read`/№17 semantics to the group MIN watermark.
+ * switches its `chat.read`/№17 semantics to the group MAX watermark
+ * (✓✓ once any one other member has read).
  * The roster is guarded by chatId, so a direct dialog opened next
  * never sees the stale group roster.
  *

@@ -289,7 +289,7 @@ class GroupMembershipGateTest {
             role: MemberRole,
         ): ChatParticipant? = error("the gate never changes roles")
 
-        override fun minOtherReadUpToSeq(
+        override fun maxOtherReadUpToSeq(
             chatId: UUID,
             userId: UUID,
         ): Long = error("the gate never projects the MIN watermark")

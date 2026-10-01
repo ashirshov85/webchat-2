@@ -84,11 +84,12 @@ class InvalidUpToSeqException : RuntimeException("upToSeq is outside the recorde
  *    [RealtimeEventPublisher.fanoutChatRead] — the payload stays the
  *    exact 004 `ChatReadEvent` shape, and the FR-012 ✓✓ projection the
  *    addressees fold it into is `othersReadUpToSeq` — the
- *    `MIN(last_read_seq)` over the ACTIVE members EXCEPT each viewer —
- *    recalculated by [ChatService.groupProjection] (№13) and the №26
+ *    `MAX(last_read_seq)` over the ACTIVE members EXCEPT each viewer
+ *    (✓✓ once any one of them has read) — recalculated by
+ *    [ChatService.groupProjection] (№13) and the №26
  *    delta (T037) from the same GREATEST-monotone rows this advance
  *    moves, so the roster recalculation tracks removals and re-adds
- *    naturally (a REMOVED reader drops out of the MIN, FR-012). The
+ *    naturally (a REMOVED reader drops out of the MAX, FR-012). The
  *    snapshot is read AFTER the committed advance and only on the
  *    rowcount > 0 leg (a no-op never reads the roster): the advance
  *    statement is its own commit point, so the publication stays

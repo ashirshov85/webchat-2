@@ -16,7 +16,7 @@
 users (002) ──< chat_participants >── chats ──< messages
                      │  + role (NULL у direct)      (kind='group': title/description,
                      │  + state ('active'|'removed')  пара NULL — та же таблица)
-                     └── выводно: othersReadUpToSeq = MIN(last_read_seq активных, кроме user)
+                      └── выводно: othersReadUpToSeq = MAX(last_read_seq активных, кроме user)
 
 user_contacts (004) ── (проверка «участник из контактов добавляющего», FR-002)
 
@@ -70,7 +70,7 @@ OR (kind='group' AND user_low_id IS NULL AND user_high_id IS NULL)`. Сущес�
   попадают. Передача владения — в одной транзакции **demote THEN promote** (индекс не нарушается
   ни в одной промежуточной точке).
 - `CREATE INDEX ix_chat_participants_chat_active ON chat_participants (chat_id) INCLUDE (user_id,
-  role, last_read_seq) WHERE state='active'` — состав/фанаут/MIN-водяной знак/счётчик лимита: все
+  role, last_read_seq) WHERE state='active'` — состав/фанаут/MAX-водяной знак/счётчик лимита: все
   читают активный состав группы одним index-only-scan (≤200 строк).
 
 **Операции (группа)**:
@@ -105,8 +105,8 @@ OR (kind='group' AND user_low_id IS NULL AND user_high_id IS NULL)`. Сущес�
 **Правила видимости/выводные (группа)**:
 - Доступ к ресурсу группы ⟺ active-строка (FR-008); не-участник (никогда не был / removed) —
   единый `404 group_not_found`.
-- `othersReadUpToSeq(user, chat) = MIN(last_read_seq) active-участников, кроме user` (0 при
-  отсутствии других — ✓✓ недостижим, FR-012/edge).
+- `othersReadUpToSeq(user, chat) = MAX(last_read_seq) active-участников, кроме user` — ✓✓ при
+  прочтении хотя бы одним (0 при отсутствии других — ✓✓ недостижим, FR-012/edge).
 - Непрочитано участника — формула 005 без изменений по его строке; инициализация добавления
   даёт «бейдж с 0» (FR-013), реактивация — счётчик за период отсутствия (FR-002).
 
@@ -143,7 +143,7 @@ Append-only аудит управления группой; публичного
 | Каналы | существующие `rt:user:{userId}` (+ конверт `{"event","data"}`); новых ключей/каналов Redis нет |
 | Адресаты | снимок активного состава в tx операции; публикация строго post-commit ([research.md §4]) |
 | `message.created` | все активные, кроме отправителя (FR-011); клиент дедуплицирует по `message.id` (004) |
-| `chat.read` | все активные, кроме читавшего; клиент пересчитывает ✓✓ по MIN (§2) |
+| `chat.read` | все активные, кроме читавшего; клиент пересчитывает ✓✓ по MAX (§2) |
 | `group.updated` / `group.role.changed` | всем активным |
 | `group.member.added` / `group.member.removed` | всем активным (добавленным — включая их самих) |
 | `group.you_removed` | адресату (его канал), reason 'kicked'\|'left' — финальное событие группы по его подписке (FR-015) |

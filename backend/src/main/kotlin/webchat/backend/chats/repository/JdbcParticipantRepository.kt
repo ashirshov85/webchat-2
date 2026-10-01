@@ -118,9 +118,9 @@ class JdbcParticipantRepository(
      * GROUP projection rides the same snapshot as correlated aggregates
      * over `ix_chat_participants_chat_active` (≤ 200 rows, the
      * `LIST_FOR_USER` precedent): the ACTIVE [memberCount] and the
-     * FR-012 ✓✓ fold `MIN(last_read_seq)` of the other actives
+     * FR-012 ✓✓ fold `MAX(last_read_seq)` of the other actives
      * (COALESCE 0 — a group of one never sets ✓✓) — one read, no N+1 of
-     * per-chat `activeMembers`/`minOtherReadUpToSeq` calls.
+     * per-chat `activeMembers`/`maxOtherReadUpToSeq` calls.
      */
     @Suppress("SpreadOperator") // the dynamic VALUES join makes the argument list per-cursor — a tiny one-off copy
     override fun loadForSync(
@@ -246,15 +246,15 @@ class JdbcParticipantRepository(
             .firstOrNull()
 
     /**
-     * T008 (FR-012): the ✓✓ fold — `MIN(last_read_seq)` of the ACTIVE
-     * members except the reader, an index-only aggregation over the
-     * same partial index (removed readers drop out naturally); a group
+     * T008 (FR-012, MAX semantics): the ✓✓ fold — `MAX(last_read_seq)` of
+     * the ACTIVE members except the reader, an index-only aggregation over
+     * the same partial index (removed readers drop out naturally); a group
      * of one folds to 0 via COALESCE.
      */
-    override fun minOtherReadUpToSeq(
+    override fun maxOtherReadUpToSeq(
         chatId: UUID,
         userId: UUID,
-    ): Long = jdbcTemplate.queryForObject(MIN_OTHER_READ_SQL, Long::class.java, chatId, userId) ?: 0L
+    ): Long = jdbcTemplate.queryForObject(MAX_OTHER_READ_SQL, Long::class.java, chatId, userId) ?: 0L
 
     private companion object {
         val ROW_MAPPER =
@@ -376,10 +376,10 @@ class JdbcParticipantRepository(
             RETURNING $PARTICIPANT_COLUMNS
             """.trimIndent()
 
-        /** T008: the ✓✓ fold of FR-012 over the active roster except the reader. */
-        val MIN_OTHER_READ_SQL =
+        /** T008 (FR-012, MAX semantics): the ✓✓ fold over the active roster except the reader. */
+        val MAX_OTHER_READ_SQL =
             """
-            SELECT COALESCE(MIN(last_read_seq), 0)
+            SELECT COALESCE(MAX(last_read_seq), 0)
             FROM chat_participants
             WHERE chat_id = ? AND user_id <> ? AND state = 'active'
             """.trimIndent()
@@ -419,7 +419,7 @@ class JdbcParticipantRepository(
                       FROM chat_participants mc
                      WHERE mc.chat_id = me.chat_id
                        AND mc.state = 'active') AS member_count,
-                   (SELECT COALESCE(MIN(op.last_read_seq), 0)
+                   (SELECT COALESCE(MAX(op.last_read_seq), 0)
                       FROM chat_participants op
                      WHERE op.chat_id = me.chat_id
                        AND op.user_id <> me.user_id
@@ -446,7 +446,7 @@ class JdbcParticipantRepository(
                       FROM chat_participants mc
                      WHERE mc.chat_id = me.chat_id
                        AND mc.state = 'active') AS member_count,
-                   (SELECT COALESCE(MIN(op.last_read_seq), 0)
+                   (SELECT COALESCE(MAX(op.last_read_seq), 0)
                       FROM chat_participants op
                      WHERE op.chat_id = me.chat_id
                        AND op.user_id <> me.user_id

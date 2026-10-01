@@ -393,7 +393,7 @@ export interface paths {
         };
         /**
          * Диалог по идентификатору (№13, Bearer)
-         * @description ChatView пары с водяными знаками прочтения. Авторизация на уровне ресурса — membership диалога (FR-002): не-участник получает 403 not_participant на существующем чате; несуществующий — 404. Группа (006): group-вариант ответа — type:'group', title, description, myRole, myReadUpToSeq, othersReadUpToSeq (MIN водяных знаков прочтения остальных активных участников; 0 в группе из одного — ✓✓ не выставляется; монотонно, FR-012), memberCount; peer/blockedByMe/peerReadUpToSeq = null.
+         * @description ChatView пары с водяными знаками прочтения. Авторизация на уровне ресурса — membership диалога (FR-002): не-участник получает 403 not_participant на существующем чате; несуществующий — 404. Группа (006): group-вариант ответа — type:'group', title, description, myRole, myReadUpToSeq, othersReadUpToSeq (MAX водяных знаков прочтения остальных активных участников — ✓✓ при прочтении хотя бы одним; 0 в группе из одного — ✓✓ не выставляется; монотонно, не сбрасывается новыми участниками; FR-012), memberCount; peer/blockedByMe/peerReadUpToSeq = null.
          */
         get: operations["getChat"];
         put?: never;
@@ -911,7 +911,7 @@ export interface components {
             myRole?: "owner" | "admin" | "member";
             /**
              * Format: int64
-             * @description MIN(last_read_seq) активных участников группы, кроме вызывающего (только type=group, 006): ✓✓ собственных сообщений; 0 в группе из одного — ✓✓ не выставляется; монотонно, не сбрасывается новыми участниками (FR-012); вышедшие/исключённые выпадают из условия
+             * @description MAX(last_read_seq) активных участников группы, кроме вызывающего (только type=group, 006): ✓✓ собственных сообщений при прочтении хотя бы одним участником; 0 в группе из одного — ✓✓ не выставляется; монотонно, не сбрасывается новыми участниками (FR-012); вышедшие/исключённые выпадают из условия
              */
             othersReadUpToSeq?: number;
             /** @description Активный состав группы, включая владельца (только type=group) */
@@ -1123,7 +1123,7 @@ export interface components {
             memberCount?: number;
             /**
              * Format: int64
-             * @description MIN(last_read_seq) активных участников группы, кроме вызывающего (только type=group, 006): накопленные оффлайн ✓✓ собственных сообщений; монотонно (FR-012)
+             * @description MAX(last_read_seq) активных участников группы, кроме вызывающего (только type=group, 006): накопленные оффлайн ✓✓ собственных сообщений (достаточно прочтения одного участника); монотонно (FR-012)
              */
             othersReadUpToSeq?: number;
             /** @description Собеседник (как №12; direct); null у group-дельты (006) */

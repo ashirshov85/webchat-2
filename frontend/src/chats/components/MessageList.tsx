@@ -43,10 +43,11 @@
  * message is attributed to its sender's roster username (several
  * peers are distinguishable), own messages keep only the status
  * marks. ✓✓ follows the group watermark `othersReadUpToSeq` =
- * MIN(last_read_seq) of the OTHER active members (№13/№26): own
- * messages with `seq ≤ othersReadUpToSeq` render «прочитано ✓✓». The
- * watermark is monotonic (max) — the hook holds the maximum, so a
- * stale `chat.read` frame or a reconnect refetch with a lower server
+ * MAX(last_read_seq) of the OTHER active members — it flips as soon
+ * as ANY one of them has read (№13/№26): own messages with
+ * `seq ≤ othersReadUpToSeq` render «прочитано ✓✓». The watermark is
+ * monotonic (max) — the hook holds the maximum, so a stale
+ * `chat.read` frame or a reconnect refetch with a lower server
  * projection never rolls a rendered ✓✓ back (FR-012). Without a
  * roster the list stays the plain direct variant — no attribution,
  * `peerReadUpToSeq` drives ✓✓ (004 semantics untouched).
@@ -100,9 +101,10 @@ export interface MessageListProps {
   readonly members?: readonly GroupMember[]
   /**
    * Group read watermark (US2, FR-012): own messages with
-   * `seq ≤ othersReadUpToSeq` render ✓✓ — the MIN of the other
-   * active members' read marks (№13/№26 + `chat.read` frames).
-   * Defaults to 0; monotonic — a rendered ✓✓ never rolls back.
+   * `seq ≤ othersReadUpToSeq` render ✓✓ — the MAX of the other
+   * active members' read marks (№13/№26 + `chat.read` frames; ✓✓
+   * once any one of them has read). Defaults to 0; monotonic — a
+   * rendered ✓✓ never rolls back.
    */
   readonly othersReadUpToSeq?: number
 }

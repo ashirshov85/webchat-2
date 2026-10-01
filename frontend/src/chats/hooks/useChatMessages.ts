@@ -55,18 +55,19 @@
  * (server GREATEST): the server counter converges with what the user
  * actually read while offline, and senders get their ✓✓ (US3-7).
  *
- * Group variant (feature 006, US2, T038, FR-012): passing the №28
- * roster switches the hook to the group semantics. `chat.read`
- * frames advance ONE member's mark each (`byUserId`, fan-out to
- * everyone except the reader — realtime-group-events.md §3.7), and
- * the ✓✓ candidate is the MIN over the OTHER roster members — the
- * mark flips only when EVERY other active member has read. The
- * rendered `othersReadUpToSeq` holds the maximum (FR-012): a stale
- * frame or a reconnect №13 refetch with a lower server projection
- * (the re-add exception) never rolls a rendered ✓✓ back. №17 read
- * marks fire for ANY other member's rendered message (there is no
- * single peer in a group), and №26 group deltas carry
- * `othersReadUpToSeq` for the offline catch-up.
+ * Group variant (feature 006, US2, T038, FR-012 — MAX semantics
+ * 2026-10-01, «read by at least one»): passing the №28 roster
+ * switches the hook to the group semantics. `chat.read` frames
+ * advance ONE member's mark each (`byUserId`, fan-out to everyone
+ * except the reader — realtime-group-events.md §3.7), and the ✓✓
+ * candidate is the MAX over the OTHER roster members — the mark
+ * flips as soon as ANY other active member has read. The rendered
+ * `othersReadUpToSeq` holds the maximum (FR-012): a stale frame or a
+ * reconnect №13 refetch with a lower server projection (the
+ * departure-of-the-furthest-reader exception) never rolls a rendered
+ * ✓✓ back. №17 read marks fire for ANY other member's rendered
+ * message (there is no single peer in a group), and №26 group deltas
+ * carry `othersReadUpToSeq` for the offline catch-up.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { getChat, listMessages, markChatRead } from '../../api/chats'
@@ -94,8 +95,9 @@ export interface SyncPageUpdate {
   readonly peerReadUpToSeq?: number
   /**
    * Group delta watermark (feature 006, US2): `othersReadUpToSeq` of
-   * the №26 group variant — the MIN of the other active members' read
-   * marks, applied monotonically (max).
+   * the №26 group variant — the MAX of the other active members' read
+   * marks (✓✓ once any one of them has read), applied monotonically
+   * (max).
    */
   readonly othersReadUpToSeq?: number
 }
@@ -132,10 +134,11 @@ export interface UseChatMessagesResult {
   readonly peerReadUpToSeq: number
   /**
    * Group read watermark of the open chat (feature 006, US2, T038):
-   * own messages with `seq ≤ othersReadUpToSeq` render ✓✓ — the MIN
+   * own messages with `seq ≤ othersReadUpToSeq` render ✓✓ — the MAX
    * of the other active members' marks (№13/№26 + `chat.read`
-   * frames), held monotonic (max, FR-012). Direct chats keep 0 — the
-   * ✓✓ rendering there reads `peerReadUpToSeq`.
+   * frames; ✓✓ once any one of them has read), held monotonic (max,
+   * FR-012). Direct chats keep 0 — the ✓✓ rendering there reads
+   * `peerReadUpToSeq`.
    */
   readonly othersReadUpToSeq: number
   /**
@@ -213,12 +216,12 @@ export function useChatMessages(
   const [peerReadUpToSeq, setPeerReadUpToSeq] = useState(0)
   /**
    * Group read watermark for the ✓✓ rendering (US2, T038) — the
-   * monotonic (max) projection of the MIN over the other members.
+   * monotonic (max) projection of the MAX over the other members.
    */
   const [othersReadUpToSeq, setOthersReadUpToSeq] = useState(0)
   /**
    * Per-member read marks assembled from `chat.read` frames (US2,
-   * FR-012): the ✓✓ candidate is the MIN over the OTHER roster
+   * FR-012): the ✓✓ candidate is the MAX over the OTHER roster
    * members — members without a frame read nothing (0) yet.
    */
   const othersMarksRef = useRef<Map<string, number>>(new Map())
@@ -449,29 +452,30 @@ export function useChatMessages(
         setPeerReadUpToSeq((previous) => Math.max(previous, event.readUpToSeq))
         return
       }
-      // Group (US2, T038, FR-012): the frame advances ONE member's
-      // mark; ✓✓ flips only when EVERY other active member has read —
-      // the MIN over the roster, held monotonic (max) against stale
-      // or lower projections. A lone member never gets ✓✓ (the MIN
-      // condition is empty — spec FR-012).
+      // Group (US2, T038, FR-012 — MAX semantics 2026-10-01): the frame
+      // advances ONE member's mark; ✓✓ flips as soon as ANY other
+      // active member has read — the MAX over the roster marks, held
+      // monotonic (max) against stale or lower projections (the
+      // departure of the furthest reader). A lone member never gets
+      // ✓✓ (the addressee set is empty — spec FR-012).
       if (userId !== null && event.byUserId === userId) {
         return
       }
       const marks = othersMarksRef.current
       marks.set(event.byUserId, Math.max(marks.get(event.byUserId) ?? 0, event.readUpToSeq))
-      let min = Number.POSITIVE_INFINITY
+      let max = 0
       let others = 0
       for (const member of groupMembers) {
         if (userId !== null && member.user.id === userId) {
           continue
         }
         others += 1
-        min = Math.min(min, marks.get(member.user.id) ?? 0)
+        max = Math.max(max, marks.get(member.user.id) ?? 0)
       }
       if (others === 0) {
         return
       }
-      setOthersReadUpToSeq((previous) => Math.max(previous, min))
+      setOthersReadUpToSeq((previous) => Math.max(previous, max))
     })
     return () => {
       unsubscribeOpen()

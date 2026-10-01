@@ -74,7 +74,8 @@ data class SyncRequest(
  * 006 T037 (api-contract.md 006 §3 №26): the delta is type-discriminated
  * — a GROUP delta answers `type:'group'` with [title], the ACTIVE
  * [memberCount] and the FR-012 ✓✓ bound [othersReadUpToSeq]
- * (`MIN(last_read_seq)` of the other active members — the caller's own
+ * (`MAX(last_read_seq)` of the other active members — ✓✓ once any one
+ * of them has read; the caller's own
  * mark never folds in), while the peer projection renders as EXPLICIT
  * `null`s (`peer`/`blockedByMe`/`peerReadUpToSeq` are required-nullable
  * fields of the schema): blocks never apply to groups (Assumptions 006)

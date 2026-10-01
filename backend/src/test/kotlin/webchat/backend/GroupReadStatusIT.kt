@@ -22,32 +22,33 @@ import java.util.UUID
  * `othersReadUpToSeq` projection and the №17 `chat.read` fanout of
  * realtime-group-events.md §3.7. One method per rule:
  *
- *  * ✓✓ = MIN: `othersReadUpToSeq` of a member is the
- *    `MIN(last_read_seq)` of the OTHER active members — the projection
- *    tracks the slowest reader and flips to the head only once everyone
- *    else has read that far (each member sees his OWN projection through
- *    №13, never a chat-wide value);
+ *  * ✓✓ = MAX (semantics changed 2026-10-01 — «read by at least one»):
+ *    `othersReadUpToSeq` of a member is the `MAX(last_read_seq)` of the
+ *    OTHER active members — the projection tracks the FASTEST reader
+ *    and flips as soon as any one other member has read that far (each
+ *    member sees his OWN projection through №13, never a chat-wide
+ *    value);
  *  * a group of one never sets ✓✓: with no other active members the
  *    projection answers 0 — the double tick is unreachable
  *    (api-contract.md №13 «0 при одиночной группе»), even though the
  *    lone member's own `myReadUpToSeq` advances normally;
  *  * monotonicity (FR-012): a repeated or smaller `upToSeq` is a silent
- *    no-op — the GREATEST-watermark row keeps its value, the MIN
+ *    no-op — the GREATEST-watermark row keeps its value, the MAX
  *    projection does not roll back and no `chat.read` is published — and
  *    a member added later cannot reset ✓✓ either: his watermark starts
- *    at the group position (FR-013), so the achieved MIN survives the
- *    roster growth;
+ *    at the group position (FR-013), so the achieved MAX survives the
+ *    roster growth (a joiner can only raise it);
  *  * `chat.read` fanout: a №17 advance in a group publishes the 004
  *    `ChatReadEvent` payload verbatim (`chatId`, `readUpToSeq`,
  *    `byUserId`) to EVERY active member EXCEPT the reader — the reader's
  *    own stream stays silent (§3.7);
- *  * T061 re-add edges (FR-002/FR-012, clarify 2026-09-25): the member
- *    leaving WITHOUT reading drops out of the ✓✓ condition (the MIN is
- *    recalculated over the CURRENT roster — the projection jumps to the
- *    head), and his №31 re-add restores him WITH his PRESERVED
- *    watermark, repinning №13 to the old MIN — a contract-legal
- *    server-side drop the live client rides out holding its max
- *    (realtime-group-events.md §3.7/§5.3);
+ *  * T061 re-add edges (FR-002/FR-012, clarify 2026-09-25): under MAX
+ *    the departure of the FURTHEST reader lowers the server projection
+ *    (the fold is recalculated over the CURRENT roster) — a
+ *    contract-legal server-side drop the live client rides out holding
+ *    its max (realtime-group-events.md §3.7/§5.3) — and his №31 re-add
+ *    restores him WITH his PRESERVED watermark (FR-002), repinning №13
+ *    back to the high bound;
  *  * T061 badge/history edge (FR-002/FR-02): a re-add is NOT a first
  *    addition — BOTH watermarks survive the removal→re-add cycle, the
  *    WHOLE history stays readable from the preserved mark and the
@@ -75,16 +76,16 @@ class GroupReadStatusIT(
     private val deliveryBudget: Duration = Duration.ofSeconds(DELIVERY_BUDGET_SECONDS)
 
     /**
-     * FR-012 core (data-model.md «Правила видимости»): №13 answers each
-     * member his OWN `othersReadUpToSeq` — the `MIN(last_read_seq)` of
-     * the other ACTIVE members. The projection tracks the slowest
-     * reader: it leaves 0 only after EVERY other member has read, it
-     * climbs step by step as the minimum of the individual marks, and it
-     * reaches the head exactly when the last laggard catches up (✓✓ of
-     * the sender's messages).
+     * FR-012 core (data-model.md «Правила видимости», MAX semantics):
+     * №13 answers each member his OWN `othersReadUpToSeq` — the
+     * `MAX(last_read_seq)` of the other ACTIVE members. The projection
+     * tracks the FASTEST reader: it flips the moment any one other
+     * member reads (the sender's early ✓✓ signal), it climbs as the
+     * maximum of the individual marks, and it reaches the head as soon
+     * as one reader catches up with it.
      */
     @Test
-    fun `others read up to seq is the min of the other active members watermarks`() {
+    fun `others read up to seq is the max of the other active members watermarks`() {
         val group = trioGroup()
         val owner = group.owner
         val bob = group.bob
@@ -96,16 +97,17 @@ class GroupReadStatusIT(
         assertOthersReadUpToSeq(bob, chatId, FRESH_PROJECTION)
 
         markReadOk(bob, chatId, seqs[1])
-        assertOthersReadUpToSeq(owner, chatId, FRESH_PROJECTION)
-        assertOthersReadUpToSeq(carol, chatId, FRESH_PROJECTION)
+        assertOthersReadUpToSeq(owner, chatId, seqs[1])
+        assertOthersReadUpToSeq(carol, chatId, seqs[1])
+        assertOthersReadUpToSeq(bob, chatId, FRESH_PROJECTION)
 
         markReadOk(carol, chatId, seqs[3])
-        assertOthersReadUpToSeq(owner, chatId, seqs[1])
-        assertOthersReadUpToSeq(bob, chatId, FRESH_PROJECTION)
-        assertOthersReadUpToSeq(carol, chatId, FRESH_PROJECTION)
+        assertOthersReadUpToSeq(owner, chatId, seqs[3])
+        assertOthersReadUpToSeq(bob, chatId, seqs[3])
+        assertOthersReadUpToSeq(carol, chatId, seqs[1])
 
         markReadOk(bob, chatId, seqs.last())
-        assertOthersReadUpToSeq(owner, chatId, seqs[3])
+        assertOthersReadUpToSeq(owner, chatId, seqs.last())
 
         markReadOk(carol, chatId, seqs.last())
         assertOthersReadUpToSeq(owner, chatId, seqs.last())
@@ -154,11 +156,11 @@ class GroupReadStatusIT(
      * same live stream are consumed first, proving the rule and not a
      * dead stream); and ✓✓ is never RESET by roster growth: a member
      * added AFTER the head was read starts at the group position
-     * (FR-013, badge 0), so the achieved MIN projection survives him
-     * joining (a naive zero-initialized member would drop it to 0).
+     * (FR-013, badge 0), so the achieved MAX projection survives him
+     * joining (a joiner can only raise the fold).
      */
     @Test
-    fun `read marks and the min projection never roll back`() {
+    fun `read marks and the max projection never roll back`() {
         val group = trioGroup()
         val owner = group.owner
         val bob = group.bob
@@ -234,18 +236,19 @@ class GroupReadStatusIT(
     }
 
     /**
-     * FR-012 edge №2 (T061, clarify 2026-09-25): the ✓✓ condition is
-     * recalculated over the CURRENT roster — the member leaving without
-     * reading DROPS OUT of the MIN, so the sender's double tick becomes
-     * reachable the moment he is gone. His №31 re-add restores him WITH
-     * his PRESERVED watermark (FR-002), repinning №13 to the old MIN —
-     * a contract-legal server-side drop the live client must ride out
-     * holding its max (realtime-group-events.md §3.7/§5.3) — and the
-     * per-member GREATEST marks never roll back: once everyone has read
-     * to the new head, №13 answers the head again.
+     * FR-012 edge №2 (T061, clarify 2026-09-25; MAX semantics
+     * 2026-10-01): the ✓✓ fold is recalculated over the CURRENT roster —
+     * the FURTHEST reader leaving DROPS OUT of the MAX, so the server
+     * projection of the sender legally slides down to the next reader's
+     * mark (new sessions pin there; a live client holds its achieved
+     * maximum, realtime-group-events.md §3.7/§5.3). His №31 re-add
+     * restores him WITH his PRESERVED watermark (FR-002), repinning №13
+     * back to the high bound — and the per-member GREATEST marks never
+     * roll back: once the laggard reads to the new head, №13 answers the
+     * head again.
      */
     @Test
-    fun `the unread member leaving frees the double tick and his re-add repins the min to the preserved mark`() {
+    fun `the furthest reader leaving lowers the server projection and his re-add restores the preserved mark`() {
         val group = trioGroup()
         val owner = group.owner
         val bob = group.bob
@@ -257,21 +260,20 @@ class GroupReadStatusIT(
 
         markReadOk(bob, chatId, mark)
         markReadOk(carol, chatId, head)
-        assertOthersReadUpToSeq(owner, chatId, mark)
-
-        leaveGroupOk(bob, chatId)
-
         assertOthersReadUpToSeq(owner, chatId, head)
+
+        leaveGroupOk(carol, chatId)
+
+        assertOthersReadUpToSeq(owner, chatId, mark)
 
         val absence = seedChatBacklog(chatId, READD_TICK_ABSENCE_MESSAGES, { owner }, READD_TICK_ABSENCE_TEXT_PREFIX)
         val newHead = absence.last().seq
 
-        addMembersOk(owner, chatId, bob.id)
+        addMembersOk(owner, chatId, carol.id)
 
-        assertOthersReadUpToSeq(owner, chatId, mark)
+        assertOthersReadUpToSeq(owner, chatId, head)
 
         markReadOk(bob, chatId, newHead)
-        markReadOk(carol, chatId, newHead)
         assertOthersReadUpToSeq(owner, chatId, newHead)
     }
 
@@ -581,7 +583,7 @@ class GroupReadStatusIT(
             ).isTrue
         assertThat(view.path(OTHERS_READ_UP_TO_SEQ_FIELD).asLong())
             .overridingErrorMessage(
-                "№13 othersReadUpToSeq of <%s> must be the MIN of the other active watermarks <%d>, view: %s",
+                "№13 othersReadUpToSeq of <%s> must be the MAX of the other active watermarks <%d>, view: %s",
                 user.username,
                 expected,
                 view,
@@ -660,10 +662,10 @@ class GroupReadStatusIT(
         const val READD_TICK_ABSENCE_MESSAGES = 2
         const val READD_BADGE_MESSAGES = 4
         const val READD_BADGE_ABSENCE_MESSAGES = 3
-        const val READD_TICK_TEXT_PREFIX = "readmin-tick"
-        const val READD_TICK_ABSENCE_TEXT_PREFIX = "readmin-tick-absence"
-        const val READD_BADGE_TEXT_PREFIX = "readmin-badge"
-        const val READD_BADGE_ABSENCE_TEXT_PREFIX = "readmin-badge-absence"
+        const val READD_TICK_TEXT_PREFIX = "readmax-tick"
+        const val READD_TICK_ABSENCE_TEXT_PREFIX = "readmax-tick-absence"
+        const val READD_BADGE_TEXT_PREFIX = "readmax-badge"
+        const val READD_BADGE_ABSENCE_TEXT_PREFIX = "readmax-badge-absence"
 
         /** Openapi 0.6.0 №13: 0 — nobody else has read yet. */
         const val FRESH_PROJECTION = 0L

@@ -65,7 +65,8 @@ data class ReadWatermarks(
  * The GROUP projection of `ChatView` (T024, 006 №13, api-contract.md §3):
  * the caller's [myRole] and own [myReadUpToSeq] from his ACTIVE
  * membership row, the FR-012 ✓✓ bound [othersReadUpToSeq]
- * (`MIN(last_read_seq)` of the other active members) and the ACTIVE
+ * (`MAX(last_read_seq)` of the other active members — ✓✓ once any one
+ * of them has read) and the ACTIVE
  * [memberCount] — the group-side counterpart of [ReadWatermarks].
  */
 data class GroupChatProjection(
@@ -243,7 +244,7 @@ class ChatService(
      * `ChatView` — the caller's own role and read watermark from his
      * ACTIVE membership row (the one [get] has just proven), the ✓✓ rule
      * of FR-012 as [GroupChatProjection.othersReadUpToSeq] (the
-     * `minOtherReadUpToSeq` MIN-fold over the other active members — 0 in
+     * `maxOtherReadUpToSeq` MAX-fold over the other active members — 0 in
      * a group of one) and [GroupChatProjection.memberCount] as the ACTIVE
      * roster size (1–200, the `ix_chat_participants_chat_active` scan of
      * [ParticipantRepository.activeMembers] — no `FOR UPDATE` lock of a
@@ -264,7 +265,7 @@ class ChatService(
         return GroupChatProjection(
             myRole = myRole,
             myReadUpToSeq = membership.lastReadSeq,
-            othersReadUpToSeq = participantRepository.minOtherReadUpToSeq(chat.id, callerId),
+            othersReadUpToSeq = participantRepository.maxOtherReadUpToSeq(chat.id, callerId),
             memberCount = participantRepository.activeMembers(chat.id).size.toLong(),
         )
     }
