@@ -30,7 +30,7 @@
 | userId | UUID | |
 | online | boolean | ⟺ ≥1 живой регистрации (FR-001); мультидевайс — любая сессия |
 | rev | int64 | Монотонная ревизия фактического/публикуемого состояния; инкремент на каждом переходе и переключении «невидимки»; основа сходимости клиентского слияния (research C2) |
-| publishedStatus | `online` \| `offline` | Последний опубликованный аудитории статус (CAS-基础 идемпотентности) |
+| publishedStatus | `online` \| `offline` | Последний опубликованный аудитории статус (основа CAS-идемпотентности) |
 | pendingOfflineAt | epoch-ms \| null | Запланированная публикация «офлайн» (гистерезис-очередь), FR-004 |
 
 Переходы (state machine, публикация — только через атомарный CAS `publishedStatus`):
@@ -113,7 +113,7 @@ ALTER TABLE users ADD COLUMN presence_hidden BOOLEAN NOT NULL DEFAULT FALSE;
 
 ## 4. Изменения OpenAPI (источник истины, аддитивно — 0.6.0 → 0.7.0)
 
-- №36 `GET /users/me/presence?userIds=` — batch-снапшок (≤200) → `{items:[{userId,status,rev}]}`; `status: online|offline|unknown` (`unknown` = «нет доступа», семантика не различает «офлайн»/«скрыто»).
+- №36 `GET /users/me/presence?userIds=` — batch-снапшот (≤200) → `{items:[{userId,status,rev}]}`; `status: online|offline|unknown` (`unknown` = «нет доступа», семантика не различает «офлайн»/«скрыто»).
 - №37 `POST /users/me/presence/heartbeat` `{connectionId}` → 204; 404 `presence_connection_not_found`.
 - №38 `GET|PUT /users/me/presence/settings` `{incognito}`.
 - №18: событие `presence.updated`; opening-фрейм `connected` `{connectionId}`.
@@ -127,7 +127,7 @@ ALTER TABLE users ADD COLUMN presence_hidden BOOLEAN NOT NULL DEFAULT FALSE;
 |---|---|
 | FR-001 онлайн ⟺ ≥1 регистрации; без истории | §1.2 производный статус; события нигде не хранятся |
 | FR-002 TTL-регистрации, heartbeat, самоистечение, явное закрытие | §1.1, §3 alive/watch; logout-обход §1.2 |
-| FR-003 адресная доставка + снапшок поверхностей | audience §1.4; снапшок №36 в цикле (re)connect |
+| FR-003 адресная доставка + снапшот поверхностей | audience §1.4; снапшот №36 в цикле (re)connect |
 | FR-004 гистерезис 45 c / дебаунс | offq §3; CAS-публикации §1.2 |
 | FR-005 только внешнее хранилище, stateless | §2–§3 (Redis/PG), поллеры идемпотентны |
 | FR-006 индикатор 1:1 + контакты, a11y, идемпотентность, «неизвестно» | E1 research; rev-merge §1.3; `unknown` №36 |

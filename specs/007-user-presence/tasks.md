@@ -10,7 +10,7 @@
 
 ## Format: `[ID] [P?] [Story] Description`
 
-- **[P]**: Можно выполнять параллельно (разные файлы, нет зависимостей от незавершённых задач)
+- **[P]**: Можно выполнять параллельно разными исполнителями/агентами (разные файлы, нет зависимостей от незавершённых задач); один агент реализует задачи строго последовательно в порядке фаз — параллельная реализация несвязанных задач одним агентом запрещена (конституция, Development Workflow & Quality Gates)
 - **[Story]**: Принадлежность к user story (US1, US2, US3, US4)
 - В описаниях — точные пути к файлам
 
@@ -44,7 +44,7 @@
 - [ ] T006 [P] Определить порт `PresenceEventPublisher` в `backend/src/main/kotlin/webchat/backend/presence/domain/port/PresenceEventPublisher.kt`: публикация `presence.updated {userId,status,rev}` в `rt:user:{observerId}` (расширение RealtimeEventPublisher, DIP)
 - [ ] T007 [P] Сгенерировать фронтенд-типы `pnpm --dir frontend generate:api` (openapi-typescript из обновлённого контракта T001; типы presence в `frontend/src/api/`)
 - [ ] T008 Реализовать `RedisPresenceStore` в `backend/src/main/kotlin/webchat/backend/presence/repository/RedisPresenceStore.kt`: ZSET `presence:alive:{userId}` (member=connectionId, score=expiresAt, ленивая чистка ZREMRANGEBYSCORE), `presence:watch`, `presence:offq`, String `presence:pub:{userId}` / `presence:rev:{userId}` / `presence:online:count`; Lua-скрипты атомарных переходов (CAS pub + INCR rev + счётчик + offq-мутации; при nil rev инициализируется меткой now_ms — монотонность между «эпохами»; TTL pub продлевается в renew-Lua), продление alive+watch одним Lua (зависит от T004; data-model §3)
-- [ ] T009 [P] Реализовать `JdbcVisibilityAudienceReader` в `backend/src/main/kotlin/webchat/backend/presence/repository/JdbcVisibilityAudienceReader.kt`: SQL `chat_participants state='active' (direct+group) ∪ user_contacts − user_blocks (обе стороны) − сам X` по индексам V10/V11/V14 (зависит от T005; research C1)
+- [ ] T009 Реализовать `JdbcVisibilityAudienceReader` в `backend/src/main/kotlin/webchat/backend/presence/repository/JdbcVisibilityAudienceReader.kt`: SQL `chat_participants state='active' (direct+group) ∪ user_contacts − user_blocks (обе стороны) − сам X` по индексам V10/V11/V14 (зависит от T005; research C1)
 - [ ] T010 [P] Создать `PresenceMetrics` в `backend/src/main/kotlin/webchat/backend/presence/PresenceMetrics.kt`: counter `webchat_presence_events_published_total{status}`, counter `webchat_presence_hysteresis_suppressed_total`, gauge `webchat_presence_online_users` (экспорт Redis-счётчика), переиспользование `webchat_realtime_push_seconds{event=presence.updated}` (FR-009, research F)
 
 **Checkpoint**: Фундамент готов — реализация user stories может начинаться параллельно
@@ -73,7 +73,7 @@
 - [ ] T019 [P] [US1] Создать `frontend/src/presence/presenceApi.ts`: клиент №36 (batch-снапшот) и №37 + heartbeat-планировщик (интервал 30 c от connectionId из фрейма `connected`; на 404 — немедленный reconnect SSE; research E2)
 - [ ] T020 [US1] Создать `frontend/src/presence/usePresence.ts`: снапшот отображаемых поверхностей (открытые чаты, видимый список «Контакты») в цикле (re)connect 005 после sync/chats/contacts + подписка `presence.updated` со слиянием в store (зависит от T018, T019)
 - [ ] T021 [P] [US1] Создать `frontend/src/presence/PresenceIndicator.tsx`: точка + текстовая/aria-подпись; `online` (зелёная), `offline` (серая), `unknown` (нейтрально-серая/скрытая) — до первого снапшота и для «нет доступа» (FR-006, clarify a11y)
-- [ ] T022 [US1] Интегрировать индикатор в три поверхности: `frontend/src/chats/components/ChatListItem.tsx` (только личные чаты), заголовок окна 1:1-чата, элементы списка «Контакты» (панель 004 US5); в групповых чатах UI присутствия отсутствует (зависит от T020, T021)
+- [ ] T022 [US1] Интегрировать индикатор в три поверхности: `frontend/src/chats/components/ChatListItem.tsx` (только личные чаты), заголовок окна 1:1-чата (`DirectChatHeader` в `frontend/src/chats/pages/MessengerPage.tsx`), элементы списка «Контакты» (`frontend/src/chats/components/ContactList.tsx`, панель 004 US5); в групповых чатах UI присутствия отсутствует (зависит от T020, T021)
 
 **Checkpoint**: US1 полностью функционален и независимо проверяем (PresenceIT + Vitest зелёные, QS-1 руками)
 
@@ -126,7 +126,7 @@
 
 ### Tests for User Story 4 (писать первыми)
 
-- [ ] T030 [P] [US4] Написать `PresencePrivacyIT` в `backend/src/test/kotlin/webchat/backend/presence/PresencePrivacyIT.kt`: посторонний (нет чата/контактов) и блок-пара не получают ни одного `presence.updated`, №36 отвечает `unknown` (SC-004); в общем групповом чате остальные участники статусы друг друга видят; «нет доступа» не различает «офлайн»/«скрыто»
+- [ ] T030 [P] [US4] Написать `PresencePrivacyIT` в `backend/src/test/kotlin/webchat/backend/presence/PresencePrivacyIT.kt`: посторонний (нет чата/контактов) и блок-пара не получают ни одного `presence.updated`, №36 отвечает `unknown` (SC-004); в общем групповом чате остальные участники статусы друг друга видят; «нет доступа» не различает «офлайн»/«скрыто»; наблюдатель с общим direct- и group-чатом получает ровно один `presence.updated` на переход (один фанаут на наблюдателя — edge «до 200 участников»); сходимость аудитории: после исключения из группы/удаления чата событие не доставляется (короткое окно, как 006 FR-010), после добавления в контакты — доставляется без перезапуска клиента (edges)
 - [ ] T031 [P] [US4] Написать `PresenceInvisibleIT` в `backend/src/test/kotlin/webchat/backend/presence/PresenceInvisibleIT.kt`: включение при живых подключениях → ровно одно переключение в `offline` + заморозка событий; выключение онлайн-пользователя → публикация `online`; снапшот цели в режиме → `offline` неотличимо; сам «невидимка» читает №36 без ограничений; режим сохраняется после перелогина (PG V15); переключение режима ≤ одной смены индикатора
 
 ### Implementation for User Story 4
@@ -143,9 +143,9 @@
 
 **Purpose**: Нагрузочный smoke, наблюдаемость, валидация контракта, сквозная проверка
 
-- [ ] T035 [P] Создать k6-сценарий `load/presence.smoke.js`: подключения + heartbeat (30 c) + переключения; отсутствие деградации delivery-метрик messaging (p99 push не растёт — SC-007; полные пики — фича 016)
+- [ ] T035 [P] Создать k6-сценарий `load/k6/presence.smoke.js` (конвенция `load/k6/*.js`): подключения + heartbeat (30 c) + переключения; отсутствие деградации delivery-метрик messaging (Δp99 push ≤ 10% к базовому прогону без presence — SC-007; полные пики — фича 016)
 - [ ] T036 [P] Проверить наблюдаемость (SC-008): интеграционный тест/проверка `/actuator/prometheus` — `webchat_presence_online_users`, `webchat_presence_events_published_total{status}`, `webchat_presence_hysteresis_suppressed_total`, `webchat_realtime_push_seconds{event=presence.updated}` (в `backend/src/test/kotlin/webchat/backend/presence/`)
-- [ ] T037 Запустить `./scripts/validate-contracts.sh`: vacuum validate + oasdiff breaking-check 0.6.0 → 0.7.0 — только аддитивные изменения (конституция IV)
+- [ ] T037 Создать `scripts/validate-contracts.sh` — локальную обёртку contract-job CI (`.github/workflows/ci.yml:157-210`: `vacuum lint -e contracts/openapi.yaml`; регенерация TS-типов `pnpm --dir frontend generate:api` + drift-check `git diff --exit-code -- frontend/src/api/schema.d.ts`; `oasdiff breaking --fail-on ERR` против `origin/main` с учётом `contracts/BREAKING.md` и `contracts/oasdiff-err-ignore.txt`) — и запустить его: lint + drift + breaking-check 0.6.0 → 0.7.0 — только аддитивные изменения (конституция IV)
 - [ ] T038 Выполнить сквозную ручную валидацию по `specs/007-user-presence/quickstart.md`: QS-1 (индикатор/realtime), QS-2 (метро), QS-3 (самоистечение), QS-4 (приватность/невидимка) + автоматизированный блок (`./gradlew :backend:test --tests 'webchat.backend.presence.*'`, `pnpm --dir frontend test`)
 - [ ] T039 [P] Финальный lint/форматирование: backend (Gradle check/spotless) и frontend (`pnpm lint`), очистка кода
 
@@ -165,7 +165,7 @@
 - **US1 (P1)**: После Phase 2; фундамент сигнала для US2/US3/US4
 - **US2 (P2)**: После US1 (offq-планирование встроено в переходы PresenceService)
 - **US3 (P2)**: После US1 (watch-поллер направляет истёкших в offq US2; разными командами — параллельно с US2)
-- **US4 (P3)**: После US1 (снапшот №16/публикация); не зависит от US2/US3
+- **US4 (P3)**: После US1 (снапшот №36/публикация); не зависит от US2/US3
 
 ### Within Each User Story
 
@@ -176,7 +176,7 @@
 ### Parallel Opportunities
 
 - Phase 1: T001, T002, T003 — параллельно (разные файлы)
-- Phase 2: T004–T07, T009, T010 — параллельно; фронтенд-кодогенерация T007 параллельно бэкенд-адаптерам
+- Phase 2: T004–T007, T010 — параллельно; T008 — после T004, T009 — после T005 (далее параллельно остальным разными исполнителями); фронтенд-кодогенерация T007 параллельно бэкенд-адаптерам
 - US1: backend (T013–T017) и frontend (T018–T022) — параллельно разными исполнителями; внутри frontend T018/T019/T021 параллельны
 - US4: T030/T031 (разные тест-файлы) параллельны
 - Phase 7: T035/T036/T039 параллельны
@@ -227,9 +227,9 @@ Task: "T018 [P] / T019 [P] / T021 [P] frontend: presenceStore.ts, presenceApi.ts
 
 ## Notes
 
-- [P] = разные файлы, нет зависимостей от незавершённых задач
+- [P] = разные файлы, нет зависимостей от незавершённых задач; параллелизм — только между исполнителями, один агент идёт последовательно (конституция, Development Workflow)
 - [Story]-метка связывает задачу с user story для трассировки
-- Все числовые параметры (TTL 90 c, heartbeat 30 c, гистерезис 45 c) — из contracts/presence-api.md §2–3 и research §G; тест-профиль ужимает окна
+- Все числовые параметры (TTL 90 c, heartbeat 30 c, гистерезис 45 c, немедленная публикация «онлайн») — из contracts/presence-api.md §2, contracts/presence-events.md §3 (каноническая фиксация FR-004) и research §G; тест-профиль ужимает окна
 - Тесты красные до реализации (VI); Definition of Done: реализация + зелёные тесты + lint + контракт (если затронут)
 - Коммит после каждой задачи/логической группы; стоп на чекпоинтах историй для независимой валидации
 - Избегать: vague-задач, конфликтов одного файла, межсторных зависимостей, ломающих независимость

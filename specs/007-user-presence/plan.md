@@ -98,8 +98,8 @@ backend/src/main/kotlin/webchat/backend/presence/
 backend/src/main/resources/db/migration/
 └── V15__presence_settings.sql         # users.presence_hidden BOOLEAN NOT NULL DEFAULT FALSE
 
-backend/src/test/kotlin/webchat/backend/presence/    # PresenceIT, PresenceHysteresisIT («метро»),
-                                                    # PresencePrivacyIT, PresenceInvisibleIT, PresenceSnapshotIT
+backend/src/test/kotlin/webchat/backend/presence/    # PresenceIT (вкл. снапшот-сценарии), PresenceHysteresisIT («метро»),
+                                                    # PresenceExpiryIT, PresencePrivacyIT, PresenceInvisibleIT
 
 frontend/src/presence/
 ├── PresenceIndicator.tsx             # точка + доступная подпись (online/offline/unknown), aria
@@ -108,12 +108,12 @@ frontend/src/presence/
 ├── presenceApi.ts                    # №36–38 + heartbeat-планировщик (connectionId из фрейма connected)
 └── __tests__/
 
-frontend/src/chats/components/        # интеграция: ChatListItem (direct), заголовок 1:1-чата, ContactList
-load/
+frontend/src/chats/components/        # интеграция: ChatListItem (direct), ContactList; заголовок 1:1 — DirectChatHeader в chats/pages/MessengerPage.tsx
+load/k6/
 └── presence.smoke.js                 # k6: подключения+heartbeat+переключения; отсутствие деградации messaging
 ```
 
-**Structure Decision**: Конвенция monorepo 001–006: package-by-feature в `backend/…/webchat/backend/`, фича-модуль `frontend/src/presence/` с точечной интеграцией в существующие компоненты; contracts — аддитивная правка корневого `contracts/openapi.yaml` (0.6.0 → 0.7.0).
+**Structure Decision**: Конвенция monorepo 001–006: package-by-feature в `backend/…/webchat/backend/`, фича-модуль `frontend/src/presence/` с точечной интеграцией в существующие компоненты; contracts — аддитивная правка корневого `contracts/openapi.yaml` (0.6.0 → 0.7.0). Точечные интеграции вне `presence/`: `backend/…/realtime/` (opening-фрейм `connected` + хуки жизненного цикла подключений — T013), `backend/…/auth/` (logout-очистка регистраций сессии — T029).
 
 ## Complexity Tracking
 
