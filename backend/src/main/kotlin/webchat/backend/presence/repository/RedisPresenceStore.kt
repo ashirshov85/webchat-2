@@ -51,8 +51,8 @@ import java.util.UUID
  * REMAINING registrations, ZREM when none are left — the removal of the
  * top scorer must LOWER the deadline, or a surviving device's silent
  * lapse would be reaped up to one TTL late, outside the SC-003 budget).
- * The offq-drain poller landed with T025; the watch-drain poller and the
- * logout leg's own watch bookkeeping — with T028/T029.
+ * The offq-drain poller landed with T025; the watch-drain poller — with
+ * T028, and the logout leg's own watch bookkeeping — with T029.
  */
 @Repository
 @Suppress("TooManyFunctions") // one atomic leg per PresenceStore operation: the port mirrors §1.2 + §3
@@ -138,6 +138,7 @@ class RedisPresenceStore(
                     revKey(userId),
                     OFFQ_KEY,
                     ONLINE_COUNT_KEY,
+                    WATCH_KEY,
                 ),
                 sessionId.toString(),
                 userId.toString(),
@@ -403,7 +404,10 @@ class RedisPresenceStore(
                 Long::class.java,
             )
 
-        // KEYS: alive, conn, pub, rev, offq, count; ARGV: sessionId, userId → {switched, statusOnline, rev}
+        // KEYS: alive, conn, pub, rev, offq, count, watch; ARGV: sessionId, userId → {switched, statusOnline, rev}
+        // (watch = the unregister-leg discipline of T027: the removed top scorer must LOWER the deadline to the
+        //  MAX of the REMAINING registrations — or a surviving device's silent lapse would be reaped up to one
+        //  TTL late, outside the SC-003 budget; none left → ZREM, the immediate publish below replaces the offq)
         private val CLEAR_SESSION_SCRIPT: DefaultRedisScript<List<*>> =
             DefaultRedisScript(
                 """
@@ -416,6 +420,12 @@ class RedisPresenceStore(
                     redis.call('ZREM', KEYS[1], mapping[i])
                     redis.call('HDEL', KEYS[2], mapping[i])
                   end
+                end
+                local last = redis.call('ZRANGE', KEYS[1], -1, -1, 'WITHSCORES')
+                if #last == 0 then
+                  redis.call('ZREM', KEYS[7], ARGV[2])
+                else
+                  redis.call('ZADD', KEYS[7], tonumber(last[2]), ARGV[2])
                 end
                 local current = redis.call('GET', KEYS[3]) or 'offline'
                 local rev = tonumber(redis.call('GET', KEYS[4]) or '0')

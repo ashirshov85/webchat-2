@@ -2,6 +2,7 @@ package webchat.backend.presence.domain
 
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.stereotype.Service
+import webchat.backend.auth.domain.port.PresenceLogoutListener
 import webchat.backend.presence.domain.port.PresenceEventPublisher
 import webchat.backend.presence.domain.port.PresencePublishedStatus
 import webchat.backend.presence.domain.port.PresenceStore
@@ -51,6 +52,18 @@ import java.util.UUID
  *    stream (a revival is the register leg of the reconnect, never the
  *    beat — presence-api.md §2). The renew never touches the published
  *    status (a kept-alive registration must not advance the rev).
+ *  * №7 logout ([onSessionLoggedOut], T029): [PresenceStore.
+ *    clearSessionRegistrations] removes EXACTLY the revoked session's
+ *    registrations (the `sid` every registration carries since T013) —
+ *    the one leg allowed to bypass the hysteresis queue: a surviving
+ *    parallel session resolves [PresenceTransition.Unchanged] (no event,
+ *    edge «мультидевайс-logout»), the removal of the LAST registration
+ *    flips offline IMMEDIATELY inside the very logout request (FR-004's
+ *    single logout exception — a revoked session cannot return, the
+ *    window is pointless; research §B2). The still-mounted №18 sockets
+ *    of the logged-out session converge naturally: their №37 turns 404
+ *    and the reconnect hits the 002-denylisted token — no revival path
+ *    exists.
  *
  * The publication leg: on the ACTUAL flip only, the visibility audience
  * is resolved LIVE through [VisibilityAudienceReader] (data-model §1.4 —
@@ -85,7 +98,8 @@ class PresenceService(
     private val presenceStore: PresenceStore,
     private val visibilityAudienceReader: VisibilityAudienceReader,
     private val presenceEventPublisher: ObjectProvider<PresenceEventPublisher>,
-) : PresenceConnectionLifecycle {
+) : PresenceConnectionLifecycle,
+    PresenceLogoutListener {
     /**
      * SSE №18 open (T013 → data-model 007 §1.1/§1.2): register the
      * connection — [sessionId] is the `sid` claim of the access token
@@ -128,6 +142,26 @@ class PresenceService(
         userId: UUID,
         connectionId: UUID,
     ): Boolean = presenceStore.renewRegistration(userId, connectionId)
+
+    /**
+     * №7 logout (T029, research §B2; data-model §1.2 logout leg): clear the
+     * revoked session's registrations — [sessionId] is the `sid` of the
+     * 002 session every registration of that login carries. The atomic
+     * store leg decides: a live registration of ANOTHER session →
+     * [PresenceTransition.Unchanged] — nothing is published and the
+     * audience keeps the untouched `online`/rev (edge
+     * «мультидевайс-logout»); the removal of the LAST one → the immediate
+     * CAS online→offline + rev++ + the offq cancel (the BYPASS — no
+     * hysteresis window) → the audience fan-out happens right here,
+     * inside the logout request (FR-004's single logout exception: the
+     * tokens are revoked, a return is impossible, waiting is pointless).
+     */
+    override fun onSessionLoggedOut(
+        userId: UUID,
+        sessionId: UUID,
+    ) {
+        publishIfSwitched(presenceStore.clearSessionRegistrations(userId, sessionId))
+    }
 
     /**
      * №36 batch snapshot (T016, contracts/presence-api.md §1): the
