@@ -43,10 +43,16 @@ import java.util.UUID
  * and pollers serialize safely and a repeat execution is always a no-op
  * (FR-003/FR-005; data-model §3 «Атомарность»). All scripts take the
  * clock from Redis `TIME` — the scores of one key family are always
- * comparable regardless of the pod's wall clock. In T008 the watch ZSET
- * is maintained by the RENEW leg only (alive+watch in one script); the
- * register/unregister watch branches arrive with T027 (US3), the pollers
- * that drain watch/offq — with T025/T028.
+ * comparable regardless of the pod's wall clock. The watch ZSET score is
+ * max(expiresAt) of the user's registrations (research.md §A2): the
+ * RENEW leg has raised it GT-style since T008, and T027 (US3) added the
+ * register leg (a GT ZADD of the fresh expiry — it may only push the
+ * deadline UP) and the unregister leg (a recompute to the MAX of the
+ * REMAINING registrations, ZREM when none are left — the removal of the
+ * top scorer must LOWER the deadline, or a surviving device's silent
+ * lapse would be reaped up to one TTL late, outside the SC-003 budget).
+ * The offq-drain poller landed with T025; the watch-drain poller and the
+ * logout leg's own watch bookkeeping — with T028/T029.
  */
 @Repository
 @Suppress("TooManyFunctions") // one atomic leg per PresenceStore operation: the port mirrors §1.2 + §3
@@ -57,7 +63,7 @@ class RedisPresenceStore(
     private val ttlMs: Long = properties.ttl.toMillis()
     private val hysteresisMs: Long = properties.hysteresis.toMillis()
 
-    /** SSE №18 open: ZADD alive + the session index + the offq cancel — the returning-device revival. */
+    /** SSE №18 open: ZADD alive + the watch GT-raise + the session index + the offq cancel — the returning-device revival. */
     override fun register(
         userId: UUID,
         sessionId: UUID,
@@ -66,7 +72,7 @@ class RedisPresenceStore(
         val result =
             evalList(
                 REGISTER_SCRIPT,
-                listOf(aliveKey(userId), connKey(userId), OFFQ_KEY),
+                listOf(aliveKey(userId), connKey(userId), OFFQ_KEY, WATCH_KEY),
                 ttlMs.toString(),
                 connectionId.toString(),
                 sessionId.toString(),
@@ -96,14 +102,14 @@ class RedisPresenceStore(
             userId.toString(),
         ) == 1L
 
-    /** SSE close: remove the member; the loss of the LAST live registration only schedules the offq. */
+    /** SSE close: remove the member, recompute the watch score; the loss of the LAST live registration only schedules the offq. */
     override fun unregister(
         userId: UUID,
         connectionId: UUID,
     ) {
         evalLong(
             UNREGISTER_SCRIPT,
-            listOf(aliveKey(userId), connKey(userId), OFFQ_KEY, pubKey(userId)),
+            listOf(aliveKey(userId), connKey(userId), OFFQ_KEY, pubKey(userId), WATCH_KEY),
             hysteresisMs.toString(),
             connectionId.toString(),
             userId.toString(),
@@ -325,7 +331,8 @@ class RedisPresenceStore(
             end
             """
 
-        // KEYS: alive, conn, offq; ARGV: ttlMs, connectionId, sessionId, userId → {now, expiry}
+        // KEYS: alive, conn, offq, watch; ARGV: ttlMs, connectionId, sessionId, userId → {now, expiry}
+        // (watch GT: a fresh expiry may only push the shared deadline UP — never below another live max)
         private val REGISTER_SCRIPT: DefaultRedisScript<List<*>> =
             DefaultRedisScript(
                 """
@@ -333,6 +340,7 @@ class RedisPresenceStore(
                 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
                 local expiry = now + tonumber(ARGV[1])
                 redis.call('ZADD', KEYS[1], expiry, ARGV[2])
+                redis.call('ZADD', KEYS[4], 'GT', expiry, ARGV[4])
                 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
                 redis.call('PEXPIRE', KEYS[2], $PUB_TTL_MS)
                 redis.call('ZREM', KEYS[3], ARGV[4])
@@ -365,7 +373,9 @@ class RedisPresenceStore(
                 Long::class.java,
             )
 
-        // KEYS: alive, conn, offq, pub; ARGV: hysteresisMs, connectionId, userId → 1
+        // KEYS: alive, conn, offq, pub, watch; ARGV: hysteresisMs, connectionId, userId → 1
+        // (watch = MAX score of the REMAINING members — plain ZADD, the deadline may LOWER;
+        //  none left → ZREM: the deferred publish is already armed in the offq)
         private val UNREGISTER_SCRIPT: DefaultRedisScript<Long> =
             DefaultRedisScript(
                 """
@@ -373,6 +383,12 @@ class RedisPresenceStore(
                 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
                 redis.call('ZREM', KEYS[1], ARGV[2])
                 redis.call('HDEL', KEYS[2], ARGV[2])
+                local last = redis.call('ZRANGE', KEYS[1], -1, -1, 'WITHSCORES')
+                if #last == 0 then
+                  redis.call('ZREM', KEYS[5], ARGV[3])
+                else
+                  redis.call('ZADD', KEYS[5], tonumber(last[2]), ARGV[3])
+                end
                 if redis.call('EXISTS', KEYS[1]) == 0 and redis.call('GET', KEYS[4]) == 'online' then
                   redis.call('ZADD', KEYS[3], now + tonumber(ARGV[1]), ARGV[3])
                 end

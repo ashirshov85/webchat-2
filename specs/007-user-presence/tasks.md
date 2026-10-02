@@ -110,7 +110,7 @@
 
 ### Implementation for User Story 3
 
-- [ ] T027 [US3] Обслуживать `presence:watch` в `backend/src/main/kotlin/webchat/backend/presence/repository/RedisPresenceStore.kt`: score=max(expiresAt) регистраций пользователя в register/unregister-ветках Lua (renew-ветка — уже в T008; research A2) — Приёмка: T026 — тихое истечение ≤ бюджета SC-003
+- [X] T027 [US3] Обслуживать `presence:watch` в `backend/src/main/kotlin/webchat/backend/presence/repository/RedisPresenceStore.kt`: score=max(expiresAt) регистраций пользователя в register/unregister-ветках Lua (renew-ветка — уже в T008; research A2) — Приёмка: T026 — тихое истечение ≤ бюджета SC-003
 - [ ] T028 [US3] Реализовать watch-поллер тихих истечений в `backend/src/main/kotlin/webchat/backend/presence/scheduler/PresenceTransitionScheduler.kt`: fixed-delay 1 c, батчево ZRANGEBYSCORE −inf..now, вычистка истёкших members из `presence:alive:{userId}`, пересчёт → при пустоте offq (ленивая + активная чистка, FR-002) — Приёмка: T026 — истёкшие регистрации вычищаются из `presence:alive:{userId}`, пересчёт направляет в offq
 - [ ] T029 [US3] Интегрировать logout в существующий флоу `backend/src/main/kotlin/webchat/backend/auth/`: очистка регистраций только logout-сессии (registration.sessionId из sid токена; 002 отзывает одну сессию — clearSessionRegistrations); при потере последней регистрации — немедленный CAS→offline с публикацией (обход offq), при живых других — статус не меняется (edge «мультидевайс-logout»; research B2) — Приёмка: T026 — logout последней сессии → немедленный «офлайн»; при живой второй — «онлайн»
 
