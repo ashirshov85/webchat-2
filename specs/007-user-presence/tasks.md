@@ -91,7 +91,7 @@
 
 ### Implementation for User Story 2
 
-- [ ] T024 [US2] Реализовать гистерезис-планирование в `backend/src/main/kotlin/webchat/backend/presence/domain/PresenceService.kt` + `RedisPresenceStore.kt`: потеря последней регистрации (SSE close / закрытие устройства; ИСКЛЮЧЕНИЕ — logout-исключение FR-004: немедленный «офлайн» без окна, реализация — T029) НИКОГДА не публикует сразу — ZADD `presence:offq` с score=now+гистерезис (data-model §1.2, research B1) — Приёмка: T023 — метро-серия → 0 публикаций
+- [X] T024 [US2] Реализовать гистерезис-планирование в `backend/src/main/kotlin/webchat/backend/presence/domain/PresenceService.kt` + `RedisPresenceStore.kt`: потеря последней регистрации (SSE close / закрытие устройства; ИСКЛЮЧЕНИЕ — logout-исключение FR-004: немедленный «офлайн» без окна, реализация — T029) НИКОГДА не публикует сразу — ZADD `presence:offq` с score=now+гистерезис (data-model §1.2, research B1) — Приёмка: T023 — метро-серия → 0 публикаций
 - [ ] T025 [US2] Реализовать offq-поллер в `backend/src/main/kotlin/webchat/backend/presence/scheduler/PresenceTransitionScheduler.kt`: fixed-delay 1 c, батчево ZRANGEBYSCORE; на исполнении — есть живая регистрация → отмена + `hysteresis_suppressed_total`++; нет → атомарный CAS online→offline + rev++ + публикация аудитории (идемпотентность конкуренции инстансов — CAS) — Приёмка: T023 — длинный разрыв → ровно одно `offline`; подавления растят `webchat_presence_hysteresis_suppressed_total`
 
 **Checkpoint**: US2 независимо проверяем (PresenceHysteresisIT зелёный, QS-2 руками)
