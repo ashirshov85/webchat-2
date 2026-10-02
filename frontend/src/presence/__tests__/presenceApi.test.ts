@@ -4,8 +4,10 @@ import type { ApiProblem } from '../../api/auth'
 import {
   HEARTBEAT_INTERVAL_MS,
   createPresenceHeartbeat,
+  fetchPresenceSettings,
   fetchPresenceSnapshot,
   sendPresenceHeartbeat,
+  updatePresenceSettings,
 } from '../presenceApi'
 
 /**
@@ -140,6 +142,47 @@ describe('№37 sendPresenceHeartbeat (T019)', () => {
     mockedApiFetch.mockRejectedValue(new TypeError('network down'))
 
     await expect(sendPresenceHeartbeat(CONNECTION_ID)).resolves.toBe('error')
+  })
+})
+
+describe('№38 presence settings client (T034, contracts/presence-api.md §3)', () => {
+  it('GET returns the saved incognito mode — the toggle survives relogin (QS-4)', async () => {
+    mockedApiFetch.mockResolvedValue(jsonResponse(200, { incognito: true }))
+
+    const settings = await fetchPresenceSettings()
+
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1)
+    const [path, init] = mockedApiFetch.mock.calls[0]!
+    expect(path).toBe('/users/me/presence/settings')
+    expect(init?.method).toBeUndefined()
+    expect(new Headers(init?.headers).get('Accept')).toBe(
+      'application/json, application/problem+json',
+    )
+    expect(settings).toEqual({ incognito: true })
+  })
+
+  it('PUT sends {incognito} and returns the persisted value', async () => {
+    mockedApiFetch.mockResolvedValue(jsonResponse(200, { incognito: true }))
+
+    const settings = await updatePresenceSettings(true)
+
+    expect(mockedApiFetch).toHaveBeenCalledTimes(1)
+    const [path, init] = mockedApiFetch.mock.calls[0]!
+    expect(path).toBe('/users/me/presence/settings')
+    expect(init?.method).toBe('PUT')
+    expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json')
+    expect(JSON.parse(init?.body as string)).toEqual({ incognito: true })
+    expect(settings).toEqual({ incognito: true })
+  })
+
+  it('throws the RFC 9457 problem on a non-OK answer (429 flood_limit)', async () => {
+    mockedApiFetch.mockResolvedValue(problemResponse(429, { incognito: ['flood_limit'] }))
+
+    const problem = await updatePresenceSettings(false).catch(
+      (error: unknown) => error as ApiProblem,
+    )
+
+    expect(problem).toMatchObject({ status: 429, errors: { incognito: ['flood_limit'] } })
   })
 })
 

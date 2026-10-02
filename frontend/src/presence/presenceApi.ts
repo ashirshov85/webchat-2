@@ -14,7 +14,7 @@
  *
  * transport-keepalive `:ka` (15 s comment frame) is a №18 channel
  * concern and unrelated to №37 (presence-api.md §2) — this module never
- * touches it. №38 settings clients belong to T034; snapshot chunking
+ * touches it. №38 settings clients (T034) live below; snapshot chunking
  * (>200) and surface bookkeeping belong to usePresence (T020).
  */
 import { toApiProblem } from '../api/auth'
@@ -26,8 +26,13 @@ export type PresenceHeartbeatRequest = components['schemas']['PresenceHeartbeatR
 
 export type PresenceSnapshotResponse = components['schemas']['PresenceSnapshotResponse']
 
+export type PresenceSettingsResponse = components['schemas']['PresenceSettingsResponse']
+
+export type PresenceSettingsUpdateRequest = components['schemas']['PresenceSettingsUpdateRequest']
+
 const SNAPSHOT_PATH = '/users/me/presence'
 const HEARTBEAT_PATH = '/users/me/presence/heartbeat'
+const SETTINGS_PATH = '/users/me/presence/settings'
 
 /** №37 contract interval: 30 s beats against the 90 s TTL = 3× margin (research.md §G). */
 export const HEARTBEAT_INTERVAL_MS = 30_000
@@ -55,6 +60,46 @@ export async function fetchPresenceSnapshot(
   }
   const parsed = (await response.json()) as PresenceSnapshotResponse
   return parsed.items
+}
+
+/**
+ * №38 `GET /users/me/presence/settings`: the persisted «incognito» mode
+ * (users.presence_hidden, PG V15) — per-user, survives relogin
+ * (presence-api.md §3). Non-OK answers reject with the ApiProblem.
+ */
+export async function fetchPresenceSettings(): Promise<PresenceSettingsResponse> {
+  const response = await apiFetch(SETTINGS_PATH, {
+    headers: { Accept: 'application/json, application/problem+json' },
+  })
+  if (!response.ok) {
+    const problem: unknown = await toApiProblem(response)
+    throw problem
+  }
+  return (await response.json()) as PresenceSettingsResponse
+}
+
+/**
+ * №38 `PUT /users/me/presence/settings`: idempotent mode flip; returns
+ * the persisted value (a repeat of the same value is a server-side
+ * no-op without events). Non-OK answers (400 `malformed_request`,
+ * 429 `flood_limit` + retryAfterSec) reject with the ApiProblem.
+ */
+export async function updatePresenceSettings(
+  incognito: boolean,
+): Promise<PresenceSettingsResponse> {
+  const response = await apiFetch(SETTINGS_PATH, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, application/problem+json',
+    },
+    body: JSON.stringify({ incognito } satisfies PresenceSettingsUpdateRequest),
+  })
+  if (!response.ok) {
+    const problem: unknown = await toApiProblem(response)
+    throw problem
+  }
+  return (await response.json()) as PresenceSettingsResponse
 }
 
 /** Classified №37 outcome — the caller never needs the raw response. */
