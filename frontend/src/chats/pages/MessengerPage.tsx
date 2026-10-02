@@ -137,6 +137,7 @@ import { useGroup } from '../../groups/hooks/useGroup'
 import type { GroupStatus } from '../../groups/hooks/useGroup'
 import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
+import { PresenceIndicator } from '../../presence/PresenceIndicator'
 
 /** The open direct dialog: everything the header actions need (T060). */
 interface DirectChatView {
@@ -200,8 +201,14 @@ function confirmCopy(action: PendingAction, peerName: string): ConfirmCopy {
  * The DIRECT dialog header (T060): the peer title, the «заблокирован»
  * mark and the «Действия» menu (№14 delete + №23/№24 block toggle).
  * A group window carries none of these controls (T029).
+ *
+ * Presence (feature 007, T022): the 1:1 header is the ONLY surface
+ * with a visible text status label (clarify a11y) — the dot plus the
+ * «онлайн»/«офлайн»/«неизвестно» text next to the peer title; the
+ * «Чаты» row and «Контакты» carry the aria-only dot.
  */
 interface DirectChatHeaderProps {
+  readonly peerId: string
   readonly username: string
   readonly blockedByMe: boolean
   readonly menuOpen: boolean
@@ -211,6 +218,7 @@ interface DirectChatHeaderProps {
 }
 
 function DirectChatHeader({
+  peerId,
   username,
   blockedByMe,
   menuOpen,
@@ -221,6 +229,7 @@ function DirectChatHeader({
   return (
     <>
       <h2 className="dialog-title">{username}</h2>
+      <PresenceIndicator userId={peerId} showLabel={true} />
       {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
       <div className="dialog-menu">
         <button
@@ -425,6 +434,7 @@ function DialogHeader({
   }
   return (
     <DirectChatHeader
+      peerId={chat.peer.id}
       username={chat.peer.username}
       blockedByMe={chat.blockedByMe}
       menuOpen={menuOpen}

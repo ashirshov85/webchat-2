@@ -181,6 +181,23 @@ describe('ContactList row actions', () => {
   })
 })
 
+describe('ContactList presence surface (007, T022)', () => {
+  it('mounts a neutral aria-labelled dot per contact row — no visible text on this surface', async () => {
+    mockedListContacts.mockResolvedValue(BY_LOGIN)
+    render(<ContactList />)
+    await screen.findByText('bob')
+
+    // Neutral «неизвестно» before the first №36 snapshot (never a
+    // false «офлайн»); the visible text label belongs to the 1:1
+    // dialog header alone, so the list rows carry the aria-only dot.
+    const dots = screen.getAllByRole('img', { name: 'неизвестно' })
+    expect(dots).toHaveLength(2)
+    expect(dots[0]?.closest('.presence-indicator')).toHaveClass('presence-unknown')
+    expect(dots[1]?.closest('.presence-indicator')).toHaveClass('presence-unknown')
+    expect(document.querySelectorAll('.presence-indicator-label')).toHaveLength(0)
+  })
+})
+
 describe('ContactList states', () => {
   it('renders the calm empty state for an empty address book', async () => {
     mockedListContacts.mockResolvedValue([])

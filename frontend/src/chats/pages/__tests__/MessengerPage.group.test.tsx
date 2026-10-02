@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
 import type { ChatListItem, ContactView } from '../../../api/chats'
@@ -247,6 +247,10 @@ describe('MessengerPage group window from the unified list (US1)', () => {
     expect(screen.getByLabelText('Текст сообщения')).toBeInTheDocument()
     // №14/№23/№24 are pair-dialog actions — a group window carries none.
     expect(screen.queryByRole('button', { name: 'Действия' })).toBeNull()
+    // Presence (007, T022): a group window carries NO presence UI.
+    const groupDialog = screen.getByRole('region', { name: 'Окно диалога' })
+    expect(groupDialog.querySelector('.presence-indicator')).toBeNull()
+    expect(within(groupDialog).queryByText('неизвестно')).toBeNull()
   })
 
   it('keeps the direct dialog intact: peer header with the action menu', async () => {
@@ -256,6 +260,11 @@ describe('MessengerPage group window from the unified list (US1)', () => {
 
     expect(screen.getByRole('heading', { level: 2, name: 'alice' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Действия' })).toBeInTheDocument()
+    // Presence (007, T022): the 1:1 header is the ONLY surface with a
+    // VISIBLE text label — neutral «неизвестно» before the first №36
+    // snapshot (never a false «офлайн»).
+    const directDialog = screen.getByRole('region', { name: 'Окно диалога' })
+    expect(within(directDialog).getByText('неизвестно')).toBeVisible()
   })
 })
 
