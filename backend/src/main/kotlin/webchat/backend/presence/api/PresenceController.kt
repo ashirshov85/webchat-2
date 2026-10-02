@@ -127,7 +127,11 @@ class PresenceController(
                     throw SnapshotMalformedException("every userIds segment must be a UUID")
                 }
             }
-        val distinct = parsed.distinct()
+        return requireWithinBatchLimit(parsed.distinct())
+    }
+
+    /** openapi №36 400: the batch over [PresenceProperties.snapshotBatchLimit] after dedup is refused whole. */
+    private fun requireWithinBatchLimit(distinct: List<UUID>): List<UUID> {
         if (distinct.size > presenceProperties.snapshotBatchLimit) {
             throw PresenceIdsTooManyException(distinct.size)
         }
@@ -181,8 +185,8 @@ class PresenceController(
             )
         if (verdict is UserRateLimiter.Verdict.Rejected) {
             log.warn(
-                "snapshot refused by the flood limit (№36, presence-api.md §1): user <{}> exhausted {} snapshots/minute, " +
-                    "retry after {}s",
+                "snapshot refused by the flood limit (№36, presence-api.md §1): " +
+                    "user <{}> exhausted {} snapshots/minute, retry after {}s",
                 callerId,
                 presenceProperties.rateLimit.snapshotsPerMinute,
                 verdict.retryAfterSeconds,

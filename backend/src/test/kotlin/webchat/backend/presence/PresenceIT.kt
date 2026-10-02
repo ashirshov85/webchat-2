@@ -61,7 +61,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * observer's event — the connect-handshake jitter and the percentiles are
  * the k6 profile's business (T035), the precedent of RealtimeSseIT.
  */
-@Suppress("TooManyFunctions") // T011: one helper per contract surface №36/№37 + the SSE lifecycle
+@Suppress("LargeClass", "TooManyFunctions") // T011: one scenario/helper per №36/№37 surface + the SSE lifecycle
 class PresenceIT(
     @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val objectMapper: ObjectMapper,
@@ -495,7 +495,7 @@ class PresenceIT(
      * allowed call answers 200 again.
      */
     @Test
-    fun `snapshot batch gate answers one item per distinct target and enforces malformed too-many and flood refusals`() {
+    fun `snapshot batch gate answers one item per distinct target and enforces the refusals`() {
         val (alice, bob) = messagingPair()
         ensureChatOk(alice, bob.id)
 
@@ -527,7 +527,11 @@ class PresenceIT(
         // shape gate: absent/empty parameter and a non-UUID segment are malformed
         assertSnapshotProblem(snapshotRawParam(alice, null), HttpStatus.BAD_REQUEST, MALFORMED_REQUEST)
         assertSnapshotProblem(snapshotRawParam(alice, EMPTY_PARAM), HttpStatus.BAD_REQUEST, MALFORMED_REQUEST)
-        assertSnapshotProblem(snapshotRawParam(alice, MALFORMED_CONNECTION_ID), HttpStatus.BAD_REQUEST, MALFORMED_REQUEST)
+        assertSnapshotProblem(
+            snapshotRawParam(alice, MALFORMED_CONNECTION_ID),
+            HttpStatus.BAD_REQUEST,
+            MALFORMED_REQUEST,
+        )
         assertSnapshotProblem(
             snapshotRawParam(alice, "${bob.id},$MALFORMED_CONNECTION_ID"),
             HttpStatus.BAD_REQUEST,
@@ -540,7 +544,8 @@ class PresenceIT(
         val dedupedLegal = snapshotRaw(alice, oversized.dropLast(1) + oversized.first())
         assertThat(dedupedLegal.statusCode)
             .overridingErrorMessage(
-                "the №36 cap applies AFTER dedup — %d raw ids with one duplicate are %d distinct and must pass, got <%s>",
+                "the №36 cap applies AFTER dedup — %d raw ids with one duplicate " +
+                    "are %d distinct and must pass, got <%s>",
                 SNAPSHOT_BATCH_LIMIT + 1,
                 SNAPSHOT_BATCH_LIMIT,
                 dedupedLegal.statusCode,
@@ -549,11 +554,25 @@ class PresenceIT(
             .isEqualTo(SNAPSHOT_BATCH_LIMIT)
 
         // flood gate: drain the per-user bucket — the refusal carries Retry-After and recovers
+        assertSnapshotFloodGateRecovers(alice, bob.id)
+    }
+
+    /**
+     * presence-api.md §1 flood gate: drains the per-user №36 bucket until
+     * the `429 flood_limit` refusal lands (carrying `Retry-After`), then
+     * asserts the first batch after the advertised wait recovers with 200 —
+     * a refused snapshot is a pure refusal (no visibility/store leg), so
+     * the next allowed call answers 200 again.
+     */
+    private fun assertSnapshotFloodGateRecovers(
+        observer: MessagingUser,
+        target: UUID,
+    ) {
         var rejection: ResponseEntity<String>? = null
         var attempt = 0
         while (rejection == null && attempt < SNAPSHOT_BURST_CAP) {
             attempt += 1
-            val probe = snapshotRaw(alice, listOf(bob.id))
+            val probe = snapshotRaw(observer, listOf(target))
             if (probe.statusCode == HttpStatus.TOO_MANY_REQUESTS) rejection = probe
         }
         assertThat(rejection)
@@ -566,7 +585,7 @@ class PresenceIT(
         val retryAfterSeconds = retryAfterSecondsOf(rejection!!)
 
         Thread.sleep(retryAfterSeconds * MILLIS_PER_SECOND + RECOVERY_MARGIN_MILLIS)
-        val recovery = snapshotRaw(alice, listOf(bob.id))
+        val recovery = snapshotRaw(observer, listOf(target))
         assertThat(recovery.statusCode)
             .overridingErrorMessage(
                 "the first №36 batch after the Retry-After window must recover with 200, got <%s>: %s",

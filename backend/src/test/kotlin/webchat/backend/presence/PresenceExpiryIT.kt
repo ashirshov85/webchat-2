@@ -157,8 +157,10 @@ class PresenceExpiryIT(
             // the score lapses at open + ttl, the offq is due after that
             val offlineEvent = awaitPresenceEvent(bobStream, alice.id, sc003Budget)
             assertThat(offlineEvent[STATUS_FIELD].asText())
-                .overridingErrorMessage("heartbeat silence must converge the subject to offline, got <%s>", offlineEvent)
-                .isEqualTo(STATUS_OFFLINE)
+                .overridingErrorMessage(
+                    "heartbeat silence must converge the subject to offline, got <%s>",
+                    offlineEvent,
+                ).isEqualTo(STATUS_OFFLINE)
             val offlineRev = offlineEvent[REV_FIELD].asLong()
             assertThat(offlineRev)
                 .overridingErrorMessage("rev must strictly increase across the silent-expiry offline transition")
@@ -281,16 +283,7 @@ class PresenceExpiryIT(
                 )
 
             // one shared status before the crash: №36 answers online with the very published revs
-            val beforeCrash = snapshotBatch(observer, subjects.map { it.id })
-            subjects.forEach { subject ->
-                val item = beforeCrash.getValue(subject.id)
-                assertThat(item[STATUS_FIELD].asText())
-                    .overridingErrorMessage("every subject must be online before the storm, got <%s>", item)
-                    .isEqualTo(STATUS_ONLINE)
-                assertThat(item[REV_FIELD].asLong())
-                    .overridingErrorMessage("№36 must expose the very published rev before the storm, got <%s>", item)
-                    .isEqualTo(onlineRevs.getValue(subject.id))
-            }
+            assertBeforeStormBaseline(observer, subjects, onlineRevs)
 
             val suppressedBefore = hysteresisSuppressedTotal()
 
@@ -308,34 +301,7 @@ class PresenceExpiryIT(
 
             val frames =
                 drainSubjectPresenceEvents(observerStream, subjects.map { it.id }.toSet(), stormDrainWindow)
-            val offlines = frames.filter { it[STATUS_FIELD].asText() == STATUS_OFFLINE }
-            val onlines = frames.filter { it[STATUS_FIELD].asText() == STATUS_ONLINE }
-
-            assertThat(onlines)
-                .overridingErrorMessage(
-                    "a returning subject must surface NO switch at all (the pending offline is cancelled), got %s",
-                    onlines,
-                ).isEmpty()
-            val offlinesBySubject = offlines.groupBy { it[USER_ID_FIELD].asText() }
-            assertThat(offlinesBySubject.keys)
-                .overridingErrorMessage(
-                    "offline publications must land for EXACTLY the abandoned half, got %s",
-                    offlinesBySubject.keys,
-                ).containsExactlyInAnyOrderElementsOf(abandoned.map { it.id.toString() })
-            offlinesBySubject.forEach { (subjectId, events) ->
-                assertThat(events)
-                    .overridingErrorMessage(
-                        "the abandoned subject <%s> must get EXACTLY ONE offline, got %d: %s",
-                        subjectId,
-                        events.size,
-                        events,
-                    ).hasSize(1)
-                assertThat(events.single()[REV_FIELD].asLong())
-                    .overridingErrorMessage(
-                        "the storm offline of <%s> must advance the rev beyond the initial online",
-                        subjectId,
-                    ).isGreaterThan(onlineRevs.getValue(UUID.fromString(subjectId)))
-            }
+            val offlinesBySubject = assertStormFrames(frames, abandoned, onlineRevs)
 
             assertThat(hysteresisSuppressedTotal())
                 .overridingErrorMessage(
@@ -343,29 +309,7 @@ class PresenceExpiryIT(
                     HYSTERESIS_SUPPRESSED_COUNTER,
                 ).isGreaterThan(suppressedBefore)
 
-            val afterStorm = snapshotBatch(observer, subjects.map { it.id })
-            returning.forEach { subject ->
-                val item = afterStorm.getValue(subject.id)
-                assertThat(item[STATUS_FIELD].asText())
-                    .overridingErrorMessage("a returned subject must be online again, got <%s>", item)
-                    .isEqualTo(STATUS_ONLINE)
-                assertThat(item[REV_FIELD].asLong())
-                    .overridingErrorMessage(
-                        "a suppressed storm leg must not even advance the revision, got <%s>",
-                        item,
-                    ).isEqualTo(onlineRevs.getValue(subject.id))
-            }
-            abandoned.forEach { subject ->
-                val item = afterStorm.getValue(subject.id)
-                assertThat(item[STATUS_FIELD].asText())
-                    .overridingErrorMessage("an abandoned subject must be offline after the storm, got <%s>", item)
-                    .isEqualTo(STATUS_OFFLINE)
-                assertThat(item[REV_FIELD].asLong())
-                    .overridingErrorMessage(
-                        "№36 must expose the very rev of the storm offline event, got <%s>",
-                        item,
-                    ).isEqualTo(offlinesBySubject.getValue(subject.id.toString()).single()[REV_FIELD].asLong())
-            }
+            assertAfterStormSnapshot(observer, returning, abandoned, onlineRevs, offlinesBySubject)
 
             assertNoPresenceEventForAny(observerStream, subjects.map { it.id }, windowWithNoEvent)
             assertThat(pumpFailures)
@@ -376,6 +320,102 @@ class PresenceExpiryIT(
             runCatching { observerStream.close() }
             crashedStreams.forEach { runCatching { it.close() } }
             returnedStreams.forEach { runCatching { it.close() } }
+        }
+    }
+
+    /** One shared status before the crash: №36 answers online with the very published revs. */
+    private fun assertBeforeStormBaseline(
+        observer: MessagingUser,
+        subjects: List<MessagingUser>,
+        onlineRevs: Map<UUID, Long>,
+    ) {
+        val beforeCrash = snapshotBatch(observer, subjects.map { it.id })
+        subjects.forEach { subject ->
+            val item = beforeCrash.getValue(subject.id)
+            assertThat(item[STATUS_FIELD].asText())
+                .overridingErrorMessage("every subject must be online before the storm, got <%s>", item)
+                .isEqualTo(STATUS_ONLINE)
+            assertThat(item[REV_FIELD].asLong())
+                .overridingErrorMessage("№36 must expose the very published rev before the storm, got <%s>", item)
+                .isEqualTo(onlineRevs.getValue(subject.id))
+        }
+    }
+
+    /**
+     * US3 AC4 storm frames: ZERO switches for the returning half (their
+     * pending offline publishes are cancelled) and EXACTLY ONE `offline`
+     * with a strictly greater rev per abandoned subject; returns the
+     * per-subject offline payloads keyed by the subject id string.
+     */
+    private fun assertStormFrames(
+        frames: List<JsonNode>,
+        abandoned: List<MessagingUser>,
+        onlineRevs: Map<UUID, Long>,
+    ): Map<String, List<JsonNode>> {
+        val offlines = frames.filter { it[STATUS_FIELD].asText() == STATUS_OFFLINE }
+        val onlines = frames.filter { it[STATUS_FIELD].asText() == STATUS_ONLINE }
+
+        assertThat(onlines)
+            .overridingErrorMessage(
+                "a returning subject must surface NO switch at all (the pending offline is cancelled), got %s",
+                onlines,
+            ).isEmpty()
+        val offlinesBySubject = offlines.groupBy { it[USER_ID_FIELD].asText() }
+        assertThat(offlinesBySubject.keys)
+            .overridingErrorMessage(
+                "offline publications must land for EXACTLY the abandoned half, got %s",
+                offlinesBySubject.keys,
+            ).containsExactlyInAnyOrderElementsOf(abandoned.map { it.id.toString() })
+        offlinesBySubject.forEach { (subjectId, events) ->
+            assertThat(events)
+                .overridingErrorMessage(
+                    "the abandoned subject <%s> must get EXACTLY ONE offline, got %d: %s",
+                    subjectId,
+                    events.size,
+                    events,
+                ).hasSize(1)
+            assertThat(events.single()[REV_FIELD].asLong())
+                .overridingErrorMessage(
+                    "the storm offline of <%s> must advance the rev beyond the initial online",
+                    subjectId,
+                ).isGreaterThan(onlineRevs.getValue(UUID.fromString(subjectId)))
+        }
+        return offlinesBySubject
+    }
+
+    /**
+     * US3 AC4 aftermath: the returning half is online at the untouched
+     * rev, the abandoned half offline at the very storm rev.
+     */
+    private fun assertAfterStormSnapshot(
+        observer: MessagingUser,
+        returning: List<MessagingUser>,
+        abandoned: List<MessagingUser>,
+        onlineRevs: Map<UUID, Long>,
+        offlinesBySubject: Map<String, List<JsonNode>>,
+    ) {
+        val afterStorm = snapshotBatch(observer, (returning + abandoned).map { it.id })
+        returning.forEach { subject ->
+            val item = afterStorm.getValue(subject.id)
+            assertThat(item[STATUS_FIELD].asText())
+                .overridingErrorMessage("a returned subject must be online again, got <%s>", item)
+                .isEqualTo(STATUS_ONLINE)
+            assertThat(item[REV_FIELD].asLong())
+                .overridingErrorMessage(
+                    "a suppressed storm leg must not even advance the revision, got <%s>",
+                    item,
+                ).isEqualTo(onlineRevs.getValue(subject.id))
+        }
+        abandoned.forEach { subject ->
+            val item = afterStorm.getValue(subject.id)
+            assertThat(item[STATUS_FIELD].asText())
+                .overridingErrorMessage("an abandoned subject must be offline after the storm, got <%s>", item)
+                .isEqualTo(STATUS_OFFLINE)
+            assertThat(item[REV_FIELD].asLong())
+                .overridingErrorMessage(
+                    "№36 must expose the very rev of the storm offline event, got <%s>",
+                    item,
+                ).isEqualTo(offlinesBySubject.getValue(subject.id.toString()).single()[REV_FIELD].asLong())
         }
     }
 
@@ -488,31 +528,48 @@ class PresenceExpiryIT(
                     .overridingErrorMessage("the №7 logout of the last session must answer 204")
                     .isEqualTo(HttpStatus.NO_CONTENT)
 
-                val offlineEvent = awaitPresenceEvent(bobStream, alice.id, logoutBudget)
-                assertThat(offlineEvent[STATUS_FIELD].asText())
-                    .overridingErrorMessage(
-                        "the last-session logout must publish offline immediately, got <%s>",
-                        offlineEvent,
-                    ).isEqualTo(STATUS_OFFLINE)
-                val offlineRev = offlineEvent[REV_FIELD].asLong()
-                assertThat(offlineRev)
-                    .overridingErrorMessage("rev must strictly increase across the logout offline transition")
-                    .isGreaterThan(onlineRev)
-
-                assertSnapshotStatus(bob, alice.id, STATUS_OFFLINE, offlineRev)
-                assertNoPresenceEventFor(bobStream, alice.id, windowWithNoEvent)
+                assertImmediateOfflineAfterLastLogout(bobStream, bob, alice.id, onlineRev)
             } finally {
                 firstPump.close()
                 secondPump.close()
             }
             assertThat(pumpFailures)
-                .overridingErrorMessage("both sessions' №37 renewals must stay 204 until their logouts: %s", pumpFailures)
-                .isEmpty()
+                .overridingErrorMessage(
+                    "both sessions' №37 renewals must stay 204 until their logouts: %s",
+                    pumpFailures,
+                ).isEmpty()
         } finally {
             runCatching { bobStream.close() }
             runCatching { firstSessionStream.close() }
             runCatching { secondSessionStream.close() }
         }
+    }
+
+    /**
+     * research §B2: the logout of the LAST session publishes `offline`
+     * IMMEDIATELY (the [logoutBudget] is strictly smaller than one
+     * hysteresis window — a logout routed through the offq would time
+     * out), the snapshot flips with the very rev and nothing follows.
+     */
+    private fun assertImmediateOfflineAfterLastLogout(
+        observerStream: UserEventsStream,
+        observer: MessagingUser,
+        subjectId: UUID,
+        onlineRev: Long,
+    ) {
+        val offlineEvent = awaitPresenceEvent(observerStream, subjectId, logoutBudget)
+        assertThat(offlineEvent[STATUS_FIELD].asText())
+            .overridingErrorMessage(
+                "the last-session logout must publish offline immediately, got <%s>",
+                offlineEvent,
+            ).isEqualTo(STATUS_OFFLINE)
+        val offlineRev = offlineEvent[REV_FIELD].asLong()
+        assertThat(offlineRev)
+            .overridingErrorMessage("rev must strictly increase across the logout offline transition")
+            .isGreaterThan(onlineRev)
+
+        assertSnapshotStatus(observer, subjectId, STATUS_OFFLINE, offlineRev)
+        assertNoPresenceEventFor(observerStream, subjectId, windowWithNoEvent)
     }
 
     /**
@@ -797,7 +854,9 @@ class PresenceExpiryIT(
         val items = objectMapper.readTree(response.body)[ITEMS_FIELD]
         return targets.associateWith { target ->
             items.firstOrNull { it[USER_ID_FIELD].asText() == target.toString() }
-                ?: throw AssertionError("№36 must answer one item per requested userId, missing <$target> in ${response.body}")
+                ?: throw AssertionError(
+                    "№36 must answer one item per requested userId, missing <$target> in ${response.body}",
+                )
         }
     }
 
@@ -982,7 +1041,8 @@ class PresenceExpiryIT(
             setBearerAuth(user.accessToken)
         }
 
-    private fun uniqueLoginIp(): String = LOGIN_IP_PREFIX + (1L + loginIpCounter.incrementAndGet() % LOGIN_IP_LAST_OCTET_SPAN)
+    private fun uniqueLoginIp(): String =
+        LOGIN_IP_PREFIX + (1L + loginIpCounter.incrementAndGet() % LOGIN_IP_LAST_OCTET_SPAN)
 
     /** Fixed-delay №37 keep-alive loop of T011 (the explicit 1 s test-profile renewals). */
     private class HeartbeatPump(

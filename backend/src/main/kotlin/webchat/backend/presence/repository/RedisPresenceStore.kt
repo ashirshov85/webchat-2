@@ -108,7 +108,10 @@ class RedisPresenceStore(
             userId.toString(),
         ) == 1L
 
-    /** SSE close: remove the member, recompute the watch score; the loss of the LAST live registration only schedules the offq. */
+    /**
+     * SSE close: remove the member, recompute the watch score; the loss
+     * of the LAST live registration only schedules the offq.
+     */
     override fun unregister(
         userId: UUID,
         connectionId: UUID,

@@ -19,8 +19,8 @@ import webchat.backend.presence.domain.port.PresenceTransition
 import webchat.backend.presence.domain.port.PresenceUpdatedEvent
 import webchat.backend.presence.domain.port.PublishedPresence
 import webchat.backend.presence.repository.RedisPresenceEventPublisher
-import webchat.backend.realtime.RedisRealtimePublisher
 import webchat.backend.realtime.RealtimePubSub
+import webchat.backend.realtime.RedisRealtimePublisher
 import webchat.backend.realtime.SseConnectionRegistry
 import java.time.Duration
 import java.util.UUID
@@ -178,7 +178,11 @@ class RedisPresenceEventPublisherTest {
     }
 
     private fun publishedCountOf(status: String): Double =
-        meterRegistry.find(METRIC_EVENTS_PUBLISHED_TOTAL).tag(TAG_STATUS, status).counter()?.count() ?: 0.0
+        meterRegistry
+            .find(METRIC_EVENTS_PUBLISHED_TOTAL)
+            .tag(TAG_STATUS, status)
+            .counter()
+            ?.count() ?: 0.0
 
     private fun fieldNames(node: JsonNode): List<String> = node.fieldNames().asSequence().toList()
 

@@ -173,8 +173,7 @@ class PresencePrivacyIT(
                 .overridingErrorMessage(
                     "the №37 renewals must keep the subject online through the scenario: %s",
                     pumpFailures,
-                )
-                .isEmpty()
+                ).isEmpty()
         } finally {
             runCatching { bobStream.close() }
             runCatching { strangerStream.close() }
@@ -254,8 +253,7 @@ class PresencePrivacyIT(
                 .overridingErrorMessage(
                     "the №37 renewals must keep the subject online through the scenario: %s",
                     pumpFailures,
-                )
-                .isEmpty()
+                ).isEmpty()
         } finally {
             runCatching { bobStream.close() }
             runCatching { mateStream.close() }
@@ -346,8 +344,7 @@ class PresencePrivacyIT(
                 .overridingErrorMessage(
                     "the №37 renewals must keep the subject online through the scenario: %s",
                     pumpFailures,
-                )
-                .isEmpty()
+                ).isEmpty()
         } finally {
             runCatching { bobStream.close() }
             runCatching { hostStream.close() }
@@ -431,8 +428,7 @@ class PresencePrivacyIT(
                 .overridingErrorMessage(
                     "the №37 renewals must keep the subject online through the scenario: %s",
                     pumpFailures,
-                )
-                .isEmpty()
+                ).isEmpty()
         } finally {
             runCatching { observerStream.close() }
             runCatching { aliceStream.close() }
