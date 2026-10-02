@@ -34,7 +34,7 @@ data class PresenceProperties(
     val pollerInterval: Duration,
     /** contracts/presence-api.md §1: the №36 batch snapshot cap after dedup (≤ 200). */
     val snapshotBatchLimit: Int,
-    /** contracts/presence-api.md §1–2: the per-user №36/№37 flood buckets of the presence routes. */
+    /** contracts/presence-api.md §1–3: the per-user №36/№37/№38 flood buckets of the presence routes. */
     val rateLimit: RateLimit,
 ) {
     /**
@@ -60,11 +60,21 @@ data class PresenceProperties(
      * the bucket counts REQUESTS across every device and replica of the
      * user (`rl:user:presence-snapshot:{userId}`, constitution II) and
      * a refusal performs NO store/SQL read leg.
+     *
+     * The №38 PUT allowance [settingsWritesPerMinute] is the same
+     * conservative parity for the «невидимка» toggle (presence-api.md
+     * §3 «консервативно, как №26/№36»): one bucket
+     * `rl:user:presence-settings:{userId}` per user — the GET stays
+     * ungated (a pure point read the settings page polls freely) and a
+     * refusal performs NO V15 write; the bucket counts REQUESTS, not
+     * outcomes, so the IDEMPOTENT no-op PUT still draws its token (the
+     * T031 drain burst throttles exactly that way).
      */
     data class RateLimit(
         val heartbeatsPerWindow: Int,
         val heartbeatWindow: Duration,
         val snapshotsPerMinute: Int,
+        val settingsWritesPerMinute: Int,
     )
 
     init {
@@ -76,5 +86,8 @@ data class PresenceProperties(
         require(rateLimit.heartbeatsPerWindow > 0) { "presence.rate-limit.heartbeats-per-window must be positive" }
         require(rateLimit.heartbeatWindow.isPositive) { "presence.rate-limit.heartbeat-window must be positive" }
         require(rateLimit.snapshotsPerMinute > 0) { "presence.rate-limit.snapshots-per-minute must be positive" }
+        require(rateLimit.settingsWritesPerMinute > 0) {
+            "presence.rate-limit.settings-writes-per-minute must be positive"
+        }
     }
 }

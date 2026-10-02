@@ -343,6 +343,12 @@ presence:
     # the client contract calls №36 only on the 005 (re)connect cycle and
     # new displayed surfaces, so a full visible UI stays far below the cap
     snapshots-per-minute: 30
+    # 007 contracts/presence-api.md §3 (№38): per-user «невидимка» PUT flood
+    # bucket — conservative like №26/№36 (30/min, 60 s Bucket4j window,
+    # rl:user:presence-settings:{userId}); guards the PUT only (the GET is a
+    # pure point read), counts requests rather than outcomes — an idempotent
+    # no-op toggle still draws its token, and a refusal performs no V15 write
+    settings-writes-per-minute: 30
 
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)

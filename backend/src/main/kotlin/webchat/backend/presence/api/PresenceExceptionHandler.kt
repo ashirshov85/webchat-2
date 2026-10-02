@@ -86,6 +86,33 @@ class PresenceExceptionHandler {
                     .apply { setProperty(ERRORS_PROPERTY, mapOf(CONNECTION_ID_FIELD to listOf(FLOOD_LIMIT_CODE))) },
             )
 
+    /**
+     * 400 (openapi №38, presence-api.md §3): the body is absent,
+     * `incognito` is not set or is not a boolean —
+     * `errors: {incognito: [malformed_request]}`.
+     */
+    @ExceptionHandler(SettingsMalformedException::class)
+    fun onSettingsMalformed(failure: SettingsMalformedException): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, failure.message ?: SETTINGS_MALFORMED_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(INCOGNITO_FIELD to listOf(MALFORMED_REQUEST_CODE))) }
+
+    /**
+     * 429 (openapi №38, presence-api.md §3): the per-user PUT bucket is
+     * exhausted — `Retry-After` carries the integral seconds to the
+     * next token; the stored mode is NOT touched and the client repeats
+     * the toggle after the wait. The value itself is never echoed
+     * (constitution V).
+     */
+    @ExceptionHandler(PresenceSettingsFloodException::class)
+    fun onSettingsFlood(failure: PresenceSettingsFloodException): ResponseEntity<ProblemDetail> =
+        ResponseEntity
+            .status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, failure.retryAfterSeconds.toString())
+            .body(
+                problem(HttpStatus.TOO_MANY_REQUESTS, SETTINGS_FLOOD_DETAIL)
+                    .apply { setProperty(ERRORS_PROPERTY, mapOf(INCOGNITO_FIELD to listOf(FLOOD_LIMIT_CODE))) },
+            )
+
     private fun problem(
         status: HttpStatus,
         detail: String,
@@ -99,6 +126,7 @@ class PresenceExceptionHandler {
         const val ERRORS_PROPERTY = "errors"
         const val CONNECTION_ID_FIELD = "connectionId"
         const val USER_IDS_FIELD = "userIds"
+        const val INCOGNITO_FIELD = "incognito"
         const val MALFORMED_REQUEST_CODE = "malformed_request"
         const val CONNECTION_NOT_FOUND_CODE = "presence_connection_not_found"
         const val IDS_TOO_MANY_CODE = "presence_ids_too_many"
@@ -113,5 +141,8 @@ class PresenceExceptionHandler {
             "The connectionId is not a live registration of the caller (unknown or expired)"
         const val FLOOD_LIMIT_DETAIL =
             "The per-user heartbeat flood limit is exhausted; keep the stream and retry in the next interval"
+        const val SETTINGS_MALFORMED_DETAIL = "incognito must be present and a boolean"
+        const val SETTINGS_FLOOD_DETAIL =
+            "The per-user presence settings flood limit is exhausted; repeat the toggle after the advertised wait"
     }
 }

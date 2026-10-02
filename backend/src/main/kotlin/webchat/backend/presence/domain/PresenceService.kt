@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service
 import webchat.backend.auth.domain.port.PresenceLogoutListener
 import webchat.backend.presence.domain.port.PresenceEventPublisher
 import webchat.backend.presence.domain.port.PresencePublishedStatus
+import webchat.backend.presence.domain.port.PresenceSettingsStore
 import webchat.backend.presence.domain.port.PresenceStore
 import webchat.backend.presence.domain.port.PresenceTransition
 import webchat.backend.presence.domain.port.PresenceUpdatedEvent
@@ -64,7 +65,15 @@ import java.util.UUID
  *    of the logged-out session converge naturally: their №37 turns 404
  *    and the reconnect hits the 002-denylisted token — no revival path
  *    exists.
- *
+ *  * №38 settings ([presenceSettings]/[updatePresenceSettings], T032):
+ *    the durable «невидимка» mode of data-model §1.5 — a pure V15
+ *    `users.presence_hidden` round trip through [PresenceSettingsStore]
+ *    whose conditional write resolves the IDEMPOTENT PUT of
+ *    presence-api.md §3 (a repeat of the same value is a no-op without
+ *    events and without a rev advance). The SWITCH semantics — the
+ *    immediate freeze `offline` on enable, the actual-status reveal on
+ *    disable, the indistinguishable №36 answer (FR-007, research
+ *    §D1/§D2) — are the T033 legs layered onto the change verdict.
  * The publication leg: on the ACTUAL flip only, the visibility audience
  * is resolved LIVE through [VisibilityAudienceReader] (data-model §1.4 —
  * one SQL, no cache: a contact added or a group kick converges by the
@@ -97,6 +106,7 @@ import java.util.UUID
 class PresenceService(
     private val presenceStore: PresenceStore,
     private val visibilityAudienceReader: VisibilityAudienceReader,
+    private val presenceSettingsStore: PresenceSettingsStore,
     private val presenceEventPublisher: ObjectProvider<PresenceEventPublisher>,
 ) : PresenceConnectionLifecycle,
     PresenceLogoutListener {
@@ -205,6 +215,54 @@ class PresenceService(
             published[target]?.let { PresenceSnapshotEntry.of(it) } ?: PresenceSnapshotEntry.unknown(target)
         }
     }
+
+    /**
+     * №38 GET (T032, contracts/presence-api.md §3): the persisted
+     * «невидимка» mode — the V15 `users.presence_hidden` round trip of
+     * [PresenceSettingsStore.incognitoOf]. The value is per-USER and
+     * survives sessions (US4 AC5): a fresh login of the same account
+     * answers the very mode the previous session left.
+     */
+    fun presenceSettings(userId: UUID): Boolean = presenceSettingsStore.incognitoOf(userId)
+
+    /**
+     * №38 PUT (T032, presence-api.md §3): persist the mode
+     * atomically-if-changed and answer the STORED value. The
+     * conditional V15 write IS the idempotence verdict: a repeat of the
+     * very same value writes nothing, publishes no event and advances
+     * no rev — the «no-op без событий» of the contract; only an actual
+     * flip returns `changed = true`.
+     *
+     * T033 seam: the switch semantics (enable → the immediate
+     * freeze-`offline` CAS + the event freeze; disable → the
+     * actual-status reveal; the №36 indistinguishability — FR-007,
+     * research §D1/§D2) layer onto the `changed` verdict HERE; until
+     * T033 lands the toggle persists silently, which is exactly the
+     * offline-subject contract leg (spec 109: zero events, rev may only
+     * grow — and nothing here moves it).
+     */
+    fun updatePresenceSettings(
+        userId: UUID,
+        incognito: Boolean,
+    ): PresenceSettingsUpdate {
+        val changed = presenceSettingsStore.storeIfChanged(userId, incognito)
+        val stored = if (changed) incognito else presenceSettingsStore.incognitoOf(userId)
+        return PresenceSettingsUpdate(
+            incognito = stored,
+            changed = changed,
+        )
+    }
+
+    /**
+     * The №38 PUT outcome (T032): the STORED mode (the 200 body of the
+     * route) plus the atomic change verdict the caller's T033 legs will
+     * branch on — `changed = false` is the idempotent no-op that must
+     * stay COMPLETELY unobservable (no event, no rev advance).
+     */
+    data class PresenceSettingsUpdate(
+        val incognito: Boolean,
+        val changed: Boolean,
+    )
 
     /**
      * The §1.2 publication rule: ONLY a [PresenceTransition.Switched]
