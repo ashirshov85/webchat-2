@@ -6,3 +6,10 @@ presence:
   hysteresis: 2s
   heartbeat-interval: 1s
   poller-interval: 200ms
+  rate-limit:
+    # T015 (№37): the tightened 3 s TTL must absorb a whole throttle episode
+    # with the contract's 3× headroom — capacity 30 over the 30 s window
+    # refills 1 token/s, so a drained bucket answers Retry-After: 1 and the
+    # T011 recovery beat lands ~2 s after the last renewal (drain ~30 beats,
+    # safely below the 60-attempt burst cap)
+    heartbeats-per-window: 30

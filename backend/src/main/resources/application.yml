@@ -330,6 +330,13 @@ presence:
   poller-interval: 1s
   # №36 batch snapshot cap after dedup (contracts/presence-api.md §1)
   snapshot-batch-limit: 200
+  rate-limit:
+    # 007 contracts/presence-api.md §2 (№37): per-user heartbeat flood bucket
+    # «~10 запросов/30 c» — capacity 10 over a 30 s window (Bucket4j greedy
+    # refill; the bucket counts attempts across every device and replica of
+    # the user, rl:user:presence-heartbeat:{userId})
+    heartbeats-per-window: 10
+    heartbeat-window: 30s
 
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)
