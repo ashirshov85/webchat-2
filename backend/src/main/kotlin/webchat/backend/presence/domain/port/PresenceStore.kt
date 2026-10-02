@@ -140,15 +140,19 @@ sealed interface OfflineDueOutcome {
 interface PresenceStore {
     /**
      * SSE №18 open (T013/T014): atomically adds the registration
-     * (ZADD `presence:alive` + the watch score = max(expiresAt)) and
-     * cancels any pending offq entry — the returning-device revival
-     * (research §B1). It NEVER touches the published status itself: the
-     * offline→online transition is a SEPARATE [transitionOnlineIfDue]
-     * call, so the service can suppress it while the «невидимка» freeze
-     * holds (FR-007, T033). A reconnect before the old registration
-     * expires simply adds a second member — the duplicate never distorts
-     * the status (edge «reconnect», FR-003); the orphaned old member
-     * lapses by its own score (FR-002).
+     * (ZADD `presence:alive` + the watch score = max(expiresAt)). It
+     * NEVER touches the published status itself: the offline→online
+     * transition is a SEPARATE [transitionOnlineIfDue] call, so the
+     * service can suppress it while the «невидимка» freeze holds
+     * (FR-007, T033). A PENDING offq entry is deliberately left in
+     * place — the offq poller's due recount (T025) is the branch that
+     * cancels it AND counts the suppression (`suppressed++`,
+     * data-model §1.2), so an in-window returning device stays
+     * observable in `webchat_presence_hysteresis_suppressed_total`
+     * (US3 AC4). A reconnect before the old registration expires simply
+     * adds a second member — the duplicate never distorts the status
+     * (edge «reconnect», FR-003); the orphaned old member lapses by its
+     * own score (FR-002).
      */
     fun register(
         userId: UUID,

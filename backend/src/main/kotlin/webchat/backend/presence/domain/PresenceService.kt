@@ -30,7 +30,10 @@ import java.util.UUID
  *    immediate CAS + rev++ + the offq cancel (debounce-online = 0,
  *    data-model §1.2) — the second device of an already-online user
  *    resolves [PresenceTransition.Unchanged] and publishes NOTHING
- *    (SC-005 multi-device: exactly one `online` per transition).
+ *    (SC-005 multi-device: exactly one `online` per transition). An
+ *    in-window revival deliberately leaves a PENDING offq entry to the
+ *    offq poller's due recount (T025) — that branch both cancels it and
+ *    counts the suppression (US3 AC4).
  *    Splitting the two store calls (and not folding the transition into
  *    the register Lua) is what lets T033 skip the transition entirely
  *    while the «невидимка» freeze holds (FR-007).

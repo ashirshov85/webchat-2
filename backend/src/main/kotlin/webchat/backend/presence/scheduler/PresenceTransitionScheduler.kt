@@ -55,10 +55,10 @@ import java.util.UUID
  * max(rev) (FR-003). An empty audience (a subject nobody may observe)
  * publishes nothing — set semantics make that structural.
  *
- * T028 (US3) will add the sibling `presence:watch` silent-expiry poller
- * to this very scheduler file (plan.md Project Structure): the two
- * pollers share the tick cadence and the idempotent-CAS etiquette, but
- * drain their own trigger ZSET.
+ * T028 (US3, FR-002) added the sibling `presence:watch` silent-expiry
+ * poller to this very scheduler file (plan.md Project Structure): the
+ * two pollers share the tick cadence and the idempotent-CAS etiquette,
+ * but drain their own trigger ZSET.
  */
 @Component
 class PresenceTransitionScheduler(
@@ -86,6 +86,44 @@ class PresenceTransitionScheduler(
                 OfflineDueOutcome.AlreadyOffline -> Unit
             }
         }
+    }
+
+    /**
+     * T028 (US3, FR-002; research.md §A2, data-model 007 §1.1/§3): one
+     * fixed-delay `presence:watch` drain — the ACTIVE cleanup half of the
+     * self-expiry contract beside the lazy eviction every store read
+     * performs. A hung tab, a `kill -9`'d pod or a metro gap without FIN
+     * never sends an unregister: the registration lapses by its OWN score
+     * and only this poller notices, which is what makes «offline»
+     * guaranteed within the SC-003 budget (TTL + hysteresis +
+     * 2×poller-interval — a purely lazy design would strand the user
+     * online until some unrelated read touched the key).
+     *
+     * The cadence mirrors the offq drain above: a bounded, non-destructive
+     * [PresenceStore.dueWatchBatch] fetch (ZRANGEBYSCORE −inf..now with
+     * LIMIT — the entries beyond the cap stay due for the next tick or a
+     * competing replica, so the US3 AC4 storm back-pressures across the
+     * fleet instead of spiking one tick), then ONE atomic
+     * [PresenceStore.reapExpiredRegistrations] per candidate: the expired
+     * members are evicted from `presence:alive:{userId}`, the watch entry
+     * of a user whose deadline was raced UP by a concurrent renewal
+     * simply stays with its new score (not due anymore), and the emptied
+     * user is ROUTED — not published — into `presence:offq` with the
+     * standard hysteresis score. The deferred `offline` publication
+     * itself belongs to the T025 offq drain above: the reap NEVER
+     * publishes, so a returning device inside the window still lands on
+     * the suppression path (SC-002 «метро» holds for silent lapses too).
+     *
+     * The reap's boolean outcome needs no follow-up leg here — no metric
+     * counts reaps (the presence-events.md §5 vocabulary has exactly four
+     * series, all wired elsewhere) and no frame may follow a route — and
+     * a thrown store leg fails the tick loudly for the next tick to
+     * retry the still-due candidates: the fetch is non-destructive and
+     * the reap is idempotent either way.
+     */
+    @Scheduled(fixedDelayString = "\${presence.poller-interval}")
+    fun reapSilentlyExpiredRegistrations() {
+        presenceStore.dueWatchBatch(DUE_BATCH_LIMIT).forEach(presenceStore::reapExpiredRegistrations)
     }
 
     /**

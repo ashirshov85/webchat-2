@@ -63,7 +63,13 @@ class RedisPresenceStore(
     private val ttlMs: Long = properties.ttl.toMillis()
     private val hysteresisMs: Long = properties.hysteresis.toMillis()
 
-    /** SSE №18 open: ZADD alive + the watch GT-raise + the session index + the offq cancel — the returning-device revival. */
+    /**
+     * SSE №18 open: ZADD alive + the watch GT-raise + the session index —
+     * the returning-device revival. A PENDING offq entry is deliberately
+     * LEFT in place: the offq poller's due recount (T025) is the branch
+     * that cancels it AND counts the suppression (US3 AC4 — data-model
+     * §1.2 «восстановление в окне → отмена (suppressed++)»).
+     */
     override fun register(
         userId: UUID,
         sessionId: UUID,
@@ -72,7 +78,7 @@ class RedisPresenceStore(
         val result =
             evalList(
                 REGISTER_SCRIPT,
-                listOf(aliveKey(userId), connKey(userId), OFFQ_KEY, WATCH_KEY),
+                listOf(aliveKey(userId), connKey(userId), WATCH_KEY),
                 ttlMs.toString(),
                 connectionId.toString(),
                 sessionId.toString(),
@@ -331,8 +337,9 @@ class RedisPresenceStore(
             end
             """
 
-        // KEYS: alive, conn, offq, watch; ARGV: ttlMs, connectionId, sessionId, userId → {now, expiry}
-        // (watch GT: a fresh expiry may only push the shared deadline UP — never below another live max)
+        // KEYS: alive, conn, watch; ARGV: ttlMs, connectionId, sessionId, userId → {now, expiry}
+        // (watch GT: a fresh expiry may only push the shared deadline UP — never below another live max;
+        //  a pending offq entry survives for the poller's due recount — the suppression must be counted)
         private val REGISTER_SCRIPT: DefaultRedisScript<List<*>> =
             DefaultRedisScript(
                 """
@@ -340,10 +347,9 @@ class RedisPresenceStore(
                 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
                 local expiry = now + tonumber(ARGV[1])
                 redis.call('ZADD', KEYS[1], expiry, ARGV[2])
-                redis.call('ZADD', KEYS[4], 'GT', expiry, ARGV[4])
+                redis.call('ZADD', KEYS[3], 'GT', expiry, ARGV[4])
                 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
                 redis.call('PEXPIRE', KEYS[2], $PUB_TTL_MS)
-                redis.call('ZREM', KEYS[3], ARGV[4])
                 return {now, expiry}
                 """.trimIndent(),
                 List::class.java,
