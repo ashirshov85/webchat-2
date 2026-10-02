@@ -26,6 +26,7 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.stream.Stream
 
 /**
  * T002 (tasks.md Phase 1): shared fixtures of the 004 messaging ITs — used by
@@ -359,6 +360,9 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
         @Volatile
         private var streamFailure: Exception? = null
 
+        /** The live SSE body — [close] must cancel it to REALLY disconnect (T025). */
+        private val response: HttpResponse<Stream<String>>
+
         init {
             val request =
                 HttpRequest
@@ -368,7 +372,7 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
                     .header(HttpHeaders.ACCEPT, "text/event-stream")
                     .GET()
                     .build()
-            val response =
+            response =
                 httpClient
                     .sendAsync(request, HttpResponse.BodyHandlers.ofLines())
                     .get(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
@@ -457,6 +461,13 @@ abstract class MessagingTestSupport : AbstractIntegrationTest() {
         override fun close() {
             closed = true
             reader.shutdownNow()
+            // ofLines rides an HTTP/1.1 InputStream: closing the Stream
+            // cancels the subscription and TEARS DOWN the connection —
+            // without this leg the socket survives as a zombie and the
+            // server never learns about the «explicit client close»
+            // (US2 metro gaps of T023 would never reach the unregister
+            // hook within the scenario budget).
+            runCatching { response.body().close() }
             httpClient.close()
         }
 

@@ -13,7 +13,6 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.web.util.UriComponentsBuilder
-import webchat.backend.chats.MessagingTestSupport
 import webchat.backend.config.PresenceProperties
 import java.time.Duration
 import java.util.UUID
@@ -67,7 +66,7 @@ class PresenceIT(
     @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val objectMapper: ObjectMapper,
     @Autowired private val presenceProperties: PresenceProperties,
-) : MessagingTestSupport() {
+) : PresenceTestSupport() {
     /** A suppressed transition (re-register, covered break) must stay silent for the window + poller slack. */
     private val windowWithNoEvent: Duration =
         presenceProperties.hysteresis
@@ -338,17 +337,21 @@ class PresenceIT(
             aliceStream.close()
             bobStream.close()
 
+            // the transition must LAND while the observer is disconnected —
+            // only then is the frame genuinely missed; №36 already converges
+            // here (the healing is proved BEFORE any reconnect happens)
+            val healed = awaitSnapshotStatus(bob, alice.id, STATUS_OFFLINE, offlinePublicationBudget.plusSeconds(1))
+            assertThat(healed[REV_FIELD].asLong())
+                .overridingErrorMessage(
+                    "the missed transition must surface through №36 with a strictly greater rev (max(rev) merge)",
+                ).isGreaterThan(appliedRev)
+
             openUserEvents(bob).use { reconnected ->
                 awaitConnectedFrame(reconnected)
 
-                // the missed frame is NOT re-pushed (at-most-once) — healing is №36's job
+                // the missed frame is NOT re-pushed (at-most-once): the
+                // transition already fired into the void — nothing may follow
                 assertNoPresenceEventFollows(reconnected, windowWithNoEvent)
-
-                val healed = awaitSnapshotStatus(bob, alice.id, STATUS_OFFLINE, offlinePublicationBudget.plusSeconds(1))
-                assertThat(healed[REV_FIELD].asLong())
-                    .overridingErrorMessage(
-                        "the missed transition must surface through №36 with a strictly greater rev (max(rev) merge)",
-                    ).isGreaterThan(appliedRev)
             }
         } finally {
             runCatching { bobStream.close() }

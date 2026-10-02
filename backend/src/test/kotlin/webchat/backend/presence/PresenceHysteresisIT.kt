@@ -12,7 +12,6 @@ import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.web.util.UriComponentsBuilder
-import webchat.backend.chats.MessagingTestSupport
 import webchat.backend.config.PresenceProperties
 import java.time.Duration
 import java.util.UUID
@@ -64,7 +63,7 @@ class PresenceHysteresisIT(
     @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val objectMapper: ObjectMapper,
     @Autowired private val presenceProperties: PresenceProperties,
-) : MessagingTestSupport() {
+) : PresenceTestSupport() {
     /** A suppressed transition (re-register, covered break) must stay silent for the window + poller slack. */
     private val windowWithNoEvent: Duration =
         presenceProperties.hysteresis
