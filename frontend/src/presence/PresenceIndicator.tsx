@@ -40,7 +40,9 @@ export function PresenceIndicator({ userId, showLabel = false }: PresenceIndicat
   const label = PRESENCE_LABELS[status]
   return (
     <span className={`presence-indicator presence-${status}`}>
-      <span role="img" aria-label={label} className="presence-indicator-dot" />
+      <svg role="img" aria-label={label} className="presence-indicator-dot" viewBox="0 0 8 8">
+        <circle cx="4" cy="4" r="4" />
+      </svg>
       {showLabel && <span className="presence-indicator-label">{label}</span>}
     </span>
   )

@@ -27,7 +27,7 @@ import java.util.UUID
  *    a warn (the №7 revocation stands regardless; the registration
  *    self-expires through the TTL/offq machinery, FR-002/FR-004).
  */
-interface PresenceLogoutListener {
+fun interface PresenceLogoutListener {
     /**
      * The logout leg (research 007 §B2): clear every presence registration
      * carrying [sessionId]. Live registrations of OTHER sessions of

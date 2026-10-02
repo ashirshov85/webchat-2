@@ -1249,20 +1249,19 @@ p {
 .presence-indicator-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
   flex: none;
 }
 
 .presence-online .presence-indicator-dot {
-  background: var(--success);
+  fill: var(--success);
 }
 
 .presence-offline .presence-indicator-dot {
-  background: var(--muted);
+  fill: var(--muted);
 }
 
 .presence-unknown .presence-indicator-dot {
-  background: var(--border);
+  fill: var(--border);
 }
 
 .presence-indicator-label {
