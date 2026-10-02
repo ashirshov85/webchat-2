@@ -13,3 +13,9 @@ presence:
     # T011 recovery beat lands ~2 s after the last renewal (drain ~30 beats,
     # safely below the 60-attempt burst cap)
     heartbeats-per-window: 30
+    # T016 (№36): the T011 convergence helpers poll №36 every 200 ms inside
+    # windows of ~5 s — a worst-case scenario spends ≤ ~40 snapshots for one
+    # observer, far below capacity 120; the T016 flood leg still drains the
+    # bucket on purpose (burst cap 150 attempts) and sees Retry-After: 1 at
+    # the 2 token/s refill of the 60 s window
+    snapshots-per-minute: 120

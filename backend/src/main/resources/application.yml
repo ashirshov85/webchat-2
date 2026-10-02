@@ -337,6 +337,12 @@ presence:
     # the user, rl:user:presence-heartbeat:{userId})
     heartbeats-per-window: 10
     heartbeat-window: 30s
+    # 007 contracts/presence-api.md §1 (№36): per-user batch-snapshot flood
+    # bucket — conservative like №26, the 004 house parity (30/min, №16/№19
+    # style, 60 s Bucket4j window, rl:user:presence-snapshot:{userId});
+    # the client contract calls №36 only on the 005 (re)connect cycle and
+    # new displayed surfaces, so a full visible UI stays far below the cap
+    snapshots-per-minute: 30
 
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)

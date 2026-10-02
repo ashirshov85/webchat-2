@@ -34,12 +34,12 @@ data class PresenceProperties(
     val pollerInterval: Duration,
     /** contracts/presence-api.md §1: the №36 batch snapshot cap after dedup (≤ 200). */
     val snapshotBatchLimit: Int,
-    /** contracts/presence-api.md §2: the per-user №37 flood buckets of the presence routes. */
+    /** contracts/presence-api.md §1–2: the per-user №36/№37 flood buckets of the presence routes. */
     val rateLimit: RateLimit,
 ) {
     /**
      * The per-user flood buckets of the presence routes
-     * (contracts/presence-api.md §2): the №37 heartbeat allowance —
+     * (contracts/presence-api.md §1–2): the №37 heartbeat allowance —
      * capacity [heartbeatsPerWindow] over [heartbeatWindow], the
      * contract's «~10 запросов/30 c» expressed verbatim as a Bucket4j
      * capacity/window pair, so every device and replica of the user
@@ -50,10 +50,21 @@ data class PresenceProperties(
      * keeps the contract ratio with the TTL: the worst `Retry-After` of
      * N/window never approaches `ttl / 3` — the 3× headroom the client
      * reaction «keep the stream, retry in the next interval» relies on.
+     *
+     * The №36 batch-snapshot allowance [snapshotsPerMinute] is the
+     * CONSERVATIVE per-user bucket of presence-api.md §1 «как №26»: the
+     * 004 house parity (30/min, the №16/№19 style) over the 60 s
+     * [UserRateLimiter] window — the client contract calls №36 only on
+     * the 005 (re)connect cycle and on opening a NEW displayed surface
+     * (chunked ≤ 200), so a full visible UI stays far below the cap;
+     * the bucket counts REQUESTS across every device and replica of the
+     * user (`rl:user:presence-snapshot:{userId}`, constitution II) and
+     * a refusal performs NO store/SQL read leg.
      */
     data class RateLimit(
         val heartbeatsPerWindow: Int,
         val heartbeatWindow: Duration,
+        val snapshotsPerMinute: Int,
     )
 
     init {
@@ -64,5 +75,6 @@ data class PresenceProperties(
         require(snapshotBatchLimit > 0) { "presence.snapshot-batch-limit must be positive" }
         require(rateLimit.heartbeatsPerWindow > 0) { "presence.rate-limit.heartbeats-per-window must be positive" }
         require(rateLimit.heartbeatWindow.isPositive) { "presence.rate-limit.heartbeat-window must be positive" }
+        require(rateLimit.snapshotsPerMinute > 0) { "presence.rate-limit.snapshots-per-minute must be positive" }
     }
 }

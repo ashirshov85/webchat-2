@@ -3,9 +3,11 @@ package webchat.backend.presence.domain
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.stereotype.Service
 import webchat.backend.presence.domain.port.PresenceEventPublisher
+import webchat.backend.presence.domain.port.PresencePublishedStatus
 import webchat.backend.presence.domain.port.PresenceStore
 import webchat.backend.presence.domain.port.PresenceTransition
 import webchat.backend.presence.domain.port.PresenceUpdatedEvent
+import webchat.backend.presence.domain.port.PublishedPresence
 import webchat.backend.presence.domain.port.VisibilityAudienceReader
 import webchat.backend.realtime.PresenceConnectionLifecycle
 import java.util.UUID
@@ -122,6 +124,49 @@ class PresenceService(
     ): Boolean = presenceStore.renewRegistration(userId, connectionId)
 
     /**
+     * №36 batch snapshot (T016, contracts/presence-api.md §1): the
+     * per-pair visibility policy FIRST — [VisibilityAudienceReader.
+     * visibleTargets] decides which of the DEDUPED [observerId]-supplied
+     * [targetIds] may be answered at all — and only THEN one
+     * [PresenceStore.readPublishedBatch] round trip over the visible
+     * subset (data-model §1.4: an event and a snapshot resolve through
+     * the SAME policy, so they can never disagree about who observes
+     * whom — SC-004). Every requested target gets an entry:
+     *  * visible → the PUBLISHED status + rev (`presence:pub` — the
+     *    hysteresis-consistent value, so inside the pending-offline
+     *    window the snapshot still reads [ONLINE] exactly like the last
+     *    event did, FR-004; a never-published user reads
+     *    [OFFLINE]/rev 0 — the store contract);
+     *  * the complement (an outsider, a block-pair, a nonexistent
+     *    userId, the observer themself) → [UNKNOWN] with rev 0 — the
+     *    INDISTINGUISHABLE «no access» answer that never reveals
+     *    existence, offline-ness or «невидимка» (FR-007, US4 AC4); rev 0
+     *    makes the client's strictly-greater max(rev) merge a structural
+     *    no-op, so an `unknown` item can never overwrite a live state.
+     *
+     * [targetIds] arrives deduped and ≤ 200 — the №36 contract
+     * validation is the API layer's business (presence-api.md §1);
+     * duplicates/self-entries stay harmless anyway (set semantics).
+     */
+    fun snapshot(
+        observerId: UUID,
+        targetIds: Collection<UUID>,
+    ): Map<UUID, PresenceSnapshotEntry> {
+        val distinct = targetIds.distinct()
+        if (distinct.isEmpty()) return emptyMap()
+        val visible = visibilityAudienceReader.visibleTargets(observerId, distinct)
+        val published: Map<UUID, PublishedPresence> =
+            if (visible.isEmpty()) {
+                emptyMap()
+            } else {
+                presenceStore.readPublishedBatch(visible)
+            }
+        return distinct.associateWith { target ->
+            published[target]?.let { PresenceSnapshotEntry.of(it) } ?: PresenceSnapshotEntry.unknown(target)
+        }
+    }
+
+    /**
      * The §1.2 publication rule: ONLY a [PresenceTransition.Switched]
      * outcome ever fans out — [PresenceTransition.Unchanged] is the echo
      * the CAS suppressed (the second device, a repeat hook), and an
@@ -144,5 +189,49 @@ class PresenceService(
                 )
             }
         }
+    }
+}
+
+/**
+ * The №36 answer for one target (T016): the API-level status triple
+ * online/offline/unknown of contracts/presence-api.md §1 — [UNKNOWN] is
+ * NOT a store value, it is the visibility policy's «no access» answer
+ * decided in [PresenceService.snapshot] BEFORE any store read (FR-007:
+ * indistinguishable for an outsider, a block-pair and a nonexistent
+ * userId alike).
+ */
+enum class PresenceSnapshotStatus {
+    ONLINE,
+    OFFLINE,
+    UNKNOWN,
+}
+
+/**
+ * One №36 item (contracts/presence-api.md §1): the status the observer
+ * may see plus the revision of that publication — the client merges it
+ * with №18 `presence.updated` frames by strictly-greater `rev` per user
+ * (FR-003); an [PresenceSnapshotStatus.UNKNOWN] entry carries rev 0, so
+ * it never overwrites a previously observed state.
+ */
+data class PresenceSnapshotEntry(
+    val userId: UUID,
+    val status: PresenceSnapshotStatus,
+    val rev: Long,
+) {
+    internal companion object {
+        /** The visible projection: the published status + its very rev (SC-006). */
+        fun of(published: PublishedPresence): PresenceSnapshotEntry =
+            PresenceSnapshotEntry(
+                userId = published.userId,
+                status =
+                    when (published.status) {
+                        PresencePublishedStatus.ONLINE -> PresenceSnapshotStatus.ONLINE
+                        PresencePublishedStatus.OFFLINE -> PresenceSnapshotStatus.OFFLINE
+                    },
+                rev = published.rev,
+            )
+
+        /** The «no access» projection: unknown + rev 0 (a structural merge no-op). */
+        fun unknown(userId: UUID): PresenceSnapshotEntry = PresenceSnapshotEntry(userId, PresenceSnapshotStatus.UNKNOWN, 0L)
     }
 }

@@ -478,6 +478,101 @@ class PresenceIT(
     }
 
     /**
+     * Presence-api.md §1 (№36 batch gate, T016): the SHAPE comes first —
+     * an absent/empty `userIds` parameter and a non-UUID segment answer
+     * `400 malformed_request` (errors.userIds), an oversized batch (> 200
+     * AFTER DEDUP) `400 presence_ids_too_many`, while 201 raw ids with
+     * ONE duplicate stay legal (200 distinct → one item per DISTINCT
+     * target, request order preserved); the per-pair policy slice: the
+     * chat peer answers its published status while the observer's OWN id
+     * answers `unknown` (the audience never contains the subject). The
+     * per-user `flood_limit` bucket throttles a drain burst with 429 +
+     * `Retry-After` and recovers after the advertised wait — a refused
+     * snapshot is a pure refusal (no visibility/store leg), so the next
+     * allowed call answers 200 again.
+     */
+    @Test
+    fun `snapshot batch gate answers one item per distinct target and enforces malformed too-many and flood refusals`() {
+        val (alice, bob) = messagingPair()
+        ensureChatOk(alice, bob.id)
+
+        // one item per DISTINCT target, request order; exactly the №36 item fields
+        val shaped = snapshotRaw(alice, listOf(bob.id, bob.id, alice.id))
+        assertThat(shaped.statusCode)
+            .overridingErrorMessage(
+                "№36 must answer 200 for a well-formed batch, got <%s>: %s",
+                shaped.statusCode,
+                shaped.body,
+            ).isEqualTo(HttpStatus.OK)
+        val items = objectMapper.readTree(shaped.body)[ITEMS_FIELD]
+        assertThat(items.map { it[USER_ID_FIELD].asText() })
+            .overridingErrorMessage(
+                "№36 must answer ONE item per DISTINCT target in request order (duplicates collapse), got %s",
+                shaped.body,
+            ).containsExactly(bob.id.toString(), alice.id.toString())
+        items.forEach { item ->
+            assertThat(fieldNames(item))
+                .overridingErrorMessage("a №36 item must have exactly the PresenceStatusItem fields")
+                .containsExactlyInAnyOrder(USER_ID_FIELD, STATUS_FIELD, REV_FIELD)
+        }
+
+        // the pair-policy slice: the peer is visible (published offline until first
+        // connect), the observer's own id is the indistinguishable no-access unknown
+        assertThat(items[0][STATUS_FIELD].asText()).isEqualTo(STATUS_OFFLINE)
+        assertThat(items[1][STATUS_FIELD].asText()).isEqualTo(STATUS_UNKNOWN)
+
+        // shape gate: absent/empty parameter and a non-UUID segment are malformed
+        assertSnapshotProblem(snapshotRawParam(alice, null), HttpStatus.BAD_REQUEST, MALFORMED_REQUEST)
+        assertSnapshotProblem(snapshotRawParam(alice, EMPTY_PARAM), HttpStatus.BAD_REQUEST, MALFORMED_REQUEST)
+        assertSnapshotProblem(snapshotRawParam(alice, MALFORMED_CONNECTION_ID), HttpStatus.BAD_REQUEST, MALFORMED_REQUEST)
+        assertSnapshotProblem(
+            snapshotRawParam(alice, "${bob.id},$MALFORMED_CONNECTION_ID"),
+            HttpStatus.BAD_REQUEST,
+            MALFORMED_REQUEST,
+        )
+
+        // the batch cap counts DISTINCT ids: 201 → refused whole, 201 raw with a dup → 200 legal
+        val oversized = (1..SNAPSHOT_BATCH_LIMIT + 1).map { UUID.randomUUID() }
+        assertSnapshotProblem(snapshotRaw(alice, oversized), HttpStatus.BAD_REQUEST, IDS_TOO_MANY)
+        val dedupedLegal = snapshotRaw(alice, oversized.dropLast(1) + oversized.first())
+        assertThat(dedupedLegal.statusCode)
+            .overridingErrorMessage(
+                "the №36 cap applies AFTER dedup — %d raw ids with one duplicate are %d distinct and must pass, got <%s>",
+                SNAPSHOT_BATCH_LIMIT + 1,
+                SNAPSHOT_BATCH_LIMIT,
+                dedupedLegal.statusCode,
+            ).isEqualTo(HttpStatus.OK)
+        assertThat(objectMapper.readTree(dedupedLegal.body)[ITEMS_FIELD].size())
+            .isEqualTo(SNAPSHOT_BATCH_LIMIT)
+
+        // flood gate: drain the per-user bucket — the refusal carries Retry-After and recovers
+        var rejection: ResponseEntity<String>? = null
+        var attempt = 0
+        while (rejection == null && attempt < SNAPSHOT_BURST_CAP) {
+            attempt += 1
+            val probe = snapshotRaw(alice, listOf(bob.id))
+            if (probe.statusCode == HttpStatus.TOO_MANY_REQUESTS) rejection = probe
+        }
+        assertThat(rejection)
+            .overridingErrorMessage(
+                "№36 must enforce the per-user snapshot flood bucket (presence-api.md §1) — " +
+                    "%d back-to-back snapshots were all admitted",
+                SNAPSHOT_BURST_CAP,
+            ).isNotNull
+        assertSnapshotProblem(rejection!!, HttpStatus.TOO_MANY_REQUESTS, FLOOD_LIMIT)
+        val retryAfterSeconds = retryAfterSecondsOf(rejection!!)
+
+        Thread.sleep(retryAfterSeconds * MILLIS_PER_SECOND + RECOVERY_MARGIN_MILLIS)
+        val recovery = snapshotRaw(alice, listOf(bob.id))
+        assertThat(recovery.statusCode)
+            .overridingErrorMessage(
+                "the first №36 batch after the Retry-After window must recover with 200, got <%s>: %s",
+                recovery.statusCode,
+                recovery.body,
+            ).isEqualTo(HttpStatus.OK)
+    }
+
+    /**
      * Consumes the opening `retry: 3000` frame (realtime-channel.md §1) and
      * the №18 `connected {connectionId}` opening frame that follows it
      * (presence-events.md §1), asserting the exact frame order and payload
@@ -520,19 +615,49 @@ class PresenceIT(
     private fun snapshotRaw(
         observer: MessagingUser,
         targets: List<UUID>,
+    ): ResponseEntity<String> = snapshotRawParam(observer, targets.joinToString(",") { it.toString() })
+
+    /** Contract №36 with a RAW `userIds` parameter — the malformed/oversized probes of the batch gate. */
+    private fun snapshotRawParam(
+        observer: MessagingUser,
+        rawUserIds: String?,
     ): ResponseEntity<String> {
-        val path =
-            UriComponentsBuilder
-                .fromPath(SNAPSHOT_PATH)
-                .queryParam(USER_IDS_PARAM, targets.joinToString(",") { it.toString() })
-                .build()
-                .toUriString()
+        val builder = UriComponentsBuilder.fromPath(SNAPSHOT_PATH)
+        if (rawUserIds != null) builder.queryParam(USER_IDS_PARAM, rawUserIds)
         return restTemplate.exchange(
-            path,
+            builder.build().toUriString(),
             HttpMethod.GET,
             HttpEntity<Void>(null, bearerHeaders(observer)),
             String::class.java,
         )
+    }
+
+    /** The №36 error contract: the status, RFC 9457 body and `errors.userIds=[code]`. */
+    private fun assertSnapshotProblem(
+        response: ResponseEntity<String>,
+        expectedStatus: HttpStatus,
+        expectedCode: String,
+    ) {
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "№36 must answer <%s>, got <%s>: %s",
+                expectedStatus,
+                response.statusCode,
+                response.body,
+            ).isEqualTo(expectedStatus)
+        assertThat(response.headers.contentType?.toString())
+            .overridingErrorMessage("№36 errors must be RFC 9457 application/problem+json")
+            .contains(PROBLEM_JSON_MEDIA_TYPE)
+        val problem = objectMapper.readTree(response.body)
+        val codes = problem["errors"]?.get(USER_IDS_PARAM)?.map { it.asText() }.orEmpty()
+        assertThat(codes)
+            .overridingErrorMessage(
+                "the problem must carry errors.%s=[%s], got <%s> in %s",
+                USER_IDS_PARAM,
+                expectedCode,
+                codes,
+                response.body,
+            ).containsExactly(expectedCode)
     }
 
     /** №36 for one target: asserts 200 + the per-request item and returns it. */
@@ -811,12 +936,16 @@ class PresenceIT(
         const val STATUS_FIELD = "status"
         const val REV_FIELD = "rev"
         const val USER_IDS_PARAM = "userIds"
+        const val ITEMS_FIELD = "items"
         const val STATUS_ONLINE = "online"
         const val STATUS_OFFLINE = "offline"
+        const val STATUS_UNKNOWN = "unknown"
         const val FLOOD_LIMIT = "flood_limit"
         const val MALFORMED_REQUEST = "malformed_request"
         const val CONNECTION_NOT_FOUND = "presence_connection_not_found"
+        const val IDS_TOO_MANY = "presence_ids_too_many"
         const val MALFORMED_CONNECTION_ID = "not-a-uuid"
+        const val EMPTY_PARAM = ""
         const val PROBLEM_JSON_MEDIA_TYPE = "application/problem+json"
         const val TIMEOUT_MARKER = "timed out"
         const val SNAPSHOT_PATH = "/api/v1/users/me/presence"
@@ -831,6 +960,12 @@ class PresenceIT(
         const val POLLER_SLACK_TICKS = 2L
         const val WINDOW_SLACK_SECONDS = 1L
         const val HEARTBEAT_BURST_CAP = 60
+
+        /** openapi №36 (presence-api.md §1): the batch cap after dedup. */
+        const val SNAPSHOT_BATCH_LIMIT = 200
+
+        /** The test-profile №36 bucket (T016): capacity 120 over 60 s refills 2 tokens/s. */
+        const val SNAPSHOT_BURST_CAP = 150
         const val RETRY_AFTER_FLOOR_SECONDS = 1L
         const val RETRY_AFTER_CEILING_SECONDS = 60L
         const val MILLIS_PER_SECOND = 1000L

@@ -16,11 +16,47 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
  * connectionId or any payload (constitution V).
  *
  * The advice claims exactly its own carrier types, so the global advices
- * never collide; the №36/№38 legs (T016/T032) extend it with
- * `presence_ids_too_many` and the settings codes.
+ * never collide; the №38 settings legs (T032) extend it last.
  */
 @RestControllerAdvice
 class PresenceExceptionHandler {
+    /**
+     * 400 (openapi №36): `userIds` is absent/empty or any segment is
+     * not a UUID — `errors: {userIds: [malformed_request]}`.
+     */
+    @ExceptionHandler(SnapshotMalformedException::class)
+    fun onSnapshotMalformed(failure: SnapshotMalformedException): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, failure.message ?: SNAPSHOT_MALFORMED_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(USER_IDS_FIELD to listOf(MALFORMED_REQUEST_CODE))) }
+
+    /**
+     * 400 (openapi №36, presence-api.md §1): the batch exceeds the cap
+     * after dedup — the >200 chunking is the CLIENT's contract business,
+     * so the server refuses the oversized batch whole; the ids
+     * themselves are never echoed (constitution V).
+     */
+    @ExceptionHandler(PresenceIdsTooManyException::class)
+    fun onPresenceIdsTooMany(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, IDS_TOO_MANY_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(USER_IDS_FIELD to listOf(IDS_TOO_MANY_CODE))) }
+
+    /**
+     * 429 (openapi №36, presence-api.md §1): the per-user snapshot
+     * bucket is exhausted — `Retry-After` carries the integral seconds
+     * to the next token; the client repeats the batch after the wait
+     * (the №18 stream keeps delivering and the max(rev) merge of FR-003
+     * absorbs the delay). The targets themselves are never echoed.
+     */
+    @ExceptionHandler(PresenceSnapshotFloodException::class)
+    fun onSnapshotFlood(failure: PresenceSnapshotFloodException): ResponseEntity<ProblemDetail> =
+        ResponseEntity
+            .status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, failure.retryAfterSeconds.toString())
+            .body(
+                problem(HttpStatus.TOO_MANY_REQUESTS, SNAPSHOT_FLOOD_DETAIL)
+                    .apply { setProperty(ERRORS_PROPERTY, mapOf(USER_IDS_FIELD to listOf(FLOOD_LIMIT_CODE))) },
+            )
+
     /** 400 (openapi №37): the body is absent, connectionId is not set or is not a UUID. */
     @ExceptionHandler(HeartbeatMalformedException::class)
     fun onHeartbeatMalformed(failure: HeartbeatMalformedException): ProblemDetail =
@@ -62,10 +98,17 @@ class PresenceExceptionHandler {
     private companion object {
         const val ERRORS_PROPERTY = "errors"
         const val CONNECTION_ID_FIELD = "connectionId"
+        const val USER_IDS_FIELD = "userIds"
         const val MALFORMED_REQUEST_CODE = "malformed_request"
         const val CONNECTION_NOT_FOUND_CODE = "presence_connection_not_found"
+        const val IDS_TOO_MANY_CODE = "presence_ids_too_many"
         const val FLOOD_LIMIT_CODE = "flood_limit"
         const val MALFORMED_DETAIL = "connectionId must be present and a UUID"
+        const val SNAPSHOT_MALFORMED_DETAIL = "userIds must be present, non-empty and a comma-separated UUID list"
+        const val IDS_TOO_MANY_DETAIL =
+            "The userIds batch exceeds the per-request cap of 200 targets after dedup; chunk the batch client-side"
+        const val SNAPSHOT_FLOOD_DETAIL =
+            "The per-user snapshot flood limit is exhausted; refetch the batch after the advertised wait"
         const val CONNECTION_NOT_FOUND_DETAIL =
             "The connectionId is not a live registration of the caller (unknown or expired)"
         const val FLOOD_LIMIT_DETAIL =
