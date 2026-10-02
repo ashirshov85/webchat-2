@@ -111,6 +111,10 @@ class PresencePrivacyIT(
         setPresenceHidden(alice.id, hidden = true)
         assertSnapshotUnknown(stranger, alice.id)
         assertSnapshotUnknown(stranger, UUID.randomUUID())
+        // T033: the V15 mode now carries runtime meaning — an incognito
+        // subject's open hook never publishes `online` — so restore the
+        // NORMAL subject the delivery control below observes
+        setPresenceHidden(alice.id, hidden = false)
 
         // №23 (004): the block removes the pair from each other's audience BOTH ways
         assertThat(blockUser(blocker, alice.id).statusCode)

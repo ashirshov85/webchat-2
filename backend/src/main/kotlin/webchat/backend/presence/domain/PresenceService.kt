@@ -37,8 +37,11 @@ import java.util.UUID
  *    offq poller's due recount (T025) — that branch both cancels it and
  *    counts the suppression (US3 AC4).
  *    Splitting the two store calls (and not folding the transition into
- *    the register Lua) is what lets T033 skip the transition entirely
- *    while the «невидимка» freeze holds (FR-007).
+ *    the register Lua) is what lets this service skip the transition
+ *    entirely while the «невидимка» freeze holds (T033/FR-007): an
+ *    incognito subject still REGISTERS — the №37 leg keeps answering
+ *    204 and the later reveal knows the actual status — but the open
+ *    hook never arms the online publication.
  *  * close ([onConnectionClosed]): [PresenceStore.unregister] ONLY — the
  *    loss of the last live registration NEVER publishes here: at this
  *    moment a tab close is indistinguishable from a metro gap, so the
@@ -70,10 +73,19 @@ import java.util.UUID
  *    `users.presence_hidden` round trip through [PresenceSettingsStore]
  *    whose conditional write resolves the IDEMPOTENT PUT of
  *    presence-api.md §3 (a repeat of the same value is a no-op without
- *    events and without a rev advance). The SWITCH semantics — the
- *    immediate freeze `offline` on enable, the actual-status reveal on
- *    disable, the indistinguishable №36 answer (FR-007, research
- *    §D1/§D2) — are the T033 legs layered onto the change verdict.
+ *    events and without a rev advance). The SWITCH semantics layered
+ *    onto the change verdict are the T033 legs: a real flip to `true`
+ *    runs the store's freeze transition — the immediate CAS→offline
+ *    (rev++ unconditionally, the offq bypass, EXACTLY one observable
+ *    switch) plus the LAST `offline` event the audience receives while
+ *    the mode holds; a real flip to `false` runs the reveal — the
+ *    published status moves to the ACTUAL one (rev++; a live
+ *    registration publishes `online`, no registration keeps `offline`
+ *    silently — edge «выключение без живых подключений»). The №36
+ *    indistinguishability needs NO extra leg: the freeze already
+ *    forced `presence:pub` to `offline`, so the snapshot answers the
+ *    frozen target exactly like a real offline (FR-007, research
+ *    §D1/§D2).
  * The publication leg: on the ACTUAL flip only, the visibility audience
  * is resolved LIVE through [VisibilityAudienceReader] (data-model §1.4 —
  * one SQL, no cache: a contact added or a group kick converges by the
@@ -117,6 +129,16 @@ class PresenceService(
      * the FIRST live registration with the audience fan-out on the
      * actual flip (debounce-online = 0, SC-001; a repeat is a silent
      * no-op, FR-003).
+     *
+     * T033 freeze (FR-007): while the «невидимка» mode holds, the
+     * registration STILL lands — the №37 leg of that connection keeps
+     * answering 204 and a later №38 disable must find the actual
+     * «online» to reveal — but the transition is skipped ENTIRELY: no
+     * CAS, no rev advance, no `online` ever reaches the audience
+     * (research §D1 «заморозка»). The mode consults the durable V15
+     * verdict per open: the value is per-USER and survives sessions, so
+     * a fresh login of an incognito account stays frozen from its very
+     * first frame (US4 AC5, the T031 relogin leg).
      */
     override fun onConnectionOpened(
         userId: UUID,
@@ -124,6 +146,7 @@ class PresenceService(
         connectionId: UUID,
     ) {
         presenceStore.register(userId, sessionId, connectionId)
+        if (presenceSettingsStore.incognitoOf(userId)) return
         publishIfSwitched(presenceStore.transitionOnlineIfDue(userId))
     }
 
@@ -233,19 +256,45 @@ class PresenceService(
      * no rev — the «no-op без событий» of the contract; only an actual
      * flip returns `changed = true`.
      *
-     * T033 seam: the switch semantics (enable → the immediate
-     * freeze-`offline` CAS + the event freeze; disable → the
-     * actual-status reveal; the №36 indistinguishability — FR-007,
-     * research §D1/§D2) layer onto the `changed` verdict HERE; until
-     * T033 lands the toggle persists silently, which is exactly the
-     * offline-subject contract leg (spec 109: zero events, rev may only
-     * grow — and nothing here moves it).
+     * T033 switch semantics (FR-007, research §D1/§D2) — layered onto
+     * the `changed` verdict ALONE, so the idempotent repeat stays
+     * completely unobservable (no Lua leg runs at all):
+     *  * enable → [PresenceStore.freezePublishedOffline]: the rev
+     *    advances UNCONDITIONALLY, the published status CASes
+     *    online→offline IMMEDIATELY (the offq bypass — the §B2 logout
+     *    discipline: the toggle must not wait out a 45 s window it
+     *    already decided) and any pending offq entry is cancelled; a
+     *    [PresenceTransition.Switched] verdict fans out the ONE — and
+     *    until the disable, the LAST — `offline` the audience observes
+     *    (≤ one displayed switch per toggle, spec edge 108); an already
+     *    `offline` subject resolves [PresenceTransition.Unchanged] —
+     *    zero events, the rev may only grow (spec edge 109).
+     *  * disable → [PresenceStore.revealPublishedStatus]: the rev
+     *    advances UNCONDITIONALLY and the published status moves to the
+     *    ACTUAL one — a live registration flips offline→online
+     *    (Switched → the `online` fan-out), no registration keeps
+     *    `offline` (Unchanged — NO event; edge «выключение без живых
+     *    подключений»: the №36 status part stays untouched and the rev
+     *    does not decrease, so the client's max(rev) merge stays
+     *    correct while the display stays still).
+     * The №36 indistinguishability of the frozen target needs no extra
+     * leg: the freeze already forced `presence:pub` to `offline`, so
+     * the snapshot reads a value indistinguishable from a real offline.
      */
     fun updatePresenceSettings(
         userId: UUID,
         incognito: Boolean,
     ): PresenceSettingsUpdate {
         val changed = presenceSettingsStore.storeIfChanged(userId, incognito)
+        if (changed) {
+            publishIfSwitched(
+                if (incognito) {
+                    presenceStore.freezePublishedOffline(userId)
+                } else {
+                    presenceStore.revealPublishedStatus(userId)
+                },
+            )
+        }
         val stored = if (changed) incognito else presenceSettingsStore.incognitoOf(userId)
         return PresenceSettingsUpdate(
             incognito = stored,
@@ -255,9 +304,9 @@ class PresenceService(
 
     /**
      * The №38 PUT outcome (T032): the STORED mode (the 200 body of the
-     * route) plus the atomic change verdict the caller's T033 legs will
-     * branch on — `changed = false` is the idempotent no-op that must
-     * stay COMPLETELY unobservable (no event, no rev advance).
+     * route) plus the atomic change verdict the T033 switch legs branch
+     * on — `changed = false` is the idempotent no-op that must stay
+     * COMPLETELY unobservable (no event, no rev advance).
      */
     data class PresenceSettingsUpdate(
         val incognito: Boolean,
@@ -330,6 +379,7 @@ data class PresenceSnapshotEntry(
             )
 
         /** The «no access» projection: unknown + rev 0 (a structural merge no-op). */
-        fun unknown(userId: UUID): PresenceSnapshotEntry = PresenceSnapshotEntry(userId, PresenceSnapshotStatus.UNKNOWN, 0L)
+        fun unknown(userId: UUID): PresenceSnapshotEntry =
+            PresenceSnapshotEntry(userId, PresenceSnapshotStatus.UNKNOWN, 0L)
     }
 }
