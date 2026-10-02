@@ -35,12 +35,19 @@
  * consumed by groups/hooks/useGroupRealtime) — one connection, one
  * multiplexed feed. Unknown `event:` types stay ignored (forward
  * compatibility, 004 §2).
+ *
+ * Feature 007 (T020, presence-events.md §2): the stream also carries
+ * `presence.updated` frames; they are handed to the presence
+ * listeners (`onPresenceUpdated`, consumed by presence/usePresence)
+ * untouched — the strictly-greater-rev merge rule lives in the
+ * presence store, not here (FR-003).
  */
 import { useEffect, useRef } from 'react'
 import type { ChatReadEvent, MessageCreatedEvent } from '../../api/chats'
 import type { GroupRealtimeEvent } from '../../api/groups'
 import { streamUserEvents } from '../../api/sse'
 import type { SseConnection } from '../../api/sse'
+import type { PresenceUpdatedEvent } from '../../presence/presenceStore'
 
 export type Unsubscribe = () => void
 
@@ -51,6 +58,8 @@ export type ChatReadListener = (event: ChatReadEvent) => void
 export type RealtimeOpenListener = () => void
 
 export type GroupEventListener = (event: GroupRealtimeEvent) => void
+
+export type PresenceUpdatedListener = (event: PresenceUpdatedEvent) => void
 
 export interface RealtimeStream {
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe
@@ -63,6 +72,13 @@ export interface RealtimeStream {
    * consumer's reducer, not here.
    */
   onGroupEvent(listener: GroupEventListener): Unsubscribe
+  /**
+   * Subscribes to every №18 `presence.updated` frame of the user's
+   * stream (feature 007): the listener applies the STATE by the
+   * strictly-greater-rev rule in the presence store (FR-003) —
+   * duplicates and stale frames are consumer-side no-ops.
+   */
+  onPresenceUpdated(listener: PresenceUpdatedListener): Unsubscribe
 }
 
 class UserEventStream implements RealtimeStream {
@@ -72,6 +88,7 @@ class UserEventStream implements RealtimeStream {
   private readonly chatReadListeners = new Map<string | null, Set<ChatReadListener>>()
   private readonly openListeners = new Set<RealtimeOpenListener>()
   private readonly groupListeners = new Set<GroupEventListener>()
+  private readonly presenceListeners = new Set<PresenceUpdatedListener>()
 
   retain(): void {
     this.refCount += 1
@@ -97,6 +114,9 @@ class UserEventStream implements RealtimeStream {
         this.handleGroupEvent(eventType, data)
       })
     }
+    connection.subscribe('presence.updated', (data) => {
+      this.handlePresenceUpdated(data)
+    })
   }
 
   release(): void {
@@ -111,6 +131,7 @@ class UserEventStream implements RealtimeStream {
     this.chatReadListeners.clear()
     this.openListeners.clear()
     this.groupListeners.clear()
+    this.presenceListeners.clear()
   }
 
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe {
@@ -132,6 +153,13 @@ class UserEventStream implements RealtimeStream {
     this.groupListeners.add(listener)
     return () => {
       this.groupListeners.delete(listener)
+    }
+  }
+
+  onPresenceUpdated(listener: PresenceUpdatedListener): Unsubscribe {
+    this.presenceListeners.add(listener)
+    return () => {
+      this.presenceListeners.delete(listener)
     }
   }
 
@@ -179,6 +207,16 @@ class UserEventStream implements RealtimeStream {
       return
     }
     for (const listener of this.groupListeners) {
+      listener(event)
+    }
+  }
+
+  private handlePresenceUpdated(data: string): void {
+    const event = parsePresenceUpdatedEvent(data)
+    if (event === null) {
+      return
+    }
+    for (const listener of this.presenceListeners) {
       listener(event)
     }
   }
@@ -266,6 +304,32 @@ function parseGroupEvent(eventType: GroupEventType, data: string): GroupRealtime
     return null
   }
   return { ...payload, type: eventType } as GroupRealtimeEvent
+}
+
+/** №18 `presence.updated` payload guard (feature 007, presence-events.md §2). */
+function parsePresenceUpdatedEvent(data: string): PresenceUpdatedEvent | null {
+  let payload: unknown
+  try {
+    payload = JSON.parse(data)
+  } catch {
+    return null
+  }
+  if (!isPresenceUpdatedEvent(payload)) {
+    return null
+  }
+  return payload
+}
+
+function isPresenceUpdatedEvent(value: unknown): value is PresenceUpdatedEvent {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const candidate = value as { userId?: unknown; status?: unknown; rev?: unknown }
+  return (
+    typeof candidate.userId === 'string' &&
+    (candidate.status === 'online' || candidate.status === 'offline') &&
+    typeof candidate.rev === 'number'
+  )
 }
 
 function isGroupEventPayload(eventType: GroupEventType, value: unknown): boolean {
