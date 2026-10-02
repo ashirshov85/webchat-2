@@ -87,7 +87,7 @@
 
 ### Tests for User Story 2 (писать первыми)
 
-- [ ] T023 [P] [US2] Написать `PresenceHysteresisIT` в `backend/src/test/kotlin/webchat/backend/presence/PresenceHysteresisIT.kt`: метро-серия ≥ 10 разрывов/восстановлений короче окна → 0 публикаций смен (SC-002); единичный разрыв длиннее окна → ровно одно «offline» (CAS исключает ≥2) и один возврат; разрыв на границе окна → 0 или 1 переключение; чередование устройств в окне → без промежуточного «офлайн»
+- [X] T023 [P] [US2] Написать `PresenceHysteresisIT` в `backend/src/test/kotlin/webchat/backend/presence/PresenceHysteresisIT.kt`: метро-серия ≥ 10 разрывов/восстановлений короче окна → 0 публикаций смен (SC-002); единичный разрыв длиннее окна → ровно одно «offline» (CAS исключает ≥2) и один возврат; разрыв на границе окна → 0 или 1 переключение; чередование устройств в окне → без промежуточного «офлайн»
 
 ### Implementation for User Story 2
 
