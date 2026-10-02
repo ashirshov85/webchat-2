@@ -162,7 +162,7 @@ internal class RedisRealtimePubSubConfig {
  * contract payloads ([MessageView] for `message.created`).
  */
 @Component
-@Suppress("TooManyFunctions") // T028/T009: one function per fan-out leg plus the SC-005 timer
+@Suppress("TooManyFunctions") // T028/T009/T017: one function per fan-out leg plus the SC-005 timer
 class RedisRealtimePublisher(
     private val connectionRegistry: SseConnectionRegistry,
     private val objectMapper: ObjectMapper,
@@ -220,6 +220,26 @@ class RedisRealtimePublisher(
         event: ChatReadEvent,
     ) {
         toUserIds.forEach { addressee -> publishEnvelope(addressee, EVENT_CHAT_READ, event) }
+    }
+
+    /**
+     * T017 (presence-events.md 007 §2): ONE `presence.updated` envelope
+     * per VISIBILITY-AUDIENCE observer on their own `rt:user:{id}`
+     * channel — exactly one frame per observer per transition regardless
+     * of how many chats they share with the subject (edge «до 200
+     * участников»). The [payload] is the CALLER's contract
+     * serialization of the presence `PresenceUpdatedEvent` — this
+     * transport stays presence-agnostic (it only fans the №18 frame
+     * family out over the SAME per-user channels, no new topology,
+     * research.md 006 §4); the transition counter and the
+     * presence-tagged push sample live in the presence adapter
+     * (`webchat.backend.presence.repository.RedisPresenceEventPublisher`).
+     */
+    fun fanoutPresenceUpdated(
+        toUserIds: Set<UUID>,
+        payload: Map<String, Any>,
+    ) {
+        toUserIds.forEach { addressee -> publishEnvelope(addressee, EVENT_PRESENCE_UPDATED, payload) }
     }
 
     /** The T019 dynamic subscription hook: subscribe `rt:user:{id}` on the first live session. */
@@ -428,6 +448,9 @@ class RedisRealtimePublisher(
         const val EVENT_GROUP_ROLE_CHANGED = "group.role.changed"
         const val EVENT_GROUP_YOU_REMOVED = "group.you_removed"
         const val EVENT_GROUP_DELETED = "group.deleted"
+
+        /** presence-events.md 007 §2: the №18 presence `event:` value (T017). */
+        const val EVENT_PRESENCE_UPDATED = "presence.updated"
 
         /** The internal wire envelope fields (transport detail, NOT the public SSE framing). */
         const val FIELD_EVENT = "event"

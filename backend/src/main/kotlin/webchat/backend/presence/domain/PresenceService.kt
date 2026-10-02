@@ -57,11 +57,14 @@ import java.util.UUID
  * frame per observer regardless of how many chats they share with the
  * subject (edge «до 200 участников», contracts/presence-events.md §2).
  * The publisher rides the ObjectProvider seam exactly like the
- * RealtimeController side of T013: the T017 Redis adapter is not on the
- * classpath as a bean yet while US1 lands leg by leg, and the №18
- * channel must survive that interim — transitions keep converging in
- * the store, only the frame is absent, and clients heal through the №36
- * snapshot by max(rev) anyway (at-most-once channel, constitution III).
+ * RealtimeController side of T013: presence and realtime stay loosely
+ * coupled through the port (Spring wires whatever bean implements it —
+ * since T017 the Redis adapter
+ * `webchat.backend.presence.repository.RedisPresenceEventPublisher`),
+ * and an absent/unresolvable publisher degrades gracefully — the
+ * transition keeps converging in the store, only the frame is absent,
+ * and clients heal through the №36 snapshot by max(rev) anyway
+ * (at-most-once channel, constitution III).
  * A Switched leg with an EMPTY audience (a subject nobody may observe
  * yet) publishes nothing — set semantics make that structural.
  *
