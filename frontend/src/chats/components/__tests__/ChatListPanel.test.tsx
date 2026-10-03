@@ -12,6 +12,12 @@ import { ChatListPanel } from '../ChatListPanel'
  * dialog is highlighted, and after a per-user chat deletion (№14 +
  * useChatList reload) the dropped chat simply disappears from the
  * `chats` prop — down to the empty state when the last dialog is gone.
+ *
+ * Feature 008 (US1, T017): the 004 class hooks of the rows
+ * (`.chat-item`, `.chat-item-badge`, `.chat-item-blocked`) stay as
+ * wrappers of the prototype row classes (research §C, FR-034); the
+ * badge/preview nodes additionally carry the prototype hooks `.c-badge`
+ * and `.c-prev` (T019/T020).
  */
 
 const ME = '11111111-1111-1111-1111-111111111111'
@@ -106,6 +112,8 @@ describe('ChatListPanel unread badge (FR-014)', () => {
     const badges = Array.from(container.querySelectorAll('.chat-item-badge'))
 
     expect(badges.map((badge) => badge.textContent)).toEqual(['5', '99'])
+    // T020: the badge node rides the prototype `.c-badge` hook.
+    expect(badges[0]).toHaveClass('c-badge')
   })
 
   it('collapses into «99+» above ninety-nine and hides the badge at zero', () => {
@@ -171,6 +179,8 @@ describe('ChatListPanel rows and the open dialog', () => {
       ),
     )
 
+    // T020: the preview node rides the prototype `.c-prev` hook.
+    expect(screen.getByText('Вы: привет')).toHaveClass('c-prev')
     expect(screen.getByText('Вы: привет')).toBeVisible()
   })
 })

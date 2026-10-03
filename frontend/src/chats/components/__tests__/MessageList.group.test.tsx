@@ -127,11 +127,22 @@ function groupChatView(overrides: Partial<ChatView> = {}): ChatView {
   }
 }
 
-/** Per-message status mark: `null` — no mark (incoming messages). */
+/**
+ * Per-message delivery mark (feature 008, US1, T022/T023): a
+ * server-confirmed outgoing message carries the engraved ✓/✓✓ tick
+ * stamp — its SC-002 text rides the prototype `title`
+ * («Доставлено»/«Прочитано», design-tokens §6); local outbox entries
+ * keep the 005 text statuses inside `.message-status`; incoming
+ * messages carry no mark at all (`null`).
+ */
 function statusTexts(container: HTMLElement): Array<string | null> {
-  return Array.from(container.querySelectorAll('.message')).map(
-    (item) => item.querySelector('.message-status')?.textContent ?? null,
-  )
+  return Array.from(container.querySelectorAll('.message')).map((item) => {
+    const tick = item.querySelector('.tick')
+    if (tick !== null) {
+      return tick.getAttribute('title')
+    }
+    return item.querySelector('.message-status')?.textContent ?? null
+  })
 }
 
 /** Sender attribution of a rendered group message (US2): `null` — own message. */
@@ -267,7 +278,10 @@ describe('MessageList group sender attribution (US2, T033 → T038)', () => {
     expect(screen.getByText('alice')).toBeVisible()
     expect(screen.getByText('bob')).toBeVisible()
     expect(senderTexts(container)).toEqual(['alice', 'bob', null])
-    expect(screen.getByText('доставлено ✓')).toBeVisible()
+    // T022: the prototype sender hook rides together with the preserved
+    // 004 test hook on group incoming bubbles (research §C, FR-034).
+    expect(container.querySelectorAll('.msg.them .sender.message-sender')).toHaveLength(2)
+    expect(container.querySelector('.tick.dlv')).toHaveAttribute('title', 'Доставлено')
   })
 
   it('keeps the direct variant attribution-free when no roster is given', () => {
@@ -298,8 +312,8 @@ describe('MessageList group ✓✓ by othersReadUpToSeq (№13/№26, FR-012)', 
     // The boundary is inclusive: seq ≤ othersReadUpToSeq counts as read
     // once ANY other active member has read that far (MAX of their
     // watermarks).
-    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓', 'доставлено ✓'])
-    expect(container.querySelectorAll('.message-status-read')).toHaveLength(1)
+    expect(statusTexts(container)).toEqual([null, 'Прочитано', 'Доставлено'])
+    expect(container.querySelectorAll('.tick.read')).toHaveLength(1)
   })
 
   it('keeps a lone sender without ✓✓ — no other members, nothing is ever read (edge, FR-012)', () => {
@@ -311,7 +325,7 @@ describe('MessageList group ✓✓ by othersReadUpToSeq (№13/№26, FR-012)', 
       />,
     )
 
-    expect(statusTexts(container)).toEqual(['доставлено ✓'])
+    expect(statusTexts(container)).toEqual(['Доставлено'])
   })
 
   it('flips ✓ to ✓✓ when the watermark advances (a larger othersReadUpToSeq rerender)', () => {
@@ -324,7 +338,7 @@ describe('MessageList group ✓✓ by othersReadUpToSeq (№13/№26, FR-012)', 
         othersReadUpToSeq={2}
       />,
     )
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'доставлено ✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Доставлено'])
 
     rerender(
       <GroupMessageList
@@ -335,7 +349,7 @@ describe('MessageList group ✓✓ by othersReadUpToSeq (№13/№26, FR-012)', 
       />,
     )
 
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
   })
 })
 
@@ -349,7 +363,7 @@ describe('MessageList group chat.read handling (US2, T039; realtime-group-events
     )
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['доставлено ✓'])
+      expect(statusTexts(container)).toEqual(['Доставлено'])
     })
 
     // Alice alone has read up to 2 — bob has not, yet the mark flips:
@@ -357,13 +371,13 @@ describe('MessageList group chat.read handling (US2, T039; realtime-group-events
     // (spec US2-5: «хотя бы один другой участник просмотрел»).
     emitGroupRead(stream, GROUP_ID, ALICE, 2)
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['прочитано ✓✓'])
+      expect(statusTexts(container)).toEqual(['Прочитано'])
     })
 
     // A later, lower mark from another member never rolls it back —
     // the client holds the maximum (FR-012).
     emitGroupRead(stream, GROUP_ID, BOB, 1)
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано'])
   })
 
   it('seeds ✓✓ from the №13 group watermark and keeps it on a stale smaller chat.read frame', async () => {
@@ -378,12 +392,12 @@ describe('MessageList group chat.read handling (US2, T039; realtime-group-events
     )
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+      expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
     })
 
     emitGroupRead(stream, GROUP_ID, ALICE, 2)
 
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
   })
 
   it('never renders a rollback when a reconnect refetch returns a lower watermark (FR-012 live-session max)', async () => {
@@ -399,7 +413,7 @@ describe('MessageList group chat.read handling (US2, T039; realtime-group-events
     )
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['прочитано ✓✓'])
+      expect(statusTexts(container)).toEqual(['Прочитано'])
     })
 
     act(() => {
@@ -409,7 +423,7 @@ describe('MessageList group chat.read handling (US2, T039; realtime-group-events
     await waitFor(() => {
       expect(mockedGetChat).toHaveBeenCalledTimes(2)
     })
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано'])
   })
 
   it('ignores chat.read frames of other chats', async () => {
@@ -421,12 +435,12 @@ describe('MessageList group chat.read handling (US2, T039; realtime-group-events
     )
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['доставлено ✓'])
+      expect(statusTexts(container)).toEqual(['Доставлено'])
     })
 
     emitGroupRead(stream, 'chat-2', ALICE, 2)
 
-    expect(statusTexts(container)).toEqual(['доставлено ✓'])
+    expect(statusTexts(container)).toEqual(['Доставлено'])
   })
 })
 
@@ -459,7 +473,7 @@ describe('MessageList group read marks and sync deltas (US2; №17/№26)', () =
     )
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual([null, 'доставлено ✓', 'доставлено ✓'])
+      expect(statusTexts(container)).toEqual([null, 'Доставлено', 'Доставлено'])
     })
 
     // The others read up to seq 2 while the user was offline; the №26
@@ -474,7 +488,7 @@ describe('MessageList group read marks and sync deltas (US2; №17/№26)', () =
       />,
     )
 
-    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓', 'доставлено ✓'])
+    expect(statusTexts(container)).toEqual([null, 'Прочитано', 'Доставлено'])
   })
 
   it('renders own delta messages read while offline straight as ✓✓ (quickstart §3.2)', async () => {
@@ -504,6 +518,6 @@ describe('MessageList group read marks and sync deltas (US2; №17/№26)', () =
       />,
     )
 
-    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual([null, 'Прочитано'])
   })
 })

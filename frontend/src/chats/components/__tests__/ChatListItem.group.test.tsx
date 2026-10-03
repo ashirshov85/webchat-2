@@ -6,11 +6,19 @@ import { ChatListItem } from '../ChatListItem'
 /**
  * One «Чаты» row over the №12 group elements (US1, T019 → T028;
  * FR-014): the unified list discriminates rows by `type` — a group
- * row renders `title` + `memberCount` from the group fields while
- * `peer`/`blockedByMe` are null (api-contract.md §3), and a direct
- * row keeps rendering the peer login exactly as in 004 (the `type`
- * field may be absent — backward-friendly). The unread badge rules
- * of 004 (exact up to 99, «99+» above) apply to group rows alike.
+ * row renders `title` from the group fields while `peer`/
+ * `blockedByMe` are null (api-contract.md §3), and a direct row keeps
+ * rendering the peer login exactly as in 004 (the `type` field may be
+ * absent — backward-friendly). The unread badge rules of 004 (exact up
+ * to 99, «99+» above) apply to group rows alike.
+ *
+ * Feature 008 (US1, T017 → T020): the row is rebuilt per the
+ * prototype — avatar + `.c-name` + preview + time + badge. The №12
+ * `memberCount` LEAVES the row (the prototype carries no counter —
+ * FR-001) and returns as the «N участников» header status of US3
+ * (T043); the 007 presence dot leaves the row markup until the Avatar
+ * presence wiring of US3 (T040/T042). Neither is a row expectation
+ * anymore (data-model 2.1).
  */
 
 const ME = '11111111-1111-1111-1111-111111111111'
@@ -60,37 +68,21 @@ function groupItem(overrides: Partial<ChatListItemData> = {}): ChatListItemData 
 afterEach(cleanup)
 
 describe('ChatListItem type discrimination (№12 group elements, FR-014)', () => {
-  it('renders a group row from the group fields: title, member counter, no peer login', () => {
+  it('renders a group row from the group fields: title, no peer login', () => {
     render(
       <ul>
         <ChatListItem item={groupItem()} />
       </ul>,
     )
 
-    expect(screen.getByText('Проект Альфа')).toBeVisible()
+    // T020: the title rides the prototype `.c-name` hook.
+    expect(screen.getByText('Проект Альфа')).toHaveClass('c-name')
     expect(screen.queryByText('alice')).toBeNull()
     expect(screen.queryByText('заблокирован')).toBeNull()
   })
 
-  it('renders the member counter with Russian plurals', () => {
-    const { container } = render(
-      <ul>
-        <ChatListItem item={groupItem({ memberCount: 1 })} />
-        <ChatListItem item={groupItem({ chatId: 'group-2', memberCount: 3 })} />
-        <ChatListItem item={groupItem({ chatId: 'group-3', memberCount: 5 })} />
-      </ul>,
-    )
-    const counters = Array.from(container.querySelectorAll('.chat-item-members'))
-
-    expect(counters.map((counter) => counter.textContent)).toEqual([
-      '1 участник',
-      '3 участника',
-      '5 участников',
-    ])
-  })
-
-  it('keeps direct rows peer-driven and without a member counter (type absent or direct)', () => {
-    const { container } = render(
+  it('keeps direct rows peer-driven (type absent or direct)', () => {
+    render(
       <ul>
         <ChatListItem item={directItem()} />
         <ChatListItem
@@ -101,24 +93,6 @@ describe('ChatListItem type discrimination (№12 group elements, FR-014)', () =
 
     expect(screen.getByText('alice')).toBeVisible()
     expect(screen.getByText('bob')).toBeVisible()
-    expect(container.querySelector('.chat-item-members')).toBeNull()
-  })
-
-  it('mounts the presence dot on direct rows only — groups carry no presence UI (007, T022)', () => {
-    const { container } = render(
-      <ul>
-        <ChatListItem item={directItem()} />
-        <ChatListItem item={groupItem()} />
-      </ul>,
-    )
-    const rows = Array.from(container.querySelectorAll('.chat-item'))
-    const indicators = rows.map((row) => row.querySelector('.presence-indicator'))
-
-    // A direct row mounts the shared dot (neutral before the first №36
-    // snapshot — never a false «офлайн»); a group row mounts none.
-    expect(indicators[0]).not.toBeNull()
-    expect(indicators[0]).toHaveClass('presence-unknown')
-    expect(indicators[1]).toBeNull()
   })
 })
 

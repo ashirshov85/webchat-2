@@ -42,11 +42,22 @@ function renderedTexts(container: HTMLElement): string[] {
   )
 }
 
-/** Per-message status mark (US4): `null` — no mark (incoming messages). */
+/**
+ * Per-message delivery mark (feature 008, US1, T022/T023): a
+ * server-confirmed outgoing message carries the engraved ✓/✓✓ tick
+ * stamp — its SC-002 text rides the prototype `title`
+ * («Доставлено»/«Прочитано», design-tokens §6); local outbox entries
+ * keep the 005 text statuses inside `.message-status`; incoming
+ * messages carry no mark at all (`null`).
+ */
 function statusTexts(container: HTMLElement): Array<string | null> {
-  return Array.from(container.querySelectorAll('.message')).map(
-    (item) => item.querySelector('.message-status')?.textContent ?? null,
-  )
+  return Array.from(container.querySelectorAll('.message')).map((item) => {
+    const tick = item.querySelector('.tick')
+    if (tick !== null) {
+      return tick.getAttribute('title')
+    }
+    return item.querySelector('.message-status')?.textContent ?? null
+  })
 }
 
 function chatView(overrides: Partial<ChatView> = {}): ChatView {
@@ -155,7 +166,16 @@ describe('MessageList delivery statuses', () => {
     )
 
     expect(screen.getByText('Привет')).toBeVisible()
-    expect(screen.getByText('доставлено ✓')).toBeVisible()
+    // T022/T023: the ✓ stamp is the engraved tick — «Доставлено» rides
+    // its title (SC-002), `.dlv` is the single-check variant.
+    const tick = container.querySelector('.tick') as HTMLElement
+    expect(tick).toHaveClass('dlv')
+    expect(tick).toHaveAttribute('title', 'Доставлено')
+    expect(container.querySelector('.tick.read')).toBeNull()
+    // The row carries the prototype bubble hooks alongside the preserved
+    // 004 test hooks (research §C, FR-034).
+    expect(container.querySelector('.message.outgoing')).toHaveClass('msg', 'me')
+    expect(container.querySelector('.msg.me .bubble .b-text')?.textContent).toBe('Привет')
     expect(container.querySelectorAll('.message.outgoing')).toHaveLength(1)
   })
 
@@ -167,7 +187,10 @@ describe('MessageList delivery statuses', () => {
     expect(screen.getByText('Ответ')).toBeVisible()
     expect(screen.queryByText(/доставлено/)).toBeNull()
     expect(screen.queryByText(/отправляется/)).toBeNull()
+    expect(container.querySelector('.tick')).toBeNull()
     expect(container.querySelector('.message-status')).toBeNull()
+    expect(container.querySelector('.message.incoming')).toHaveClass('msg', 'them')
+    expect(container.querySelector('.msg.them .bubble .b-text')?.textContent).toBe('Ответ')
     expect(container.querySelectorAll('.message.incoming')).toHaveLength(1)
   })
 
@@ -199,7 +222,7 @@ describe('MessageList idempotent render', () => {
 
     expect(container.querySelectorAll('.message')).toHaveLength(1)
     expect(screen.getByText('Подтверждено')).toBeVisible()
-    expect(screen.getByText('доставлено ✓')).toBeVisible()
+    expect(container.querySelector('.tick.dlv')).toHaveAttribute('title', 'Доставлено')
     expect(screen.queryByText('отправляется')).toBeNull()
   })
 
@@ -242,8 +265,9 @@ describe('MessageList read status by watermark (US4, T045)', () => {
     )
 
     // The boundary is inclusive: seq ≤ peerReadUpToSeq counts as read.
-    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓', 'доставлено ✓'])
-    expect(container.querySelectorAll('.message-status-read')).toHaveLength(1)
+    expect(statusTexts(container)).toEqual([null, 'Прочитано', 'Доставлено'])
+    expect(container.querySelectorAll('.tick.read')).toHaveLength(1)
+    expect(container.querySelectorAll('.tick.dlv')).toHaveLength(1)
   })
 
   it('renders everything as delivered when no watermark is given (default 0)', () => {
@@ -254,7 +278,7 @@ describe('MessageList read status by watermark (US4, T045)', () => {
       />,
     )
 
-    expect(statusTexts(container)).toEqual(['доставлено ✓', 'доставлено ✓'])
+    expect(statusTexts(container)).toEqual(['Доставлено', 'Доставлено'])
   })
 
   it('flips ✓ to ✓✓ when the watermark advances and covers more outgoing messages', () => {
@@ -262,11 +286,11 @@ describe('MessageList read status by watermark (US4, T045)', () => {
     const { container, rerender } = render(
       <MessageList messages={messages} currentUserId={ME} peerReadUpToSeq={2} />,
     )
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'доставлено ✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Доставлено'])
 
     rerender(<MessageList messages={messages} currentUserId={ME} peerReadUpToSeq={3} />)
 
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
   })
 })
 
@@ -280,13 +304,13 @@ describe('MessageList read status via chat.read (US4, T045)', () => {
     const { container } = render(<DialogWindow chatId="chat-1" currentUserId={ME} />)
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual([null, 'доставлено ✓'])
+      expect(statusTexts(container)).toEqual([null, 'Доставлено'])
     })
 
     emitChatRead(stream, 'chat-1', 2)
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓'])
+      expect(statusTexts(container)).toEqual([null, 'Прочитано'])
     })
   })
 
@@ -300,12 +324,12 @@ describe('MessageList read status via chat.read (US4, T045)', () => {
     const { container } = render(<DialogWindow chatId="chat-1" currentUserId={ME} />)
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+      expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
     })
 
     emitChatRead(stream, 'chat-1', 2)
 
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
   })
 
   it('ignores chat.read frames of other chats', async () => {
@@ -315,12 +339,12 @@ describe('MessageList read status via chat.read (US4, T045)', () => {
     const { container } = render(<DialogWindow chatId="chat-1" currentUserId={ME} />)
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['доставлено ✓'])
+      expect(statusTexts(container)).toEqual(['Доставлено'])
     })
 
     emitChatRead(stream, 'chat-2', 2)
 
-    expect(statusTexts(container)).toEqual(['доставлено ✓'])
+    expect(statusTexts(container)).toEqual(['Доставлено'])
   })
 })
 
@@ -370,7 +394,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
     )
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual([null, 'доставлено ✓', 'доставлено ✓'])
+      expect(statusTexts(container)).toEqual([null, 'Доставлено', 'Доставлено'])
     })
 
     // The peer read up to seq 2 while the user was offline; the §3.1
@@ -384,7 +408,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
       />,
     )
 
-    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓', 'доставлено ✓'])
+    expect(statusTexts(container)).toEqual([null, 'Прочитано', 'Доставлено'])
   })
 
   it('applies each status event once: a repeated identical delta keeps the statuses stable (quickstart §3.2)', async () => {
@@ -397,7 +421,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
     )
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['доставлено ✓', 'доставлено ✓'])
+      expect(statusTexts(container)).toEqual(['Доставлено', 'Доставлено'])
     })
 
     rerender(
@@ -407,7 +431,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
         update={{ chatId: 'chat-1', messages: [], peerReadUpToSeq: 3 }}
       />,
     )
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
 
     // A repeated №26 with the same cursors redelivers the same
     // watermark — every message renders once, no doubled statuses.
@@ -420,7 +444,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
     )
 
     expect(container.querySelectorAll('.message')).toHaveLength(2)
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
   })
 
   it('renders own delta messages that were read while offline straight as ✓✓ (FR-003 status catch-up)', async () => {
@@ -450,7 +474,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
     )
 
     expect(renderedTexts(container)).toEqual(['text-in-1', 'text-out-1'])
-    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual([null, 'Прочитано'])
   })
 })
 

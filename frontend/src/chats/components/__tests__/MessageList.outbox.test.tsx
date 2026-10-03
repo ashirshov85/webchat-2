@@ -157,7 +157,9 @@ describe('MessageList outbox convergence', () => {
     )
 
     expect(container.querySelectorAll('.message')).toHaveLength(1)
-    expect(screen.getByText('доставлено ✓')).toBeVisible()
+    // The confirmed copy carries the ✓ tick stamp — «Доставлено» rides
+    // its title (US1 T023, SC-002).
+    expect(container.querySelector('.tick.dlv')).toHaveAttribute('title', 'Доставлено')
     expect(screen.queryByText(/не отправлено/)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Удалить' })).toBeNull()
@@ -174,6 +176,7 @@ describe('MessageList outbox convergence', () => {
 
     const incoming = screen.getByText('Ответ').closest('li')
     expect(incoming?.querySelector('.message-status')).toBeNull()
+    expect(incoming?.querySelector('.tick')).toBeNull()
     expect(incoming?.querySelectorAll('button')).toHaveLength(0)
   })
 })

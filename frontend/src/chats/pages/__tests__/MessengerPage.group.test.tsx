@@ -13,6 +13,12 @@ import { MessengerPage } from '../MessengerPage'
  * NO direct-only actions («Действия» = №14 delete + №23/№24 block are
  * 004 pair-dialog features; blocks never apply to groups). A direct
  * row keeps the 004 pair dialog with its action menu.
+ *
+ * Feature 008 (US1, T017): the row lookups are anchored by the row
+ * title text inside the «Список чатов» list — the T020 rebuild puts
+ * the avatar initials INSIDE the row button, so its accessible name no
+ * longer starts with the peer login; the title text itself is the
+ * stable 004 expectation (FR-034).
  */
 
 type GroupView = components['schemas']['GroupView']
@@ -172,6 +178,12 @@ async function renderPage(
   await screen.findByRole('button', { name: 'Создать группу' })
 }
 
+/** The «Чаты» row button of a chat, anchored by its visible title (T017). */
+function chatRowButton(title: string): HTMLElement {
+  const list = screen.getByRole('list', { name: 'Список чатов' })
+  return within(list).getByText(title).closest('button') as HTMLElement
+}
+
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
@@ -256,7 +268,7 @@ describe('MessengerPage group window from the unified list (US1)', () => {
   it('keeps the direct dialog intact: peer header with the action menu', async () => {
     await renderPage([groupRow(), directRow()])
 
-    fireEvent.click(screen.getByRole('button', { name: /^alice/ }))
+    fireEvent.click(chatRowButton('alice'))
 
     expect(screen.getByRole('heading', { level: 2, name: 'alice' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Действия' })).toBeInTheDocument()
@@ -297,7 +309,7 @@ describe('MessengerPage group.you_removed with the group window open (US5, T055 
     // Deterministic removal — no №12 refetch round (§5.2 без поллинга).
     expect(mockChats.listChats.mock.calls).toHaveLength(callsBeforeRemoval)
     // The direct dialog of the same list keeps flowing.
-    expect(screen.getByRole('button', { name: /^alice/ })).toBeInTheDocument()
+    expect(chatRowButton('alice')).toBeInTheDocument()
   })
 })
 
@@ -335,6 +347,6 @@ describe('MessengerPage group.deleted with the group window open (US6, T062 → 
     // Deterministic removal — no №12 refetch round (§3.5 без поллинга).
     expect(mockChats.listChats.mock.calls).toHaveLength(callsBeforeDelete)
     // The direct dialog of the same list keeps flowing.
-    expect(screen.getByRole('button', { name: /^alice/ })).toBeInTheDocument()
+    expect(chatRowButton('alice')).toBeInTheDocument()
   })
 })
