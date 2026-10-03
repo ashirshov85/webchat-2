@@ -35,7 +35,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 
 - [X] T001 Установить runtime-зависимости шрифтов `@fontsource/old-standard-tt`, `@fontsource/cormorant-sc`, `@fontsource/anonymous-pro` (woff2, cyrillic+latin) в frontend/package.json (research §A, FR-003)
 - [X] T002 Установить dev-зависимость `@playwright/test` и добавить скрипт `test:visual` в frontend/package.json (research §B, SC-001)
-- [ ] T003 [P] Создать структуру каталогов по plan.md: `frontend/src/theme/`, `frontend/src/ui/` (+ `frontend/src/ui/__tests__/`), `frontend/tests/visual/` — проверка: `pnpm build` зелёный, каталоги используются задачами T004+
+- [X] T003 [P] Создать структуру каталогов по plan.md: `frontend/src/theme/`, `frontend/src/ui/` (+ `frontend/src/ui/__tests__/`), `frontend/tests/visual/` — проверка: `pnpm build` зелёный, каталоги используются задачами T004+
 
 ---
 

@@ -10,6 +10,7 @@ build
 # Frontend (no trailing slash: also ignores node_modules symlinks, e.g. on WSL/drvfs)
 node_modules
 dist/
+coverage/
 .scannerwork/
 
 # Secrets / local env
