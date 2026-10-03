@@ -1,0 +1,190 @@
+/* Корпус-«машина» Aethergram — статический каркас чата (FR-004).
+   Дословная проекция разделов «1. БАЗА», «2. КОРПУС МАШИНЫ», «3. ПАНЕЛИ И ВИНТЫ»
+   и завершающего prefers-reduced-motion прототипа
+   specs/008-chat-window-styling/design/chats.html; при расхождениях побеждает
+   прототип (FR-001). Константы — theme/tokens.css (FR-002); подключение файла —
+   theme/index.css (T007); адаптив ≤900/≤480px, burger и drawer — T065–T067. */
+
+/* ============ 1. БАЗА ============ */
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--cream);
+  overflow-x: hidden;
+  overscroll-behavior: none;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(1100px 700px at 15% -5%, rgba(138, 106, 44, 0.14), transparent 60%),
+    radial-gradient(900px 700px at 85% 105%, rgba(64, 52, 30, 0.35), transparent 60%),
+    var(--pat-main);
+  background-size:
+    auto,
+    auto,
+    280px 280px;
+  padding: 0 16px;
+}
+
+::selection {
+  background: var(--gold);
+  color: var(--ink);
+}
+
+button {
+  font-family: inherit;
+}
+
+/* Зерно поверх всего + виньетка — «старина» (design-tokens §3) */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-grain);
+  pointer-events: none;
+  opacity: 0.55;
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='0.10'/%3E%3C/svg%3E");
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-vignette);
+  pointer-events: none;
+  background: radial-gradient(120% 100% at 50% 45%, transparent 55%, rgba(0, 0, 0, 0.42) 100%);
+}
+
+/* ============ 2. КОРПУС МАШИНЫ ============ */
+.machine {
+  position: relative;
+  z-index: 2;
+  max-width: 1360px;
+  margin: 18px auto;
+  height: calc(100vh - 36px);
+  height: calc(100dvh - 36px);
+  min-height: 540px;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  border-radius: var(--r-machine);
+  background: linear-gradient(150deg, #241e14, #16120d 30%, #100d09 70%, #221b11);
+  border: 1px solid #080604;
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(201, 162, 74, 0.25),
+    inset 0 1px 0 rgba(232, 200, 119, 0.12);
+}
+
+/* Золотая окантовка как у auth-card */
+.machine::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: var(--r-machine-frame);
+  pointer-events: none;
+  z-index: 20;
+  border: 2px solid transparent;
+  background: linear-gradient(
+      160deg,
+      var(--gold-dark),
+      var(--gold-light) 22%,
+      var(--gold) 50%,
+      var(--gold-light) 78%,
+      var(--gold-dark)
+    )
+    border-box;
+  -webkit-mask:
+    linear-gradient(#000 0 0) padding-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* ============ 3. ПАНЕЛИ И ВИНТЫ ============ */
+.frame-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--gap-frame);
+  padding: var(--pad-frame);
+}
+
+.panel {
+  position: relative;
+  border-radius: var(--r-panel);
+  background: var(--panel-bg);
+  border: 1px solid var(--gold-dark);
+  box-shadow:
+    0 0 0 1px rgba(201, 162, 74, 0.18),
+    0 20px 60px rgba(0, 0, 0, 0.65),
+    inset 0 0 40px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+}
+
+/* Заклёпки по углам панелей — как auth-rivet */
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-panel);
+  pointer-events: none;
+  z-index: 3;
+  background:
+    radial-gradient(
+      circle at 11px 11px,
+      var(--gold-light) 0 1.8px,
+      var(--gold-dark) 2.2px 2.8px,
+      transparent 3.6px
+    ),
+    radial-gradient(
+      circle at calc(100% - 11px) 11px,
+      var(--gold-light) 0 1.8px,
+      var(--gold-dark) 2.2px 2.8px,
+      transparent 3.6px
+    ),
+    radial-gradient(
+      circle at 11px calc(100% - 11px),
+      var(--gold-light) 0 1.8px,
+      var(--gold-dark) 2.2px 2.8px,
+      transparent 3.6px
+    ),
+    radial-gradient(
+      circle at calc(100% - 11px) calc(100% - 11px),
+      var(--gold-light) 0 1.8px,
+      var(--gold-dark) 2.2px 2.8px,
+      transparent 3.6px
+    );
+}
+
+/* ============ 4. ЗОЛОТЫЕ СКРОЛЛБАРЫ (webkit-стили прототипа) ============ */
+.chat-scroll::-webkit-scrollbar,
+.sidebar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.chat-scroll::-webkit-scrollbar-track,
+.sidebar::-webkit-scrollbar-track {
+  background: #100d09;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb,
+.sidebar::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--gold-dark), #4f3f1c);
+  border-radius: 5px;
+  border: 1px solid #2e2410;
+}
+
+/* ============ 5. REDUCED MOTION (design-tokens §8, FR-004) ============ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01s !important;
+  }
+}
