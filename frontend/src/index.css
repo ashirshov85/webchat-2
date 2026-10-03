@@ -606,6 +606,11 @@ body {
 .dialog-menu-item {
   text-align: left;
   background: none;
+  color: var(--text);
+}
+
+.dialog-menu-item:hover:not(:disabled) {
+  color: #ffffff;
 }
 
 .dialog-confirm {

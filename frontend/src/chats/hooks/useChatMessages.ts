@@ -36,6 +36,15 @@
  * compensated by the ChatView refetch on every SSE (re)connect
  * (FR-009), so the status never regresses.
  *
+ * Switch safety (007, T040 — defect 004 live-validation): the
+ * scheduler only marks messages PROVEN to belong to the open chat
+ * (`messagesChatRef`, stamped by chat-verified page/merge sources and
+ * cleared by the chat-switch reset). In the switch commit the effect
+ * still sees the previous chat's `messages`/`peerUserId` (the state
+ * resets land on the next render) — without the guard it would POST
+ * the OLD chat's max seq against the NEW chatId (400
+ * `invalid_up_to_seq` or a quiet erroneous watermark advance).
+ *
  * Catch-up pages (feature 005, T023): `applySyncPage` merges the
  * №26/№15 pages useSync applied — the same dedup-by-id reconcile in
  * stable `seq` order, so a page racing a realtime frame of the same
@@ -232,9 +241,25 @@ export function useChatMessages(
   /** Timestamp of the last POST /read — the ≤500 ms throttle anchor. */
   const lastReadSentAtRef = useRef(0)
   const readTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * Chat the rendered `messages` are PROVEN to belong to (T040):
+   * stamped only by chat-verified sources (the latest-page load and
+   * merges whose chatId was checked) and cleared by the chat-switch
+   * reset — the read-mark scheduler ignores everything else. In the
+   * switch commit the reset zeroes the watermark refs but the state
+   * (`messages`/`peerUserId` of the previous chat) lands only on the
+   * next render, so without this guard the scheduler would POST the
+   * old chat's max seq against the NEW chatId: 400
+   * `invalid_up_to_seq` when the new chat is shallower, or a quiet
+   * erroneous watermark advance (premature ✓✓ / fading badge).
+   */
+  const messagesChatRef = useRef<string | null>(null)
 
   useEffect(() => {
     setMessages([])
+    // T040: rendered ownership is unknown again until a page of the
+    // newly opened chat arrives — the scheduler must not touch it.
+    messagesChatRef.current = null
     setError(null)
     setStatus(chatId === null ? 'ready' : 'loading')
     setOldestSeq(null)
@@ -293,6 +318,10 @@ export function useChatMessages(
         if (cancelled) {
           return
         }
+        // T040: this page is the server's answer for THIS chat — from
+        // now on the rendered window (whatever stale-free state it
+        // reconciles into) is proven to belong to `chatId`.
+        messagesChatRef.current = chatId
         setError(null)
         setStatus('ready')
         applyLatestPage(page)
@@ -407,6 +436,13 @@ export function useChatMessages(
     if (chatId === null || (!groupMode && peerUserId === null)) {
       return
     }
+    // T040 switch-safety: in the chat-switch commit this effect still
+    // sees the PREVIOUS chat's `messages`/`peerUserId` (the resets
+    // land on the next render) — never mark them read against the new
+    // chatId.
+    if (messagesChatRef.current !== chatId) {
+      return
+    }
     let target = 0
     for (const message of messages) {
       const incoming = groupMode
@@ -442,6 +478,9 @@ export function useChatMessages(
       if (event.chatId !== chatId) {
         return
       }
+      // T040: the frame is verified to belong to the open chat and
+      // merges into the post-reset window — ownership is proven.
+      messagesChatRef.current = chatId
       setMessages((previous) => reconcileMessages(previous, [event.message]))
     })
     const unsubscribeRead = realtime.onChatRead(chatId, (event) => {
@@ -497,6 +536,8 @@ export function useChatMessages(
       if (update.chatId !== chatId) {
         return
       }
+      // T040: the page is verified to belong to the open chat.
+      messagesChatRef.current = chatId
       const truncatedUpToSeq = update.truncatedUpToSeq
       if (truncatedUpToSeq !== undefined) {
         // US1-5/FR-007: everything at/below the truncation point is
