@@ -55,7 +55,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 - [X] T011 [P] Реализовать `frontend/src/ui/Toast.tsx` + тесты `frontend/src/ui/__tests__/Toast.test.tsx`: ToastProvider + useToast, одиночный слот z-99, авто-скрытие 3000 мс, новый тост заменяет предыдущий (FR-025, data-model 1.4)
 - [X] T012 [P] Реализовать `frontend/src/ui/ModalShell.tsx` + тесты `frontend/src/ui/__tests__/ModalShell.test.tsx`: фокус-ловушка, возврат фокуса на инициатора, Esc, закрытие по фону press+release (перетаскивание не закрывает), переключение formId без второй подложки (FR-026, data-model 1.6/3.3)
 - [X] T013 [P] Реализовать `frontend/src/ui/ContextMenu.tsx` + тесты `frontend/src/ui/__tests__/ContextMenu.test.tsx`: позиционирование у якоря + clamp в пределы экрана (8px), клик-вне/Esc, разделители, danger-пункты, ArrowUp/Down/Enter/Space (FR-027, FR-035, data-model 1.5)
-- [ ] T014 Реализовать `frontend/src/ui/ConfirmDialog.tsx` + тесты `frontend/src/ui/__tests__/ConfirmDialog.test.tsx` (зависит от T012): заголовок, текст с `<b>`-выделением, кнопки обычная/основная/опасная (FR-014, SC-007, ui-behavior §3)
+- [X] T014 Реализовать `frontend/src/ui/ConfirmDialog.tsx` + тесты `frontend/src/ui/__tests__/ConfirmDialog.test.tsx` (зависит от T012): заголовок, текст с `<b>`-выделением, кнопки обычная/основная/опасная (FR-014, SC-007, ui-behavior §3)
 
 **Checkpoint**: Фундамент готов — дизайн-система и примитивы доступны; можно начинать истории
 
