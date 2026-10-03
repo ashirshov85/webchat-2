@@ -37,6 +37,12 @@
  * have `peer = null` by contract). The dot's aria-label carries the
  * state; no visible text on this surface (the text label belongs to
  * the 1:1 dialog header alone).
+ *
+ * «Aethergram» reskin (feature 008, US1; research §C, FR-034): the
+ * badge and preview nodes additionally carry the PROTOTYPE row hooks
+ * `.c-badge`/`.c-prev` beside the 004 hooks — the T019 share of the
+ * T017 adaptation (ChatListPanel tests); the full row rebuild — the
+ * Avatar, the c-top/c-main structure, the last-message time — is T020.
  */
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
 import { PresenceIndicator } from '../../presence/PresenceIndicator'
@@ -117,12 +123,12 @@ export function ChatListItem({
             </span>
           )}
           {item.blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
-          {item.unreadCount > 0 && <span className="chat-item-badge">{unreadLabel}</span>}
+          {item.unreadCount > 0 && <span className="chat-item-badge c-badge">{unreadLabel}</span>}
         </span>
         {last === null ? (
-          <span className="chat-item-preview chat-item-preview-empty">Нет сообщений</span>
+          <span className="chat-item-preview chat-item-preview-empty c-prev">Нет сообщений</span>
         ) : (
-          <span className="chat-item-preview">
+          <span className="chat-item-preview c-prev">
             {outgoing ? 'Вы: ' : ''}
             {previewText(last.text)}
           </span>

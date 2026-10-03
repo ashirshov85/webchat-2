@@ -1,0 +1,191 @@
+/* Панель списка чатов (feature 008, US1, T019; FR-001): строка поиска и
+   «Чаты»-список — дословная проекция раздела «5. САЙДБАР» прототипа
+   specs/008-chat-window-styling/design/chats.html (#search/#chatList); при
+   расхождениях побеждает прототип. Константы — theme/tokens.css (FR-002),
+   каркас .sidebar/.panel — chats/pages/messenger.css (T018). Подключается
+   компонентом chats/components/ChatListPanel.tsx.
+
+   Табы «Чаты»/«Контакты» стоят до US2 (удаляет T029) и здесь лишь
+   переодеты в лексикон машины: пластины .ch-btn/.ch-btn.on + капитель
+   .sr-head прототипа. Строка поиска уже несёт прототипную структуру
+   .search-row > .search-wrap — MainMenuButton (T030) встанет слева от
+   поля. Строки списка (.contact) перестраивает T020.
+
+   Все селекторы скоупятся под .chat-panel: общие element-стили index.css
+   (auth-наследие: синие кнопки, светлые поля) не должны просвечивать
+   сквозь машину (специфичность 0-2-0 против 0-0-1/0-2-1). */
+
+.chat-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============ ТАБЫ (рестайлинг; снимает US2/T029) ============ */
+
+.chat-panel-tabs {
+  display: flex;
+  gap: 6px;
+  flex: none;
+  margin: 2px 0;
+}
+
+.chat-panel .chat-panel-tab {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 8px 10px;
+  border-radius: var(--r-field);
+  cursor: pointer;
+  transition: 0.15s;
+  border: 1px solid var(--gold-dark);
+  color: var(--gold);
+  background: var(--input-bg);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+  font: 600 12px var(--font-heading);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.chat-panel .chat-panel-tab:hover {
+  border-color: var(--gold-light);
+  color: var(--gold-light);
+  background: rgba(40, 34, 26, 0.9);
+}
+
+.chat-panel .chat-panel-tab:active {
+  transform: translateY(1px);
+}
+
+/* Включённая пластина — .ch-btn.on прототипа */
+.chat-panel .chat-panel-tab-active {
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+  background: rgba(40, 34, 26, 0.9);
+}
+
+.chat-panel .chat-panel-tab:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+/* ============ СЕКЦИИ РЕЖИМОВ (FR-013) ============ */
+
+.chat-panel-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* `hidden` обязан побеждать display:flex — иначе переключение режимов
+   перестаёт скрывать неактивную секцию (FR-013). */
+.chat-panel-section[hidden] {
+  display: none;
+}
+
+/* ============ СТРОКА ПОИСКА (прототип §5, дословно) ============ */
+
+.chat-panel .search-row {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  flex: none;
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+
+.chat-panel .search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Гравированная лупа */
+.chat-panel .search-wrap svg {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  stroke: var(--muted-3);
+  fill: none;
+  stroke-width: 2;
+}
+
+/* #search прототипа; класс `chat-panel-search` — хук тестов 004 (research §C,
+   FR-034), держится на поле и в прототипной раме. */
+.chat-panel .chat-panel-search {
+  width: 100%;
+  padding: 10px 12px 10px 34px;
+  border-radius: var(--r-field);
+  outline: none;
+  border: 1px solid var(--gold-dark);
+  background: var(--input-bg);
+  color: var(--cream-bright);
+  font: 14px var(--font-mono);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.chat-panel .chat-panel-search::placeholder {
+  color: var(--muted-3);
+}
+
+.chat-panel .chat-panel-search:focus-visible {
+  border-color: var(--gold-light);
+  box-shadow: 0 0 0 2px rgba(232, 200, 119, 0.25);
+  outline: none;
+}
+
+/* Нативный крестик type=search в эталоне отсутствует */
+.chat-panel .chat-panel-search::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+/* ============ СПИСОК (прототип §5: #chatList) ============ */
+
+.chat-panel .chat-list {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ============ СОСТОЯНИЯ: ОШИБКА + ПОВТОР ============ */
+
+.chat-panel .chat-panel-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* Повтор — обычная машинная кнопка .m-btn прототипа (полная перекрыка
+   auth-наследия index.css: фон/цвет/шрифт/паддинги). */
+.chat-panel .chat-panel-retry {
+  align-self: flex-start;
+  padding: 9px 16px;
+  border-radius: var(--r-field);
+  cursor: pointer;
+  transition: 0.15s;
+  border: 1px solid var(--gold-dark);
+  color: var(--muted-2);
+  background: var(--input-bg);
+  font: 700 11px var(--font-heading);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.chat-panel .chat-panel-retry:hover {
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+}
+
+.chat-panel .chat-panel-retry:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}

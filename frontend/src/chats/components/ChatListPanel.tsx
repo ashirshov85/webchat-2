@@ -30,6 +30,16 @@
  * «заблокирован» mark (FR-014/020); clicking a row opens the pair
  * dialog via `onSelectChat`, the open one is highlighted by
  * `activeChatId`.
+ *
+ * «Aethergram» reskin (feature 008, US1, T019; FR-001): the search
+ * field rides the PROTOTYPE search row — `.search-row >
+ * .search-wrap` with the engraved magnifier glyph and the golden
+ * frame of `#search` (design/chats.html §5, chat-list-panel.css) —
+ * while the 004 test hook `chat-panel-search` stays as the input's
+ * class (research §C, FR-034). The tabs stay until US2 removes them
+ * (T029) and are only restyled into the machine vocabulary
+ * (Cormorant SC uppercase plates); the MainMenuButton that joins the
+ * search row per the prototype is T030.
  */
 import { useState } from 'react'
 import type { ReactNode } from 'react'
@@ -37,6 +47,7 @@ import type { ChatListItem as ChatListItemData } from '../../api/chats'
 import type { ChatListStatus } from '../hooks/useChatList'
 import { ErrorBanner } from './ErrorBanner'
 import { ChatListItem } from './ChatListItem'
+import './chat-list-panel.css'
 
 export type ChatListPanelMode = 'chats' | 'contacts'
 
@@ -132,16 +143,27 @@ export function ChatListPanel({
         className="chat-panel-section"
         hidden={mode !== 'chats'}
       >
-        <input
-          type="search"
-          className="chat-panel-search"
-          aria-label="Поиск чатов"
-          placeholder="Поиск: название группы или логин"
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value)
-          }}
-        />
+        <div className="search-row">
+          {/* .menu-btn (главное меню, US2/T030) встраивается сюда же —
+              слева от поля, как в прототипе §5. */}
+          <div className="search-wrap">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <circle cx="10.5" cy="10.5" r="6.5" />
+              <path d="M15.5 15.5 21 21" />
+            </svg>
+            <input
+              type="search"
+              className="chat-panel-search"
+              aria-label="Поиск чатов"
+              placeholder="Поиск…"
+              autoComplete="off"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value)
+              }}
+            />
+          </div>
+        </div>
         {status === 'loading' && <p className="messenger-empty">Загрузка чатов…</p>}
         {status === 'error' && (
           <div className="chat-panel-error">
