@@ -1,14 +1,47 @@
 /**
- * Message composer (feature 004, T026): client-side pre-validation of
- * FR-003 (see chats/validation.ts) — `onSend` fires only with the
- * normalized valid text, so an invalid draft cannot reach the chat or
- * the outbox; instead a local understandable error is shown (US1-4).
- * The server-side 400 (text_blank / text_too_long) remains the
+ * Message composer (feature 004, T026; reskin 008, US1, T024; FR-021,
+ * ui-behavior §4 «Композер»): the `.chat-input` block of the prototype
+ * specs/008-chat-window-styling/design/chats.html §7 — the golden
+ * `.input-frame` around the field (`.msg-input`: Anonymous Pro over
+ * `--input-bg`, design-tokens §2 mono role) + the «ОТПРАВИТЬ» plate
+ * (`.send-btn`: `--gold-gradient`, Cormorant SC caps). The 004 hooks
+ * stay as wrappers of the prototype classes (research §C, FR-034):
+ * the form keeps `message-input`, the field — id `message-composer`,
+ * the local validation error — `message-input-error` role=alert.
+ *
+ * Client-side pre-validation of the 004 rule (see chats/validation.ts)
+ * is unchanged: `onSend` fires only with the normalized valid text, so
+ * an invalid draft cannot reach the chat or the outbox; instead the
+ * local understandable error shows above the field (US1-4). The
+ * server-side 400 (text_blank / text_too_long) remains the
  * authoritative protection.
+ *
+ * Sending (FR-021, US1-AS4): Enter submits the trimmed text (IME
+ * composition never submits); Shift+Enter keeps the newline of the
+ * 004 multiline drafts. The button never steals the field focus —
+ * its mousedown default is prevented, so the caret stays in the
+ * field on every send path (button click included). A successful
+ * send raises the prototype «steam»: three `.puff` flashes above the
+ * composer (design-tokens §5), spawned imperatively into the `.steam`
+ * container exactly like the prototype JS and dropped after the
+ * 1.1s flight (the timers are tracked for the unmount);
+ * prefers-reduced-motion kills the flight via machine.css (FR-004).
+ *
+ * The blocked-contact hint (FR-022) is US2 (T036), the flood-limit
+ * retry line (FR-030) is US4 (T051) — until then the only disabled
+ * wiring is the 004 `disabled` prop.
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { SubmitEvent } from 'react'
 import { validateMessageText } from '../validation'
+import './message-input.css'
+
+/** Steam spawn count — design-tokens §5 (3 puff's). */
+const PUFF_COUNT = 3
+
+/** Puff lifetime (ms) — the 1.1s flight + margin, prototype JS. */
+const PUFF_LIFETIME_MS = 1400
 
 export interface MessageInputProps {
   /** Receives the normalized (trimmed) valid text only. */
@@ -19,9 +52,23 @@ export interface MessageInputProps {
 export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const fieldRef = useRef<HTMLTextAreaElement>(null)
+  const steamRef = useRef<HTMLDivElement>(null)
+  const puffTimersRef = useRef<number[]>([])
 
-  function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
-    event.preventDefault()
+  useEffect(
+    () => () => {
+      // The flight outlives the composer only on a chat switch mid-
+      // animation — the puffs die with the container, the timers die
+      // here.
+      for (const timer of puffTimersRef.current) {
+        window.clearTimeout(timer)
+      }
+    },
+    [],
+  )
+
+  function send() {
     const validation = validateMessageText(value)
     if (!validation.ok) {
       setError(validation.error)
@@ -30,31 +77,84 @@ export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
     setError(null)
     setValue('')
     onSend(validation.text)
+    puffSteam()
+  }
+
+  function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
+    event.preventDefault()
+    send()
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    // Enter отправляет (FR-021); Shift+Enter — перенос строки черновика
+    // 004; набор композиции (IME) отправку не завершает.
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault()
+      send()
+    }
+  }
+
+  function handleSendMouseDown(event: ReactMouseEvent<HTMLButtonElement>) {
+    // Фокус остаётся в поле — кнопка не забирает его на mousedown
+    // (FR-021, US1-AS4): default предотвращён до click-отправки.
+    event.preventDefault()
+  }
+
+  /** «Пар» над композером при отправке — прототип puffSteam(), §7 JS. */
+  function puffSteam() {
+    const steam = steamRef.current
+    if (steam === null) {
+      return
+    }
+    for (let index = 0; index < PUFF_COUNT; index += 1) {
+      const puff = document.createElement('i')
+      puff.className = 'puff'
+      puff.style.left = `${10 + Math.random() * 60}px`
+      puff.style.setProperty('--dx', `${Math.random() * 40 - 20}px`)
+      puff.style.animationDelay = `${index * 0.08}s`
+      steam.appendChild(puff)
+      puffTimersRef.current.push(
+        window.setTimeout(() => {
+          puff.remove()
+        }, PUFF_LIFETIME_MS),
+      )
+    }
   }
 
   return (
-    <form className="message-input" onSubmit={handleSubmit} noValidate>
+    <form className="message-input chat-input" onSubmit={handleSubmit} noValidate>
       {error !== null && (
         <p className="message-input-error" role="alert">
           {error}
         </p>
       )}
-      <label className="visually-hidden" htmlFor="message-composer">
-        Текст сообщения
-      </label>
-      <textarea
-        id="message-composer"
-        value={value}
-        placeholder="Написать сообщение…"
-        rows={2}
+      <div className="steam" ref={steamRef} aria-hidden="true" />
+      <div className="input-frame">
+        <label className="visually-hidden" htmlFor="message-composer">
+          Текст сообщения
+        </label>
+        <textarea
+          id="message-composer"
+          className="msg-input"
+          ref={fieldRef}
+          value={value}
+          placeholder="Сообщение…"
+          rows={1}
+          disabled={disabled}
+          onChange={(event) => {
+            setValue(event.target.value)
+            setError(null)
+          }}
+          onKeyDown={handleKeyDown}
+        />
+      </div>
+      <button
+        type="submit"
+        className="send-btn"
         disabled={disabled}
-        onChange={(event) => {
-          setValue(event.target.value)
-          setError(null)
-        }}
-      />
-      <button type="submit" disabled={disabled}>
-        Отправить
+        onMouseDown={handleSendMouseDown}
+      >
+        ОТПРАВИТЬ
       </button>
     </form>
   )
