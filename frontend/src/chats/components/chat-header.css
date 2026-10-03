@@ -1,0 +1,203 @@
+/* Заголовок окна чата (feature 008, US1, T021; FR-016): дословная
+   проекция блока .chat-head прототипа
+   specs/008-chat-window-styling/design/chats.html (§7 «ЧАТ»); при
+   расхождениях побеждает прототип (FR-001). Константы — theme/tokens.css
+   (FR-002); каркас .chat/.panel — chats/pages/messenger.css (T018).
+   Подключается компонентом chats/components/ChatHeader.tsx.
+
+   Аватар — 46px заголовка с инициалами 13px (design-tokens §4, проекция
+   .head-av .avatar прототипа); базовый статус — .status-row:
+   direct — точка+подпись 007 PresenceIndicator (лампа и members-tip —
+   US3/T043), group — «N участников» .status-txt. Правые кнопки —
+   промежуточные 004/006 («Действия», «Информация о группе») в словаре
+   машины; «шестерёнка» ChatGearMenu встаёт сюда в US4/T054.
+
+   Селекторы скоупятся под .chat-head: глобальные element-стили index.css
+   (auth-наследие: синие кнопки, отступ h2) не должны просвечивать сквозь
+   машину (перекрытие по каждому свойству, как в chat-list-panel.css). */
+
+.chat-head {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 2px solid rgba(138, 106, 44, 0.55);
+  background: linear-gradient(#1d1812, #14110c);
+}
+
+/* ============ АВАТАР ЗАГОЛОВКА (46px, инициалы 13px — §4/§7) ============ */
+
+.chat-head .head-av .avatar {
+  width: 46px;
+  height: 46px;
+}
+
+.chat-head .head-av .avatar .av-in {
+  font-size: 13px;
+}
+
+/* ============ ИМЯ И СТАТУС (.chat-title, дословно §7) ============ */
+
+.chat-head .chat-title {
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-head .chat-name {
+  margin: 0; /* h2 auth-наследия index.css */
+  font: 600 16px var(--font-heading);
+  color: var(--cream-bright);
+  letter-spacing: 0.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-head .status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  min-width: 0;
+}
+
+.chat-head .status-txt {
+  font: italic 12px var(--font-body);
+  color: var(--muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Промежуточный статус 007 в строке статуса (до лампы US3/T043):
+   точка 8px по состояниям прототипа (online #9dbb7d / offline #6b5c39 /
+   нейтральная --muted-3), подпись — курсив .status-txt. */
+.chat-head .presence-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.chat-head .presence-indicator-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  fill: currentColor;
+}
+
+.chat-head .presence-online {
+  color: #9dbb7d;
+}
+
+.chat-head .presence-offline {
+  color: #6b5c39;
+}
+
+.chat-head .presence-unknown {
+  color: var(--muted-3);
+}
+
+.chat-head .presence-indicator-label {
+  font: italic 12px var(--font-body);
+  color: var(--muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Метка блокирующего (FR-020): err-цвет и курсив тела прототипа. */
+.chat-head .chat-item-blocked {
+  flex: none;
+  font: italic 11px var(--font-body);
+  color: var(--err);
+}
+
+/* ============ ПРАВЫЕ КНОПКИ (.ch-btns §7; interim 004/006) ============ */
+
+.chat-head .ch-btns {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+/* Промежуточные текстовые пластины (до «шестерёнки» T054): словарь
+   машины — как .chat-panel-retry (полная перекрыка auth-наследия). */
+.chat-head .dialog-menu-toggle,
+.chat-head .dialog-group-info-toggle {
+  align-self: center;
+  padding: 9px 16px;
+  border-radius: var(--r-field);
+  cursor: pointer;
+  transition: 0.15s;
+  border: 1px solid var(--gold-dark);
+  color: var(--gold);
+  background: var(--input-bg);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+  font: 700 11px var(--font-heading);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.chat-head .dialog-menu-toggle:hover,
+.chat-head .dialog-group-info-toggle:hover {
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+  background: rgba(40, 34, 26, 0.9);
+}
+
+.chat-head .dialog-menu-toggle:focus-visible,
+.chat-head .dialog-group-info-toggle:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+/* Раскрывающееся меню «Действия» (004): пластина меню словаря
+   .ctx-menu прототипа, якорь — под своей кнопкой. */
+.chat-head .dialog-menu {
+  position: relative;
+}
+
+.chat-head .dialog-menu-items {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: var(--z-ctx-menu);
+  min-width: 200px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: var(--r-menu);
+  border: 1px solid var(--gold-dark);
+  background: #191510;
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(201, 162, 74, 0.18);
+}
+
+.chat-head .dialog-menu-item {
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 6px;
+  color: var(--cream);
+  font: 14px var(--font-body);
+  transition: 0.15s;
+  align-self: stretch;
+}
+
+.chat-head .dialog-menu-item:hover {
+  background: rgba(201, 162, 74, 0.12);
+  color: var(--gold-light);
+}
+
+.chat-head .dialog-menu-item:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}

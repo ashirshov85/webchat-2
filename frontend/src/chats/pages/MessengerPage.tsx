@@ -123,6 +123,8 @@ import type { Message } from '../../api/chats'
 import { getAckBatcher } from '../../sync/ack'
 import { advanceCursor } from '../../sync/cursors'
 import { useSync } from '../../sync/hooks/useSync'
+import { ChatHeader } from '../components/ChatHeader'
+import type { ChatHeaderChat } from '../components/ChatHeader'
 import { ChatListPanel } from '../components/ChatListPanel'
 import { ContactList } from '../components/ContactList'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -142,7 +144,6 @@ import { useGroup } from '../../groups/hooks/useGroup'
 import type { GroupStatus } from '../../groups/hooks/useGroup'
 import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
-import { PresenceIndicator } from '../../presence/PresenceIndicator'
 import './messenger.css'
 
 /** The open direct dialog: everything the header actions need (T060). */
@@ -154,15 +155,17 @@ interface DirectChatView {
 }
 
 /**
- * The open GROUP window (feature 006, T029; US1): the header title is
- * all the US1 window needs — the roster/roles card is US3 (T046), the
- * window actions are US3/US6. `title` comes from the №12 row or the
- * №27/№13 answer and is server-authoritative.
+ * The open GROUP window (feature 006, T029; US1): the №12/№13/№27
+ * `title` + `memberCount` are the server-owned basis of the US1
+ * header (ChatHeader, 008 T021) — the live №28 GroupView of the open
+ * window (useGroup below) overrides both while it is live; the
+ * roster/roles card is US3 (T046), the window actions are US3/US6.
  */
 interface GroupChatView {
   readonly kind: 'group'
   readonly chatId: string
   readonly title: string
+  readonly memberCount: number | null
 }
 
 /** The open dialog of either kind (T029): one window, two headers. */
@@ -204,72 +207,29 @@ function confirmCopy(action: PendingAction, peerName: string): ConfirmCopy {
 }
 
 /**
- * The DIRECT dialog header (T060): the peer title, the «заблокирован»
- * mark and the «Действия» menu (№14 delete + №23/№24 block toggle).
- * A group window carries none of these controls (T029).
- *
- * Presence (feature 007, T022): the 1:1 header is the ONLY surface
- * with a visible text status label (clarify a11y) — the dot plus the
- * «онлайн»/«офлайн»/«неизвестно» text next to the peer title; the
- * «Чаты» row and «Контакты» carry the aria-only dot.
+ * The header props of the open window (T029 → 008 T021): the page
+ * resolves the server-owned chat data into the ChatHeader variant —
+ * the GROUP window the №28 title/memberCount (or the №12/№27 basis),
+ * the direct dialog the peer + the «Действия» menu wiring (T060).
  */
-interface DirectChatHeaderProps {
-  readonly peerId: string
-  readonly username: string
-  readonly blockedByMe: boolean
-  readonly menuOpen: boolean
-  readonly onToggleMenu: () => void
-  readonly onDeleteChat: () => void
-  readonly onToggleBlock: () => void
-}
-
-function DirectChatHeader({
-  peerId,
-  username,
-  blockedByMe,
-  menuOpen,
-  onToggleMenu,
-  onDeleteChat,
-  onToggleBlock,
-}: DirectChatHeaderProps) {
-  return (
-    <>
-      <h2 className="dialog-title">{username}</h2>
-      <PresenceIndicator userId={peerId} showLabel={true} />
-      {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
-      <div className="dialog-menu">
-        <button
-          type="button"
-          className="dialog-menu-toggle"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          onClick={onToggleMenu}
-        >
-          Действия
-        </button>
-        {menuOpen && (
-          <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
-            <button
-              type="button"
-              role="menuitem"
-              className="dialog-menu-item"
-              onClick={onDeleteChat}
-            >
-              Удалить чат
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="dialog-menu-item"
-              onClick={onToggleBlock}
-            >
-              {blockedByMe ? 'Разблокировать пользователя' : 'Заблокировать пользователя'}
-            </button>
-          </div>
-        )}
-      </div>
-    </>
-  )
+function headerChatOf(chat: ActiveChat, group: GroupView | null): ChatHeaderChat {
+  if (chat.kind === 'group') {
+    // №28 title/roster while the view is live (the optimistic
+    // `group.updated` half of the header), the №12/№27 basis until
+    // then; the roster length IS the memberCount (me included).
+    const live = group !== null && group.chatId === chat.chatId
+    return {
+      kind: 'group',
+      title: live ? group.title : chat.title,
+      memberCount: live ? group.members.length : chat.memberCount,
+    }
+  }
+  return {
+    kind: 'direct',
+    peerId: chat.peer.id,
+    username: chat.peer.username,
+    blockedByMe: chat.blockedByMe,
+  }
 }
 
 /** The «диалоговое меню» confirmation of a pending T060 action. */
@@ -384,70 +344,6 @@ function GroupCard({
         />
       )}
     </div>
-  )
-}
-
-/**
- * The open window header (T029): one window, two headers — the GROUP
- * window carries the №28 title and the «Информация о группе» toggle
- * (US3, T046a), the direct dialog the peer title + the «Действия»
- * menu (T060).
- */
-interface DialogHeaderProps {
-  readonly chat: ActiveChat
-  readonly group: GroupView | null
-  readonly groupInfoOpen: boolean
-  readonly menuOpen: boolean
-  readonly onToggleGroupInfo: () => void
-  readonly onToggleMenu: () => void
-  readonly onDeleteChat: () => void
-  readonly onToggleBlock: () => void
-}
-
-function DialogHeader({
-  chat,
-  group,
-  groupInfoOpen,
-  menuOpen,
-  onToggleGroupInfo,
-  onToggleMenu,
-  onDeleteChat,
-  onToggleBlock,
-}: DialogHeaderProps) {
-  if (chat.kind === 'group') {
-    return (
-      <>
-        <span className="chat-item-avatar" aria-hidden="true">
-          #
-        </span>
-        <h2 className="dialog-title">
-          {/* №28 title while the view is live (the optimistic
-              `group.updated` half of the header), the №12/№27
-              title until then. */}
-          {group?.chatId === chat.chatId ? group.title : chat.title}
-        </h2>
-        <button
-          type="button"
-          className="dialog-group-info-toggle"
-          aria-expanded={groupInfoOpen}
-          aria-controls="dialog-group-card"
-          onClick={onToggleGroupInfo}
-        >
-          Информация о группе
-        </button>
-      </>
-    )
-  }
-  return (
-    <DirectChatHeader
-      peerId={chat.peer.id}
-      username={chat.peer.username}
-      blockedByMe={chat.blockedByMe}
-      menuOpen={menuOpen}
-      onToggleMenu={onToggleMenu}
-      onDeleteChat={onDeleteChat}
-      onToggleBlock={onToggleBlock}
-    />
   )
 }
 
@@ -675,7 +571,12 @@ export function MessengerPage() {
     (group: GroupView) => {
       setCreateGroupOpen(false)
       reloadChatList()
-      openChatView({ kind: 'group', chatId: group.chatId, title: group.title })
+      openChatView({
+        kind: 'group',
+        chatId: group.chatId,
+        title: group.title,
+        memberCount: group.members.length,
+      })
     },
     [reloadChatList, openChatView],
   )
@@ -685,8 +586,14 @@ export function MessengerPage() {
       const item = chats.find((entry) => entry.chatId === chatId)
       if (item?.type === 'group') {
         // The unified list (T028): a group row opens the GROUP window —
-        // the №12 title is the server-owned header of US1.
-        openChatView({ kind: 'group', chatId: item.chatId, title: item.title ?? '' })
+        // the №12 title/memberCount is the server-owned header basis
+        // of US1 (superseded by the №28 view once it is live).
+        openChatView({
+          kind: 'group',
+          chatId: item.chatId,
+          title: item.title ?? '',
+          memberCount: item.memberCount ?? null,
+        })
         return
       }
       if (item !== undefined && item.peer !== null) {
@@ -704,7 +611,12 @@ export function MessengerPage() {
         try {
           const view = await getChat(chatId)
           if (view.type === 'group') {
-            openChatView({ kind: 'group', chatId: view.chatId, title: view.title ?? '' })
+            openChatView({
+              kind: 'group',
+              chatId: view.chatId,
+              title: view.title ?? '',
+              memberCount: view.memberCount ?? null,
+            })
             return
           }
           if (view.peer !== null) {
@@ -937,30 +849,27 @@ export function MessengerPage() {
         <section className="chat panel" aria-label="Окно диалога">
           {dialogOpen && activeChat !== null ? (
             <>
-              <header className="dialog-header">
-                <DialogHeader
-                  chat={activeChat}
-                  group={activeGroup}
-                  groupInfoOpen={groupInfoOpen}
-                  menuOpen={menuOpen}
-                  onToggleGroupInfo={() => {
-                    setGroupInfoOpen((open) => !open)
-                  }}
-                  onToggleMenu={() => {
-                    setMenuOpen((open) => !open)
-                  }}
-                  onDeleteChat={() => {
-                    setMenuOpen(false)
-                    setPendingAction('delete-chat')
-                  }}
-                  onToggleBlock={() => {
-                    setMenuOpen(false)
-                    setPendingAction(
-                      activeChat.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block',
-                    )
-                  }}
-                />
-              </header>
+              <ChatHeader
+                chat={headerChatOf(activeChat, activeGroup)}
+                menuOpen={menuOpen}
+                onToggleMenu={() => {
+                  setMenuOpen((open) => !open)
+                }}
+                onDeleteChat={() => {
+                  setMenuOpen(false)
+                  setPendingAction('delete-chat')
+                }}
+                onToggleBlock={() => {
+                  setMenuOpen(false)
+                  setPendingAction(
+                    activeChat.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block',
+                  )
+                }}
+                groupInfoOpen={groupInfoOpen}
+                onToggleGroupInfo={() => {
+                  setGroupInfoOpen((open) => !open)
+                }}
+              />
 
               {activeChat.kind === 'group' && groupInfoOpen && (
                 <GroupCard
