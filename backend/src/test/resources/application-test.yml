@@ -1,0 +1,31 @@
+# 007 tasks.md T003: tightened presence windows for the IT profile —
+# SC-003 budget must not flake on poller slack, and registrations must not
+# expire mid-scenario longer than TTL; read by T011/T023/T026
+#
+# T036 (scheduler ownership): the IT JVM caches many Spring contexts
+# against ONE shared Redis; running this scheduler in every cached
+# context would turn every due offq/watch entry into a 50/50 race
+# between pollers for the counter increments the presence ITs assert.
+# The pollers are therefore OFF for every test context except the
+# presence context, where PresenceTestSupport re-enables them — exactly
+# ONE poller owner per test JVM (production always runs them: the
+# conditional defaults to TRUE).
+presence:
+  poller-enabled: false
+  ttl: 3s
+  hysteresis: 2s
+  heartbeat-interval: 1s
+  poller-interval: 200ms
+  rate-limit:
+    # T015 (№37): the tightened 3 s TTL must absorb a whole throttle episode
+    # with the contract's 3× headroom — capacity 30 over the 30 s window
+    # refills 1 token/s, so a drained bucket answers Retry-After: 1 and the
+    # T011 recovery beat lands ~2 s after the last renewal (drain ~30 beats,
+    # safely below the 60-attempt burst cap)
+    heartbeats-per-window: 30
+    # T016 (№36): the T011 convergence helpers poll №36 every 200 ms inside
+    # windows of ~5 s — a worst-case scenario spends ≤ ~40 snapshots for one
+    # observer, far below capacity 120; the T016 flood leg still drains the
+    # bucket on purpose (burst cap 150 attempts) and sees Retry-After: 1 at
+    # the 2 token/s refill of the 60 s window
+    snapshots-per-minute: 120

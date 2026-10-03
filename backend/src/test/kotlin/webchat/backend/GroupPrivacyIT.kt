@@ -756,8 +756,8 @@ class GroupPrivacyIT(
         )
 
     /** Contract №20 `GET /api/v1/contacts` — raw response. */
-    @Suppress("MaxLineLength") // ktlint's function-signature rule (140 cols) forces this 129-col one-liner
-    private fun listContacts(user: MessagingUser): ResponseEntity<String> = exchangeWithAuth(HttpMethod.GET, CONTACTS_PATH, user)
+    private fun listContacts(user: MessagingUser): ResponseEntity<String> =
+        exchangeWithAuth(HttpMethod.GET, CONTACTS_PATH, user)
 
     // ------------------------------------------------------------------
     // probes

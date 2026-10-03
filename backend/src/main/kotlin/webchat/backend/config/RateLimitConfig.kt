@@ -127,21 +127,36 @@ class UserRateLimiter(
 
     /**
      * Consumes one token of the per-user bucket `keyFamily + userId`
-     * (capacity [permitsPerMinute], greedy refill over 60 s). The key
-     * family is the caller's Redis prefix WITH the trailing colon (e.g.
-     * `rl:user:search:`), so the bucket id never collides across routes.
+     * (capacity [permitsPerMinute], greedy refill over 60 s — the 004
+     * routes). The key family is the caller's Redis prefix WITH the
+     * trailing colon (e.g. `rl:user:search:`), so the bucket id never
+     * collides across routes.
+     */
+    fun tryAcquire(
+        keyFamily: String,
+        userId: UUID,
+        permitsPerMinute: Long,
+    ): Verdict = tryAcquire(keyFamily, userId, permitsPerMinute, Duration.ofSeconds(REFILL_WINDOW_SECONDS))
+
+    /**
+     * The window-parameterized leg (007 №37): the SAME capacity-N /
+     * greedy-N-per-[window] semantics over the shared `rl:*` infra —
+     * the presence heartbeat bucket is the CONTRACT window of 30 s
+     * (presence-api.md §2 «~10 запросов/30 c»), not the 60-s window of
+     * the 004 routes; a test profile may tighten it alongside the TTL.
      */
     @Suppress("TooGenericExceptionCaught") // the driver signals any outage by throwing
     fun tryAcquire(
         keyFamily: String,
         userId: UUID,
-        permitsPerMinute: Long,
+        permits: Long,
+        window: Duration,
     ): Verdict {
         val key = "$keyFamily$userId"
         val probe =
             runCatching {
                 proxyManager
-                    .getProxy(key.toByteArray(StandardCharsets.UTF_8)) { bucketConfiguration(permitsPerMinute) }
+                    .getProxy(key.toByteArray(StandardCharsets.UTF_8)) { bucketConfiguration(permits, window) }
                     .tryConsumeAndReturnRemaining(1)
             }.onFailure { outage ->
                 log.warn("rate-limit bucket <{}> is unavailable, failing open: {}", key, outage.toString())
@@ -158,15 +173,18 @@ class UserRateLimiter(
         ((nanosToWaitForRefill + NANOS_PER_SECOND - 1) / NANOS_PER_SECOND)
             .coerceAtLeast(RETRY_AFTER_FLOOR_SECONDS)
 
-    /** research.md 004 §7: capacity N, greedy N/60s — the uniform drip, burst ≤ N then 1 per 2s. */
-    private fun bucketConfiguration(permitsPerMinute: Long): BucketConfiguration =
+    /** research.md 004 §7 / presence-api.md §2: capacity N, greedy N/window — burst ≤ N, then N/window sustained. */
+    private fun bucketConfiguration(
+        permits: Long,
+        window: Duration,
+    ): BucketConfiguration =
         BucketConfiguration
             .builder()
             .addLimit(
                 Bandwidth
                     .builder()
-                    .capacity(permitsPerMinute)
-                    .refillGreedy(permitsPerMinute, Duration.ofSeconds(REFILL_WINDOW_SECONDS))
+                    .capacity(permits)
+                    .refillGreedy(permits, window)
                     .build(),
             ).build()
 

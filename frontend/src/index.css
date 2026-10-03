@@ -1231,3 +1231,41 @@ p {
 .group-leave-delete-delete {
   color: var(--danger, #b3352c);
 }
+
+/* Presence indicator (feature 007, T021; research.md §E1): one shared
+   dot for «Чаты» direct rows, the 1:1 dialog header and «Контакты».
+   online — green, offline — gray, unknown — neutral gray (before the
+   first №36 snapshot and for «нет доступа», FR-006/FR-007). The state
+   class lives on the wrapper so both the dot and the optional header
+   text label (showLabel, T022) derive from it. */
+.presence-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  vertical-align: baseline;
+}
+
+.presence-indicator-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+}
+
+.presence-online .presence-indicator-dot {
+  fill: var(--success);
+}
+
+.presence-offline .presence-indicator-dot {
+  fill: var(--muted);
+}
+
+.presence-unknown .presence-indicator-dot {
+  fill: var(--border);
+}
+
+.presence-indicator-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: nowrap;
+}

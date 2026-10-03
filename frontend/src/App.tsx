@@ -9,6 +9,7 @@ import { SetPasswordPage } from './auth/pages/SetPasswordPage'
 import { SsoCallbackPage } from './auth/pages/SsoCallbackPage'
 import { isSessionExpired } from './auth/session'
 import { MessengerPage } from './chats/pages/MessengerPage'
+import { PresenceSettingsPage } from './settings/pages/PresenceSettingsPage'
 import { SecurityPage } from './settings/pages/SecurityPage'
 
 /**
@@ -56,6 +57,8 @@ function renderRoute(pathname: string): ReactNode {
       return <SsoCallbackPage />
     case '/settings/security':
       return <SecurityPage />
+    case '/settings/presence':
+      return <PresenceSettingsPage />
     default:
       return (
         <p>

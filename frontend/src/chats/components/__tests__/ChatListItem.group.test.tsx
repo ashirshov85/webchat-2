@@ -103,6 +103,23 @@ describe('ChatListItem type discrimination (№12 group elements, FR-014)', () =
     expect(screen.getByText('bob')).toBeVisible()
     expect(container.querySelector('.chat-item-members')).toBeNull()
   })
+
+  it('mounts the presence dot on direct rows only — groups carry no presence UI (007, T022)', () => {
+    const { container } = render(
+      <ul>
+        <ChatListItem item={directItem()} />
+        <ChatListItem item={groupItem()} />
+      </ul>,
+    )
+    const rows = Array.from(container.querySelectorAll('.chat-item'))
+    const indicators = rows.map((row) => row.querySelector('.presence-indicator'))
+
+    // A direct row mounts the shared dot (neutral before the first №36
+    // snapshot — never a false «офлайн»); a group row mounts none.
+    expect(indicators[0]).not.toBeNull()
+    expect(indicators[0]).toHaveClass('presence-unknown')
+    expect(indicators[1]).toBeNull()
+  })
 })
 
 describe('ChatListItem group unread badge (FR-014)', () => {

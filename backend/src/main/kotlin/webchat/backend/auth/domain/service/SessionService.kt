@@ -1,5 +1,7 @@
 package webchat.backend.auth.domain.service
 
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.PlatformTransactionManager
@@ -11,6 +13,7 @@ import webchat.backend.auth.domain.model.RevokedReason
 import webchat.backend.auth.domain.model.Session
 import webchat.backend.auth.domain.model.SessionAuthMethod
 import webchat.backend.auth.domain.port.Clock
+import webchat.backend.auth.domain.port.PresenceLogoutListener
 import webchat.backend.auth.domain.port.RefreshTokenRepository
 import webchat.backend.auth.domain.port.SessionRepository
 import webchat.backend.auth.security.AuthEventRecorder
@@ -73,10 +76,13 @@ class SessionService(
     private val jwtService: JwtService,
     private val redisTemplate: StringRedisTemplate,
     private val authEventRecorder: AuthEventRecorder,
+    private val presenceLogoutListener: ObjectProvider<PresenceLogoutListener>,
     private val authTokenProperties: AuthTokenProperties,
     private val clock: Clock,
     transactionManager: PlatformTransactionManager,
 ) {
+    private val log = LoggerFactory.getLogger(SessionService::class.java)
+
     /**
      * Independent REQUIRES_NEW template for the reuse revocation: the
      * surrounding rotation transaction rolls back when the uniform 401 is
@@ -166,6 +172,14 @@ class SessionService(
      * belongs to, kills its whole chain and denylists the sid. A parallel
      * session of the same user is a different sid and stays untouched (edge
      * spec); an already dead session is a no-op (idempotence).
+     *
+     * 007 (T029, research 007 §B2): the revoked session's presence
+     * registrations are cleared through [PresenceLogoutListener] — the
+     * LAST one publishes «offline» immediately (no hysteresis window: a
+     * revoked session cannot return), a surviving parallel session keeps
+     * the user online. Best-effort exactly like the denylist marker: a
+     * degraded presence store never fails the №7 revocation itself, the
+     * registration self-expires through TTL/offq (FR-002/FR-004).
      */
     @Transactional
     fun logout(
@@ -178,6 +192,7 @@ class SessionService(
         if (session.isActive && sessionRepository.revoke(session.id, RevokedReason.LOGOUT)) {
             refreshTokenRepository.revokeActiveForSession(session.id)
             denylistSid(session.id)
+            clearPresenceSession(session.userId, session.id)
             authEventRecorder.record(
                 eventType = AuthEventType.LOGOUT,
                 clientIp = clientIp,
@@ -316,6 +331,31 @@ class SessionService(
         redisTemplate
             .opsForValue()
             .set(DENYLIST_KEY_PREFIX + sessionId, DENYLIST_MARKER, authTokenProperties.accessTtl)
+    }
+
+    /**
+     * T029 (tasks.md 007): the per-session presence cleanup — best-effort
+     * EXACTLY like the №18 presence hooks of T013: a degraded presence
+     * store must never fail the №7 logout itself (the session is revoked
+     * regardless), and the not-cleared registration converges through the
+     * TTL/offq machinery inside the SC-003 budget anyway (FR-002/FR-004).
+     */
+    @Suppress("TooGenericExceptionCaught") // a degraded presence store signals itself by throwing
+    private fun clearPresenceSession(
+        userId: UUID,
+        sessionId: UUID,
+    ) {
+        try {
+            presenceLogoutListener.ifAvailable?.onSessionLoggedOut(userId, sessionId)
+        } catch (failure: Exception) {
+            log.warn(
+                "presence logout cleanup of session <{}> of user <{}> failed; the revocation stands and the " +
+                    "registration self-expires (FR-002): {}",
+                sessionId,
+                userId,
+                failure.message,
+            )
+        }
     }
 
     private fun sha256Hex(value: String): String =

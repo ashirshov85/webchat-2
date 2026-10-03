@@ -11,6 +11,8 @@ import org.mockito.ArgumentMatchers.eq
 import org.mockito.Mockito
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
+import org.springframework.beans.factory.NoSuchBeanDefinitionException
+import org.springframework.beans.factory.ObjectProvider
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.ValueOperations
 import org.springframework.transaction.PlatformTransactionManager
@@ -21,6 +23,7 @@ import webchat.backend.auth.domain.model.Session
 import webchat.backend.auth.domain.model.SessionAuthMethod
 import webchat.backend.auth.domain.model.SessionStatus
 import webchat.backend.auth.domain.port.Clock
+import webchat.backend.auth.domain.port.PresenceLogoutListener
 import webchat.backend.auth.domain.port.RefreshTokenRepository
 import webchat.backend.auth.domain.port.SessionRepository
 import webchat.backend.auth.security.AuthEventRecorder
@@ -58,6 +61,20 @@ class SessionServiceTest {
 
     private val authEventRecorder: AuthEventRecorder = Mockito.mock(AuthEventRecorder::class.java)
 
+    // T029: the late-bound presence seam — null by default (ifAvailable →
+    // null, the RealtimeControllerTest providerOf pattern); a test installs
+    // its stand-in only where the logout leg is under observation
+    private var presenceHook: PresenceLogoutListener? = null
+
+    private val presenceLogoutProvider: ObjectProvider<PresenceLogoutListener> =
+        object : ObjectProvider<PresenceLogoutListener> {
+            override fun getObject(): PresenceLogoutListener =
+                presenceHook ?: throw NoSuchBeanDefinitionException(PresenceLogoutListener::class.java)
+        }
+
+    private val presenceLogoutListener: PresenceLogoutListener =
+        Mockito.mock(PresenceLogoutListener::class.java)
+
     // REQUIRES_NEW reuse revocation: a mocked manager still runs the callback
     // synchronously — the unit mirror asserts the sequence, not the TX boundaries
     private val transactionManager: PlatformTransactionManager =
@@ -76,6 +93,7 @@ class SessionServiceTest {
                 jwtService = jwtService,
                 redisTemplate = redisTemplate,
                 authEventRecorder = authEventRecorder,
+                presenceLogoutListener = presenceLogoutProvider,
                 authTokenProperties = TOKEN_PROPERTIES,
                 clock = clock,
                 transactionManager = transactionManager,
@@ -205,6 +223,7 @@ class SessionServiceTest {
         stubResolved(openValue, session)
         whenever(sessionRepository.revoke(session.id, RevokedReason.LOGOUT)).thenReturn(true)
         whenever(redisTemplate.opsForValue()).thenReturn(valueOperations)
+        presenceHook = presenceLogoutListener
 
         service.logout(openValue, CLIENT_IP, USER_AGENT)
 
@@ -224,15 +243,56 @@ class SessionServiceTest {
     }
 
     @Test
+    fun `logout hands exactly the revoked session over to the presence cleanup seam`() {
+        val openValue = "presence-logout-open-value"
+        val session = activeSession()
+        stubResolved(openValue, session)
+        whenever(sessionRepository.revoke(session.id, RevokedReason.LOGOUT)).thenReturn(true)
+        whenever(redisTemplate.opsForValue()).thenReturn(valueOperations)
+        presenceHook = presenceLogoutListener
+
+        service.logout(openValue, CLIENT_IP)
+
+        // T029 (research 007 §B2): the pair the per-session presence clear
+        // needs — the OWNER and the revoked sid, never another session's
+        verify(presenceLogoutListener).onSessionLoggedOut(session.userId, session.id)
+    }
+
+    @Test
+    fun `a failing presence cleanup never fails the logout itself`() {
+        val openValue = "degraded-presence-logout-open-value"
+        val session = activeSession()
+        stubResolved(openValue, session)
+        whenever(sessionRepository.revoke(session.id, RevokedReason.LOGOUT)).thenReturn(true)
+        whenever(redisTemplate.opsForValue()).thenReturn(valueOperations)
+        presenceHook =
+            object : PresenceLogoutListener {
+                override fun onSessionLoggedOut(
+                    userId: UUID,
+                    sessionId: UUID,
+                ): Unit = error("presence store degraded")
+            }
+
+        service.logout(openValue, CLIENT_IP)
+
+        // best-effort exactly like the denylist marker: the revocation stands
+        verify(sessionRepository).revoke(session.id, RevokedReason.LOGOUT)
+        verify(valueOperations).set(DENYLIST_PREFIX + session.id, DENYLIST_MARKER, TOKEN_PROPERTIES.accessTtl)
+        verify(authEventRecorder).record(AuthEventType.LOGOUT, CLIENT_IP, null, session.userId, emptyMap())
+    }
+
+    @Test
     fun `logout of an already dead session is an idempotent no-op`() {
         val openValue = "dead-session-open-value"
         val session = sessionWithStatus(SessionStatus.REVOKED)
         stubResolved(openValue, session)
+        presenceHook = presenceLogoutListener
 
         service.logout(openValue, CLIENT_IP)
 
         verifyNoInteractions(authEventRecorder)
         verifyNoInteractions(redisTemplate)
+        verifyNoInteractions(presenceLogoutListener)
     }
 
     @Test

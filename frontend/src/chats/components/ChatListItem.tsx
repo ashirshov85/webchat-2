@@ -31,8 +31,15 @@
  * Blocked mark (FR-020): only the blocker sees «заблокирован» —
  * `blockedByMe` is the single block projection the API exposes, so
  * the blocked side's row renders without any mark by construction.
+ *
+ * Presence dot (feature 007, T022; FR-006, clarify a11y): DIRECT rows
+ * only — a group carries no presence UI (YAGNI; №12 group elements
+ * have `peer = null` by contract). The dot's aria-label carries the
+ * state; no visible text on this surface (the text label belongs to
+ * the 1:1 dialog header alone).
  */
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
+import { PresenceIndicator } from '../../presence/PresenceIndicator'
 
 /** Превью последнего сообщения: обрезка ≤64 симв. — клиентский рендер (контракт №12). */
 const PREVIEW_MAX_LENGTH = 64
@@ -103,6 +110,7 @@ export function ChatListItem({
             </span>
           )}
           <span className="chat-item-title">{title ?? ''}</span>
+          {!isGroup && item.peer !== null && <PresenceIndicator userId={item.peer.id} />}
           {isGroup && item.memberCount !== undefined && (
             <span className="chat-item-members">
               {item.memberCount} {membersLabel(item.memberCount)}

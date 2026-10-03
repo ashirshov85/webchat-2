@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WebChat Public API
-  version: 0.6.0
+  version: 0.7.0
   description: >
     Публичный API веб-чата. Единственный источник истины публичного API;
     TypeScript-типы фронтенда генерируются из этого файла автоматически.
@@ -63,6 +63,25 @@ info:
     в группах без изменений. Все новые пути требуют Bearer: публичный
     перечень 002–003 не расширен. Изменение — только additive
     (0.5.0 → 0.6.0, без BREAKING.md).
+
+    Фича 007 (presence): endpoints №36–38 — присутствие пользователей
+    (статус «онлайн»): batch-снапшот статусов отображаемых поверхностей
+    №36, продление регистрации presence-heartbeat'ом №37, режим
+    «невидимки» №38. №18 — 2 новых кадра: opening-фрейм
+    connected {connectionId} и событие presence.updated
+    {userId,status,rev} (аудитории видимости субъекта). Терминология
+    keepalive: transport-keepalive :ka (кадр-комментарий каждые 15 с —
+    удержание соединения) ≠ presence-heartbeat №37 (прикладное
+    продление регистрации каждые 30 с). Фиксированные константы фичи:
+    TTL регистрации — 90 c; интервал heartbeat — 30 c (3× запаса);
+    batch №36 — ≤ 200 userIds после дедупа; окно гистерезиса «офлайн» —
+    45 c (серия разрывов < окна → 0 событий); публикация «онлайн» —
+    немедленная; logout — немедленный «офлайн» без окна. Новые problem-
+    коды: presence_ids_too_many (400), presence_connection_not_found
+    (404); flood_limit (429) переиспользован. Все новые пути требуют
+    Bearer (/users/me/* — per-user, публичный перечень 002–003 не
+    расширен). Изменение — только additive (0.6.0 → 0.7.0,
+    без BREAKING.md).
 tags:
   - name: auth
     description: Регистрация, вход, сессии, восстановление пароля
@@ -80,6 +99,8 @@ tags:
     description: 'Контакты пользователя, точный поиск пользователей, блокировки'
   - name: groups
     description: 'Групповые чаты: создание, состав, роли, метаданные, выход и удаление'
+  - name: presence
+    description: 'Присутствие пользователей: batch-снапшот статусов, heartbeat-регистрации, режим «невидимки»'
 security:
   - bearerAuth: []
 paths:
@@ -1279,11 +1300,31 @@ paths:
         системных сообщений в истории. В группах message.created
         публикуется всем активным участникам, кроме отправителя (FR-011);
         chat.read — всем активным, кроме читавшего.
+        Присутствие (007): сразу после retry: 3000 сервер отправляет
+        opening-фрейм event: connected с payload ConnectedEvent
+        {connectionId} — идентификатор регистрации подключения,
+        используется клиентом в heartbeat №37; живёт вместе с потоком:
+        реконнект выдаёт новый connectionId, старая регистрация
+        самоистекает по TTL. Событие event: presence.updated с payload
+        PresenceUpdatedEvent {userId, status, rev} публикуется каждому
+        члену аудитории видимости субъекта (общий чат ∪ «субъект в
+        контактах наблюдающего» − блок-пары − сам субъект) ровно один
+        раз на переход, независимо от числа общих чатов; userId —
+        субъект смены (не наблюдатель); status — опубликованное online
+        | offline (online — немедленно, offline — гистерезис-задержано
+        окном 45 c); rev — монотонная ревизия per-user: применять
+        только строго большее rev (дубль/задержавшийся кадр — no-op);
+        режим «невидимки» замораживает исходящие события субъекта.
+        Терминология keepalive: transport-keepalive :ka — кадр-
+        комментарий каждые 15 с, удерживает TCP-соединение и к
+        регистрации присутствия не относится; presence-heartbeat №37 —
+        прикладное продление регистрации каждые 30 c (отдельный REST-
+        вызов); 404/429 на №37 не влияют на :ka, и наоборот.
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: 'SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, события message.created, chat.read и события групп (group.updated, group.member.added, group.member.removed, group.role.changed, group.you_removed, group.deleted; фрейминг и payloads — в описании операции)'
+          description: 'SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, opening-фрейм connected (007), события message.created, chat.read, presence.updated (007) и события групп (group.updated, group.member.added, group.member.removed, group.role.changed, group.you_removed, group.deleted; фрейминг и payloads — в описании операции)'
           headers:
             X-Accel-Buffering:
               description: 'no — отключение буферизации прокси (кадры доставляются немедленно, без агрегации за ingress)'
@@ -1297,15 +1338,21 @@ paths:
                 description: Сырой SSE-поток (текст по спецификации WHATWG)
               examples:
                 streamSample:
-                  summary: 'Первый кадр (retry) + события message.created, chat.read, group.member.added, group.you_removed + heartbeat'
+                  summary: 'Первый кадр (retry) + opening-фрейм connected + события message.created, chat.read, presence.updated, group.member.added, group.you_removed + heartbeat'
                   value: |
                     retry: 3000
+
+                    event: connected
+                    data: {"connectionId":"7c9e6679-7425-40de-944b-e07fc1f90ae7"}
 
                     event: message.created
                     data: {"chatId":"7dc5f5c0-0000-4a10-8b00-000000000001","message":{"id":"0b0f5e70-0000-4c20-9d00-000000000002","chatId":"7dc5f5c0-0000-4a10-8b00-000000000001","senderId":"9a2c8e40-0000-4d30-a100-000000000003","text":"Привет","seq":128,"createdAt":"2026-09-20T12:00:00.123Z"}}
 
                     event: chat.read
                     data: {"chatId":"7dc5f5c0-0000-4a10-8b00-000000000001","readUpToSeq":128,"byUserId":"9a2c8e40-0000-4d30-a100-000000000003"}
+
+                    event: presence.updated
+                    data: {"userId":"9a2c8e40-0000-4d30-a100-000000000003","status":"online","rev":42}
 
                     event: group.member.added
                     data: {"groupId":"7dc5f5c0-0000-4a10-8b00-000000000002","user":{"id":"c41d1a10-0000-4f40-b200-000000000004","username":"carol","email":"carol@example.com","status":"active","createdAt":"2026-09-01T10:00:00Z"},"actorId":"0f1e6c60-0000-4e50-c300-000000000005"}
@@ -2248,6 +2295,219 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/presence:
+    get:
+      operationId: getPresenceSnapshot
+      tags: [presence]
+      summary: Batch-снапшот статусов присутствия (№36, Bearer)
+      description: >
+        Batch-чтение статусов присутствия для отображаемых поверхностей
+        (FR-006): открытый чат + смонтированные элементы списков «Чаты»
+        и «Контакты» текущего экрана; попадание в вьюпорт не
+        отслеживается, серверу определение поверхности неизвестно —
+        клиент передаёт userIds (≤ 200 после дедупа). Появление новой
+        поверхности триггерит догрузку только для недостающих userIds;
+        если отображаемые поверхности суммарно > 200, клиент разбивает
+        запрос на несколько №36 по ≤ 200 (приоритет — открытый чат,
+        затем элементы списков); запросы независимы, серверной
+        координации не требуется. Статусы: online/offline — последний
+        опубликованный статус (единая гистерезисная семантика с
+        presence.updated, FR-004: в окне pending-offline снимок
+        возвращает online — расхождения снимок/событие исключены);
+        unknown — единая семантика «нет доступа» (вызывающий вне
+        аудитории видимости цели или блок-пара; не различает «офлайн»
+        и «скрыто» — FR-007); несуществующий userId — unknown (не
+        раскрывает существование); цель в режиме «невидимки» — offline,
+        неотличимо от реального офлайна (FR-007). rev — ревизия
+        статуса цели: клиент сливает снимок с событиями №18 по
+        max(rev) per-user (идемпотентность FR-003: дубль кадра,
+        задержавшийся кадр, устаревший снимок — no-op). Цикл вызова —
+        (re)connect 005 (после sync/chats/contacts) и открытие новых
+        поверхностей. Флуд-контроль — per-user бакет: 429 flood_limit +
+        Retry-After (консервативно, как №26).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userIds
+          in: query
+          required: true
+          description: 'UUID целей через запятую, ≤ 200 после дедупа; пустой/не-UUID в списке → 400 malformed_request; > 200 → 400 presence_ids_too_many'
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        '200':
+          description: 'Статусы запрошенных целей: online/offline — последний опубликованный статус + rev; вне аудитории видимости, блок-пара или несуществующий — unknown'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresenceSnapshotResponse'
+        '400':
+          description: '> 200 userIds после дедупа (errors: {userIds: [presence_ids_too_many]}); пустой/не-UUID в списке (errors: {userIds: [malformed_request]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Per-user флод-бакет batch-снапшотов исчерпан — снапшот не выполняется, повторить после Retry-After (errors: {userIds: [flood_limit]})'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/presence/heartbeat:
+    post:
+      operationId: presenceHeartbeat
+      tags: [presence]
+      summary: Продление регистрации присутствия (№37, Bearer)
+      description: >
+        Прикладной presence-heartbeat: атомарно (Lua) продлевает все
+        горизонты регистрации подключения до now + 90 c. Параметры
+        контракта (FR-002): TTL регистрации 90 c, интервал heartbeat
+        30 c (3× запаса), гарантия обнаружения тишины ≤ TTL +
+        гистерезис + 2× poller-interval. connectionId — из opening-фрейма
+        connected канала №18 (007); живёт вместе с потоком: реконнект
+        выдаёт новый connectionId, старая регистрация самоистекает по
+        TTL. Терминология: presence-heartbeat №37 (прикладной —
+        продлевает регистрацию присутствия, интервал 30 c) ≠
+        transport-keepalive SSE-канала №18 — кадр-комментарий :ka каждые
+        15 с (удерживает TCP-соединение, к регистрации присутствия не
+        относится); 404/429 на №37 не влияют на :ka, и наоборот.
+        Реакция клиента: 404 — немедленный reconnect SSE
+        (connectionId неизвестен/истёк); 429 — сохранить SSE-соединение
+        и повторить heartbeat в следующем интервале (TTL 90 c даёт 3×
+        запас); немедленный reconnect — только на 404.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresenceHeartbeatRequest'
+      responses:
+        '204':
+          description: 'Регистрация продлена до now + 90 c (атомарно: alive + watch)'
+        '400':
+          description: 'Тело отсутствует, connectionId не задан или не UUID (errors: {connectionId: [malformed_request]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'connectionId неизвестен или истёк (errors: {connectionId: [presence_connection_not_found]}) — реакция клиента: немедленный reconnect SSE'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Per-user бакет heartbeat исчерпан (~10 запросов/30 c — допуск на джиттер, реконнекты и мультидевайс; errors: {connectionId: [flood_limit]}) — сохранить SSE-соединение, повторить в следующем интервале'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/presence/settings:
+    get:
+      operationId: getPresenceSettings
+      tags: [presence]
+      summary: Настройки видимости присутствия (№38, Bearer)
+      description: >
+        Текущее значение режима «невидимки» (FR-007). Режим действует
+        на пользователя целиком, не на устройство; переживает сессии
+        (хранится per-user). «Невидимка» виден окружающим как «офлайн»
+        (неотличимо от реального офлайна), сам читает статусы №36 без
+        ограничений. Единая операция для standalone SPA и виджета.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Текущее значение режима «невидимки»
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresenceSettingsResponse'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    put:
+      operationId: updatePresenceSettings
+      tags: [presence]
+      summary: Изменение режима «невидимки» (№38, Bearer)
+      description: >
+        Идемпотентный PUT: повтор той же величины — no-op без событий.
+        Семантика переключения: включение при живых подключениях
+        публикует аудитории видимости ровно одно переключение в offline
+        и замораживает дальнейшие события субъекта; выключение
+        публикует фактический статус (если фактический совпадает с
+        публикуемым — только продвижение rev, без события); на
+        переключение — ≤ одной смены индикатора у наблюдателей.
+        Флуд-контроль — per-user бакет: 429 flood_limit + Retry-After
+        (консервативно, как №26/№36).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresenceSettingsUpdateRequest'
+      responses:
+        '200':
+          description: Сохранённое значение режима «невидимки» (повтор той же величины — no-op)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresenceSettingsResponse'
+        '400':
+          description: 'incognito отсутствует или не boolean (errors: {incognito: [malformed_request]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Per-user флод-бакет PUT исчерпан (errors: {incognito: [flood_limit]})'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   securitySchemes:
     bearerAuth:
@@ -3151,3 +3411,89 @@ components:
           type: string
           enum: [kicked, left]
           description: 'kicked — исключён владельцем/админом (№32); left — вышел самостоятельно (№33)'
+    ConnectedEvent:
+      type: object
+      additionalProperties: false
+      description: 'SSE-кадр №18 connected (007): opening-фрейм — отправляется сервером сразу после retry: 3000; connectionId — идентификатор регистрации подключения, используется клиентом в heartbeat №37; живёт вместе с потоком: реконнект выдаёт новый connectionId, старая регистрация самоистекает по TTL; клиенты, не знающие кадра, игнорируют неизвестный event: (контракт 004 §3 — кадр безопасен для всех действующих потребителей)'
+      required: [connectionId]
+      properties:
+        connectionId:
+          type: string
+          format: uuid
+          description: Идентификатор регистрации подключения (для presence-heartbeat №37)
+    PresenceUpdatedEvent:
+      type: object
+      additionalProperties: false
+      description: 'SSE-событие №18 presence.updated (007): смена опубликованного статуса субъекта; публикуется каждому члену аудитории видимости субъекта (общий чат ∪ «субъект в контактах наблюдающего» − блок-пары − сам субъект) один раз на переход независимо от числа общих чатов; режим «невидимки» замораживает исходящие события субъекта (FR-007); идемпотентность FR-003 — применять только строго большее rev per-user (дубль кадра, задержавшийся кадр — no-op)'
+      required: [userId, status, rev]
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: Субъект смены (не наблюдатель)
+        status:
+          type: string
+          enum: [online, offline]
+          description: 'Опубликованный статус: online — немедленно (дебаунс 0), offline — гистерезис-задержанный (окно 45 c)'
+        rev:
+          type: integer
+          format: int64
+          description: Монотонная ревизия статуса per-user; строгое возрастание — дубль/устаревший кадр игнорируется
+    PresenceStatusItem:
+      type: object
+      additionalProperties: false
+      description: 'Элемент №36: статус одной цели; online/offline — последний опубликованный статус (гистерезис-согласован с presence.updated: в окне pending-offline — online); unknown — «нет доступа» или несуществующий userId (не различает «офлайн» и «скрыто» — FR-007)'
+      required: [userId, status, rev]
+      properties:
+        userId:
+          type: string
+          format: uuid
+          description: Цель снапшота (запрошенный userId)
+        status:
+          type: string
+          enum: [online, offline, unknown]
+          description: 'online — ≥1 живой регистрации и не «невидимка»; offline — опубликованный офлайн, в т.ч. режим «невидимки» (неотличимо); unknown — вызывающий вне аудитории видимости, блок-пара или несуществующий userId'
+        rev:
+          type: integer
+          format: int64
+          description: Ревизия статуса цели; слияние с событиями №18 по max(rev) per-user (идемпотентность FR-003)
+    PresenceSnapshotResponse:
+      type: object
+      additionalProperties: false
+      description: 'Ответ №36: статусы запрошенных целей отображаемых поверхностей'
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          description: По одному элементу на каждый запрошенный userId (после дедупа)
+          items:
+            $ref: '#/components/schemas/PresenceStatusItem'
+    PresenceHeartbeatRequest:
+      type: object
+      additionalProperties: false
+      description: 'Тело №37: идентификатор регистрации подключения из opening-фрейма connected канала №18'
+      required: [connectionId]
+      properties:
+        connectionId:
+          type: string
+          format: uuid
+          description: connectionId из фрейма connected; реконнект выдаёт новый, старая регистрация самоистекает по TTL
+    PresenceSettingsResponse:
+      type: object
+      additionalProperties: false
+      description: 'Ответ №38: значение режима «невидимки» (≡ колонка users.presence_hidden)'
+      required: [incognito]
+      properties:
+        incognito:
+          type: boolean
+          description: 'true — режим «невидимки»: субъект виден окружающим как «офлайн» (неотличимо), исходящие события заморожены'
+    PresenceSettingsUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: 'Тело №38 PUT: новое значение режима «невидимки»; идемпотентно — повтор той же величины no-op без событий'
+      required: [incognito]
+      properties:
+        incognito:
+          type: boolean
+          description: 'Новое значение режима; не boolean → 400 malformed_request'

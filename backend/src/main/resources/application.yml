@@ -315,6 +315,41 @@ groups:
   title-max-length: 64
   description-max-length: 256
 
+presence:
+  # 007 research.md §G / contracts/presence-api.md §2 (FR-002): registration
+  # TTL 90 s = 3× the 30 s heartbeat interval (2 lost beats tolerated);
+  # silence detection budget ≤ TTL + hysteresis + 2×poller (prod ≈ 137 s) — SC-003
+  ttl: 90s
+  # anti-flap window before publishing `offline` (FR-004);
+  # contracts/presence-events.md §3 default
+  hysteresis: 45s
+  # recommended client heartbeat cadence for №37 (contracts/presence-api.md §2);
+  # contract recommendation, not a server-side timer
+  heartbeat-interval: 30s
+  # offq/watch poller tick (research.md §G; internal, not a contract value)
+  poller-interval: 1s
+  # №36 batch snapshot cap after dedup (contracts/presence-api.md §1)
+  snapshot-batch-limit: 200
+  rate-limit:
+    # 007 contracts/presence-api.md §2 (№37): per-user heartbeat flood bucket
+    # «~10 запросов/30 c» — capacity 10 over a 30 s window (Bucket4j greedy
+    # refill; the bucket counts attempts across every device and replica of
+    # the user, rl:user:presence-heartbeat:{userId})
+    heartbeats-per-window: 10
+    heartbeat-window: 30s
+    # 007 contracts/presence-api.md §1 (№36): per-user batch-snapshot flood
+    # bucket — conservative like №26, the 004 house parity (30/min, №16/№19
+    # style, 60 s Bucket4j window, rl:user:presence-snapshot:{userId});
+    # the client contract calls №36 only on the 005 (re)connect cycle and
+    # new displayed surfaces, so a full visible UI stays far below the cap
+    snapshots-per-minute: 30
+    # 007 contracts/presence-api.md §3 (№38): per-user «невидимка» PUT flood
+    # bucket — conservative like №26/№36 (30/min, 60 s Bucket4j window,
+    # rl:user:presence-settings:{userId}); guards the PUT only (the GET is a
+    # pure point read), counts requests rather than outcomes — an idempotent
+    # no-op toggle still draws its token, and a refusal performs no V15 write
+    settings-writes-per-minute: 30
+
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)
   observations:

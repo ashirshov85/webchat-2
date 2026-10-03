@@ -22,10 +22,18 @@
  * flows through №20 only. Failures of the row actions (ensure with
  * `peer_not_found`, network) render in a banner above the list
  * without unmounting it.
+ *
+ * Presence dot (feature 007, T022; FR-006, clarify a11y): every
+ * contact is a displayed surface — the row mounts the shared
+ * PresenceIndicator (aria-label only, no visible text on this
+ * surface; the text label belongs to the 1:1 dialog header alone).
+ * №36 `unknown` (e.g. a block-pair — §1.4) stays indistinguishable
+ * from «no data yet»: neutral dot, never a false «офлайн».
  */
 import { useCallback, useEffect, useState } from 'react'
 import { ensureChat, listContacts, removeContact } from '../../api/chats'
 import type { ChatView, ContactSort, ContactView } from '../../api/chats'
+import { PresenceIndicator } from '../../presence/PresenceIndicator'
 import { ErrorBanner } from './ErrorBanner'
 
 export interface ContactListProps {
@@ -185,6 +193,7 @@ export function ContactList({
                 }}
               >
                 <span className="chat-item-title">{contact.user.username}</span>
+                <PresenceIndicator userId={contact.user.id} />
                 <span className="contact-row-email">{contact.user.email}</span>
               </button>
               <button
