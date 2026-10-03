@@ -1,0 +1,37 @@
+/* Тост «Aethergram» — проекция блока «Тост — стиль [role=status] из
+   auth-карточки» прототипа specs/008-chat-window-styling/design/chats.html;
+   при расхождениях побеждает прототип (FR-001). Норматив констант —
+   contracts/design-tokens.md §7 (радиус тоста, z-слой 99 поверх любых
+   поверхностей); переменные-токены — theme/tokens.css (FR-002): z-порядок
+   var(--z-toast), радиус var(--r-toast), шрифтовая роль var(--font-body).
+   Подключается компонентом ui/Toast.tsx (T011); показ — классом .show.
+   Скрытие — только таймером ToastProvider: pointer-events none.
+
+   prefers-reduced-motion (FR-004) — глобальное правило theme/machine.css
+   (transition-duration .01s !important) покрывает и тост. */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  z-index: var(--z-toast);
+  transform: translate(-50%, 20px);
+  opacity: 0;
+  transition:
+    transform 0.3s,
+    opacity 0.3s;
+  pointer-events: none;
+  padding: 10px 20px;
+  border-radius: var(--r-toast);
+  background: rgba(32, 46, 26, 0.78);
+  border: 1px solid rgba(201, 162, 74, 0.4);
+  color: var(--ok);
+  font: italic 13.5px var(--font-body);
+  backdrop-filter: blur(2px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+}
+
+.toast.show {
+  transform: translate(-50%, 0);
+  opacity: 1;
+}
