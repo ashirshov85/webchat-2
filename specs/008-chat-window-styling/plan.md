@@ -18,7 +18,7 @@
 
 **Testing**: Vitest + Testing Library (unit/компонентные, адаптация под новый DOM — FR-034); NEW: Playwright screenshot-тесты (Chromium, эталонная ширина + мобильные состояния, допуск ~2% пикселей); ручная матрица браузеров FR-036 для приёмки SC-009
 
-**Target Platform**: браузеры SPA (последние 2 версии Chrome/Edge/Firefox/Safari, desktop+мобильные); breakpoint'ы прототипа ~900px/~480px
+**Target Platform**: браузеры SPA (последние 2 версии Chrome/Edge/Firefox/Safari, desktop+мобильные); точные контрольные точки: ≤900px — burger-drawer, ≥901px — машина без прокрутки страницы, ≤480px — компакт (реализация T065–T067)
 
 **Project Type**: web-app — только фронтенд-слой существующего monorepo (backend не затрагивается)
 
@@ -96,8 +96,9 @@ frontend/src/chats/                      # ПЕРЕСТРОЙКА существ
 ├── components/ChatGearMenu.tsx          # НОВОЕ: меню чата — ростер-действия 006/контакты/блокировка (FR-023)
 ├── components/MessageList.tsx           # пузыри «пластина/панель», аватары, время, разделители дат,
 │                                        # штампы ✓/✓✓ с анимацией, outbox-статусы, пагинация (FR-018–020, FR-030)
-├── components/MessageInput.tsx          # золотая рама, «ОТПРАВИТЬ», Enter, фокус-сохранение, баннеры
-│                                        # очереди/ретрая в композере, блокировка при блок-контакте (FR-021/022, FR-030)
+├── components/MessageInput.tsx          # золотая рама, «ОТПРАВИТЬ», Enter, фокус-сохранение, строка
+│                                        # ретрая флуд-лимита в композере (баннеры очереди/ошибок/синхронизации
+│                                        # сохраняют существующие позиции — T052), блокировка при блок-контакте (FR-021/022, FR-030)
 ├── components/ContactsModal.tsx         # НОВОЕ: модальные «Контакты»: поиск/сортировка/«⋯»-меню/пометки (FR-011–013)
 ├── components/ProfileModal.tsx          # НОВОЕ: «Мой профиль»: readonly username/email + инкогнито №38 (FR-015)
 └── components/ (SyncIndicator, QueueOverflowBanner, ErrorBanner)  # переоформление в токены (FR-030, FR-032)
