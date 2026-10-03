@@ -109,10 +109,19 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/anonymous-pro':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/cinzel':
         specifier: ^5.3.0
         version: 5.3.0
+      '@fontsource/cormorant-sc':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@fontsource/eb-garamond':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource/old-standard-tt':
         specifier: ^5.3.0
         version: 5.3.0
       '@opentelemetry/context-zone':
@@ -379,11 +388,20 @@ packages:
       '@noble/hashes':
         optional: true
 
+  '@fontsource/anonymous-pro@5.3.0':
+    resolution: {integrity: sha512-zoJ/iLJYCkMsjwEgqM6rQr2KmRk+v9+G90NOPxBm1RCN2rjX5kk0t0MoUkzYMT+51jWuIfPGCD/YcZXlNFqMKA==}
+
   '@fontsource/cinzel@5.3.0':
     resolution: {integrity: sha512-KEOYTsrRppW0uRIPWBDPrQgunCS6f8u4nzZxYRBfo9SCknKojLYjK7B0ZoVmJhyVLefz271ZQRF9EOpHZlfhRw==}
 
+  '@fontsource/cormorant-sc@5.3.0':
+    resolution: {integrity: sha512-4iTWFRwm6x6UJ2tJpcMYShL2KLgLSwiXt5KTPSe6GHpDr54ZzkH3/JXXvczGWV3MnzTUc4PCqPsbh/VLNPlxGg==}
+
   '@fontsource/eb-garamond@5.3.0':
     resolution: {integrity: sha512-VplwHpB8FLuzl+4G5LDci1b3Z4SghiuXH8XEgaxjnOb5aue5mEt1njmDKeO6iyLeGa73LffU7PC7hzncLRx0ZA==}
+
+  '@fontsource/old-standard-tt@5.3.0':
+    resolution: {integrity: sha512-9cXU8XWqw4Pz9/9Lf6Otf1GPc0y17d96/nP9tzs4PLlq1IFMIxXszL3OLldaoyAn5YGr1r+tIXr0rlbgIeCYrg==}
 
   '@humanfs/core@0.19.2':
     resolution: {integrity: sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA==}
@@ -2045,9 +2063,15 @@ snapshots:
 
   '@exodus/bytes@1.15.1': {}
 
+  '@fontsource/anonymous-pro@5.3.0': {}
+
   '@fontsource/cinzel@5.3.0': {}
 
+  '@fontsource/cormorant-sc@5.3.0': {}
+
   '@fontsource/eb-garamond@5.3.0': {}
+
+  '@fontsource/old-standard-tt@5.3.0': {}
 
   '@humanfs/core@0.19.2':
     dependencies:
