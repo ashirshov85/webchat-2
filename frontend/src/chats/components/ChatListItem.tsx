@@ -7,16 +7,23 @@
  *
  * Unified list (feature 006, T028; FR-014): №12 now also carries group
  * elements, and the row discriminates by `type` — a group renders the
- * group avatar glyph, `title` and the `memberCount` counter (Russian
- * plurals) while `peer`/`blockedByMe` are null (api-contract.md §3);
- * blocks never apply to groups. A direct row keeps rendering the peer
- * login exactly as in 004 (the `type` field may be absent —
- * backward-friendly) and never carries a member counter.
+ * group avatar and `title` while `peer`/`blockedByMe` are null
+ * (api-contract.md §3); blocks never apply to groups. A direct row keeps
+ * rendering the peer login exactly as in 004 (the `type` field may be
+ * absent — backward-friendly).
  *
  * Preview: the server sends the FULL last message text and the contract
- * (№12) makes truncation a client render decision — the row clamps it
- * to 64 code points with an ellipsis. `null` lastMessage (an empty or
+ * (№12) makes truncation a client render decision — the DOM text is
+ * clamped to 64 code points with an ellipsis, the CSS clamps further,
+ * and the FULL text rides the `title` tooltip (spec edge-case «полный
+ * текст — во всплывающей подсказке»). `null` lastMessage (an empty or
  * fully deleted-for-me dialog) renders the muted «Нет сообщений» line.
+ * The «Вы: » prefix stays the 004 rule for every OUTGOING message; an
+ * incoming GROUP message renders bare: №12's `lastMessage` carries
+ * `senderId` only, the roster with usernames lives in №28 of the OPEN
+ * chat alone, SC-003 forbids contract changes and the panel issues no
+ * per-chat requests — the «Имя: »-prefixed preview stays the feed's
+ * privilege (T022, MessageList's `members` prop).
  *
  * Badge (FR-014; feature 005 T035, FR-007/FR-008): the counter is
  * server-authoritative and delivery-bounded — useChatList maintains it
@@ -32,42 +39,34 @@
  * `blockedByMe` is the single block projection the API exposes, so
  * the blocked side's row renders without any mark by construction.
  *
- * Presence dot (feature 007, T022; FR-006, clarify a11y): DIRECT rows
- * only — a group carries no presence UI (YAGNI; №12 group elements
- * have `peer = null` by contract). The dot's aria-label carries the
- * state; no visible text on this surface (the text label belongs to
- * the 1:1 dialog header alone).
- *
- * «Aethergram» reskin (feature 008, US1; research §C, FR-034): the
- * badge and preview nodes additionally carry the PROTOTYPE row hooks
- * `.c-badge`/`.c-prev` beside the 004 hooks — the T019 share of the
- * T017 adaptation (ChatListPanel tests); the full row rebuild — the
- * Avatar, the c-top/c-main structure, the last-message time — is T020.
+ * «Aethergram» reskin (feature 008, US1, T020; FR-001, FR-008,
+ * data-model 2.1, research §C): the row rides the PROTOTYPE markup of
+ * design/chats.html §5 — `.contact` button > Avatar + `.c-main`
+ * (`.c-top`: `.c-name` + `.c-time` / `.c-prev`) + `.c-badge`; the 004
+ * hooks (`chat-item`, `chat-item-badge`, `chat-item-blocked`,
+ * `chat-item-preview`, `c-prev`/`c-badge` of T019) stay as wrappers
+ * (FR-034). The avatar derives from `peer.username` (circle) or the
+ * group `title` (octagon, FR-024) and recalculates itself on renames;
+ * the `.c-time` node carries the ЧЧ:ММ (ui/time) of
+ * `lastMessage.createdAt` and renders EMPTY for a messageless chat
+ * (`${last?last.time:''}` of the prototype); long names/previews
+ * truncate via CSS with the full text in `title` tooltips. The №12
+ * `memberCount` LEAVES the row (the prototype carries no counter) and
+ * returns as the «N участников» header status of US3 (T043); the 007
+ * presence dot leaves the row markup until the Avatar presence wiring
+ * of US3 (T040/T042). React.memo + the row's `content-visibility`
+ * (chat-list-panel.css) keep a 200+ list at 60 fps (SC-011, §G).
  */
+import { memo } from 'react'
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
-import { PresenceIndicator } from '../../presence/PresenceIndicator'
+import { Avatar } from '../../ui/Avatar'
+import { formatTime } from '../../ui/time'
 
 /** Превью последнего сообщения: обрезка ≤64 симв. — клиентский рендер (контракт №12). */
 const PREVIEW_MAX_LENGTH = 64
 
 /** Бейдж непрочитанных сворачивается в «99+» (FR-014). */
 const UNREAD_CAP = 99
-
-/**
- * Русская плюрализация счётчика участников (№12 `memberCount` 1–200):
- * 1/21 участник, 3 участника, 5/11 участников.
- */
-function membersLabel(count: number): string {
-  const mod10 = count % 10
-  const mod100 = count % 100
-  if (mod10 === 1 && mod100 !== 11) {
-    return 'участник'
-  }
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
-    return 'участника'
-  }
-  return 'участников'
-}
 
 export interface ChatListItemProps {
   /** №12 aggregate row: peer, lastMessage, unreadCount, blockedByMe. */
@@ -87,7 +86,7 @@ function previewText(text: string): string {
   return `${Array.from(text).slice(0, PREVIEW_MAX_LENGTH).join('')}…`
 }
 
-export function ChatListItem({
+export const ChatListItem = memo(function ChatListItem({
   item,
   currentUserId = null,
   active = false,
@@ -103,37 +102,35 @@ export function ChatListItem({
     <li>
       <button
         type="button"
-        className={active ? 'chat-item chat-item-active' : 'chat-item'}
+        className={active ? 'chat-item contact active' : 'chat-item contact'}
         aria-current={active ? 'true' : undefined}
         onClick={() => {
           onSelect?.(item.chatId)
         }}
       >
-        <span className="chat-item-head">
-          {isGroup && (
-            <span className="chat-item-avatar" aria-hidden="true">
-              #
+        <Avatar source={title ?? ''} shape={isGroup ? 'octagon' : 'circle'} />
+        <span className="c-main">
+          <span className="c-top">
+            <span className="c-name" title={title ?? ''}>
+              {title ?? ''}
             </span>
-          )}
-          <span className="chat-item-title">{title ?? ''}</span>
-          {!isGroup && item.peer !== null && <PresenceIndicator userId={item.peer.id} />}
-          {isGroup && item.memberCount !== undefined && (
-            <span className="chat-item-members">
-              {item.memberCount} {membersLabel(item.memberCount)}
-            </span>
-          )}
-          {item.blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
-          {item.unreadCount > 0 && <span className="chat-item-badge c-badge">{unreadLabel}</span>}
-        </span>
-        {last === null ? (
-          <span className="chat-item-preview chat-item-preview-empty c-prev">Нет сообщений</span>
-        ) : (
-          <span className="chat-item-preview c-prev">
-            {outgoing ? 'Вы: ' : ''}
-            {previewText(last.text)}
+            {item.blockedByMe === true && <span className="chat-item-blocked">заблокирован</span>}
+            <span className="c-time">{last !== null ? formatTime(last.createdAt) : ''}</span>
           </span>
-        )}
+          {last === null ? (
+            <span className="chat-item-preview chat-item-preview-empty c-prev">Нет сообщений</span>
+          ) : (
+            <span
+              className="chat-item-preview c-prev"
+              title={`${outgoing ? 'Вы: ' : ''}${last.text}`}
+            >
+              {outgoing ? 'Вы: ' : ''}
+              {previewText(last.text)}
+            </span>
+          )}
+        </span>
+        {item.unreadCount > 0 && <span className="chat-item-badge c-badge">{unreadLabel}</span>}
       </button>
     </li>
   )
-}
+})
