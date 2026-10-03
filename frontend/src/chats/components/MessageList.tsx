@@ -72,9 +72,32 @@
  * auto` (message-list.css) keep a 1000+ feed at 60 fps (SC-010,
  * research §G); the `pop` entrance is transform/opacity-only and
  * dies under prefers-reduced-motion (FR-004 via machine.css). The
- * `tickStamp` animation on a status change lands with T023; the
  * ЧЧ:ММ time and date dividers of the `.b-time` footer — with
  * T044 (US3).
+ *
+ * Delivery-stamp animation (US1, T023, FR-018 edge case): the
+ * engraved tick plays the prototype `tickStamp` (.32s,
+ * design-tokens §5) ONLY when the stamp of an ALREADY DISPLAYED row
+ * changes — never on the first paint of history (initial load,
+ * pagination prepend, chat switch render settled stamps). Two
+ * transitions animate: «телеграф отбил» — a server ✓ replaces the
+ * optimistic «отправляется» row the user has just seen (the
+ * prototype inserts the ack tick with `.anim`, chats.html §7
+ * sendMessage) — and the in-place ✓ → ✓✓ flip when a read watermark
+ * (direct `peerReadUpToSeq` or group `othersReadUpToSeq`) crosses
+ * the message (markRead swaps the tick the same way). The ack case
+ * rides `stampAnim`: MessageList remembers the ids rendered as LOCAL
+ * rows in the previous committed render (`localIdsRef`, rewritten in
+ * a post-commit effect — no render-phase writes), so a fresh FeedRow
+ * whose id just graduated from the optimistic row mounts WITH the
+ * animation, while a message that was never shown locally stays
+ * quiet. The flip is detected inside the Tick itself by comparing
+ * `read` with the previous render — a one-shot render-phase latch
+ * (idempotent under StrictMode double-render: both passes converge
+ * to the same output). A mass watermark jump re-renders EXACTLY the
+ * flipped rows once (memo-blocked rows render zero extra times — no
+ * avalanche); the spent `.anim` marker stays in the class list so
+ * the animation never replays on unrelated re-renders.
  */
 import { memo, useEffect, useRef } from 'react'
 import type { Message } from '../../api/chats'
@@ -154,25 +177,47 @@ export interface MessageListProps {
  * Engraved delivery stamp of a server-confirmed outgoing message
  * (design-tokens §5): dark «гравированные» strokes with the white
  * emboss edge ride the prototype SVG; the SC-002 text lives in the
- * `title` (ui-behavior §1). The `.anim` tickStamp on a status CHANGE
- * lands with T023.
+ * `title` (ui-behavior §1). T023: the `.anim` tickStamp plays when
+ * the stamp of an already displayed row CHANGES — on mount only for
+ * an ack that replaced a local optimistic row (`animate`), and
+ * in-place when `read` flips ✓ → ✓✓ (a watermark advance). The
+ * status-keyed span remounts on the flip so the fresh stamp of the
+ * NEW status carries the animation; the spent marker then persists
+ * in the class list (a stable className never restarts the CSS
+ * animation) and a first paint of history stays settled.
  */
-function Tick({ read }: { read: boolean }) {
-  if (read) {
-    return (
-      <span className="tick read" title="Прочитано">
+function Tick({ read, animate = false }: { read: boolean; animate?: boolean }) {
+  const stampedRef = useRef(animate)
+  const prevReadRef = useRef(read)
+  // One-shot latches (render-phase but idempotent: once set they
+  // never reset, so a StrictMode double render converges to the
+  // same output — no setState, no extra render pass, one render per
+  // flipped row even on a mass watermark jump).
+  if (animate) {
+    stampedRef.current = true
+  }
+  if (prevReadRef.current !== read) {
+    prevReadRef.current = read
+    stampedRef.current = true
+  }
+  const variant = read ? 'read' : 'dlv'
+  const title = read ? 'Прочитано' : 'Доставлено'
+  return (
+    <span
+      key={variant}
+      className={stampedRef.current ? `tick ${variant} anim` : `tick ${variant}`}
+      title={title}
+    >
+      {read ? (
         <svg viewBox="0 0 30 16" aria-hidden="true">
           <path d="M2.5 8.5l4.5 4.5L19.5 3.5" />
           <path d="M11 8.5l4.5 4.5L28 3.5" />
         </svg>
-      </span>
-    )
-  }
-  return (
-    <span className="tick dlv" title="Доставлено">
-      <svg viewBox="0 0 24 16" aria-hidden="true">
-        <path d="M6 8.5l4.5 4.5L23 3.5" />
-      </svg>
+      ) : (
+        <svg viewBox="0 0 24 16" aria-hidden="true">
+          <path d="M6 8.5l4.5 4.5L23 3.5" />
+        </svg>
+      )}
     </span>
   )
 }
@@ -186,6 +231,8 @@ interface FeedRowProps {
   readonly sender: string | undefined
   /** Avatar derivation source of the row (username or stable id). */
   readonly avatarSource: string
+  /** The ack transition animates the fresh ✓ (T023, FR-018). */
+  readonly stampAnim: boolean
 }
 
 const FeedRow = memo(function FeedRow({
@@ -194,6 +241,7 @@ const FeedRow = memo(function FeedRow({
   read,
   sender,
   avatarSource,
+  stampAnim,
 }: FeedRowProps) {
   return (
     <li className={outgoing ? 'message outgoing msg me' : 'message incoming msg them'}>
@@ -203,7 +251,7 @@ const FeedRow = memo(function FeedRow({
         <div className="b-text message-text">{message.text}</div>
         {outgoing && (
           <div className="b-time">
-            <Tick read={read} />
+            <Tick read={read} animate={stampAnim} />
           </div>
         )}
       </div>
@@ -324,6 +372,21 @@ export function MessageList({
   const activePending = pending.filter((entry) => !confirmedIds.has(entry.clientMessageId))
   const activeOutbox = outbox.filter((entry) => !confirmedIds.has(entry.clientMessageId))
 
+  // T023 ack tracking: ids rendered as LOCAL rows in the previous
+  // committed render. A server message with such an id has just
+  // replaced the optimistic «отправляется»/«не отправлено» row the
+  // user saw — its fresh ✓ stamp mounts WITH the tickStamp
+  // (prototype sendMessage ack). Written only in a post-commit
+  // effect (never during render): a chat switch back, a pagination
+  // prepend or a refetch stays quiet because their ids were never
+  // locally displayed here.
+  const localIdsRef = useRef<ReadonlySet<string>>(new Set())
+  useEffect(() => {
+    localIdsRef.current = new Set(
+      [...activePending, ...activeOutbox].map((entry) => entry.clientMessageId),
+    )
+  })
+
   // Group variant (T038): the roster presence discriminates; sender
   // attribution resolves through it, and ✓✓ follows the group
   // watermark instead of the direct-chat `peerReadUpToSeq`.
@@ -367,6 +430,7 @@ export function MessageList({
             read={read}
             sender={sender}
             avatarSource={outgoing ? meAvatarSource : incomingAvatarSource(message.senderId)}
+            stampAnim={localIdsRef.current.has(message.id)}
           />
         )
       })}
