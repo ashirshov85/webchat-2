@@ -40,7 +40,7 @@ export function RegisterPage() {
 
         <AuthBadge />
 
-        <h1 className="auth-brand-title">STEAMCHAT</h1>
+        <h1 className="auth-brand-title">Aethergram</h1>
         <div className="auth-brand-sub">
           {'CONNECT'}
           <span className="auth-brand-sub-sep">·</span>
