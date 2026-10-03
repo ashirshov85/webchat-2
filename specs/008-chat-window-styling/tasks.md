@@ -75,7 +75,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 
 ### Implementation for User Story 1
 
-- [ ] T018 [US1] Перестроить `frontend/src/chats/pages/MessengerPage.tsx` в корпус-«машину»: grid сайдбар+окно чата, классы machine/panel, пустое состояние «Чат не выбран»; существующие хуки/роутинг без изменений (FR-001, FR-004)
+- [X] T018 [US1] Перестроить `frontend/src/chats/pages/MessengerPage.tsx` в корпус-«машину»: grid сайдбар+окно чата, классы machine/panel, пустое состояние «Чат не выбран»; существующие хуки/роутинг без изменений (FR-001, FR-004)
 - [ ] T019 [P] [US1] Перестилизовать `frontend/src/chats/components/ChatListPanel.tsx`: строка поиска и список по прототипу (табы пока остаются, рестайлинг), сохранить хук `chat-panel-search` (research §C) — проверка: тесты T017 зелёные; полноэкранный снимок сайдбара — T039
 - [ ] T020 [P] [US1] Перестроить `frontend/src/chats/components/ChatListItem.tsx`: аватар (Avatar), имя с усечением+title-подсказкой, превью «Вы: »/«Имя: »/«Нет сообщений», время последнего сообщения ЧЧ:ММ (пусто без сообщений), бейдж непрочитанных с капом «99+» с 100, метка «заблокирован»; порядок не меняется (FR-008, FR-009)
 - [ ] T021 [P] [US1] Создать `frontend/src/chats/components/ChatHeader.tsx`: аватар, имя, базовый статус на существующих данных (presence-лампа и members-tip — US3/US4) (FR-016 базовая часть)

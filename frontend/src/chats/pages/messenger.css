@@ -1,0 +1,60 @@
+/* Поверхности корпуса-«машины» (feature 008, US1, T018): сайдбар и окно
+   чата — панели .sidebar/.chat каркаса .machine > .frame-body из
+   theme/machine.css. Дословная проекция разделов «5. САЙДБАР» и «7. ЧАТ»
+   (каркасные строки) прототипа specs/008-chat-window-styling/design/chats.html;
+   при расхождениях побеждает прототип (FR-001). Норматив констант —
+   contracts/design-tokens.md §3 (панели, паттерны); переменные-токены —
+   theme/tokens.css (FR-002). Подключается страницей chats/pages/MessengerPage.tsx.
+
+   Внутренности поверхностей приходят своими задачами US1: строка поиска и
+   список — ChatListPanel (T019/T020), заголовок — ChatHeader (T021), лента и
+   композер — MessageList/MessageInput (T022–T024); адаптив ≤900/≤480px и
+   burger/drawer — T065–T067 (design-tokens §9).
+
+   Корпус — оболочка приложения: пока .machine на странице, служебная колонка
+   #root (наследие auth-страниц, index.css) и заголовок <main> раскрываются/
+   скрываются — auth-экран (position:fixed) и страницы настроек не затронуты
+   (plan.md Structure Decision). */
+
+body:has(.machine) #root {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+body:has(.machine) main > h1 {
+  display: none;
+}
+
+/* ============ САЙДБАР (фон — основной паттерн, прототип §5) ============ */
+.sidebar {
+  width: 320px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 10px;
+  overflow-y: auto;
+  background-color: #15110c;
+  background-image: linear-gradient(rgba(10, 8, 5, 0.3), rgba(10, 8, 5, 0.3)), var(--pat-main);
+  background-size:
+    auto,
+    280px 280px;
+}
+
+/* ============ ОКНО ЧАТА (каркас, прототип §7) ============ */
+.chat {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ============ ПУСТЫЕ СОСТОЯНИЯ (предъединение T059) ============ */
+.messenger-empty {
+  margin: 0;
+  padding: 24px 12px;
+  text-align: center;
+  font: italic 13px var(--font-body);
+  color: var(--muted-2);
+}

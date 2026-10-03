@@ -1,8 +1,13 @@
 /**
- * Messenger page (feature 004, T025): the application shell of the
- * messenger — the chats/contacts panel on the left and the open dialog
- * window on the right. Mounted on the protected route `/` (with the
- * `/chat` alias — the SSO landing path from feature 003).
+ * Messenger page: the application shell of the messenger — the
+ * «Aethergram» corpus-«machine» (feature 008, US1, T018; FR-001,
+ * FR-004): the `.machine > .frame-body` grid carries the chats/contacts
+ * sidebar and the open dialog window as its `.panel` surfaces
+ * (`.sidebar` / `.chat`, design-tokens §3) — the 004–007 wiring below
+ * (hooks, routing, actions) is unchanged. Mounted on the protected
+ * route `/` (with the `/chat` alias — the SSO landing path from
+ * feature 003). Without an open chat the window carries the US1 empty
+ * state «Чат не выбран» (FR-032 — the prototype is normative, FR-001).
  *
  * T036 wires the dialog window to the outbox (FR-012): every send goes
  * through `useOutbox`, so unsent messages survive reloads and render
@@ -138,6 +143,7 @@ import type { GroupStatus } from '../../groups/hooks/useGroup'
 import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
 import { PresenceIndicator } from '../../presence/PresenceIndicator'
+import './messenger.css'
 
 /** The open direct dialog: everything the header actions need (T060). */
 interface DirectChatView {
@@ -889,136 +895,138 @@ export function MessengerPage() {
   )
 
   return (
-    <div className="messenger">
-      <aside className="messenger-panel" aria-label="Чаты и контакты">
-        <QueueOverflowBanner userId={currentUserId} />
-        <SyncIndicator syncing={syncing} />
-        {createGroupOpen ? (
-          <CreateGroupDialog
-            onCreated={handleGroupCreated}
-            onCancel={() => {
-              setCreateGroupOpen(false)
-            }}
-          />
-        ) : (
-          <div className="panel-actions">
-            <button
-              type="button"
-              className="panel-create-group"
-              onClick={() => {
-                setCreateGroupOpen(true)
+    <div className="machine">
+      <div className="frame-body">
+        <aside className="sidebar panel" aria-label="Чаты и контакты">
+          <QueueOverflowBanner userId={currentUserId} />
+          <SyncIndicator syncing={syncing} />
+          {createGroupOpen ? (
+            <CreateGroupDialog
+              onCreated={handleGroupCreated}
+              onCancel={() => {
+                setCreateGroupOpen(false)
               }}
-            >
-              Создать группу
-            </button>
-          </div>
-        )}
-        <ChatListPanel
-          chats={chats}
-          status={chatListStatus}
-          error={chatListError}
-          onReload={reloadChatList}
-          activeChatId={activeChatId}
-          onSelectChat={handleSelectChat}
-          currentUserId={currentUserId}
-          contacts={contactsSection}
-        />
-      </aside>
-      <section className="messenger-dialog" aria-label="Окно диалога">
-        {dialogOpen && activeChat !== null ? (
-          <>
-            <header className="dialog-header">
-              <DialogHeader
-                chat={activeChat}
-                group={activeGroup}
-                groupInfoOpen={groupInfoOpen}
-                menuOpen={menuOpen}
-                onToggleGroupInfo={() => {
-                  setGroupInfoOpen((open) => !open)
+            />
+          ) : (
+            <div className="panel-actions">
+              <button
+                type="button"
+                className="panel-create-group"
+                onClick={() => {
+                  setCreateGroupOpen(true)
                 }}
-                onToggleMenu={() => {
-                  setMenuOpen((open) => !open)
-                }}
-                onDeleteChat={() => {
-                  setMenuOpen(false)
-                  setPendingAction('delete-chat')
-                }}
-                onToggleBlock={() => {
-                  setMenuOpen(false)
-                  setPendingAction(
-                    activeChat.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block',
-                  )
-                }}
-              />
-            </header>
-
-            {activeChat.kind === 'group' && groupInfoOpen && (
-              <GroupCard
-                group={activeGroup}
-                chatId={activeChat.chatId}
-                status={activeGroupStatus}
-                error={activeGroupError}
-                currentUserId={currentUserId ?? ''}
-                onReload={reloadActiveGroup}
-                rosterActions={rosterActions}
-                onMembersAdded={handleMembersAdded}
-                onUpdated={handleGroupUpdated}
-                onLeft={handleLeftGroup}
-                onDeleted={handleDeletedGroup}
-              />
-            )}
-
-            {actionError !== null && (
-              <div className="dialog-action-error">
-                <ErrorBanner
-                  error={actionError}
-                  onDismiss={() => {
-                    setActionError(null)
+              >
+                Создать группу
+              </button>
+            </div>
+          )}
+          <ChatListPanel
+            chats={chats}
+            status={chatListStatus}
+            error={chatListError}
+            onReload={reloadChatList}
+            activeChatId={activeChatId}
+            onSelectChat={handleSelectChat}
+            currentUserId={currentUserId}
+            contacts={contactsSection}
+          />
+        </aside>
+        <section className="chat panel" aria-label="Окно диалога">
+          {dialogOpen && activeChat !== null ? (
+            <>
+              <header className="dialog-header">
+                <DialogHeader
+                  chat={activeChat}
+                  group={activeGroup}
+                  groupInfoOpen={groupInfoOpen}
+                  menuOpen={menuOpen}
+                  onToggleGroupInfo={() => {
+                    setGroupInfoOpen((open) => !open)
+                  }}
+                  onToggleMenu={() => {
+                    setMenuOpen((open) => !open)
+                  }}
+                  onDeleteChat={() => {
+                    setMenuOpen(false)
+                    setPendingAction('delete-chat')
+                  }}
+                  onToggleBlock={() => {
+                    setMenuOpen(false)
+                    setPendingAction(
+                      activeChat.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block',
+                    )
                   }}
                 />
-              </div>
-            )}
+              </header>
 
-            {confirmation !== null && pendingAction !== null && (
-              <ConfirmDialog
-                confirmation={confirmation}
-                pending={actionPending}
-                onAccept={
-                  pendingAction === 'delete-chat'
-                    ? handleConfirmDeleteChat
-                    : handleConfirmBlockToggle
-                }
-                onCancel={() => {
-                  setPendingAction(null)
-                }}
+              {activeChat.kind === 'group' && groupInfoOpen && (
+                <GroupCard
+                  group={activeGroup}
+                  chatId={activeChat.chatId}
+                  status={activeGroupStatus}
+                  error={activeGroupError}
+                  currentUserId={currentUserId ?? ''}
+                  onReload={reloadActiveGroup}
+                  rosterActions={rosterActions}
+                  onMembersAdded={handleMembersAdded}
+                  onUpdated={handleGroupUpdated}
+                  onLeft={handleLeftGroup}
+                  onDeleted={handleDeletedGroup}
+                />
+              )}
+
+              {actionError !== null && (
+                <div className="dialog-action-error">
+                  <ErrorBanner
+                    error={actionError}
+                    onDismiss={() => {
+                      setActionError(null)
+                    }}
+                  />
+                </div>
+              )}
+
+              {confirmation !== null && pendingAction !== null && (
+                <ConfirmDialog
+                  confirmation={confirmation}
+                  pending={actionPending}
+                  onAccept={
+                    pendingAction === 'delete-chat'
+                      ? handleConfirmDeleteChat
+                      : handleConfirmBlockToggle
+                  }
+                  onCancel={() => {
+                    setPendingAction(null)
+                  }}
+                />
+              )}
+
+              {status === 'error' && <ErrorBanner error={error} onDismiss={reload} />}
+              {composerError !== null && (
+                <p className="messenger-composer-error" role="alert">
+                  {composerError}
+                </p>
+              )}
+              <MessageList
+                messages={messages}
+                currentUserId={currentUserId ?? ''}
+                outbox={chatOutbox}
+                onRetry={handleRetry}
+                onRemove={handleRemove}
+                hasOlder={hasOlder}
+                loadingOlder={loadingOlder}
+                onLoadOlder={loadOlder}
+                peerReadUpToSeq={peerReadUpToSeq}
+                members={activeGroupMembers}
+                othersReadUpToSeq={othersReadUpToSeq}
               />
-            )}
-
-            {status === 'error' && <ErrorBanner error={error} onDismiss={reload} />}
-            {composerError !== null && (
-              <p className="messenger-composer-error" role="alert">
-                {composerError}
-              </p>
-            )}
-            <MessageList
-              messages={messages}
-              currentUserId={currentUserId ?? ''}
-              outbox={chatOutbox}
-              onRetry={handleRetry}
-              onRemove={handleRemove}
-              hasOlder={hasOlder}
-              loadingOlder={loadingOlder}
-              onLoadOlder={loadOlder}
-              peerReadUpToSeq={peerReadUpToSeq}
-              members={activeGroupMembers}
-              othersReadUpToSeq={othersReadUpToSeq}
-            />
-            <MessageInput onSend={handleSend} disabled={currentUserId === null} />
-          </>
-        ) : (
-          <p className="messenger-empty">Выберите чат, чтобы начать общение</p>
-        )}
-      </section>
+              <MessageInput onSend={handleSend} disabled={currentUserId === null} />
+            </>
+          ) : (
+            <p className="messenger-empty">Чат не выбран</p>
+          )}
+        </section>
+      </div>
     </div>
   )
 }
