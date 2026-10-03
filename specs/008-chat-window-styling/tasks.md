@@ -69,7 +69,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 
 ### Tests for User Story 1
 
-- [ ] T015 [P] [US1] Настроить Playwright-инфраструктуру `frontend/tests/visual/`: `playwright.config.ts` (Chromium, вьюпорты 1440×900 / 900×700 / 480×800, `maxDiffPixelRatio ≈ 0.02`), детерминированная подача fixture-данных (данные прототипа; способ — тестовый режим/фикстуры, research §B)
+- [X] T015 [P] [US1] Настроить Playwright-инфраструктуру `frontend/tests/visual/`: `playwright.config.ts` (Chromium, вьюпорты 1440×900 / 900×700 / 480×800, `maxDiffPixelRatio ≈ 0.02`), детерминированная подача fixture-данных (данные прототипа; способ — тестовый режим/фикстуры, research §B)
 - [ ] T016 [US1] Снять эталонные baseline-снимки с `specs/008-chat-window-styling/design/chats.html` в `frontend/tests/visual/` (зависит от T015): (а) US1-регионы — список чатов БЕЗ верхней строки табов/меню (clip-регион), заголовок/лента/композер личного чата, групповой чат; (б) полноэкранные эталоны US2+ — сайдбар с главным меню (без табов), открытое главное меню, модали «Контакты»/«Мой профиль»/создание группы, контекстные меню, тост, burger-drawer 900×700, окно чата 480×800
 - [ ] T017 [P] [US1] Адаптировать существующие тесты `frontend/src/chats/pages/__tests__/` и `frontend/src/chats/components/__tests__/` под новые классы-хуки прототипа без изменения поведенческих ожиданий (FR-034, SC-002; тексты «отправляется»/«не отправлено»/«Повторить»/«Удалить» сохраняются)
 

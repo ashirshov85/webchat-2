@@ -3,3 +3,4 @@ dist
 coverage
 pnpm-lock.yaml
 src/api/schema.d.ts
+tests/visual/test-results
