@@ -640,3 +640,109 @@ describe('useChatMessages offline read watermark (feature 005, T034, sync-protoc
     })
   })
 })
+
+describe('useChatMessages read-mark race on chat switch (T040, defect 004 live-validation)', () => {
+  it("does not POST the previous chat's max seq against the new chat (new last_seq < old seq → 400 invalid_up_to_seq)", async () => {
+    installStream()
+    mockedListMessages
+      .mockResolvedValueOnce(page([makeMessage('chat-1', 'a-1', 100)]))
+      .mockResolvedValueOnce(page([makeMessage('chat-2', 'b-1', 50)]))
+    const rendered = mountChatMessages('chat-1', 'user-1')
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-1', 100)
+    })
+
+    // The switch commit: the read-mark scheduler still sees chat-1's
+    // messages and peer (the state resets land on the NEXT render) —
+    // the stale max seq 100 must never be sent against chat-2.
+    rendered.rerender('chat-2')
+    expect(mockedMarkChatRead).not.toHaveBeenCalledWith('chat-2', expect.anything())
+
+    await waitFor(() => {
+      expect(rendered.result.current.messages.map((m) => m.id)).toEqual(['b-1'])
+    })
+    // The new chat's OWN displayed incoming message is marked normally.
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-2', 50)
+    })
+    for (const [chatId, seq] of mockedMarkChatRead.mock.calls) {
+      if (chatId === 'chat-2') {
+        expect(seq).toBeLessThanOrEqual(50)
+      }
+    }
+  })
+
+  it("does not advance the new chat's watermark before its own messages are shown (new last_seq ≥ old seq → quiet erroneous jump)", async () => {
+    installStream()
+    let resolveBPage!: (value: MessagePage) => void
+    mockedListMessages
+      .mockResolvedValueOnce(page([makeMessage('chat-1', 'a-1', 100)]))
+      .mockReturnValueOnce(
+        new Promise<MessagePage>((resolve) => {
+          resolveBPage = resolve
+        }),
+      )
+    const rendered = mountChatMessages('chat-1', 'user-1')
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-1', 100)
+    })
+
+    // chat-2's history is still in flight: nothing of chat-2 has been
+    // displayed yet, so №17 must not fire for it at all — not with the
+    // old chat's seq 100 (premature ✓✓ / fading badge), not with
+    // anything else.
+    rendered.rerender('chat-2')
+    expect(mockedMarkChatRead).not.toHaveBeenCalledWith('chat-2', expect.anything())
+
+    await act(async () => {
+      resolveBPage(page([makeMessage('chat-2', 'b-1', 200)]))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(rendered.result.current.messages.map((m) => m.id)).toEqual(['b-1'])
+    })
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-2', 200)
+    })
+    expect(mockedMarkChatRead).not.toHaveBeenCalledWith('chat-2', 100)
+  })
+
+  it('a re-switch back inside the 500 ms throttle window sends no foreign seq either', async () => {
+    installStream()
+    let resolveBPage!: (value: MessagePage) => void
+    mockedListMessages
+      .mockResolvedValueOnce(page([makeMessage('chat-1', 'a-1', 100)]))
+      .mockReturnValueOnce(
+        new Promise<MessagePage>((resolve) => {
+          resolveBPage = resolve
+        }),
+      )
+      .mockResolvedValueOnce(page([makeMessage('chat-1', 'a-1', 100)]))
+    const rendered = mountChatMessages('chat-1', 'user-1')
+    await waitFor(() => {
+      expect(mockedMarkChatRead).toHaveBeenCalledWith('chat-1', 100)
+    })
+
+    // A→B→A well inside the throttle window: every №17 of the sequence
+    // must belong to chat-1 and never exceed its own displayed seq.
+    rendered.rerender('chat-2')
+    rendered.rerender('chat-1')
+
+    // chat-2's page resolves only now — stale for the reopened chat-1,
+    // and its seq 500 is foreign to every open chat.
+    await act(async () => {
+      resolveBPage(page([makeMessage('chat-2', 'b-1', 500)], 400))
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(rendered.result.current.messages.map((m) => m.id)).toEqual(['a-1'])
+    })
+
+    for (const [chatId, seq] of mockedMarkChatRead.mock.calls) {
+      expect(chatId).toBe('chat-1')
+      expect(seq).toBeLessThanOrEqual(100)
+    }
+  })
+})
