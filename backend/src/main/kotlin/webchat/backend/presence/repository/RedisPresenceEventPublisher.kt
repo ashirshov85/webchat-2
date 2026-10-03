@@ -19,20 +19,21 @@ import java.util.UUID
  * the established T013 seam).
  *
  * The adapter owns exactly the two presence-specific concerns the
- * transport must stay agnostic of:
+ * transport stays agnostic of:
  *  * the WIRE SERIALIZATION of the port's [PresenceUpdatedEvent] — the
  *    exact `userId`/`status`/`rev` field set with the LOWER-CASE
  *    `online|offline` values of the openapi `PresenceUpdatedEvent`
  *    schema (T016's №36 projection discipline);
- *  * the FR-009 observability legs of T010 — ONE
+ *  * the FR-009 observability leg of T010 — ONE
  *    `webchat_presence_events_published_total{status}` increment per
  *    PUBLISHED transition (per transition, never per observer: the
  *    counter counts publications, and the §Load audience-size
- *    estimator of plan.md divides by it) and ONE
- *    `webchat_realtime_push_seconds{event=presence.updated,
- *    stage=publish}` sample around the whole fan-out — the SC-001
- *    «transition → frames out» latency, separable from the messaging
- *    frames the same timer family carries untagged.
+ *    estimator of plan.md divides by it). The
+ *    `webchat_realtime_push_seconds{event=presence.updated}` samples
+ *    of the SAME transition are recorded by the transport itself — one
+ *    per observer envelope on the publish leg and one per local SSE
+ *    dispatch on the dispatch leg (the T036 exporter discipline: the
+ *    whole timer family shares the `event`+`stage` tag keys).
  *
  * Failure etiquette (the port contract): the store's CAS has ALREADY
  * made the transition durable when this runs, and the channel is
@@ -40,8 +41,7 @@ import java.util.UUID
  * single envelope publish (a dead transport warns with ids only,
  * constitution V, and never re-sends), so this adapter never throws
  * either: clients converge via the №36 snapshot refetch by max(rev)
- * (FR-003, constitution III). The sample stops in a `finally` so the
- * timer stays exact even on an unexpected leg failure.
+ * (FR-003, constitution III).
  */
 @Component
 class RedisPresenceEventPublisher(
@@ -62,12 +62,7 @@ class RedisPresenceEventPublisher(
     ) {
         if (audience.isEmpty()) return
         presenceMetrics.countEventPublished(event.status)
-        val push = presenceMetrics.startPush()
-        try {
-            realtimePublisher.fanoutPresenceUpdated(audience, payloadOf(event))
-        } finally {
-            push.stop(PresenceMetrics.PushStage.PUBLISH)
-        }
+        realtimePublisher.fanoutPresenceUpdated(audience, payloadOf(event))
     }
 
     /**

@@ -1,7 +1,17 @@
 # 007 tasks.md T003: tightened presence windows for the IT profile —
 # SC-003 budget must not flake on poller slack, and registrations must not
 # expire mid-scenario longer than TTL; read by T011/T023/T026
+#
+# T036 (scheduler ownership): the IT JVM caches many Spring contexts
+# against ONE shared Redis; running this scheduler in every cached
+# context would turn every due offq/watch entry into a 50/50 race
+# between pollers for the counter increments the presence ITs assert.
+# The pollers are therefore OFF for every test context except the
+# presence context, where PresenceTestSupport re-enables them — exactly
+# ONE poller owner per test JVM (production always runs them: the
+# conditional defaults to TRUE).
 presence:
+  poller-enabled: false
   ttl: 3s
   hysteresis: 2s
   heartbeat-interval: 1s

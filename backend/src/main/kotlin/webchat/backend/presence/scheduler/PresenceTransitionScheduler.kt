@@ -1,6 +1,7 @@
 package webchat.backend.presence.scheduler
 
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import webchat.backend.presence.PresenceMetrics
@@ -59,7 +60,22 @@ import java.util.UUID
  * poller to this very scheduler file (plan.md Project Structure): the
  * two pollers share the tick cadence and the idempotent-CAS etiquette,
  * but drain their own trigger ZSET.
+ *
+ * TEST-JVM OWNERSHIP (T036): production always runs this bean (the
+ * conditional defaults to TRUE and no profile sets it), but the IT
+ * suite caches MANY Spring contexts in one JVM against ONE shared
+ * Redis — every cached context would run its own poller pair over the
+ * same trigger ZSETs, and the replica-competition design (may compete,
+ * constitution II) becomes a 50/50 race for the very counter
+ * increments the presence ITs assert (the suppressions of T023/T026,
+ * the four §5 families of T036). The test profile therefore disables
+ * the pollers globally ([application-test.yml]) and
+ * [PresenceTestSupport][webchat.backend.presence.PresenceTestSupport]
+ * re-enables them for the presence context — exactly ONE poller owner
+ * per test JVM, the deterministic single-replica view the IT budgets
+ * assume.
  */
+@ConditionalOnProperty(prefix = "presence", name = ["poller-enabled"], havingValue = "true", matchIfMissing = true)
 @Component
 class PresenceTransitionScheduler(
     private val presenceStore: PresenceStore,

@@ -365,7 +365,7 @@ class RedisRealtimePublisher(
         try {
             val envelope = objectMapper.writeValueAsString(RealtimeEnvelope(event = eventName, data = payload))
             pubSub.publish(userChannel(toUserId), envelope)
-            push.stop(pushTimer(STAGE_PUBLISH))
+            push.stop(pushTimer(eventName, STAGE_PUBLISH))
         } catch (failure: Exception) {
             log.warn(
                 "realtime publish of a <{}> event to user <{}> failed; " +
@@ -392,7 +392,7 @@ class RedisRealtimePublisher(
         val userId = userIdOf(channel) ?: return
         val frame = incomingFrame(json) ?: return
         connectionRegistry.dispatch(userId, frame.eventName, frame.payload.toString())
-        push.stop(pushTimer(STAGE_DISPATCH))
+        push.stop(pushTimer(frame.eventName, STAGE_DISPATCH))
     }
 
     private fun userIdOf(channel: String): UUID? {
@@ -473,6 +473,7 @@ class RedisRealtimePublisher(
         /** research.md 004 §11 observability contract name (SC-005). */
         const val PUSH_SECONDS = "webchat_realtime_push_seconds"
 
+        const val TAG_EVENT = "event"
         const val TAG_STAGE = "stage"
 
         /**
@@ -489,13 +490,23 @@ class RedisRealtimePublisher(
      * the realtime fan-out legs of SC-005 — the outbound publish leg
      * (post-commit handoff → Redis PUBLISH) and the inbound dispatch leg
      * (channel receipt → the SSE frame written to every local session).
+     *
+     * T036 (presence-events.md 007 §5): every sample carries the frame's
+     * `event` value — the WHOLE family shares one tag key set
+     * (`event`+`stage`), which is what the Prometheus exporter requires
+     * of a name; the presence frames are therefore separable from the
+     * messaging/group frames WITHOUT a second metric pipe (FR-009).
      */
-    private fun pushTimer(stage: String): Timer =
+    private fun pushTimer(
+        event: String,
+        stage: String,
+    ): Timer =
         Timer
             .builder(PUSH_SECONDS)
             .description(
                 "Realtime push pipeline latency: the post-commit publish leg and the SSE frame dispatch leg (SC-005)",
-            ).tag(TAG_STAGE, stage)
+            ).tag(TAG_EVENT, event)
+            .tag(TAG_STAGE, stage)
             .register(meterRegistry)
 }
 

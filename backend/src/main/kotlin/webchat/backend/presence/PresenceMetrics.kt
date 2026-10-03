@@ -3,7 +3,6 @@ package webchat.backend.presence
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.Gauge
 import io.micrometer.core.instrument.MeterRegistry
-import io.micrometer.core.instrument.Timer
 import org.springframework.stereotype.Component
 import webchat.backend.presence.domain.port.PresencePublishedStatus
 import webchat.backend.presence.domain.port.PresenceStore
@@ -34,8 +33,13 @@ import webchat.backend.presence.domain.port.PresenceStore
  *    NOT a new pipe: the presence frames ride the EXISTING 004 push
  *    pipeline metric, tagged with the `presence.updated` №18 `event:`
  *    value so the publish/dispatch legs of the SC-001 delivery latency
- *    are separable from the messaging frames ([startPush], wired by the
- *    T017 adapter over RedisRealtimePublisher).
+ *    are separable from the messaging frames. The samples are recorded
+ *    by the transport itself ([RedisRealtimePublisher] tags every
+ *    `webchat_realtime_push_seconds` sample with the frame's `event` —
+ *    the T036 exporter discipline: the whole family shares one
+ *    `event`+`stage` tag key set, which the Prometheus registry
+ *    requires of a name), one per observer envelope on the publish leg
+ *    and one per local SSE dispatch on the dispatch leg.
  *
  * The names carry the Prometheus suffixes verbatim (`_total` is
  * idempotent for counters, `_seconds` is the timer base unit), so
@@ -86,14 +90,6 @@ class PresenceMetrics(
         hysteresisSuppressedTotal().increment()
     }
 
-    /**
-     * Starts a `webchat_realtime_push_seconds{event=presence.updated}`
-     * sample of the REUSED 004 push-pipeline timer; the caller stops it
-     * with [PresencePushSample.stop] on the leg it measured — the SC-001
-     * «transition → frame» latency signal of the T017 adapter.
-     */
-    fun startPush(): PresencePushSample = PresencePushSample(Timer.start(meterRegistry))
-
     private fun hysteresisSuppressedTotal(): Counter =
         Counter
             .builder(HYSTERESIS_SUPPRESSED_TOTAL)
@@ -102,48 +98,12 @@ class PresenceMetrics(
                     "returning registration (SC-002)",
             ).register(meterRegistry)
 
-    private fun pushTimer(stage: PushStage): Timer =
-        Timer
-            .builder(PUSH_SECONDS)
-            .description(
-                "Realtime push pipeline latency of the presence.updated frames: the post-commit publish " +
-                    "leg and the SSE frame dispatch leg (SC-001)",
-            ).tag(TAG_EVENT, EVENT_PRESENCE_UPDATED)
-            .tag(TAG_STAGE, stage.wireValue)
-            .register(meterRegistry)
-
-    /** A running `webchat_realtime_push_seconds{event=presence.updated}` measurement stopped exactly once. */
-    inner class PresencePushSample(
-        private val sample: Timer.Sample,
-    ) {
-        /** Stops the sample on the measured [stage] leg of the push pipeline. */
-        fun stop(stage: PushStage) {
-            sample.stop(pushTimer(stage))
-        }
-    }
-
-    /** The two timed legs of the reused 004 push pipeline (research 004 §11). */
-    enum class PushStage(
-        val wireValue: String,
-    ) {
-        PUBLISH("publish"),
-        DISPATCH("dispatch"),
-    }
-
     private companion object {
         // contracts/presence-events.md §5 / research.md §F names (FR-009, SC-008)
         const val EVENTS_PUBLISHED_TOTAL = "webchat_presence_events_published_total"
         const val HYSTERESIS_SUPPRESSED_TOTAL = "webchat_presence_hysteresis_suppressed_total"
         const val ONLINE_USERS = "webchat_presence_online_users"
 
-        /** research.md §F: the REUSED 004 push-pipeline timer (no new pipe). */
-        const val PUSH_SECONDS = "webchat_realtime_push_seconds"
-
-        /** contracts/presence-events.md §2: the №18 `event:` value of the presence frame. */
-        const val EVENT_PRESENCE_UPDATED = "presence.updated"
-
         const val TAG_STATUS = "status"
-        const val TAG_EVENT = "event"
-        const val TAG_STAGE = "stage"
     }
 }

@@ -122,6 +122,14 @@ class RedisPresenceEventPublisherTest {
         assertThat(publishedCountOf(STATUS_OFFLINE)).isEqualTo(1.0)
     }
 
+    /**
+     * T036 (presence-events.md §5): the transport itself records the
+     * presence push-pipeline samples — one
+     * `webchat_realtime_push_seconds{event=presence.updated,stage=publish}`
+     * per OBSERVER ENVELOPE of the fan-out (the same per-envelope
+     * discipline the messaging frames ride), so the series is separable
+     * from the messaging frames by its `event` tag alone.
+     */
     @Test
     fun `the publish leg records the presence push timer separably from messaging`() {
         publisher.fanoutPresenceUpdated(setOf(OBSERVER_ONE, OBSERVER_TWO), ONLINE_EVENT)
@@ -132,8 +140,9 @@ class RedisPresenceEventPublisherTest {
             }
         assertThat(presencePublish.map { it.count() })
             .overridingErrorMessage(
-                "one $METRIC_PUSH_SECONDS{event=presence.updated,stage=publish} sample per fan-out (SC-001)",
-            ).containsExactly(1L)
+                "one $METRIC_PUSH_SECONDS{event=presence.updated,stage=publish} sample per observer " +
+                    "envelope of the fan-out (SC-001)",
+            ).containsExactly(2L)
     }
 
     @Test

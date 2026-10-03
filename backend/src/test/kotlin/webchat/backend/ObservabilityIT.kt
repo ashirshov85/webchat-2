@@ -81,8 +81,8 @@ class ObservabilityIT(
         val ackCreatedBefore = current(ACK_COUNT, TAG_OUTCOME_CREATED)
         val ackExistingBefore = current(ACK_COUNT, TAG_OUTCOME_EXISTING)
         val dedupBefore = current(DEDUP_TOTAL)
-        val pushPublishBefore = current(PUSH_COUNT, TAG_STAGE_PUBLISH)
-        val pushDispatchBefore = current(PUSH_COUNT, TAG_STAGE_DISPATCH)
+        val pushPublishBefore = currentSummed(PUSH_COUNT, TAG_STAGE_PUBLISH)
+        val pushDispatchBefore = currentSummed(PUSH_COUNT, TAG_STAGE_DISPATCH)
         val readAdvancedBefore = current(READ_ADVANCED)
 
         openUserEvents(alice).use { aliceEvents ->
@@ -120,8 +120,8 @@ class ObservabilityIT(
         assertGrows(ackCreatedBefore, MINIMUM_ONE, ACK_COUNT, TAG_OUTCOME_CREATED)
         assertGrows(ackExistingBefore, MINIMUM_ONE, ACK_COUNT, TAG_OUTCOME_EXISTING)
         assertGrows(dedupBefore, MINIMUM_ONE, DEDUP_TOTAL)
-        assertGrows(pushPublishBefore, MINIMUM_TWO, PUSH_COUNT, TAG_STAGE_PUBLISH)
-        assertGrows(pushDispatchBefore, MINIMUM_ONE, PUSH_COUNT, TAG_STAGE_DISPATCH)
+        assertGrowsSummed(pushPublishBefore, MINIMUM_TWO, PUSH_COUNT, TAG_STAGE_PUBLISH)
+        assertGrowsSummed(pushDispatchBefore, MINIMUM_ONE, PUSH_COUNT, TAG_STAGE_DISPATCH)
         assertGrows(readAdvancedBefore, MINIMUM_ONE, READ_ADVANCED)
     }
 
@@ -292,6 +292,50 @@ class ObservabilityIT(
                         (wanted.isEmpty() || match.groupValues[SAMPLE_LABELS_GROUP].contains(wanted))
                 }
         return sample?.let { match -> match.groupValues[SAMPLE_VALUE_GROUP].toDouble() } ?: 0.0
+    }
+
+    /**
+     * The SUM of every sample of [sampleName] whose label set contains
+     * every [tags] entry: since T036 (presence-events.md 007 §5) the
+     * `webchat_realtime_push_seconds` family tags EVERY sample with the
+     * frame's `event` value, so one stage spans a series per event —
+     * the operator's per-stage total is the sum, and before/after sums
+     * keep the deltas exact.
+     */
+    private fun currentSummed(
+        sampleName: String,
+        vararg tags: String,
+    ): Double {
+        val wanted = tags.joinToString(separator = "")
+        return scrape()
+            .lineSequence()
+            .mapNotNull { line -> SAMPLE_PATTERN.matchEntire(line.trim()) }
+            .filter { match ->
+                match.groupValues[SAMPLE_NAME_GROUP] == sampleName &&
+                    (wanted.isEmpty() || match.groupValues[SAMPLE_LABELS_GROUP].contains(wanted))
+            }.sumOf { match -> match.groupValues[SAMPLE_VALUE_GROUP].toDouble() }
+    }
+
+    /** Awaits the scenario minimum growth of a summed multi-series sample (deltas, not absolutes). */
+    private fun assertGrowsSummed(
+        before: Double,
+        byAtLeast: Double,
+        sampleName: String,
+        vararg tags: String,
+    ) {
+        await().atMost(METER_WAIT).untilAsserted {
+            val now = currentSummed(sampleName, *tags)
+            assertThat(now - before)
+                .overridingErrorMessage(
+                    "SC-008: <%s{%s}> (summed) must grow by at least <%s> after the scenario " +
+                        "(before=<%s>, now=<%s>)",
+                    sampleName,
+                    tags.joinToString(separator = ","),
+                    byAtLeast,
+                    before,
+                    now,
+                ).isGreaterThanOrEqualTo(byAtLeast)
+        }
     }
 
     /** Awaits the scenario minimum growth of a sample (deltas, not absolutes). */

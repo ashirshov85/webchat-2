@@ -27,6 +27,18 @@ import webchat.backend.chats.MessagingTestSupport
  * context of the presence ITs away from the shared MessagingTestSupport
  * cache, so the 004–006 suites keep both the 15 s contract cadence and
  * their cached contexts.
+ *
+ * T036 (single poller owner): application-test.yml disables the
+ * presence transition pollers for EVERY test context of the JVM (many
+ * cached contexts would otherwise race their pollers on the ONE shared
+ * Redis for the very counters these ITs assert); THIS base re-enables
+ * them — the presence context is the ONE poller owner of the run, the
+ * deterministic single-replica view the IT budgets assume.
  */
-@TestPropertySource(properties = ["chats.realtime.heartbeat=500ms"])
+@TestPropertySource(
+    properties = [
+        "chats.realtime.heartbeat=500ms",
+        "presence.poller-enabled=true",
+    ],
+)
 abstract class PresenceTestSupport : MessagingTestSupport()
