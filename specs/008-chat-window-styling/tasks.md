@@ -70,7 +70,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 ### Tests for User Story 1
 
 - [ ] T015 [P] [US1] Настроить Playwright-инфраструктуру `frontend/tests/visual/`: `playwright.config.ts` (Chromium, вьюпорты 1440×900 / 900×700 / 480×800, `maxDiffPixelRatio ≈ 0.02`), детерминированная подача fixture-данных (данные прототипа; способ — тестовый режим/фикстуры, research §B)
-- [ ] T016 [US1] Снять эталонные baseline-снимки с `specs/008-chat-window-styling/design/chats.html` (список чатов; заголовок/лента/композер личного чата; групповой чат) в `frontend/tests/visual/` (зависит от T015)
+- [ ] T016 [US1] Снять эталонные baseline-снимки с `specs/008-chat-window-styling/design/chats.html` в `frontend/tests/visual/` (зависит от T015): (а) US1-регионы — список чатов БЕЗ верхней строки табов/меню (clip-регион), заголовок/лента/композер личного чата, групповой чат; (б) полноэкранные эталоны US2+ — сайдбар с главным меню (без табов), открытое главное меню, модали «Контакты»/«Мой профиль»/создание группы, контекстные меню, тост, burger-drawer 900×700, окно чата 480×800
 - [ ] T017 [P] [US1] Адаптировать существующие тесты `frontend/src/chats/pages/__tests__/` и `frontend/src/chats/components/__tests__/` под новые классы-хуки прототипа без изменения поведенческих ожиданий (FR-034, SC-002; тексты «отправляется»/«не отправлено»/«Повторить»/«Удалить» сохраняются)
 
 ### Implementation for User Story 1
@@ -83,7 +83,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 - [ ] T023 [US1] Оформить штампы доставки в `frontend/src/chats/components/MessageList.tsx`: ✓/✓✓ SVG «гравированные», анимация `tickStamp` только при смене статуса, массовое обновление без лавины перерисовок (FR-018, edge case)
 - [ ] T024 [P] [US1] Перестроить `frontend/src/chats/components/MessageInput.tsx`: золотая рама поля, кнопка «ОТПРАВИТЬ», отправка по Enter, фокус остаётся в поле (mousedown preventDefault на кнопке), существующий лимит длины 004 (FR-021)
 - [ ] T025 [US1] Проверить `prefers-reduced-motion` в `frontend/src/theme/machine.css` и на поверхностях US1: анимации (flick/pop/tickStamp/переходы) отключены, читаемость и статичные паттерны сохранены (US1-AS5, FR-004)
-- [ ] T026 [US1] Прогнать визуальную регрессию US1: снимки реализации списка чатов, личного и группового чата против baseline (T016) зелёные ≤ ~2% пикселей в `frontend/tests/visual/` (зависит от T015–T024; SC-001)
+- [ ] T026 [US1] Прогнать визуальную регрессию US1 по регионам T016(а) (верхняя строка сайдбара исключена: табы ещё стоят до T029, меню появится в T030) — зелёные ≤ ~2% пикселей в `frontend/tests/visual/`; полноэкранное сравнение сайдбара — в T039 (зависит от T015–T024; SC-001 в объёме US1)
 
 **Checkpoint**: US1 полностью функционален и независимо тестируем — MVP готов
 
@@ -112,7 +112,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 - [ ] T036 [P] [US2] Реализовать состояние заблокированного контакта в `frontend/src/chats/components/MessageInput.tsx`: поле и кнопка disabled + подсказка о блокировке (единственная блокировка ввода), разблокировка возвращает активность (FR-022, US2-AS5)
 - [ ] T037 [US2] Пустое состояние «Чат не выбран» в `frontend/src/chats/pages/MessengerPage.tsx` после удаления открытого чата/выхода из группы — без автоперехода (Clarification, edge case)
 - [ ] T038 [US2] Удалить `frontend/src/chats/components/ContactList.tsx` и `frontend/src/chats/components/UserSearchBox.tsx` (функции мигрированы в ContactsModal) вместе с их тестовыми файлами
-- [ ] T039 [US2] Добавить визуальные снимки US2 в `frontend/tests/visual/`: главное меню, модали «Контакты», «Мой профиль», создание группы (SC-001)
+- [ ] T039 [US2] Добавить визуальные снимки US2 в `frontend/tests/visual/` против полноэкранных baseline T016(б): сайдбар целиком (без табов, с меню), открытое главное меню, модали «Контакты», «Мой профиль», создание группы (SC-001)
 
 **Checkpoint**: US1 и US2 работают независимо; вся функциональность 004–007 достижима без табов
 
@@ -136,7 +136,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 - [ ] T044 [P] [US3] Добавить время ЧЧ:ММ в ножку каждого пузыря и разделители дат (formatDate) между сообщениями разных дней в `frontend/src/chats/components/MessageList.tsx` (FR-019)
 - [ ] T045 [US3] Гарантировать ровно один тост (~3 с) на каждую завершающуюся операцию во всех точках (контакты, профиль, группы, блокировки) — аудит вызовов useToast в `frontend/src/chats/` и `frontend/src/groups/` (FR-025, US3-AS4)
 - [ ] T046 [US3] Проверить позиционирование меню у края экрана (clamp, не обрезается), danger-пункты, порядок закрытия Esc сверху вниз: ctx-menu/members-tip → модаль → drawer в `frontend/src/ui/ContextMenu.tsx` и потребителях (FR-027, edge case)
-- [ ] T047 [US3] Добавить визуальные снимки US3 в `frontend/tests/visual/`: аватары с presence, лента с временем и разделителями дат, members-tip (SC-001)
+- [ ] T047 [US3] Добавить визуальные снимки US3 в `frontend/tests/visual/` против baseline T016(б): аватары с presence, лента с временем и разделителями дат, members-tip (SC-001)
 
 **Checkpoint**: US1–US3 независимо функциональны; облик соответствует прототипу
 
@@ -165,7 +165,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 - [ ] T057 [US4] Удалить `frontend/src/groups/components/GroupInfoPanel.tsx` и `LeaveDeleteControls.tsx` (заменены ChatGearMenu + модалями), переиспользовать MemberList/AddMembersPicker внутри модалей; обновить импорты в `frontend/src/chats/pages/MessengerPage.tsx`
 - [ ] T058 [P] [US4] Перестилизовать страницы настроек `frontend/src/settings/pages/PresenceSettingsPage.tsx` и `frontend/src/settings/pages/SecurityPage.tsx` в дизайн-систему; маршруты и функции без изменений (FR-031)
 - [ ] T059 [US4] Единый стиль пустых/загрузочных/ошибочных состояний: «Нет сообщений», «Ничего не найдено», «Диалогов пока нет», сбой загрузки, «Чат не выбран» — на токенах в `frontend/src/chats/components/` (FR-032)
-- [ ] T060 [US4] Добавить визуальные снимки US4 в `frontend/tests/visual/`: outbox-состояния, индикатор синхронизации, модали участников/редактирования группы, меню «шестерёнки» (SC-001)
+- [ ] T060 [US4] Добавить визуальные снимки US4 в `frontend/tests/visual/` против baseline T016(б): модали участников/редактирования группы, меню «шестерёнки» (SC-001). Outbox-состояния и индикатор синхронизации — baseline фиксируется по реализованным снимкам в дизайн-токенах (исключение: в статическом прототипе этих состояний нет)
 
 **Checkpoint**: Все истории US1–US4 независимо функциональны; функциональность 004–007 полностью сохранена
 
@@ -189,7 +189,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 - [ ] T065 [US5] Реализовать burger + drawer в `frontend/src/chats/pages/MessengerPage.tsx` и `frontend/src/theme/machine.css` (≤900px): sidebar fixed `min(320px, 85vw)`, transform -120% ↔ 0 (.3s), backdrop z-35, burger fixed 42px (FR-029, design-tokens §9)
 - [ ] T066 [US5] Обеспечить ≥901px отсутствие прокрутки страницы (`html,body{overflow:hidden}`, машина в окне) и адаптацию к visual viewport (слушатель `--vvh`/`--vvo` на body) в `frontend/src/theme/machine.css` и `frontend/src/chats/pages/MessengerPage.tsx`: композер над клавиатурой, лента сжимается (FR-029, research §H)
 - [ ] T067 [US5] Оформить ≤480px в `frontend/src/theme/machine.css` и `frontend/src/chats/components/`: компактная кнопка «ОТПРАВИТЬ», пузырь до 84% ширины ленты (US5-AS5, design-tokens §9)
-- [ ] T068 [US5] Добавить мобильные визуальные снимки в `frontend/tests/visual/`: открытый burger-drawer 900×700, окно чата 480×800 (SC-001, Clarification)
+- [ ] T068 [US5] Добавить мобильные визуальные снимки в `frontend/tests/visual/` против baseline T016(б): открытый burger-drawer 900×700, окно чата 480×800 (SC-001, Clarification)
 
 **Checkpoint**: Все истории US1–US5 независимо функциональны
 
@@ -199,10 +199,10 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 
 **Purpose**: Сквозные качества: производительность, клавиатура, чистота токенов, приёмка
 
-- [ ] T069 [P] Профилирование производительности на fixture-данных `frontend/tests/visual/` (SC-010/SC-011): лента 1000+ сообщений и список 200+ чатов — 60 fps, первый рендер чата ≤1 с (DevTools Performance / Playwright trace); при недостижении — отдельная задача виртуализации с обоснованием (research §G)
+- [ ] T069 [P] Профилирование производительности на fixture-данных `frontend/tests/visual/` (SC-010/SC-011): лента 1000+ сообщений и список 200+ чатов — 60 fps, первый рендер чата ≤1 с (DevTools Performance / Playwright trace); при недостижении — отдельная задача виртуализации с обоснованием (research §G); измерение — Chromium из T015 (SC-010/SC-011 требуют «на браузере матрицы FR-036» — одним из, что Chromium закрывает)
 - [ ] T070 [P] Приёмочный прогон «без мыши» по `frontend/src/ui/` и `frontend/src/chats/` (quickstart E4, SC-008): Tab/Enter/Space/Esc/стрелки по всем интерактивам, видимый focus-ring, возврат фокуса на инициатора после меню/модалей/drawer (FR-035)
 - [ ] T071 [P] Аудит токенов (FR-002): отсутствие литеральных визуальных констант вне `frontend/src/theme/tokens.css` (палитра/паттерны/шрифтовые роли) — data-model 1.1
-- [ ] T072 Прогнать валидацию quickstart.md целиком: сборка, lint, typecheck, test, test:visual, ручные сценарии A–E, браузерная матрица FR-036/SC-009, SC-006 (кириллица+латиница без «тофу»)
+- [ ] T072 Прогнать валидацию quickstart.md целиком: сборка, lint, typecheck, test, test:visual, ручные сценарии A–E, браузерная матрица FR-036/SC-009, SC-006 (кириллица+латиница без «тофу»); экспресс-проверка плавности ленты 1000+ и списка 200+ (SC-010/SC-011) в остальных браузерах матрицы FR-036 — ручная, без инструментального измерения
 - [ ] T073 Полная регрессия и контроль контрактов: `pnpm lint` + `pnpm typecheck` + `pnpm test` + `pnpm build` в frontend/; SC-003 — job contract (oasdiff) в CI без отличий, `pnpm generate:api` без diff
 
 ---
@@ -268,7 +268,7 @@ Task: "T024 [P] [US1] Перестроить frontend/src/chats/components/Messa
 1. Complete Phase 1: Setup (шрифты, Playwright, каталоги)
 2. Complete Phase 2: Foundational (токены, машина, UI-примитивы) — CRITICAL, блокирует всё
 3. Complete Phase 3: User Story 1 (рескин + визуальная регрессия)
-4. **STOP and VALIDATE**: SC-001 (≤ ~2% пикселей) + SC-002 (существующие сценарии) — независимо
+4. **STOP and VALIDATE**: SC-001 в объёме US1-регионов T016(а) + SC-002 (существующие сценарии) — независимо; полноэкранный SC-001 сайдбара — после US2 (T039)
 5. Deploy/demo если готово
 
 ### Incremental Delivery
