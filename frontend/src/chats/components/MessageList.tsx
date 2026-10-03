@@ -2,9 +2,10 @@
  * Dialog message list (feature 004, T026): renders the open chat's
  * messages in ascending `seq` order (US1-2). Outgoing messages (sent
  * by the current user) carry a delivery status — server-confirmed
- * entries render «доставлено ✓» (US1-3); optimistic entries passed via
- * `pending` render «отправляется» until the server acknowledges them.
- * Incoming messages never show check marks (US1-3).
+ * entries render the engraved ✓ tick «Доставлено» (US1-3, T022);
+ * optimistic entries passed via `pending` render «отправляется»
+ * until the server acknowledges them. Incoming messages never show
+ * check marks (US1-3).
  *
  * `pending` entries whose `clientMessageId` already matches a rendered
  * server message are skipped: the server copy wins (message.id =
@@ -22,9 +23,9 @@
  * own; the actions stay the same — manual retry by the same id is
  * still allowed (idempotency preserved). A record acknowledged by the
  * server (201/200 — its id is already among `messages`) is skipped:
- * the confirmed copy renders «доставлено ✓» instead. Outgoing from
- * another device arrives as a regular server message via the own SSE
- * stream and renders «доставлено ✓» immediately (US2-6).
+ * the confirmed copy renders the ✓ tick «Доставлено» instead.
+ * Outgoing from another device arrives as a regular server message
+ * via the own SSE stream and renders «Доставлено» immediately (US2-6).
  *
  * History pagination (US3, T039, FR-008): the list itself is the scroll
  * container; scrolling close to the top calls `onLoadOlder`, and the
@@ -33,8 +34,8 @@
  * empty state without errors.
  *
  * Read status (US4, T044, FR-010): outgoing messages with
- * `seq ≤ peerReadUpToSeq` render «прочитано ✓✓», the rest stay
- * «доставлено ✓». The watermark comes from ChatView and `chat.read`
+ * `seq ≤ peerReadUpToSeq` render the ✓✓ tick «Прочитано», the rest
+ * stay «Доставлено». The watermark comes from ChatView and `chat.read`
  * frames and is monotonic (US4-5) — a delivered message never loses
  * its second check mark. Incoming messages never show marks.
  *
@@ -45,21 +46,49 @@
  * marks. ✓✓ follows the group watermark `othersReadUpToSeq` =
  * MAX(last_read_seq) of the OTHER active members — it flips as soon
  * as ANY one of them has read (№13/№26): own messages with
- * `seq ≤ othersReadUpToSeq` render «прочитано ✓✓». The watermark is
+ * `seq ≤ othersReadUpToSeq` render «Прочитано». The watermark is
  * monotonic (max) — the hook holds the maximum, so a stale
  * `chat.read` frame or a reconnect refetch with a lower server
  * projection never rolls a rendered ✓✓ back (FR-012). Without a
  * roster the list stays the plain direct variant — no attribution,
  * `peerReadUpToSeq` drives ✓✓ (004 semantics untouched).
+ *
+ * «Aethergram» reskin (feature 008, US1, T022; FR-001, FR-018,
+ * research §C/§G): the rows ride the PROTOTYPE markup of
+ * design/chats.html §7 — `.msg.me/.them` rows carry the sender
+ * Avatar (34px, design-tokens §4) and a `.bubble` (`.b-text` +
+ * `.b-time` footer hosting the `.tick` stamps); outgoing bubbles are
+ * the gold plate (4px 12px 12px 12px), incoming — the dark panel
+ * (12px 4px 12px 12px) of design-tokens §5. The 004 test hooks
+ * (`message-list`, `message`+`outgoing/incoming`, `message-text`,
+ * `message-sender`, `message-status`, `message-retry/remove`,
+ * `message-history`) stay as wrappers of the prototype classes
+ * (FR-034); the SC-002 status texts «Доставлено»/«Прочитано» ride
+ * the tick `title` (ui-behavior §1). Avatar sources: own rows —
+ * `meUsername`, direct incoming — `peerUsername`, group incoming —
+ * the roster username (the №28 sender attribution); an unknown
+ * username falls back to the stable user id, keeping the color
+ * deterministic (FR-024). `React.memo` rows + `content-visibility:
+ * auto` (message-list.css) keep a 1000+ feed at 60 fps (SC-010,
+ * research §G); the `pop` entrance is transform/opacity-only and
+ * dies under prefers-reduced-motion (FR-004 via machine.css). The
+ * `tickStamp` animation on a status change lands with T023; the
+ * ЧЧ:ММ time and date dividers of the `.b-time` footer — with
+ * T044 (US3).
  */
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import type { Message } from '../../api/chats'
 import type { GroupMember } from '../../api/groups'
 import { QUEUE_OVERFLOW_ERROR_CODE } from '../outbox'
 import type { OutboxRecord } from '../outbox'
+import { Avatar } from '../../ui/Avatar'
+import './message-list.css'
 
 /** Distance from the top (px) that triggers an older-page request. */
 const TOP_LOAD_THRESHOLD = 48
+
+/** Feed avatar size — design-tokens §4 (лента 34px). */
+const FEED_AVATAR_SIZE = 34
 
 export interface PendingMessage {
   /** Client-generated UUID (FR-004) — becomes message.id on the server. */
@@ -72,6 +101,18 @@ export interface MessageListProps {
   readonly messages: readonly Message[]
   /** Current user id: senderId === currentUserId marks an outgoing message. */
   readonly currentUserId: string
+  /**
+   * Own username — the avatar source of every outgoing row (T022,
+   * FR-024). Falls back to `currentUserId` while unknown; the
+   * derivation stays deterministic either way.
+   */
+  readonly meUsername?: string
+  /**
+   * The PEER username of the open DIRECT dialog — the avatar source
+   * of incoming rows (T022, FR-024). Groups attribute through the
+   * №28 roster instead; the stable user id is the fallback.
+   */
+  readonly peerUsername?: string
   /** Optimistic outgoing entries not yet acknowledged by the server. */
   readonly pending?: readonly PendingMessage[]
   /** Outbox records of the open chat (T036): `sending`/`failed` entries. */
@@ -109,9 +150,132 @@ export interface MessageListProps {
   readonly othersReadUpToSeq?: number
 }
 
+/**
+ * Engraved delivery stamp of a server-confirmed outgoing message
+ * (design-tokens §5): dark «гравированные» strokes with the white
+ * emboss edge ride the prototype SVG; the SC-002 text lives in the
+ * `title` (ui-behavior §1). The `.anim` tickStamp on a status CHANGE
+ * lands with T023.
+ */
+function Tick({ read }: { read: boolean }) {
+  if (read) {
+    return (
+      <span className="tick read" title="Прочитано">
+        <svg viewBox="0 0 30 16" aria-hidden="true">
+          <path d="M2.5 8.5l4.5 4.5L19.5 3.5" />
+          <path d="M11 8.5l4.5 4.5L28 3.5" />
+        </svg>
+      </span>
+    )
+  }
+  return (
+    <span className="tick dlv" title="Доставлено">
+      <svg viewBox="0 0 24 16" aria-hidden="true">
+        <path d="M6 8.5l4.5 4.5L23 3.5" />
+      </svg>
+    </span>
+  )
+}
+
+/** One server-confirmed message row (memoized, research §G). */
+interface FeedRowProps {
+  readonly message: Message
+  readonly outgoing: boolean
+  readonly read: boolean
+  /** Group attribution of the sender (undefined — none). */
+  readonly sender: string | undefined
+  /** Avatar derivation source of the row (username or stable id). */
+  readonly avatarSource: string
+}
+
+const FeedRow = memo(function FeedRow({
+  message,
+  outgoing,
+  read,
+  sender,
+  avatarSource,
+}: FeedRowProps) {
+  return (
+    <li className={outgoing ? 'message outgoing msg me' : 'message incoming msg them'}>
+      <Avatar source={avatarSource} size={FEED_AVATAR_SIZE} />
+      <div className="bubble">
+        {sender !== undefined && <div className="sender message-sender">{sender}</div>}
+        <div className="b-text message-text">{message.text}</div>
+        {outgoing && (
+          <div className="b-time">
+            <Tick read={read} />
+          </div>
+        )}
+      </div>
+    </li>
+  )
+})
+
+/** One local outgoing row — optimistic `pending` or an outbox record. */
+interface LocalRowProps {
+  readonly clientMessageId: string
+  readonly text: string
+  readonly failed: boolean
+  /** Terminal-failure reason label (the plain or queue-overflow one). */
+  readonly failedReason: string
+  readonly avatarSource: string
+  readonly onRetry?: (clientMessageId: string) => void
+  readonly onRemove?: (clientMessageId: string) => void
+}
+
+const LocalRow = memo(function LocalRow({
+  clientMessageId,
+  text,
+  failed,
+  failedReason,
+  avatarSource,
+  onRetry,
+  onRemove,
+}: LocalRowProps) {
+  return (
+    <li className="message outgoing msg me">
+      <Avatar source={avatarSource} size={FEED_AVATAR_SIZE} />
+      <div className="bubble">
+        <div className="b-text message-text">{text}</div>
+        <div className="b-time">
+          {failed ? (
+            <>
+              <span className="message-status message-status-failed">{failedReason}</span>
+              <span className="message-actions">
+                <button
+                  type="button"
+                  className="message-retry"
+                  onClick={() => {
+                    onRetry?.(clientMessageId)
+                  }}
+                >
+                  Повторить
+                </button>
+                <button
+                  type="button"
+                  className="message-remove"
+                  onClick={() => {
+                    onRemove?.(clientMessageId)
+                  }}
+                >
+                  Удалить
+                </button>
+              </span>
+            </>
+          ) : (
+            <span className="message-status">отправляется</span>
+          )}
+        </div>
+      </div>
+    </li>
+  )
+})
+
 export function MessageList({
   messages,
   currentUserId,
+  meUsername,
+  peerUsername,
   pending = [],
   outbox = [],
   onRetry,
@@ -169,13 +333,19 @@ export function MessageList({
     : undefined
   const readUpToSeq = isGroup ? othersReadUpToSeq : peerReadUpToSeq
 
+  // Avatar sources (T022, FR-024): usernames wherever the surface
+  // knows them, the stable user id as the deterministic fallback.
+  const meAvatarSource = meUsername ?? currentUserId
+  const incomingAvatarSource = (senderId: string): string =>
+    senderNames?.get(senderId) ?? peerUsername ?? senderId
+
   if (messages.length === 0 && activePending.length === 0 && activeOutbox.length === 0) {
     return <p className="messenger-empty">Сообщений пока нет</p>
   }
 
   return (
     <ol
-      className="message-list"
+      className="message-list chat-scroll"
       aria-label="Сообщения диалога"
       ref={listRef}
       onScroll={handleScroll}
@@ -190,58 +360,41 @@ export function MessageList({
         const read = outgoing && message.seq <= readUpToSeq
         const sender = outgoing ? undefined : senderNames?.get(message.senderId)
         return (
-          <li key={message.id} className={outgoing ? 'message outgoing' : 'message incoming'}>
-            {sender !== undefined && <span className="message-sender">{sender}</span>}
-            <p className="message-text">{message.text}</p>
-            {outgoing && (
-              <span className={read ? 'message-status message-status-read' : 'message-status'}>
-                {read ? 'прочитано ✓✓' : 'доставлено ✓'}
-              </span>
-            )}
-          </li>
+          <FeedRow
+            key={message.id}
+            message={message}
+            outgoing={outgoing}
+            read={read}
+            sender={sender}
+            avatarSource={outgoing ? meAvatarSource : incomingAvatarSource(message.senderId)}
+          />
         )
       })}
       {activePending.map((entry) => (
-        <li key={`pending:${entry.clientMessageId}`} className="message outgoing">
-          <p className="message-text">{entry.text}</p>
-          <span className="message-status">отправляется</span>
-        </li>
+        <LocalRow
+          key={`pending:${entry.clientMessageId}`}
+          clientMessageId={entry.clientMessageId}
+          text={entry.text}
+          failed={false}
+          failedReason=""
+          avatarSource={meAvatarSource}
+        />
       ))}
       {activeOutbox.map((entry) => (
-        <li key={`outbox:${entry.clientMessageId}`} className="message outgoing">
-          <p className="message-text">{entry.text}</p>
-          {entry.state === 'failed' ? (
-            <>
-              <span className="message-status message-status-failed">
-                {entry.errorCode === QUEUE_OVERFLOW_ERROR_CODE
-                  ? 'не отправлено (переполнение очереди)'
-                  : 'не отправлено'}
-              </span>
-              <span className="message-actions">
-                <button
-                  type="button"
-                  className="message-retry"
-                  onClick={() => {
-                    onRetry?.(entry.clientMessageId)
-                  }}
-                >
-                  Повторить
-                </button>
-                <button
-                  type="button"
-                  className="message-remove"
-                  onClick={() => {
-                    onRemove?.(entry.clientMessageId)
-                  }}
-                >
-                  Удалить
-                </button>
-              </span>
-            </>
-          ) : (
-            <span className="message-status">отправляется</span>
-          )}
-        </li>
+        <LocalRow
+          key={`outbox:${entry.clientMessageId}`}
+          clientMessageId={entry.clientMessageId}
+          text={entry.text}
+          failed={entry.state === 'failed'}
+          failedReason={
+            entry.errorCode === QUEUE_OVERFLOW_ERROR_CODE
+              ? 'не отправлено (переполнение очереди)'
+              : 'не отправлено'
+          }
+          avatarSource={meAvatarSource}
+          onRetry={onRetry}
+          onRemove={onRemove}
+        />
       ))}
     </ol>
   )

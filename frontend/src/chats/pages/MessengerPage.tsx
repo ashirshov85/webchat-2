@@ -453,6 +453,8 @@ function DialogHeader({
 
 export function MessengerPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  /** Own username — the feed avatar source of outgoing rows (008 T022). */
+  const [meUsername, setMeUsername] = useState<string | null>(null)
   const [activeChat, setActiveChat] = useState<ActiveChat | null>(null)
   const [composerError, setComposerError] = useState<string | null>(null)
   /** Dialog action menu (T060) + its pending confirmation. */
@@ -478,6 +480,7 @@ export function MessengerPage() {
         const user = await getCurrentUser()
         if (!cancelled) {
           setCurrentUserId(user.id)
+          setMeUsername(user.username)
         }
       } catch {
         // Session refresh happens in apiFetch; without a user the
@@ -1010,6 +1013,8 @@ export function MessengerPage() {
               <MessageList
                 messages={messages}
                 currentUserId={currentUserId ?? ''}
+                meUsername={meUsername ?? undefined}
+                peerUsername={activeChat.kind === 'direct' ? activeChat.peer.username : undefined}
                 outbox={chatOutbox}
                 onRetry={handleRetry}
                 onRemove={handleRemove}
