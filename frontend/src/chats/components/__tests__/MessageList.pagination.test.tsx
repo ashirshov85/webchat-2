@@ -12,6 +12,13 @@ import { MessageList } from '../MessageList'
  *
  * jsdom has no layout, so the scroll metrics of the list element are
  * provided explicitly per test.
+ *
+ * T048 (US4, FR-030/FR-034): the 004/005 expectations run unchanged
+ * on the reskinned DOM — the scroll container keeps the 004
+ * `message-list` hook AND the prototype `chat-scroll` surface (golden
+ * scrollbars, machine.css) on one element, and the empty state rides
+ * the `.messenger-empty` design-system slot (FR-032 family), so the
+ * US4 restyling passes cannot move pagination off the feed surface.
  */
 
 const ME = '11111111-1111-1111-1111-111111111111'
@@ -69,6 +76,9 @@ describe('MessageList older-page requests', () => {
       />,
     )
     const list = container.querySelector('.message-list') as HTMLOListElement
+    // T048: the 004 hook rides with the prototype scroll surface —
+    // one element serves both contracts (research §C, FR-034).
+    expect(list).toHaveClass('chat-scroll')
     const metrics: ScrollMetrics = { scrollTop: 200, scrollHeight: 1200 }
     installScrollMetrics(list, metrics)
 
@@ -244,6 +254,8 @@ describe('MessageList empty chat state', () => {
     )
 
     expect(screen.getByText('Сообщений пока нет')).toBeVisible()
+    // T048: the empty state rides the design-system slot (FR-032).
+    expect(container.querySelector('.messenger-empty')?.textContent).toBe('Сообщений пока нет')
     expect(container.querySelector('.message-list')).toBeNull()
     expect(container.querySelector('.message')).toBeNull()
     expect(screen.queryByText('Загрузка истории…')).toBeNull()
