@@ -518,12 +518,21 @@ function searchUsers(query: string): PublicUser[] {
   )
 }
 
-function contactsSorted(sort: string): ContactView[] {
-  const field =
-    sort === 'email'
-      ? (contact: ContactView) => contact.user.email
-      : (contact: ContactView) => contact.user.username
-  return [...contacts].sort((left, right) => field(left).localeCompare(field(right)))
+/**
+ * №20 answers in the PROTOTYPE's declaration order — c1…c10 (u1–u5 then
+ * u9–u13), the very order `renderPickList` of chats.html iterates for
+ * `#grpMembers` (T039 parity): the app owns NO re-sort of №20 (the
+ * ordering is server-owned, api/chats.ts №20 contract), so the
+ * create-group picker renders the order the baseline depicts. The
+ * ContactsModal is unaffected — its row order is the client-side
+ * byUsername of T031. The `sort` parameter is recorded but does not
+ * reorder: the demo book has a single canonical presentation order.
+ */
+function contactsInPrototypeOrder(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- the №20 `sort` parameter is part of the served surface (fixtures/api.ts) and intentionally has no effect: the demo book has a single canonical presentation order
+  _sort: string,
+): ContactView[] {
+  return [...contacts]
 }
 
 export const AETHERGRAM_CHAT_COUNT = demoChats.length
@@ -541,7 +550,7 @@ export const AETHERGRAM = {
   groupView,
   messagePage,
   searchUsers,
-  contacts: contactsSorted,
+  contacts: contactsInPrototypeOrder,
   presenceOf(userIdValue: string): 'online' | 'offline' | 'unknown' {
     return presenceByUserId.get(userIdValue) ?? 'unknown'
   },

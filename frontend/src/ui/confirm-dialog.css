@@ -22,6 +22,11 @@
 
 .modal-btns {
   display: flex;
+  /* Строка прототипа (flex-direction не задан = row) — явно: auth-наследие
+     index.css `form div{flex-direction:column}` (0-0-2) колонкует кнопки
+     обитателей-<form> (create-group T035), укладывая «Отмена»/«Создать»
+     столбиком (+42px высоты модали — T039). */
+  flex-direction: row;
   gap: 10px;
   justify-content: flex-end;
   margin-top: 4px;

@@ -130,6 +130,12 @@
 .pick-row .c-main {
   flex: 1;
   min-width: 0;
+  /* Прототип: .c-main — обычный блочный div (свои строки .c-top/.c-prev
+     стекаются нормальным потоком). Блок объявлен ЯВНО: auth-наследие
+     index.css `form div{display:flex;flex-direction:column;gap:4px}`
+     (0-0-2) иначе колонкует тело строк подборщиков-<form> (create-group
+     T035, group-edit T056): +2px на строку от зазора — T039. */
+  display: block;
 }
 
 .pick-row .c-top {
@@ -137,6 +143,9 @@
   justify-content: space-between;
   gap: 8px;
   align-items: baseline;
+  /* Строка прототипа (по умолчанию row) — явно против той же утечки
+     `form div` index.css внутри <form>-обитателей пикера. */
+  flex-direction: row;
 }
 
 .pick-row .c-name {

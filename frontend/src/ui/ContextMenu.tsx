@@ -80,17 +80,24 @@ export function ContextMenu({ open, anchor, items, align = 'start', onClose }: C
     menu.style.top = `${top}px`
   }, [open, anchor, align, items])
 
-  // Инициатор + клик-вне/Esc + вход фокуса. Именно useEffect (не layout):
-  // слушатели вешаются после всплытия клика, открывшего меню, — открывающий
-  // клик не закрывает меню самомгновенно. Esc — capture: контекстное меню
-  // верхний слой (data-model 3.1), stopPropagation не пускает Esc в модаль
-  // и drawer ниже.
+  // Инициатор + клик-вне/Esc + вход фокуса. Слушатель клика вешается со
+  // защитой от «открывающего» клика: в реальном Chromium React сбрасывает
+  // пассивные эффекты ДИСКРЕТНОГО доверенного события ещё внутри его
+  // доставки (до всплытия до document), поэтому без защиты слушатель
+  // успевает услышать сам клик, открывший меню, и закрыть его мгновенно
+  // (jsdom/fireEvent эффекты откладывает — юнит-тесты этого не видят,
+  // T039 ловит в настоящем браузере). Метка времени клика строго меньше
+  // момента монтирования слушателя ровно у открывающего клика: его
+  // доставка началась до эффекта; каждый следующий клик — новая задача
+  // с новой меткой. Esc — capture: контекстное меню верхний слой
+  // (data-model 3.1), stopPropagation не пускает Esc в модаль и drawer ниже.
   useEffect(() => {
     if (!open) {
       return
     }
     const menu = menuRef.current
     const initiator = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const listenerAttachedAt = performance.now()
 
     const onDocKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
@@ -99,6 +106,9 @@ export function ContextMenu({ open, anchor, items, align = 'start', onClose }: C
       }
     }
     const onDocClick = (event: MouseEvent): void => {
+      if (event.timeStamp < listenerAttachedAt) {
+        return // клик, открывший меню, — не «клик-вне»
+      }
       const target = event.target
       if (menu !== null && target instanceof Node && menu.contains(target)) {
         return
