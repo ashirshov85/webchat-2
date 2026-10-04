@@ -490,12 +490,19 @@ describe('ContactsModal форма «Добавить контакт» (FR-012)'
     fireEvent.click(screen.getByRole('button', { name: 'Добавить' }))
 
     // Подтверждение заменяет форму (без наложения): имя <b> + подпись username · email.
-    const confirm = document.querySelector('.confirm-form')
+    // №19 — асинхронный ответ: подтверждение монтируется после него, поэтому
+    // ждём форму (стабилизация харнесса против синхронного чтения DOM,
+    // паттерн T026; поведенческое ожидание неизменно).
+    const confirm = await waitFor(() => {
+      const el = document.querySelector('.confirm-form')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
     expect(confirm?.querySelector('.confirm-text b')?.textContent).toBe('dave')
     expect(confirm?.querySelector('.confirm-sub')?.textContent).toBe('dave · dave@aethergram.io')
     expect(mockedAddContact).not.toHaveBeenCalled()
 
-    fireEvent.click(within(confirm as HTMLElement).getByRole('button', { name: 'Добавить' }))
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Добавить' }))
 
     await waitFor(() => {
       expect(mockedAddContact).toHaveBeenCalledWith(DAVE)
@@ -523,8 +530,12 @@ describe('ContactsModal форма «Добавить контакт» (FR-012)'
       target: { value: 'БОРИС' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Добавить' }))
-    const confirm = document.querySelector('.confirm-form')
-    fireEvent.click(within(confirm as HTMLElement).getByRole('button', { name: 'Добавить' }))
+    const confirm = await waitFor(() => {
+      const el = document.querySelector('.confirm-form')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Добавить' }))
 
     await waitFor(() => {
       expect(mockedAddContact).toHaveBeenCalledTimes(1)
@@ -549,8 +560,12 @@ describe('ContactsModal форма «Добавить контакт» (FR-012)'
       target: { value: 'dave@aethergram.io' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Добавить' }))
-    const confirm = document.querySelector('.confirm-form')
-    fireEvent.click(within(confirm as HTMLElement).getByRole('button', { name: 'Добавить' }))
+    const confirm = await waitFor(() => {
+      const el = document.querySelector('.confirm-form')
+      expect(el).not.toBeNull()
+      return el as HTMLElement
+    })
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Добавить' }))
 
     expect(await screen.findByText('Too Many Requests')).toBeVisible()
     expect(mockedEnsureChat).not.toHaveBeenCalled()

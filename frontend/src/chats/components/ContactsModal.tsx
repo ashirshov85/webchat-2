@@ -40,26 +40,43 @@
  *   сохранён»). Отмена подтверждения — действие не выполняется (SC-007).
  *   Сбои действий — ошибка видна (.modal-err), список жив (ожидание 004).
  *
- * Форма «Добавить контакт» (FR-012) — T032; встраивание формы в ModalShell
- * MessengerPage (заголовок «Контакты», закрытие Esc/фоном) — T034.
+ * Форма «Добавить контакт» (FR-012, T032) — проекция #addForm прототипа
+ * (label «Username или email — точное совпадание», поле, .modal-btns
+ * «Отмена»/submit «Добавить»): №19 `searchUsers` с ТРИММИНГОМ запроса
+ * (точное совпадение username/email без регистра — `@`-правило на сервере,
+ * 0..1 ответ, ожидание 004); промах — спокойная ошибка «требуется точное
+ * совпадение», №21 НЕ вызывается; находка — подтверждение ConfirmDialog
+ * (имя <b> + подпись .confirm-sub «username · email», как askConfirm
+ * прототипа) → №21 `addContact` (идемпотентно 201/200: контакт уже в
+ * книге — тост «Уже в контактах — {username}», иначе «Контакт добавлен —
+ * {username}») → №11 `ensureChat` → `onOpenChat(ChatView)` + рефетч №20
+ * (новая строка в списке). Сбой №21/№11 — ошибка при живом списке
+ * (ожидание 004). Пустой запрос — без запроса на сервер (004).
+ *
+ * Встраивание форм в ModalShell MessengerPage (заголовки «Контакты»/
+ * «Добавить контакт», закрытие Esc/фоном) — T034.
  */
 import {
   useCallback,
   useEffect,
   useMemo,
   useState,
+  type FormEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react'
 import {
+  addContact,
   blockUser,
   deleteChat,
   ensureChat,
   listContacts,
   removeContact,
+  searchUsers,
   unblockUser,
 } from '../../api/chats'
 import type { ChatListItem, ChatView, ContactView } from '../../api/chats'
+import type { PublicUser } from '../../api/auth'
 import { problemMessage } from '../../auth/problem'
 import { Avatar } from '../../ui/Avatar'
 import { ConfirmDialog, type ConfirmVariant } from '../../ui/ConfirmDialog'
@@ -80,13 +97,14 @@ interface BoundChat {
   readonly blockedByMe: boolean
 }
 
-/** Ожидаемое подтверждение «⋯»-меню (ConfirmDialog, SC-007). */
+/** Ожидаемое подтверждение «⋯»-меню и формы добавления (ConfirmDialog, SC-007). */
 type PendingConfirm =
   | { readonly kind: 'block'; readonly contact: ContactView }
   | { readonly kind: 'unblock'; readonly contact: ContactView }
   | { readonly kind: 'delete-chat'; readonly contact: ContactView; readonly chatId: string }
   | { readonly kind: 'create-chat'; readonly contact: ContactView }
   | { readonly kind: 'remove-contact'; readonly contact: ContactView }
+  | { readonly kind: 'add-contact'; readonly user: PublicUser }
 
 type ListStatus = 'loading' | 'ready' | 'error'
 
@@ -136,6 +154,9 @@ interface ConfirmUi {
   readonly variant: ConfirmVariant
 }
 
+/** Форма модали (переключение внутри одной оболочки, data-model 3.3): список / добавление. */
+type ModalForm = 'list' | 'add'
+
 export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
   const showToast = useToast()
   const [status, setStatus] = useState<ListStatus>('loading')
@@ -146,6 +167,10 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
   const [menuContact, setMenuContact] = useState<ContactView | null>(null)
   const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null)
   const [pending, setPending] = useState<PendingConfirm | null>(null)
+  const [form, setForm] = useState<ModalForm>('list')
+  const [addQuery, setAddQuery] = useState('')
+  const [addError, setAddError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
 
   /** №20 + «Повторить»: единственный путь загрузки списка. */
   const loadContacts = useCallback(() => {
@@ -199,6 +224,44 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
       return
     }
     openChatWith(contact)
+  }
+
+  /** #ctcAdd прототипа → openModal('add'): форма добавления с чистым полем. */
+  const openAddForm = () => {
+    setAddQuery('')
+    setAddError(null)
+    setActionError(null)
+    setForm('add')
+  }
+
+  /**
+   * №19 с триммингом (FR-012): пустой запрос — без похода на сервер (004);
+   * 0..1 ответ: промах — спокойная ошибка прототипа без №21, находка —
+   * подтверждение поверх (pending), поле сохранено до исхода.
+   */
+  const handleAddSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const trimmed = addQuery.trim()
+    if (trimmed === '' || adding) {
+      return
+    }
+    setAdding(true)
+    setAddError(null)
+    void searchUsers(trimmed)
+      .then((users) => {
+        const [found] = users
+        if (found === undefined) {
+          setAddError('Пользователь не найден — требуется точное совпадение username или email')
+          return
+        }
+        setPending({ kind: 'add-contact', user: found })
+      })
+      .catch((error: unknown) => {
+        setAddError(problemMessage(error))
+      })
+      .finally(() => {
+        setAdding(false)
+      })
   }
 
   /** Кебаб «⋯»: якорь — rect кнопки (паттерн MainMenuButton); клик не
@@ -257,7 +320,7 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
     if (pending === null) {
       return
     }
-    const { user } = pending.contact
+    const user = pending.kind === 'add-contact' ? pending.user : pending.contact.user
     setPending(null)
     setActionError(null)
     switch (pending.kind) {
@@ -307,13 +370,39 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
             setActionError(problemMessage(error))
           })
         break
+      case 'add-contact':
+        // Идемпотентность №21 (201/200 без дублей): «уже в контактах» видно
+        // по текущей книге — тост один, далее переписка (FR-012).
+        setForm('list')
+        setAddQuery('')
+        {
+          const known = contacts.some((item) => item.user.id === user.id)
+          void Promise.resolve(addContact(user.id))
+            .then(() => {
+              showToast(
+                known
+                  ? `Уже в контактах — ${user.username}`
+                  : `Контакт добавлен — ${user.username}`,
+              )
+              return ensureChat({ peerUserId: user.id })
+            })
+            .then((view) => {
+              onOpenChat(view)
+              loadContacts()
+            })
+            .catch((error: unknown) => {
+              setActionError(problemMessage(error))
+            })
+        }
+        break
     }
   }
 
   /** Подтверждение поверх списка — переключением формы внутри одной
    * оболочки, без наложения (data-model 3.3; T034 формализует в ModalShell). */
   if (pending !== null) {
-    const { username } = pending.contact.user
+    const username =
+      pending.kind === 'add-contact' ? pending.user.username : pending.contact.user.username
     const confirmUi: ConfirmUi = (() => {
       switch (pending.kind) {
         case 'block':
@@ -366,6 +455,20 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
             confirmLabel: 'Удалить',
             variant: 'danger',
           }
+        case 'add-contact':
+          // askConfirm прототипа: имя + подпись «username · email» (.confirm-sub).
+          return {
+            text: (
+              <>
+                <b>{username}</b>
+                <span className="confirm-sub">
+                  {username} · {pending.user.email}
+                </span>
+              </>
+            ),
+            confirmLabel: 'Добавить',
+            variant: 'primary',
+          }
       }
     })()
     return (
@@ -378,6 +481,44 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
           setPending(null)
         }}
       />
+    )
+  }
+
+  /** Форма добавления (#addForm прототипа) — вместо списка, в той же оболочке. */
+  if (form === 'add') {
+    return (
+      <form className="add-form" onSubmit={handleAddSubmit}>
+        <label htmlFor="ctc-add-query">Username или email — точное совпадание</label>
+        <input
+          id="ctc-add-query"
+          className="add-query"
+          placeholder="например, hargrove или h.hargrove@aethergram.io"
+          autoComplete="off"
+          value={addQuery}
+          onChange={(event) => {
+            setAddQuery(event.target.value)
+          }}
+        />
+        {addError !== null && (
+          <div className="modal-err" role="alert">
+            {addError}
+          </div>
+        )}
+        <div className="modal-btns">
+          <button
+            type="button"
+            className="m-btn"
+            onClick={() => {
+              setForm('list')
+            }}
+          >
+            Отмена
+          </button>
+          <button type="submit" className="m-btn primary" disabled={adding}>
+            Добавить
+          </button>
+        </div>
+      </form>
     )
   }
 
@@ -466,6 +607,12 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
           })}
         </div>
       )}
+      {/* #ctcAdd прототипа: .modal-btns под списком — путь к форме добавления. */}
+      <div className="modal-btns">
+        <button type="button" className="m-btn primary" onClick={openAddForm}>
+          Добавить контакт
+        </button>
+      </div>
       {actionError !== null && (
         <div className="modal-err" role="alert">
           {actionError}

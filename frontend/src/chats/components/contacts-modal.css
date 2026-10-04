@@ -2,12 +2,14 @@
    ui-behavior §3) — проекция #contactsForm/#ctcList прототипа
    specs/008-chat-window-styling/design/chats.html (раздел «9. МОДАЛЬНОЕ
    ОКНО»); при расхождениях побеждает прототип (FR-001). Форма — обитатель
-   ЕДИНОЙ оболочки ModalShell (T012/T034): каркас подложки/окна/заголовка —
-   ui/modal-shell.css, кнопочная система .m-btn/.modal-btns и подтверждение
-   .confirm-* — ui/confirm-dialog.css (T014). Здесь — оболочка списка:
-   .contacts-form (#contactsForm: колонка gap 8), поле поиска .ctc-search
-   (#ctcSearch, дословно .modal input:not([type=checkbox])) и высота списка
-   контактов (прототип #ctcList{max-height:280px} поверх базовой 220px).
+    ЕДИНОЙ оболочки ModalShell (T012/T034): каркас подложки/окна/заголовка —
+    ui/modal-shell.css, кнопочная система .m-btn/.modal-btns и подтверждение
+    .confirm-* — ui/confirm-dialog.css (T014). Здесь — оболочка списка:
+    .contacts-form (#contactsForm: колонка gap 8), поле поиска .ctc-search
+    (#ctcSearch, дословно .modal input:not([type=checkbox])) и высота списка
+    контактов (прототип #ctcList{max-height:280px} поверх базовой 220px),
+    а также форма добавления .add-form (#addForm + #addQuery + label —
+    .modal form/.modal label/.modal input прототипа, T032/FR-012).
 
    Общие классы строк-пикеров прототипа определены здесь впервые и
    переиспользуются задачами T035+ (create-group/group-edit/group-members):
@@ -161,6 +163,47 @@
 
 .ctc-row.blocked .c-prev {
   color: var(--err);
+}
+
+/* ============ ФОРМА «ДОБАВИТЬ КОНТАКТ» (#addForm прототипа, T032) ============ */
+
+/* .modal form прототипа: колонка gap 8 (как #contactsForm). */
+.add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* .modal label прототипа: italic 12.5px, muted-2. */
+.add-form label {
+  font: italic 12.5px var(--font-body);
+  color: var(--muted-2);
+}
+
+/* #addQuery — дословно .modal input прототипа (как #ctcSearch):
+   полная перекрыка auth-наследия index.css (светлое поле, синий focus). */
+.add-form .add-query {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-field);
+  outline: none;
+  border: 1px solid var(--gold-dark);
+  background: var(--input-bg);
+  color: var(--cream-bright);
+  font: 14px var(--font-mono);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.add-form .add-query::placeholder {
+  color: var(--muted-3);
+}
+
+.add-form .add-query:focus-visible {
+  border-color: var(--gold-light);
+  box-shadow: 0 0 0 2px rgba(232, 200, 119, 0.25);
+  outline: none;
 }
 
 /* ============ КЕБАБ-КНОПКА «⋯» (прототип .c-menu) ============ */
