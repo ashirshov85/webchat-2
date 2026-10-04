@@ -64,7 +64,9 @@ vi.mock('../../../presence/presenceApi', () => mockPresence)
 
 const ME = '11111111-1111-1111-1111-111111111111'
 const ALICE = '22222222-2222-2222-2222-222222222222'
+const BOB = '33333333-3333-3333-3333-333333333333'
 const DIRECT_ID = 'chat-direct-1'
+const BOB_CHAT_ID = 'chat-direct-2'
 
 function peer(id: string, username: string) {
   return {
@@ -86,6 +88,16 @@ function directRow(blockedByMe = false): ChatListItem {
   }
 }
 
+function bobRow(): ChatListItem {
+  return {
+    chatId: BOB_CHAT_ID,
+    peer: peer(BOB, 'bob'),
+    lastMessage: null,
+    unreadCount: 0,
+    blockedByMe: false,
+  }
+}
+
 function directChatView(): ChatView {
   return {
     chatId: DIRECT_ID,
@@ -98,7 +110,10 @@ function directChatView(): ChatView {
 }
 
 function contacts(): ContactView[] {
-  return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z' }]
+  return [
+    { user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z' },
+    { user: peer(BOB, 'bob'), createdAt: '2026-09-03T00:00:00.000Z' },
+  ]
 }
 
 /** Общая подготовка страницы БЕЗ №12-мока — его ставит вызывающий тест. */
@@ -308,5 +323,58 @@ describe('MessengerPage композер заблокированного кон
       expect(screen.getByRole('button', { name: 'ОТПРАВИТЬ' })).toBeEnabled()
       expect(screen.getByLabelText('Текст сообщения')).toHaveAttribute('placeholder', 'Сообщение…')
     })
+  })
+})
+
+describe('MessengerPage окно после удаления чата из «Контактов» (T037, FR-032)', () => {
+  /** Открытая переписка alice + соседний bob — кандидат ложного автоперехода. */
+  async function openAliceWithBobAround(): Promise<void> {
+    await renderPage([directRow(), bobRow()])
+    const list = screen.getByRole('list', { name: 'Список чатов' })
+    fireEvent.click(within(list).getByText('alice').closest('button') as HTMLElement)
+    await screen.findByRole('heading', { level: 2, name: 'alice' })
+  }
+
+  /** «Контакты» → «⋯» строки → «Удалить чат» → подтверждение danger. */
+  async function deleteContactChat(username: string): Promise<void> {
+    await openShellForm('Контакты', 'Контакты')
+    const row = await screen.findByRole('button', { name: `Контакт ${username}` })
+    fireEvent.click(within(row).getByRole('button', { name: 'Действия с контактом' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить чат' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }))
+  }
+
+  it('удаление ОТКРЫТОГО чата возвращает окно к «Чат не выбран» — без автоперехода (Clarification)', async () => {
+    await openAliceWithBobAround()
+
+    await deleteContactChat('alice')
+    await waitFor(() => {
+      expect(mockChats.deleteChat).toHaveBeenCalledWith(DIRECT_ID)
+    })
+
+    // Окно — к пустому состоянию; соседний bob НЕ открывается сам.
+    const dialogWindow = screen.getByRole('region', { name: 'Окно диалога' })
+    await waitFor(() => {
+      expect(dialogWindow).toHaveTextContent('Чат не выбран')
+    })
+    expect(screen.queryByRole('heading', { level: 2, name: 'bob' })).toBeNull()
+    // №12 рефетчится — сайдбар сходится к серверу (строка исчезнет).
+    await waitFor(() => {
+      expect(mockChats.listChats.mock.calls.length).toBeGreaterThan(1)
+    })
+  })
+
+  it('удаление НЕоткрытого чата не трогает открытое окно', async () => {
+    await openAliceWithBobAround()
+
+    await deleteContactChat('bob')
+    await waitFor(() => {
+      expect(mockChats.deleteChat).toHaveBeenCalledWith(BOB_CHAT_ID)
+    })
+
+    expect(screen.getByRole('heading', { level: 2, name: 'alice' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Окно диалога' })).not.toHaveTextContent(
+      'Чат не выбран',
+    )
   })
 })

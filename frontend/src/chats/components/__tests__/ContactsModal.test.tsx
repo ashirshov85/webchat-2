@@ -117,19 +117,20 @@ function chatViewOf(item: ChatListItem): ChatView {
 
 function renderModal(chats: readonly ChatListItem[] = [ALICE_CHAT, CAROL_CHAT]) {
   const onOpenChat = vi.fn()
+  const onChatDeleted = vi.fn()
   const view = render(
     <ToastProvider>
-      <ContactsModal chats={chats} onOpenChat={onOpenChat} />
+      <ContactsModal chats={chats} onOpenChat={onOpenChat} onChatDeleted={onChatDeleted} />
     </ToastProvider>,
   )
   const rerenderChats = (next: readonly ChatListItem[]) => {
     view.rerender(
       <ToastProvider>
-        <ContactsModal chats={next} onOpenChat={onOpenChat} />
+        <ContactsModal chats={next} onOpenChat={onOpenChat} onChatDeleted={onChatDeleted} />
       </ToastProvider>,
     )
   }
-  return { onOpenChat, rerenderChats, ...view }
+  return { onOpenChat, onChatDeleted, rerenderChats, ...view }
 }
 
 /** Строка контакта по имени (прототипный хук .ctc-row, имя — в .c-name). */
@@ -350,7 +351,7 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
   })
 
   it('удаление чата: подтверждение → №14 + тост; после №12-обновления — «чат удалён» и пункт «Создать чат»', async () => {
-    const { container, rerenderChats, onOpenChat } = renderModal()
+    const { container, rerenderChats, onOpenChat, onChatDeleted } = renderModal()
     mockedEnsureChat.mockResolvedValue(chatViewOf(ALICE_CHAT))
     await screen.findByText('alice')
 
@@ -364,6 +365,9 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
     await waitFor(() => {
       expect(mockedDeleteChat).toHaveBeenCalledWith('chat-alice')
     })
+    // T037: владелец оболочки узнаёт об удалении — открытый чат вернётся
+    // к «Чат не выбран» (FR-032, без автоперехода).
+    expect(onChatDeleted).toHaveBeenCalledWith('chat-alice')
     expect(await screen.findByText('Чат удалён — контакт сохранён')).toBeVisible()
     // Контакт остаётся (FR-017), переписка не открывается.
     expect(rowOf(container, 'alice')).toBeVisible()

@@ -41,7 +41,10 @@
  *  * «Удалить чат» (№14, FR-021): per-user history hiding + the local
  *    outbox records of the chat are purged (`outbox.purgeChat`) — the
  *    dialog closes, the list refetches and the chat disappears
- *    including its local «отправляется» entries;
+ *    including its local «отправляется» entries. The contacts-form №14
+ *    of the SAME chat converges through `handleChatDeleted` (008 T037,
+ *    FR-032): the OPEN window folds to the «Чат не выбран» empty state
+ *    with NO auto-transition to a neighbouring chat;
  *  * «Заблокировать»/«Разблокировать» (№23/№24, FR-020): idempotent
  *    block toggles driven by `blockedByMe` (the only block projection
  *    the API exposes); after either action the list refetches so the
@@ -761,6 +764,28 @@ export function MessengerPage() {
     })()
   }, [activeChat, reloadChatList])
 
+  /**
+   * №14 success FROM the contacts form (008 T037; FR-032,
+   * Clarification edge case): the deleted chat may be the OPEN one —
+   * the window returns to the «Чат не выбран» empty state WITHOUT any
+   * auto-transition to a neighbouring chat; a delete of a non-open
+   * chat never touches the open window. The local outbox records of
+   * the chat die with it (FR-021 — a later resurrecting incoming
+   * starts from a clean slate), and №12 re-runs so the sidebar row
+   * converges (the modal itself stays open — the contact survives,
+   * FR-017).
+   */
+  const handleChatDeleted = useCallback(
+    (chatId: string) => {
+      outbox.purgeChat(chatId)
+      setActiveChat((previous) =>
+        previous !== null && previous.chatId === chatId ? null : previous,
+      )
+      reloadChatList()
+    },
+    [outbox, reloadChatList],
+  )
+
   const handleSend = useCallback(
     (text: string) => {
       if (activeChatId === null) {
@@ -986,6 +1011,7 @@ export function MessengerPage() {
           <ContactsModal
             chats={chats}
             onOpenChat={handleOpenChatFromModal}
+            onChatDeleted={handleChatDeleted}
             onFormChange={(form) => {
               setModalForm(form === 'add' ? 'add-contact' : 'contacts')
             }}

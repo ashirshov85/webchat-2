@@ -90,6 +90,13 @@ export interface ContactsModalProps {
   /** Открывает переписку (№11 ChatView): клик по контакту с чатом, «Создать чат», добавление. */
   readonly onOpenChat: (chat: ChatView) => void
   /**
+   * T037 (FR-032): успешный №14 «Удалить чат» строки — владелец
+   * оболочки возвращает ОТКРЫТЫЙ чат к «Чат не выбран» (без
+   * автоперехода) и сход №12; модаль остаётся открытой (контакт
+   * сохранён, FR-017).
+   */
+  readonly onChatDeleted?: (chatId: string) => void
+  /**
    * T034 (ModalShell): сообщает владельцу оболочки о внутреннем
    * переключении list ↔ add — page отображает это в formId
    * 'contacts' | 'add-contact' (заголовок оболочки и вход фокуса,
@@ -164,7 +171,12 @@ interface ConfirmUi {
 /** Форма модали (переключение внутри одной оболочки, data-model 3.3): список / добавление. */
 export type ModalForm = 'list' | 'add'
 
-export function ContactsModal({ chats, onOpenChat, onFormChange }: ContactsModalProps) {
+export function ContactsModal({
+  chats,
+  onOpenChat,
+  onChatDeleted,
+  onFormChange,
+}: ContactsModalProps) {
   const showToast = useToast()
   const [status, setStatus] = useState<ListStatus>('loading')
   const [contacts, setContacts] = useState<readonly ContactView[]>([])
@@ -353,6 +365,9 @@ export function ContactsModal({ chats, onOpenChat, onFormChange }: ContactsModal
       case 'delete-chat':
         void Promise.resolve(deleteChat(pending.chatId))
           .then(() => {
+            // T037 (FR-032): открытый чат вернётся к «Чат не выбран» —
+            // решает владелец оболочки (MessengerPage), модаль жива.
+            onChatDeleted?.(pending.chatId)
             showToast('Чат удалён — контакт сохранён')
           })
           .catch((error: unknown) => {
