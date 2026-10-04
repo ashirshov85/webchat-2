@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
 import type { GroupMember } from '../../../api/groups'
+import { ToastProvider } from '../../../ui/Toast'
 import { GroupInfoPanel } from '../GroupInfoPanel'
 
 /**
@@ -89,7 +90,13 @@ function renderPanel(overrides: Partial<Parameters<typeof GroupInfoPanel>[0]> = 
     onTransferOwnership: vi.fn(),
     ...overrides,
   }
-  render(<GroupInfoPanel {...props} />)
+  // T045: №29 завершается тостом «Групповой чат обновлён — {title}»
+  // (FR-025, прототип grpEditForm) — слот живёт в ToastProvider страницы.
+  render(
+    <ToastProvider>
+      <GroupInfoPanel {...props} />
+    </ToastProvider>,
+  )
   return props
 }
 
@@ -224,6 +231,43 @@ describe('GroupInfoPanel rename submission (№29 PATCH)', () => {
       expect(onUpdated).toHaveBeenCalledWith(view)
     })
     expect(screen.queryByLabelText('Название группы')).toBeNull()
+  })
+
+  it('№29 успех — ровно один тост «Групповой чат обновлён — {title}» (T045, FR-025)', async () => {
+    mockUpdateGroup.mockResolvedValueOnce(panelView({ title: 'Новое название' }))
+    renderPanel({ myRole: 'owner' })
+    openRenameForm()
+
+    fillTitle('Новое название')
+    submitRename()
+
+    // Слот един, открыт и несёт текст тоста прототипа (grpEditForm);
+    // форма закрыта — выдача ровно одна, вторая заменила бы текст.
+    const slot = (await screen.findByText('Групповой чат обновлён — Новое название')).closest(
+      '.toast',
+    ) as HTMLElement
+    expect(slot).toHaveClass('show')
+    expect(document.querySelectorAll('.toast')).toHaveLength(1)
+    expect(screen.queryByLabelText('Название группы')).toBeNull()
+  })
+
+  it('№29 сбой — тоста нет: ошибка в форме, черновик жив (контракт форм)', async () => {
+    mockUpdateGroup.mockRejectedValueOnce({
+      title: 'Forbidden',
+      status: 403,
+      errors: { role: ['forbidden_role'] },
+    } satisfies Problem)
+    renderPanel({ myRole: 'owner' })
+    openRenameForm()
+
+    fillTitle('Новое название')
+    submitRename()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('forbidden_role')
+    const toasts = document.querySelectorAll('.toast')
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0]).not.toHaveClass('show')
+    expect(toasts[0]).toHaveTextContent('')
   })
 
   it('renders the 403 forbidden_role problem and keeps the form open', async () => {

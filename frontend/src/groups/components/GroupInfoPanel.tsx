@@ -35,6 +35,12 @@
  * keep the OTHER viewers' lists and headers live (T053's realtime
  * half: useGroupRealtime/useChatList).
  *
+ * T045 (US3; FR-025, прототип grpEditForm): завершённый №29 отмечается
+ * ровно одним тостом «Групповой чат обновлён — {title}» (слот
+ * ToastProvider страницы; сбои тостом не отмечаются — только
+ * ErrorBanner формы). Контракт сохраняется за №29 при пересборке в
+ * GroupEditModal (T056): тост выдаёт владелец операции-формы.
+ *
  * The roster mutations stay with the parent — the №32/№34/№35 calls and
  * their mutex live in useGroupMembers (T047): `pendingUserId` (the
  * in-flight row) and `rosterError` (the last action problem) are the
@@ -55,6 +61,7 @@ import type { GroupMember, GroupView, UpdateGroupRequest } from '../../api/group
 import { membersLabel } from '../membersLabel'
 import { validateGroupDescription, validateGroupTitle } from '../validation'
 import { ErrorBanner } from '../../chats/components/ErrorBanner'
+import { useToast } from '../../ui/Toast'
 import { AddMembersPicker } from './AddMembersPicker'
 import { MemberList } from './MemberList'
 
@@ -115,6 +122,8 @@ export function GroupInfoPanel({
   onUpdated,
   leaveDeleteControls,
 }: GroupInfoPanelProps) {
+  // T045 (FR-025): тост завершённого №29 — слот ToastProvider страницы.
+  const showToast = useToast()
   /** №31 entry visibility — owner/admin (FR-004); a member never sees it. */
   const canAddMembers = myRole === 'owner' || myRole === 'admin'
   /** №29 entry visibility — the same owner/admin gate (FR-007). */
@@ -194,6 +203,9 @@ export function GroupInfoPanel({
         try {
           const view = await updateGroup(chatId, body)
           setRenameOpen(false)
+          // T045 (FR-025): один тост на завершённый №29 — текст
+          // прототипа grpEditForm (отправленное название).
+          showToast(`Групповой чат обновлён — ${validatedTitle.title}`)
           onUpdated?.(view)
         } catch (cause) {
           setRenameError(cause)
@@ -202,7 +214,7 @@ export function GroupInfoPanel({
         }
       })()
     },
-    [renamePending, titleDraft, descriptionDraft, chatId, onUpdated],
+    [renamePending, titleDraft, descriptionDraft, chatId, onUpdated, showToast],
   )
 
   // The adder's №20 contacts load LAZILY — only when the №31 section

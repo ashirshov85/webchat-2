@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
 import type { ContactView } from '../../../api/chats'
 import type { GroupMember } from '../../../api/groups'
+import { ToastProvider } from '../../../ui/Toast'
 import { GroupInfoPanel } from '../GroupInfoPanel'
 
 /**
@@ -91,7 +92,12 @@ function renderPanel(overrides: Partial<Parameters<typeof GroupInfoPanel>[0]> = 
     onTransferOwnership: vi.fn(),
     ...overrides,
   }
-  render(<GroupInfoPanel {...props} />)
+  // T045: панель №29 завершается тостом — рендер внутри ToastProvider.
+  render(
+    <ToastProvider>
+      <GroupInfoPanel {...props} />
+    </ToastProvider>,
+  )
   return props
 }
 

@@ -135,6 +135,20 @@
  * at-most-once loss of the frame). The `group.deleted` frame itself
  * rides the SAME T058 wiring: it closes an OPEN group window of the
  * hard-deleted chat and tombstones the chatId in the №25 batcher.
+ *
+ * T045 (US3; FR-025, ui-behavior §5, data-model 1.4): ровно один тост
+ * (~3 с) на каждую ЗАВЕРШАЮЩУЮСЯ операцию во всех точках. Формы-
+ * обитатели оболочки выдают свои тосты сами (ContactsModal №21/№22/
+ * №23/№24/№14, ProfileModal №38, CreateGroupDialog №27 — слоты
+ * T028/T031–T035); операции-владельцы СТРАНИЦЫ — «Действия» прямого
+ * чата (№14 «Чат удалён — контакт сохранён», №23/№24 «Контакт
+ * заблокирован/разблокирован — {username}») и групповые №33/№30 окна
+ * («Вы вышли из чата — {title}», «Групповой чат удалён») — живут в
+ * механизме ПОД провайдером (MessengerMachine ниже), поэтому страница
+ * тонкая: <ToastProvider> + машина. Тексты — дословно из прототипа
+ * (deleteChat/askBlock/askUnblock/askLeaveGroup); сбои тостом НЕ
+ * отмечаются — только инлайн-ошибки поверхностей (контракт форм
+ * T028–T035); тост — результат операции, завершившейся на сервере.
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { getCurrentUser } from '../../api/auth'
@@ -170,7 +184,7 @@ import { ConfirmDialog } from '../../ui/ConfirmDialog'
 import type { ConfirmVariant } from '../../ui/ConfirmDialog'
 import { ModalShell } from '../../ui/ModalShell'
 import type { ModalFormId } from '../../ui/ModalShell'
-import { ToastProvider } from '../../ui/Toast'
+import { ToastProvider, useToast } from '../../ui/Toast'
 import './messenger.css'
 
 /** The open direct dialog: everything the header actions need (T060). */
@@ -403,7 +417,22 @@ function GroupCard({
   )
 }
 
+/**
+ * T045 (FR-025): страница тонкая — провайдер единого тост-слота над
+ * «машиной»; все операции, завершающиеся на уровне страницы (шапка
+ * прямого чата, групповые №33/№30 окна), выполняются в механизме ПОД
+ * провайдером и отмечаются ровно одним тостом прототипа.
+ */
 export function MessengerPage() {
+  return (
+    <ToastProvider>
+      <MessengerMachine />
+    </ToastProvider>
+  )
+}
+
+function MessengerMachine() {
+  const showToast = useToast()
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   /** Own username — the feed avatar source of outgoing rows (008 T022). */
   const [meUsername, setMeUsername] = useState<string | null>(null)
@@ -732,6 +761,9 @@ export function MessengerPage() {
         // Local optimistic/failed records die with the chat — a later
         // resurrecting incoming (FR-021) starts from a clean slate.
         outbox.purgeChat(target.chatId)
+        // T045 (FR-025): один тост на завершённый №14 — текст
+        // прототипа deleteChat (private), как и у пути «Контактов».
+        showToast('Чат удалён — контакт сохранён')
         setPendingAction(null)
         setActiveChat(null)
         reloadChatList()
@@ -742,7 +774,7 @@ export function MessengerPage() {
         setActionPending(false)
       }
     })()
-  }, [activeChat, outbox, reloadChatList])
+  }, [activeChat, outbox, reloadChatList, showToast])
 
   /** №23/№24 block toggle driven by `blockedByMe` (FR-020, T060) — direct only. */
   const handleConfirmBlockToggle = useCallback(() => {
@@ -759,6 +791,13 @@ export function MessengerPage() {
         } else {
           await unblockUser(target.peer.id)
         }
+        // T045 (FR-025): один тост на завершённый №23/№24 — тексты
+        // прототипа askBlock/askUnblock, как и у пути «Контактов».
+        showToast(
+          blocking
+            ? `Контакт заблокирован — ${target.peer.username}`
+            : `Контакт разблокирован — ${target.peer.username}`,
+        )
         setActiveChat((previous) =>
           previous !== null && previous.kind === 'direct'
             ? { ...previous, blockedByMe: blocking }
@@ -775,7 +814,7 @@ export function MessengerPage() {
         setActionPending(false)
       }
     })()
-  }, [activeChat, reloadChatList])
+  }, [activeChat, reloadChatList, showToast])
 
   /**
    * №14 success FROM the contacts form (008 T037; FR-032,
@@ -872,16 +911,24 @@ export function MessengerPage() {
   /** №33 leave success of the open group window (LeaveDeleteControls). */
   const handleLeftGroup = useCallback(() => {
     if (activeGroupChatId !== null) {
+      // T045 (FR-025): один тост на завершённый №33 — текст
+      // прототипа askLeaveGroup; имя — живой №28-титул, иначе №12-базис.
+      const live = activeGroup?.chatId === activeGroupChatId
+      const title = live ? activeGroup.title : activeChat?.kind === 'group' ? activeChat.title : ''
+      showToast(`Вы вышли из чата — ${title}`)
       handleWindowGroupGone(activeGroupChatId)
     }
-  }, [activeGroupChatId, handleWindowGroupGone])
+  }, [activeGroupChatId, activeGroup, activeChat, handleWindowGroupGone, showToast])
 
   /** №30 hard-delete success of the open group window (LeaveDeleteControls). */
   const handleDeletedGroup = useCallback(() => {
     if (activeGroupChatId !== null) {
+      // T045 (FR-025): один тост на завершённый №30 — текст прототипа
+      // deleteChat (групповая ветвь, без имени).
+      showToast('Групповой чат удалён')
       handleWindowGroupGone(activeGroupChatId)
     }
-  }, [activeGroupChatId, handleWindowGroupGone])
+  }, [activeGroupChatId, handleWindowGroupGone, showToast])
 
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
@@ -904,7 +951,7 @@ export function MessengerPage() {
   }
 
   return (
-    <ToastProvider>
+    <>
       <div className="machine">
         <div className="frame-body">
           <aside className="sidebar panel" aria-label="Чаты и контакты">
@@ -1056,6 +1103,6 @@ export function MessengerPage() {
           />
         )}
       </ModalShell>
-    </ToastProvider>
+    </>
   )
 }
