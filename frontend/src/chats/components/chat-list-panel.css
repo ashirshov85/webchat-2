@@ -5,9 +5,9 @@
    каркас .sidebar/.panel — chats/pages/messenger.css (T018). Подключается
    компонентом chats/components/ChatListPanel.tsx.
 
-   Табы «Чаты»/«Контакты» стоят до US2 (удаляет T029) и здесь лишь
-   переодеты в лексикон машины: пластины .ch-btn/.ch-btn.on + капитель
-   .sr-head прототипа. Строка поиска уже несёт прототипную структуру
+   Табов «Чаты»/«Контакты» больше нет — US2/T029 снял их (FR-006,
+   research §D, ui-behavior §2): список рендерится сразу, контакты живут
+   в модали (T031). Строка поиска несёт прототипную структуру
    .search-row > .search-wrap — MainMenuButton (T030) встанет слева от
    поля. Строки списка (.contact, T020) — ниже: дословная проекция §5.
 
@@ -20,69 +20,6 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-/* ============ ТАБЫ (рестайлинг; снимает US2/T029) ============ */
-
-.chat-panel-tabs {
-  display: flex;
-  gap: 6px;
-  flex: none;
-  margin: 2px 0;
-}
-
-.chat-panel .chat-panel-tab {
-  flex: 1;
-  display: grid;
-  place-items: center;
-  padding: 8px 10px;
-  border-radius: var(--r-field);
-  cursor: pointer;
-  transition: 0.15s;
-  border: 1px solid var(--gold-dark);
-  color: var(--gold);
-  background: var(--input-bg);
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
-  font: 600 12px var(--font-heading);
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-}
-
-.chat-panel .chat-panel-tab:hover {
-  border-color: var(--gold-light);
-  color: var(--gold-light);
-  background: rgba(40, 34, 26, 0.9);
-}
-
-.chat-panel .chat-panel-tab:active {
-  transform: translateY(1px);
-}
-
-/* Включённая пластина — .ch-btn.on прототипа */
-.chat-panel .chat-panel-tab-active {
-  color: var(--gold-light);
-  border-color: var(--gold-light);
-  background: rgba(40, 34, 26, 0.9);
-}
-
-.chat-panel .chat-panel-tab:focus-visible {
-  outline: 2px solid var(--gold-light);
-  outline-offset: -2px;
-}
-
-/* ============ СЕКЦИИ РЕЖИМОВ (FR-013) ============ */
-
-.chat-panel-section {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-/* `hidden` обязан побеждать display:flex — иначе переключение режимов
-   перестаёт скрывать неактивную секцию (FR-013). */
-.chat-panel-section[hidden] {
-  display: none;
 }
 
 /* ============ СТРОКА ПОИСКА (прототип §5, дословно) ============ */

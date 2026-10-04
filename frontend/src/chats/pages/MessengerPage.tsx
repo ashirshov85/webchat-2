@@ -1,10 +1,11 @@
 /**
  * Messenger page: the application shell of the messenger — the
  * «Aethergram» corpus-«machine» (feature 008, US1, T018; FR-001,
- * FR-004): the `.machine > .frame-body` grid carries the chats/contacts
- * sidebar and the open dialog window as its `.panel` surfaces
- * (`.sidebar` / `.chat`, design-tokens §3) — the 004–007 wiring below
- * (hooks, routing, actions) is unchanged. Mounted on the protected
+ * FR-004): the `.machine > .frame-body` grid carries the chats sidebar
+ * and the open dialog window as its `.panel` surfaces (`.sidebar` /
+ * `.chat`, design-tokens §3) — the 004–007 wiring below (hooks,
+ * routing, actions) is unchanged. US2 (T029, FR-006): the sidebar is
+ * tab-free — contacts moved out of it into the modal forms (T031+). Mounted on the protected
  * route `/` (with the `/chat` alias — the SSO landing path from
  * feature 003). Without an open chat the window carries the US1 empty
  * state «Чат не выбран» (FR-032 — the prototype is normative, FR-001).
@@ -126,13 +127,11 @@ import { useSync } from '../../sync/hooks/useSync'
 import { ChatHeader } from '../components/ChatHeader'
 import type { ChatHeaderChat } from '../components/ChatHeader'
 import { ChatListPanel } from '../components/ChatListPanel'
-import { ContactList } from '../components/ContactList'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { MessageInput } from '../components/MessageInput'
 import { MessageList } from '../components/MessageList'
 import { QueueOverflowBanner } from '../components/QueueOverflowBanner'
 import { SyncIndicator } from '../components/SyncIndicator'
-import { UserSearchBox } from '../components/UserSearchBox'
 import { useChatList } from '../hooks/useChatList'
 import { useChatMessages } from '../hooks/useChatMessages'
 import { useOutbox } from '../hooks/useOutbox'
@@ -358,8 +357,6 @@ export function MessengerPage() {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionPending, setActionPending] = useState(false)
   const [actionError, setActionError] = useState<unknown>(null)
-  /** Bumps ContactList refetch after UserSearchBox added a contact. */
-  const [contactsRefresh, setContactsRefresh] = useState(0)
   /** The CreateGroupDialog lifetime (T029): closed = the entry button. */
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
   /**
@@ -785,30 +782,6 @@ export function MessengerPage() {
       ? confirmCopy(pendingAction, activeChat.peer.username)
       : null
 
-  const contactsSection = (
-    <div className="panel-contacts">
-      <UserSearchBox
-        onContactAdded={() => {
-          setContactsRefresh((count) => count + 1)
-        }}
-      />
-      <ContactList
-        refreshKey={contactsRefresh}
-        activePeerUserId={activeChat?.kind === 'direct' ? activeChat.peer.id : null}
-        onOpenChat={(view) => {
-          if (view.peer !== null) {
-            openChatView({
-              kind: 'direct',
-              chatId: view.chatId,
-              peer: view.peer,
-              blockedByMe: view.blockedByMe ?? false,
-            })
-          }
-        }}
-      />
-    </div>
-  )
-
   return (
     <div className="machine">
       <div className="frame-body">
@@ -843,7 +816,6 @@ export function MessengerPage() {
             activeChatId={activeChatId}
             onSelectChat={handleSelectChat}
             currentUserId={currentUserId}
-            contacts={contactsSection}
           />
         </aside>
         <section className="chat panel" aria-label="Окно диалога">

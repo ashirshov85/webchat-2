@@ -1,15 +1,9 @@
 /**
  * Left panel of the messenger (feature 004, T058; FR-013/014): the
- * «Чаты»/«Контакты» mode switch and the «Чаты» list itself. The data
- * comes from useChatList (T057) — the server-owned №12 ordering
- * (last visible message first, messageless chats below) plus the live
- * event updates; the panel is render-only and adds no requests.
- *
- * FR-013 «состояние списков сохраняется»: both mode sections stay
- * mounted and the inactive one is toggled with the `hidden` attribute,
- * so switching modes never unmounts a list — scroll positions and any
- * state inside the «Контакты» content (T059 sort toggle, search field)
- * survive the round trip. The default mode is «Чаты» (FR-013).
+ * «Чаты» list itself. The data comes from useChatList (T057) — the
+ * server-owned №12 ordering (last visible message first, messageless
+ * chats below) plus the live event updates; the panel is render-only
+ * and adds no requests.
  *
  * Unified list + search (feature 006, T028; FR-014): direct dialogs and
  * groups render in ONE «Чаты» list — a group row shows its `title`, a
@@ -36,20 +30,24 @@
  * .search-wrap` with the engraved magnifier glyph and the golden
  * frame of `#search` (design/chats.html §5, chat-list-panel.css) —
  * while the 004 test hook `chat-panel-search` stays as the input's
- * class (research §C, FR-034). The tabs stay until US2 removes them
- * (T029) and are only restyled into the machine vocabulary
- * (Cormorant SC uppercase plates); the MainMenuButton that joins the
- * search row per the prototype is T030.
+ * class (research §C, FR-034).
+ *
+ * Feature 008 (US2, T029; FR-006, research §D, ui-behavior §2): the
+ * «Чаты»/«Контакты» mode tabs are GONE — the chat list renders right
+ * away and the search filters it by the chat NAME (FR-010: group
+ * title / peer login — never by message content, that is feature
+ * 013). Contacts are no longer a sidebar section: they live in the
+ * ContactsModal (T031/T032) opened through the MainMenuButton of the
+ * search row (T030), so the panel carries no contacts content prop
+ * anymore. The 004 reachability of every contact operation is
+ * preserved — only the entry point moves (FR-034, SC-004).
  */
 import { useState } from 'react'
-import type { ReactNode } from 'react'
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
 import type { ChatListStatus } from '../hooks/useChatList'
 import { ErrorBanner } from './ErrorBanner'
 import { ChatListItem } from './ChatListItem'
 import './chat-list-panel.css'
-
-export type ChatListPanelMode = 'chats' | 'contacts'
 
 /**
  * FR-014 row matching: a group answers by its `title`, a direct dialog
@@ -80,10 +78,6 @@ export interface ChatListPanelProps {
   readonly onSelectChat?: (chatId: string) => void
   /** Current user id: passed through to rows for the «Вы:» preview prefix. */
   readonly currentUserId?: string | null
-  /** Content of the «Контакты» mode (T059: search box + contact list). */
-  readonly contacts?: ReactNode
-  /** Initial mode; FR-013 default is «Чаты». */
-  readonly defaultMode?: ChatListPanelMode
   /**
    * US2 (T030/T034): the MainMenuButton of the search row opens the
    * single ModalShell forms hosted by MessengerPage — «Мой профиль»
@@ -104,10 +98,7 @@ export function ChatListPanel({
   activeChatId = null,
   onSelectChat,
   currentUserId = null,
-  contacts,
-  defaultMode = 'chats',
 }: ChatListPanelProps) {
-  const [mode, setMode] = useState<ChatListPanelMode>(defaultMode)
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const visibleChats =
@@ -115,116 +106,63 @@ export function ChatListPanel({
 
   return (
     <div className="chat-panel">
-      <div className="chat-panel-tabs" role="tablist" aria-label="Режимы панели">
-        <button
-          type="button"
-          role="tab"
-          id="chat-panel-tab-chats"
-          aria-selected={mode === 'chats'}
-          aria-controls="chat-panel-section-chats"
-          className={mode === 'chats' ? 'chat-panel-tab chat-panel-tab-active' : 'chat-panel-tab'}
-          onClick={() => {
-            setMode('chats')
-          }}
-        >
-          Чаты
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id="chat-panel-tab-contacts"
-          aria-selected={mode === 'contacts'}
-          aria-controls="chat-panel-section-contacts"
-          className={
-            mode === 'contacts' ? 'chat-panel-tab chat-panel-tab-active' : 'chat-panel-tab'
-          }
-          onClick={() => {
-            setMode('contacts')
-          }}
-        >
-          Контакты
-        </button>
-      </div>
-
-      <div
-        role="tabpanel"
-        id="chat-panel-section-chats"
-        aria-labelledby="chat-panel-tab-chats"
-        className="chat-panel-section"
-        hidden={mode !== 'chats'}
-      >
-        <div className="search-row">
-          {/* .menu-btn (главное меню, US2/T030) встраивается сюда же —
-              слева от поля, как в прототипе §5. */}
-          <div className="search-wrap">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <circle cx="10.5" cy="10.5" r="6.5" />
-              <path d="M15.5 15.5 21 21" />
-            </svg>
-            <input
-              type="search"
-              className="chat-panel-search"
-              aria-label="Поиск чатов"
-              placeholder="Поиск…"
-              autoComplete="off"
-              value={query}
-              onChange={(event) => {
-                setQuery(event.target.value)
-              }}
-            />
-          </div>
+      <div className="search-row">
+        {/* .menu-btn (главное меню, US2/T030) встраивается сюда же —
+            слева от поля, как в прототипе §5. */}
+        <div className="search-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <circle cx="10.5" cy="10.5" r="6.5" />
+            <path d="M15.5 15.5 21 21" />
+          </svg>
+          <input
+            type="search"
+            className="chat-panel-search"
+            aria-label="Поиск чатов"
+            placeholder="Поиск…"
+            autoComplete="off"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value)
+            }}
+          />
         </div>
-        {status === 'loading' && <p className="messenger-empty">Загрузка чатов…</p>}
-        {status === 'error' && (
-          <div className="chat-panel-error">
-            <ErrorBanner error={error} />
-            {onReload !== undefined && (
-              <button
-                type="button"
-                className="chat-panel-retry"
-                onClick={() => {
-                  onReload()
-                }}
-              >
-                Повторить
-              </button>
-            )}
-          </div>
-        )}
-        {status === 'ready' && chats.length === 0 && (
-          <p className="messenger-empty">Диалогов пока нет</p>
-        )}
-        {status === 'ready' && chats.length > 0 && visibleChats.length === 0 && (
-          <p className="messenger-empty">Ничего не найдено</p>
-        )}
-        {visibleChats.length > 0 && (
-          <ul className="chat-list" aria-label="Список чатов">
-            {visibleChats.map((item) => (
-              <ChatListItem
-                key={item.chatId}
-                item={item}
-                currentUserId={currentUserId}
-                active={item.chatId === activeChatId}
-                onSelect={onSelectChat}
-              />
-            ))}
-          </ul>
-        )}
       </div>
-
-      <div
-        role="tabpanel"
-        id="chat-panel-section-contacts"
-        aria-labelledby="chat-panel-tab-contacts"
-        className="chat-panel-section"
-        hidden={mode !== 'contacts'}
-      >
-        {contacts === undefined ? (
-          <p className="messenger-empty">Контакты появятся здесь</p>
-        ) : (
-          contacts
-        )}
-      </div>
+      {status === 'loading' && <p className="messenger-empty">Загрузка чатов…</p>}
+      {status === 'error' && (
+        <div className="chat-panel-error">
+          <ErrorBanner error={error} />
+          {onReload !== undefined && (
+            <button
+              type="button"
+              className="chat-panel-retry"
+              onClick={() => {
+                onReload()
+              }}
+            >
+              Повторить
+            </button>
+          )}
+        </div>
+      )}
+      {status === 'ready' && chats.length === 0 && (
+        <p className="messenger-empty">Диалогов пока нет</p>
+      )}
+      {status === 'ready' && chats.length > 0 && visibleChats.length === 0 && (
+        <p className="messenger-empty">Ничего не найдено</p>
+      )}
+      {visibleChats.length > 0 && (
+        <ul className="chat-list" aria-label="Список чатов">
+          {visibleChats.map((item) => (
+            <ChatListItem
+              key={item.chatId}
+              item={item}
+              currentUserId={currentUserId}
+              active={item.chatId === activeChatId}
+              onSelect={onSelectChat}
+            />
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
