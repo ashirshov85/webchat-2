@@ -27,6 +27,15 @@
  * Outgoing from another device arrives as a regular server message
  * via the own SSE stream and renders «Доставлено» immediately (US2-6).
  *
+ * Outbox-state design system (US4, T050, FR-030): the states stay on
+ * the bubble surface pinned by T048 — the static «отправляется» rides
+ * the engraved footer typography, the terminal «не отправлено» is the
+ * engraved danger (--err-ink + the tick emboss edge), and the manual
+ * actions are compact machine buttons of the prototype `.m-btn`
+ * lexica with the danger variant «Удалить» (message-list.css). The
+ * retry/delete callbacks are addressed by the SAME clientMessageId —
+ * the 005 engine idempotency is untouched (SC-002, SC-003).
+ *
  * History pagination (US3, T039, FR-008): the list itself is the scroll
  * container; scrolling close to the top calls `onLoadOlder`, and the
  * freshly prepended older page keeps the viewport anchored to the same

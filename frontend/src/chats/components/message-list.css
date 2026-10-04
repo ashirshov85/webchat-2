@@ -8,10 +8,9 @@
    компонентом chats/components/MessageList.tsx.
 
    Локальные outbox-статусы 005 («отправляется», «не отправлено» +
-   Повторить/Удалить) не существуют в статическом прототипе — здесь они
-   посажены в прототипную ножку .b-time золотой пластины, финальная
-   полировка состояний — US4/T050. Время ЧЧ:ММ и разделители дат ножки
-   — US3/T044.
+   Повторить/Удалить) не существуют в статическом прототипе — US4/T050
+   собирает их из лексик дизайн-системы (низ файла). Время ЧЧ:ММ и
+   разделители дат ножки — US3/T044.
 
    Селекторы скоупятся под .message-list (общие element-стили index.css
    не должны просвечивать сквозь машину). */
@@ -226,18 +225,30 @@
   color: var(--gold-light);
 }
 
-/* ============ ЛОКАЛЬНЫЕ СТАТУСЫ 005 (outbox/optimistic) ============ */
+/* ============ ЛОКАЛЬНЫЕ СТАТУСЫ 005 (outbox/optimistic, US4/T050) ============ */
 
-/* «отправляется» статично; терминальный «не отправлено» — гравированная
-   опасность на золоте (в прототипе состояния нет, полировка — T050) */
+/* Состояний доставки-очереди в статическом прототипе нет (baseline T060
+   фиксирует по реализованным снимкам — исключение SC-001), поэтому они
+   собраны из лексик дизайн-системы: подписи — в прототипной ножке .b-time
+   золотой пластины той же гравированной типографикой, что время/штампы;
+   ручные действия — компактные машинные кнопки .m-btn (проекция
+   confirm-dialog.css) с danger-вариантом «Удалить» (.m-btn.danger
+   прототипа). «отправляется» — статично (ui-behavior §4), как статичны
+   паттерны машины. Повтор/удаление идут по тому же clientMessageId
+   (идемпотентность 005 сохранена — FR-030). */
+
 .message-list .message-status {
   font: 10.5px var(--font-heading);
   letter-spacing: 1px;
   color: rgba(36, 27, 12, 0.65);
 }
 
+/* Терминальный «не отправлено» — гравированная опасность на золоте:
+   тёмный тон --err-ink + белое ребро тиснения, как у штампов .tick
+   (design-tokens §5) */
 .message-list .message-status-failed {
-  color: #5c1d0e;
+  color: var(--err-ink);
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.45));
 }
 
 /* Ручные действия неудавшейся записи — компактные машинные кнопки
@@ -255,15 +266,36 @@
   cursor: pointer;
   transition: 0.15s;
   border: 1px solid var(--gold-dark);
-  color: var(--ink);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(0, 0, 0, 0.08));
+  color: var(--muted-2);
+  background: var(--input-bg);
   font: 700 10px var(--font-heading);
   letter-spacing: 1px;
   text-transform: uppercase;
+  align-self: stretch;
 }
 
 .message-list .message-actions button:hover {
-  filter: brightness(1.12);
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+  background: var(--input-bg);
+}
+
+.message-list .message-actions button:active {
+  transform: translateY(1px);
+}
+
+/* «Удалить» — опасное действие: danger-вариант .m-btn.danger/.m-rm
+   прототипа (после generic-hover — равная специфичность решается
+   порядком источников) */
+.message-list .message-actions .message-remove {
+  color: var(--err);
+  border-color: rgba(255, 180, 163, 0.45);
+}
+
+.message-list .message-actions .message-remove:hover {
+  color: #ffd6cc;
+  border-color: rgba(255, 180, 163, 0.7);
+  background: rgba(126, 51, 32, 0.35);
 }
 
 .message-list .message-actions button:focus-visible {
