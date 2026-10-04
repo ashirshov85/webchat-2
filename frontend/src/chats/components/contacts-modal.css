@@ -1,0 +1,206 @@
+/* Модальная форма «Контакты» (feature 008, US2, T031; FR-011/013,
+   ui-behavior §3) — проекция #contactsForm/#ctcList прототипа
+   specs/008-chat-window-styling/design/chats.html (раздел «9. МОДАЛЬНОЕ
+   ОКНО»); при расхождениях побеждает прототип (FR-001). Форма — обитатель
+   ЕДИНОЙ оболочки ModalShell (T012/T034): каркас подложки/окна/заголовка —
+   ui/modal-shell.css, кнопочная система .m-btn/.modal-btns и подтверждение
+   .confirm-* — ui/confirm-dialog.css (T014). Здесь — оболочка списка:
+   .contacts-form (#contactsForm: колонка gap 8), поле поиска .ctc-search
+   (#ctcSearch, дословно .modal input:not([type=checkbox])) и высота списка
+   контактов (прототип #ctcList{max-height:280px} поверх базовой 220px).
+
+   Общие классы строк-пикеров прототипа определены здесь впервые и
+   переиспользуются задачами T035+ (create-group/group-edit/group-members):
+   .pick-list (рамка + скролл), .pick-row, .pick-empty, .modal-err,
+   кебаб-кнопка .c-menu (+ поведение в .ctc-строках: видима всегда,
+   nochat/blocked-пометки). Селекторы .pick-row .c-menu:hover/:focus-visible
+   (0-3-0) перекрывают auth-наследие index.css button:hover:not(:disabled)
+   (0-2-1) по каждому свойству, focus-ring дизайн-системы — золотой
+   (FR-035). Переменные-токены — theme/tokens.css (FR-002): палитра,
+   --font-heading/--font-body/--font-mono, радиус --r-field.
+   prefers-reduced-motion (FR-004) — глобальное правило theme/machine.css. */
+
+/* ============ ФОРМА (#contactsForm прототипа: колонка gap 8) ============ */
+
+.contacts-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* #ctcSearch — дословно .modal input прототипа; полная перекрыка
+   auth-наследия index.css (светлое поле, синий focus-accent). */
+.contacts-form .ctc-search {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-field);
+  outline: none;
+  border: 1px solid var(--gold-dark);
+  background: var(--input-bg);
+  color: var(--cream-bright);
+  font: 14px var(--font-mono);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.contacts-form .ctc-search::placeholder {
+  color: var(--muted-3);
+}
+
+.contacts-form .ctc-search:focus-visible {
+  border-color: var(--gold-light);
+  box-shadow: 0 0 0 2px rgba(232, 200, 119, 0.25);
+  outline: none;
+}
+
+/* ============ СПИСОК-ПИКЕР (прототип: .pick-list, базовые стили) ============ */
+
+.pick-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--gold-dark);
+  border-radius: 8px;
+  padding: 6px;
+  background: var(--input-bg);
+}
+
+.pick-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.pick-list::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--gold-dark), #4f3f1c);
+  border-radius: 4px;
+}
+
+/* #ctcList прототипа: список контактов чуть выше базового пикера. */
+.contacts-form .ctc-list {
+  max-height: 280px;
+}
+
+.pick-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.pick-row:hover {
+  background: rgba(201, 162, 74, 0.08);
+}
+
+.pick-row:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+.pick-row .avatar {
+  width: 32px;
+  height: 32px;
+}
+
+.pick-empty {
+  font: italic 12.5px var(--font-body);
+  color: var(--muted-3);
+  padding: 8px;
+  text-align: center;
+}
+
+/* Встроенная ошибка формы (прототип .modal-err; №20-сбой и сбои действий). */
+.modal-err {
+  min-height: 17px;
+  font: italic 12.5px var(--font-body);
+  color: var(--err);
+}
+
+/* ============ ТЕЛО СТРОКИ КОНТАКТА (.c-* прототипа, скоуп формы) ============ */
+
+.contacts-form .c-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.contacts-form .c-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.contacts-form .c-name {
+  font: 600 14px var(--font-heading);
+  color: var(--cream-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Блочный div — своя строка превью держит нормаль своего шрифта
+   (паттерн chat-list-panel.css). */
+.contacts-form .c-prev {
+  display: block;
+  font: italic 12px var(--font-body);
+  color: var(--muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+/* Пометки ctc-строк прототипа: «чат удалён» приглушает имя,
+   «заблокирован» красит превью (0-3-0 бьёт скоуп формы 0-2-0). */
+.ctc-row.nochat .c-name {
+  color: var(--muted-2);
+}
+
+.ctc-row.blocked .c-prev {
+  color: var(--err);
+}
+
+/* ============ КЕБАБ-КНОПКА «⋯» (прототип .c-menu) ============ */
+
+.c-menu {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  align-self: center;
+  border-radius: 5px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-3);
+  transition: 0.15s;
+}
+
+/* В ctc-строках кебаб виден всегда (прототип .ctc-row .c-menu). */
+.ctc-row .c-menu {
+  opacity: 1;
+}
+
+/* (0-3-0) перекрывает auth-наследие button:hover:not(:disabled) (0-2-1). */
+.pick-row .c-menu:hover {
+  color: var(--gold-light);
+  border-color: rgba(201, 162, 74, 0.4);
+  background: rgba(201, 162, 74, 0.1);
+}
+
+.pick-row .c-menu:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 1px;
+}
+
+.c-menu svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}

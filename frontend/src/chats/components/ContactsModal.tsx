@@ -1,55 +1,71 @@
 /**
- * Модальная форма «Контакты» «Aethergram» (feature 008, US2; FR-011–013,
- * ui-behavior §3, data-model 1.6/2.5): житель ЕДИНОЙ модальной оболочки
- * ModalShell (T034, MessengerPage) — проекция contactsForm/addForm прототипа
- * specs/008-chat-window-styling/design/chats.html (`.pick-row.ctc-row`,
- * `.c-name`/`.c-prev`, кнопка «⋯» `.c-menu`, инлайн-подтверждения через
- * ConfirmDialog — переключение формы внутри оболочки, без второй подложки,
- * data-model 3.3).
+ * Модальная форма «Контакты» «Aethergram» (feature 008, US2, T031; FR-011,
+ * FR-013, ui-behavior §3, data-model 1.6/2.5): житель ЕДИНОЙ модальной
+ * оболочки ModalShell (T034, MessengerPage) — проекция contactsForm
+ * прототипа specs/008-chat-window-styling/design/chats.html (`#ctcSearch`,
+ * `#ctcList`, строки `.pick-row.ctc-row`, кебаб `.c-menu`), инлайн-
+ * подтверждения через ConfirmDialog — переключение формы внутри оболочки,
+ * без второй подложки (data-model 3.3). Стили — contacts-modal.css.
  *
- * КОНТРАКТ (закреплён тестами T028 — написаны ДО реализации, конституция
- * VI; реализация — T031 (список/меню) и T032 (форма «Добавить контакт»),
- * встраивание в ModalShell MessengerPage — T034):
+ * Реализовано в T031 (список/меню; контракт закреплён красными тестами
+ * T028 — написаны ДО реализации, конституция VI):
  *
- * - Список: №20 `listContacts` на монтировании; клиентская сортировка
- *   username по `localeCompare(…, 'ru')` (displayName в контрактах 004–007
- *   нет — alias-имена вне фичи, ui-behavior §9; «displayName → username»
- *   FR-011 вырождается в username); живой фильтр по подстроке
+ * - Список: №20 `listContacts` на монтировании; КЛИЕНТСКАЯ сортировка
+ *   username (`byUsername`: алфавит без регистра, латиница раньше
+ *   кириллицы — см. комментарий у компаратора; displayName в контрактах
+ *   004–007 нет — alias-имена вне фичи, ui-behavior §9; «displayName →
+ *   username» FR-011 вырождается в username); живой фильтр по подстроке
  *   username/email без регистра; пустые состояния «Нет контактов —
  *   добавьте первого» / «Ничего не найдено»; сбой №20 — ошибка +
  *   «Повторить» с рефетчем (ожидание 004, FR-034).
  *
  * - Пометки из пропа `chats` (№12, владелец — MessengerPage): связанный
- *   direct-чат с `blockedByMe` → «заблокирован»; контакта без чата →
- *   «чат удалён» (рендер строк — флаги в `.c-prev` прототипа).
+ *   direct-чат с `blockedByMe` → «заблокирован» (+ класс .blocked);
+ *   контакта без чата → «чат удалён» (+ .nochat, подсказка title).
  *
- * - Клик по строке: контакт со связанным чатом — №11 `ensureChat({peerUserId})`
- *   → `onOpenChat(ChatView)` (поведение 004 сохранено, FR-034); контакт без
- *   чата — БЕЗ действия (Clarification FR-013: создание чата — только
- *   осознанным пунктом «Создать чат»).
+ * - Клик по строке (Row/Enter/Space — FR-035): контакт со связанным чатом
+ *   — №11 `ensureChat({peerUserId})` → `onOpenChat(ChatView)` (поведение
+ *   004 сохранено, FR-034); контакт без чата — БЕЗ действия
+ *   (Clarification FR-013: создание чата — только осознанным пунктом
+ *   «Создать чат»).
  *
  * - Меню «⋯» (ContextMenu; FR-013/FR-014): «Заблокировать»/«Разблокировать»
- *   (по blockedByMe связанного чата; подтверждение, danger — №23/№24,
- *   тосты «Контакт заблокирован/разблокирован — {username}»); «Удалить чат»
+ *   (по blockedByMe связанного чата; подтверждение — №23/№24, тосты
+ *   «Контакт заблокирован/разблокирован — {username}»); «Удалить чат»
  *   (есть связанный; подтверждение danger — №14, тост «Чат удалён —
  *   контакт сохранён», контакт остаётся) / «Создать чат» (чата нет;
  *   подтверждение — №11 + `onOpenChat`); «Удалить контакт» (danger +
- *   разделитель; подтверждение danger — №22, строка исчезает, чат и история
- *   сохраняются — FR-017, тост «Контакт удалён — чат сохранён»). Отмена
- *   подтверждения — действие не выполняется (SC-007). Сбои действий —
- *   ошибка видна, список жив (ожидание 004).
+ *   разделитель; подтверждение danger — №22, строка исчезает локально,
+ *   чат и история сохраняются — FR-017, тост «Контакт удалён — чат
+ *   сохранён»). Отмена подтверждения — действие не выполняется (SC-007).
+ *   Сбои действий — ошибка видна (.modal-err), список жив (ожидание 004).
  *
- * - Форма «Добавить контакт» (FR-012, T032): вход кнопкой «Добавить
- *   контакт»; №19 `searchUsers` с триммингом запроса (точное совпадение
- *   username/email без регистра — правило на сервере); промах — ошибка
- *   «Пользователь не найден — требуется точное совпадение username или
- *   email», №21 не вызывается; находка — подтверждение (имя `<b>` + подпись
- *   «username · email») → №21 `addContact` (идемпотентно: дубль не создаётся)
- *   → №11 → `onOpenChat` (открывается переписка); тост «Контакт добавлен —
- *   {username}» либо «Уже в контактах — {username}» (факт определяется по
- *   загруженному списку №20); «Отмена» возвращает список.
+ * Форма «Добавить контакт» (FR-012) — T032; встраивание формы в ModalShell
+ * MessengerPage (заголовок «Контакты», закрытие Esc/фоном) — T034.
  */
-import type { ChatListItem, ChatView } from '../../api/chats'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from 'react'
+import {
+  blockUser,
+  deleteChat,
+  ensureChat,
+  listContacts,
+  removeContact,
+  unblockUser,
+} from '../../api/chats'
+import type { ChatListItem, ChatView, ContactView } from '../../api/chats'
+import { problemMessage } from '../../auth/problem'
+import { Avatar } from '../../ui/Avatar'
+import { ConfirmDialog, type ConfirmVariant } from '../../ui/ConfirmDialog'
+import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
+import { useToast } from '../../ui/Toast'
+import './contacts-modal.css'
 
 export interface ContactsModalProps {
   /** №12-строки (useChatList MessengerPage): связанный чат + blockedByMe. */
@@ -58,12 +74,411 @@ export interface ContactsModalProps {
   readonly onOpenChat: (chat: ChatView) => void
 }
 
-/**
- * T028: контракт-заглушка — держит компиляцию и пропсы для тестов
- * ContactsModal.test.tsx до реализации T031/T032 (паттерн T027:
- * опережающее объявление API). Никакого UI не рендерит.
- */
-export function ContactsModal(props: ContactsModalProps): null {
-  void props
+/** Связанный direct-чат контакта в терминах строки (№12). */
+interface BoundChat {
+  readonly chatId: string
+  readonly blockedByMe: boolean
+}
+
+/** Ожидаемое подтверждение «⋯»-меню (ConfirmDialog, SC-007). */
+type PendingConfirm =
+  | { readonly kind: 'block'; readonly contact: ContactView }
+  | { readonly kind: 'unblock'; readonly contact: ContactView }
+  | { readonly kind: 'delete-chat'; readonly contact: ContactView; readonly chatId: string }
+  | { readonly kind: 'create-chat'; readonly contact: ContactView }
+  | { readonly kind: 'remove-contact'; readonly contact: ContactView }
+
+type ListStatus = 'loading' | 'ready' | 'error'
+
+/** №12-строка контакта: direct-чат с собеседником = contact.user (type у direct-элементов опционален). */
+function boundChatOf(chats: readonly ChatListItem[], contact: ContactView): BoundChat | null {
+  for (const item of chats) {
+    if ((item.type ?? 'direct') === 'direct' && item.peer?.id === contact.user.id) {
+      return { chatId: item.chatId, blockedByMe: item.blockedByMe ?? false }
+    }
+  }
   return null
+}
+
+/** Пометки строки (renderContactsModal прототипа): «заблокирован», «чат удалён». */
+function contactFlags(bound: BoundChat | null): string[] {
+  const flags: string[] = []
+  if (bound !== null && bound.blockedByMe) {
+    flags.push('заблокирован')
+  }
+  if (bound === null) {
+    flags.push('чат удалён')
+  }
+  return flags
+}
+
+/** capFirst прототипа: «Заблокирован, чат удалён». */
+function capFirst(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/**
+ * FR-011 сортировка username: алфавитная, без регистра, латиница раньше
+ * кириллицы, «анна» < «Борис» (фиксация тестов T028). Корневая коллация
+ * ICU ('und'): ru-тюнинг CLDR переупорядочивает кириллицу ПЕРЕД
+ * латиницей (Node/Browser full-ICU: «анна, Борис, alice»), что противоречит
+ * контракту — корневой порядок даёт ровно ожидаемое, сохраняя
+ * регистронезависимость (прототип renderContactsModal, §9 chats.html).
+ */
+function byUsername(a: ContactView, b: ContactView): number {
+  return a.user.username.localeCompare(b.user.username, 'und')
+}
+
+/** Параметры подтверждения по виду действия (ConfirmDialog, ui-behavior §3). */
+interface ConfirmUi {
+  readonly text: ReactNode
+  readonly confirmLabel: string
+  readonly variant: ConfirmVariant
+}
+
+export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
+  const showToast = useToast()
+  const [status, setStatus] = useState<ListStatus>('loading')
+  const [contacts, setContacts] = useState<readonly ContactView[]>([])
+  const [listError, setListError] = useState<unknown>(null)
+  const [query, setQuery] = useState('')
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [menuContact, setMenuContact] = useState<ContactView | null>(null)
+  const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null)
+  const [pending, setPending] = useState<PendingConfirm | null>(null)
+
+  /** №20 + «Повторить»: единственный путь загрузки списка. */
+  const loadContacts = useCallback(() => {
+    setStatus('loading')
+    setListError(null)
+    listContacts()
+      .then((list) => {
+        setContacts(list)
+        setStatus('ready')
+      })
+      .catch((error: unknown) => {
+        setListError(error)
+        setStatus('error')
+      })
+  }, [])
+  useEffect(() => {
+    loadContacts()
+  }, [loadContacts])
+
+  /** FR-011: клиентская сортировка username (ru-locale) + живой фильтр username/email. */
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleContacts = useMemo(() => {
+    const sorted = [...contacts].sort(byUsername)
+    if (normalizedQuery === '') {
+      return sorted
+    }
+    return sorted.filter(
+      (contact) =>
+        contact.user.username.toLowerCase().includes(normalizedQuery) ||
+        contact.user.email.toLowerCase().includes(normalizedQuery),
+    )
+  }, [contacts, normalizedQuery])
+
+  /** №11 → onOpenChat; клик без чата отсекается вызывающим (Clarification FR-013). */
+  const openChatWith = useCallback(
+    (contact: ContactView) => {
+      setActionError(null)
+      Promise.resolve(ensureChat({ peerUserId: contact.user.id }))
+        .then((view) => {
+          onOpenChat(view)
+        })
+        .catch((error: unknown) => {
+          setActionError(problemMessage(error))
+        })
+    },
+    [onOpenChat],
+  )
+
+  const handleRowActivate = (contact: ContactView) => {
+    if (boundChatOf(chats, contact) === null) {
+      return
+    }
+    openChatWith(contact)
+  }
+
+  /** Кебаб «⋯»: якорь — rect кнопки (паттерн MainMenuButton); клик не
+   * проваливается в строку (menuBtn-early-return прототипа). */
+  const handleMenuButtonClick = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    contact: ContactView,
+  ) => {
+    event.stopPropagation()
+    setMenuAnchor(event.currentTarget.getBoundingClientRect())
+    setMenuContact(contact)
+  }
+
+  /** Пункты «⋯»-меню строки (FR-013): состав зависит от связанного чата. */
+  const menuItems = useMemo<readonly MenuItem[]>(() => {
+    if (menuContact === null) {
+      return []
+    }
+    const bound = boundChatOf(chats, menuContact)
+    const blocked = bound !== null && bound.blockedByMe
+    return [
+      {
+        label: blocked ? 'Разблокировать' : 'Заблокировать',
+        onSelect: () => {
+          setPending({ kind: blocked ? 'unblock' : 'block', contact: menuContact })
+        },
+      },
+      bound !== null
+        ? {
+            label: 'Удалить чат',
+            onSelect: () => {
+              setPending({ kind: 'delete-chat', contact: menuContact, chatId: bound.chatId })
+            },
+          }
+        : {
+            label: 'Создать чат',
+            onSelect: () => {
+              setPending({ kind: 'create-chat', contact: menuContact })
+            },
+          },
+      {
+        label: 'Удалить контакт',
+        danger: true,
+        sepBefore: true,
+        onSelect: () => {
+          setPending({ kind: 'remove-contact', contact: menuContact })
+        },
+      },
+    ]
+  }, [menuContact, chats])
+
+  /** Подтверждённое действие (submit ConfirmDialog): форма возвращается к
+   * списку, операция идёт своим ходом; успех — ровно один тост (FR-025),
+   * сбой — ошибка при живом списке (ожидание 004). */
+  const runPendingAction = () => {
+    if (pending === null) {
+      return
+    }
+    const { user } = pending.contact
+    setPending(null)
+    setActionError(null)
+    switch (pending.kind) {
+      case 'block':
+        void Promise.resolve(blockUser(user.id))
+          .then(() => {
+            showToast(`Контакт заблокирован — ${user.username}`)
+          })
+          .catch((error: unknown) => {
+            setActionError(problemMessage(error))
+          })
+        break
+      case 'unblock':
+        void Promise.resolve(unblockUser(user.id))
+          .then(() => {
+            showToast(`Контакт разблокирован — ${user.username}`)
+          })
+          .catch((error: unknown) => {
+            setActionError(problemMessage(error))
+          })
+        break
+      case 'delete-chat':
+        void Promise.resolve(deleteChat(pending.chatId))
+          .then(() => {
+            showToast('Чат удалён — контакт сохранён')
+          })
+          .catch((error: unknown) => {
+            setActionError(problemMessage(error))
+          })
+        break
+      case 'create-chat':
+        void Promise.resolve(ensureChat({ peerUserId: user.id }))
+          .then((view) => {
+            onOpenChat(view)
+          })
+          .catch((error: unknown) => {
+            setActionError(problemMessage(error))
+          })
+        break
+      case 'remove-contact':
+        void Promise.resolve(removeContact(user.id))
+          .then(() => {
+            setContacts((current) => current.filter((item) => item.user.id !== user.id))
+            showToast('Контакт удалён — чат сохранён')
+          })
+          .catch((error: unknown) => {
+            setActionError(problemMessage(error))
+          })
+        break
+    }
+  }
+
+  /** Подтверждение поверх списка — переключением формы внутри одной
+   * оболочки, без наложения (data-model 3.3; T034 формализует в ModalShell). */
+  if (pending !== null) {
+    const { username } = pending.contact.user
+    const confirmUi: ConfirmUi = (() => {
+      switch (pending.kind) {
+        case 'block':
+          return {
+            text: (
+              <>
+                Заблокировать контакт <b>{username}</b>?
+              </>
+            ),
+            confirmLabel: 'Заблокировать',
+            variant: 'danger',
+          }
+        case 'unblock':
+          return {
+            text: (
+              <>
+                Разблокировать контакт <b>{username}</b>?
+              </>
+            ),
+            confirmLabel: 'Разблокировать',
+            variant: 'primary',
+          }
+        case 'delete-chat':
+          return {
+            text: (
+              <>
+                Удалить чат с <b>{username}</b>?
+              </>
+            ),
+            confirmLabel: 'Удалить',
+            variant: 'danger',
+          }
+        case 'create-chat':
+          return {
+            text: (
+              <>
+                Создать чат с <b>{username}</b>?
+              </>
+            ),
+            confirmLabel: 'Создать',
+            variant: 'primary',
+          }
+        case 'remove-contact':
+          return {
+            text: (
+              <>
+                Удалить контакт <b>{username}</b>? Чат и история сохранятся.
+              </>
+            ),
+            confirmLabel: 'Удалить',
+            variant: 'danger',
+          }
+      }
+    })()
+    return (
+      <ConfirmDialog
+        text={confirmUi.text}
+        confirmLabel={confirmUi.confirmLabel}
+        variant={confirmUi.variant}
+        onConfirm={runPendingAction}
+        onCancel={() => {
+          setPending(null)
+        }}
+      />
+    )
+  }
+
+  return (
+    <div className="contacts-form">
+      <input
+        className="ctc-search"
+        placeholder="Поиск контакта — имя, username или email"
+        autoComplete="off"
+        value={query}
+        onChange={(event) => {
+          setQuery(event.target.value)
+        }}
+      />
+      {status === 'error' && (
+        <>
+          <div className="modal-err" role="alert">
+            {problemMessage(listError)}
+          </div>
+          <div className="modal-btns">
+            <button type="button" className="m-btn" onClick={loadContacts}>
+              Повторить
+            </button>
+          </div>
+        </>
+      )}
+      {status === 'ready' && (
+        <div className="pick-list ctc-list">
+          {contacts.length === 0 && (
+            <div className="pick-empty">Нет контактов — добавьте первого</div>
+          )}
+          {contacts.length > 0 && visibleContacts.length === 0 && (
+            <div className="pick-empty">Ничего не найдено</div>
+          )}
+          {visibleContacts.map((contact) => {
+            const bound = boundChatOf(chats, contact)
+            const blocked = bound !== null && bound.blockedByMe
+            const flags = contactFlags(bound)
+            return (
+              <div
+                key={contact.user.id}
+                className={
+                  'pick-row ctc-row' +
+                  (blocked ? ' blocked' : '') +
+                  (bound === null ? ' nochat' : '')
+                }
+                role="button"
+                tabIndex={0}
+                aria-label={`Контакт ${contact.user.username}`}
+                title={bound !== null ? 'Открыть чат' : 'Чат удалён — создайте через меню ⋯'}
+                onClick={() => {
+                  handleRowActivate(contact)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    handleRowActivate(contact)
+                  }
+                }}
+              >
+                <Avatar source={contact.user.username} size={32} />
+                <div className="c-main">
+                  <div className="c-top">
+                    <span className="c-name">{contact.user.username}</span>
+                  </div>
+                  {flags.length > 0 && <div className="c-prev">{capFirst(flags.join(', '))}</div>}
+                </div>
+                <button
+                  type="button"
+                  className="c-menu"
+                  title="Действия с контактом"
+                  aria-haspopup="menu"
+                  aria-expanded={menuContact?.user.id === contact.user.id}
+                  onClick={(event) => {
+                    handleMenuButtonClick(event, contact)
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <circle cx="12" cy="5" r="1.8" />
+                    <circle cx="12" cy="12" r="1.8" />
+                    <circle cx="12" cy="19" r="1.8" />
+                  </svg>
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {actionError !== null && (
+        <div className="modal-err" role="alert">
+          {actionError}
+        </div>
+      )}
+      <ContextMenu
+        open={menuContact !== null}
+        anchor={menuContact !== null ? menuAnchor : null}
+        items={menuItems}
+        onClose={() => {
+          setMenuContact(null)
+        }}
+      />
+    </div>
+  )
 }
