@@ -175,7 +175,17 @@ async function renderPage(
   mockChats.listContacts.mockResolvedValue(contacts())
   installStream()
   render(<MessengerPage />)
-  await screen.findByRole('button', { name: 'Создать группу' })
+  await screen.findByRole('list', { name: 'Список чатов' })
+}
+
+/**
+ * US2 (008 T034): the creation entry is the «Создать групповой чат»
+ * item of the sidebar main menu — the legacy panel button is gone with
+ * the tabs (ui-behavior §2), the form lives in the single ModalShell.
+ */
+async function openCreateGroup(): Promise<void> {
+  fireEvent.click(screen.getByRole('button', { name: 'Меню' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Создать групповой чат' }))
 }
 
 /** The «Чаты» row button of a chat, anchored by its visible title (T017). */
@@ -190,21 +200,22 @@ afterEach(() => {
 })
 
 describe('MessengerPage «Создать группу» entry (US1, quickstart §3.1)', () => {
-  it('opens the CreateGroupDialog from the panel button and closes it on «Отмена»', async () => {
+  it('opens the CreateGroupDialog from the main menu and closes it on «Отмена»', async () => {
     await renderPage([directRow()])
 
-    fireEvent.click(screen.getByRole('button', { name: 'Создать группу' }))
+    await openCreateGroup()
     expect(screen.getByRole('dialog', { name: 'Создание группы' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
     expect(screen.queryByRole('dialog', { name: 'Создание группы' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Создать группу' })).toBeInTheDocument()
+    // The modal shell closed — the main menu entry stays reachable.
+    expect(screen.getByRole('button', { name: 'Меню' })).toBeInTheDocument()
   })
 
   it('creates the group via №27, closes the dialog, refetches №12 and opens the group window', async () => {
     await renderPage([directRow()])
 
-    fireEvent.click(screen.getByRole('button', { name: 'Создать группу' }))
+    await openCreateGroup()
     fireEvent.change(await screen.findByLabelText('Название группы'), {
       target: { value: 'Проект Альфа' },
     })
@@ -230,7 +241,7 @@ describe('MessengerPage «Создать группу» entry (US1, quickstart �
   it('keeps the dialog open on a №27 problem so the draft stays fixable', async () => {
     await renderPage([directRow()])
 
-    fireEvent.click(screen.getByRole('button', { name: 'Создать группу' }))
+    await openCreateGroup()
     fireEvent.change(await screen.findByLabelText('Название группы'), {
       target: { value: 'Проект Альфа' },
     })

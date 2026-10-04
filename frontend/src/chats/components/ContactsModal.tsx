@@ -89,6 +89,13 @@ export interface ContactsModalProps {
   readonly chats: readonly ChatListItem[]
   /** Открывает переписку (№11 ChatView): клик по контакту с чатом, «Создать чат», добавление. */
   readonly onOpenChat: (chat: ChatView) => void
+  /**
+   * T034 (ModalShell): сообщает владельцу оболочки о внутреннем
+   * переключении list ↔ add — page отображает это в formId
+   * 'contacts' | 'add-contact' (заголовок оболочки и вход фокуса,
+   * data-model 3.3 — форма меняется, подложка остаётся одна).
+   */
+  readonly onFormChange?: (form: ModalForm) => void
 }
 
 /** Связанный direct-чат контакта в терминах строки (№12). */
@@ -155,9 +162,9 @@ interface ConfirmUi {
 }
 
 /** Форма модали (переключение внутри одной оболочки, data-model 3.3): список / добавление. */
-type ModalForm = 'list' | 'add'
+export type ModalForm = 'list' | 'add'
 
-export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
+export function ContactsModal({ chats, onOpenChat, onFormChange }: ContactsModalProps) {
   const showToast = useToast()
   const [status, setStatus] = useState<ListStatus>('loading')
   const [contacts, setContacts] = useState<readonly ContactView[]>([])
@@ -232,6 +239,7 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
     setAddError(null)
     setActionError(null)
     setForm('add')
+    onFormChange?.('add')
   }
 
   /**
@@ -374,6 +382,7 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
         // Идемпотентность №21 (201/200 без дублей): «уже в контактах» видно
         // по текущей книге — тост один, далее переписка (FR-012).
         setForm('list')
+        onFormChange?.('list')
         setAddQuery('')
         {
           const known = contacts.some((item) => item.user.id === user.id)
@@ -510,6 +519,7 @@ export function ContactsModal({ chats, onOpenChat }: ContactsModalProps) {
             className="m-btn"
             onClick={() => {
               setForm('list')
+              onFormChange?.('list')
             }}
           >
             Отмена

@@ -5,7 +5,22 @@
  * and the open dialog window as its `.panel` surfaces (`.sidebar` /
  * `.chat`, design-tokens §3) — the 004–007 wiring below (hooks,
  * routing, actions) is unchanged. US2 (T029, FR-006): the sidebar is
- * tab-free — contacts moved out of it into the modal forms (T031+). Mounted on the protected
+ * tab-free — contacts moved out of it into the modal forms (T031+).
+ *
+ * US2 single modal shell (008 T034; FR-026, data-model 1.6/3.3,
+ * ui-behavior §3): EVERY modal form of the app is an inhabitant of
+ * ONE `ModalShell` mounted here — the main menu items (T030) open
+ * contacts / add-contact (ContactsModal — its internal list ↔ add
+ * switch lifts into the shell formId via onFormChange) / profile
+ * (ProfileModal) / create-group (the interim №27 CreateGroupDialog
+ * until the T035 grpForm projection), and the header confirmations
+ * (№14/№23/№24) ride the 'confirm' formId. A formId switch NEVER
+ * adds a second `.modal-back` (edge case data-model 3.3 — the
+ * confirmation swaps the inhabitant inside the same shell); closure
+ * is uniform — Esc / backdrop press+release / «Отмена» / submit
+ * success → closeShell. The page ToastProvider keeps the single
+ * toast slot above the modal (z-99, ui-behavior §5).
+ * Mounted on the protected
  * route `/` (with the `/chat` alias — the SSO landing path from
  * feature 003). Without an open chat the window carries the US1 empty
  * state «Чат не выбран» (FR-032 — the prototype is normative, FR-001).
@@ -115,21 +130,23 @@
  * rides the SAME T058 wiring: it closes an OPEN group window of the
  * hard-deleted chat and tombstones the chatId in the №25 batcher.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
 import type { GroupView } from '../../api/groups'
 import { blockUser, deleteChat, getChat, unblockUser } from '../../api/chats'
-import type { Message } from '../../api/chats'
+import type { ChatView, Message } from '../../api/chats'
 import { getAckBatcher } from '../../sync/ack'
 import { advanceCursor } from '../../sync/cursors'
 import { useSync } from '../../sync/hooks/useSync'
 import { ChatHeader } from '../components/ChatHeader'
 import type { ChatHeaderChat } from '../components/ChatHeader'
 import { ChatListPanel } from '../components/ChatListPanel'
+import { ContactsModal } from '../components/ContactsModal'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { MessageInput } from '../components/MessageInput'
 import { MessageList } from '../components/MessageList'
+import { ProfileModal } from '../components/ProfileModal'
 import { QueueOverflowBanner } from '../components/QueueOverflowBanner'
 import { SyncIndicator } from '../components/SyncIndicator'
 import { useChatList } from '../hooks/useChatList'
@@ -143,6 +160,11 @@ import { useGroup } from '../../groups/hooks/useGroup'
 import type { GroupStatus } from '../../groups/hooks/useGroup'
 import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
+import { ConfirmDialog } from '../../ui/ConfirmDialog'
+import type { ConfirmVariant } from '../../ui/ConfirmDialog'
+import { ModalShell } from '../../ui/ModalShell'
+import type { ModalFormId } from '../../ui/ModalShell'
+import { ToastProvider } from '../../ui/Toast'
 import './messenger.css'
 
 /** The open direct dialog: everything the header actions need (T060). */
@@ -177,32 +199,61 @@ type ActiveChat = DirectChatView | GroupChatView
  */
 type PendingAction = 'delete-chat' | 'block' | 'unblock'
 
-interface ConfirmCopy {
+/** The shell 'confirm' inhabitant copy (SC-007: имя — <b>, FR-033). */
+interface ConfirmUi {
   readonly title: string
-  readonly text: string
+  readonly text: ReactNode
   readonly confirmLabel: string
+  readonly variant: ConfirmVariant
 }
 
-function confirmCopy(action: PendingAction, peerName: string): ConfirmCopy {
+function confirmUiOf(action: PendingAction, peerName: string): ConfirmUi {
   if (action === 'delete-chat') {
     return {
       title: 'Удаление чата',
-      text: `Удалить чат с ${peerName}? История скроется только у вас; неотправленные сообщения этого чата будут удалены.`,
+      text: (
+        <>
+          Удалить чат с <b>{peerName}</b>? История скроется только у вас; неотправленные сообщения
+          этого чата будут удалены.
+        </>
+      ),
       confirmLabel: 'Удалить чат',
+      variant: 'danger',
     }
   }
   if (action === 'block') {
     return {
       title: 'Блокировка пользователя',
-      text: `Заблокировать ${peerName}? Отправка сообщений будет запрещена в обе стороны.`,
+      text: (
+        <>
+          Заблокировать <b>{peerName}</b>? Отправка сообщений будет запрещена в обе стороны.
+        </>
+      ),
       confirmLabel: 'Заблокировать',
+      variant: 'danger',
     }
   }
   return {
     title: 'Разблокировка пользователя',
-    text: `Разблокировать ${peerName}? Переписка снова станет доступна в обе стороны.`,
+    text: (
+      <>
+        Разблокировать <b>{peerName}</b>? Переписка снова станет доступна в обе стороны.
+      </>
+    ),
     confirmLabel: 'Разблокировать',
+    variant: 'primary',
   }
+}
+
+/** Заголовки форм-обитателей оболочки (openXxx() прототипа, T034). */
+const MODAL_TITLES: Record<ModalFormId, string> = {
+  contacts: 'Контакты',
+  'add-contact': 'Добавить контакт',
+  'create-group': 'Новый групповой чат',
+  'group-edit': 'Редактировать групповой чат',
+  'group-members': 'Участники',
+  profile: 'Мой профиль',
+  confirm: 'Подтверждение',
 }
 
 /**
@@ -231,38 +282,25 @@ function headerChatOf(chat: ActiveChat, group: GroupView | null): ChatHeaderChat
   }
 }
 
-/** The «диалоговое меню» confirmation of a pending T060 action. */
-interface ConfirmDialogProps {
-  readonly confirmation: ConfirmCopy
-  readonly pending: boolean
-  readonly onAccept: () => void
-  readonly onCancel: () => void
-}
-
-function ConfirmDialog({ confirmation, pending, onAccept, onCancel }: ConfirmDialogProps) {
-  return (
-    <dialog className="dialog-confirm" open aria-label={confirmation.title}>
-      <p className="dialog-confirm-text">{confirmation.text}</p>
-      <div className="dialog-confirm-actions">
-        <button
-          type="button"
-          className="dialog-confirm-accept"
-          disabled={pending}
-          onClick={onAccept}
-        >
-          {pending ? 'Выполняется…' : confirmation.confirmLabel}
-        </button>
-        <button
-          type="button"
-          className="dialog-confirm-cancel"
-          disabled={pending}
-          onClick={onCancel}
-        >
-          Отмена
-        </button>
-      </div>
-    </dialog>
-  )
+/** Связывание №11/№13 ChatView с окном страницы (T034: путь из модалей). */
+function activeChatOfView(view: ChatView): ActiveChat | null {
+  if (view.type === 'group') {
+    return {
+      kind: 'group',
+      chatId: view.chatId,
+      title: view.title ?? '',
+      memberCount: view.memberCount ?? null,
+    }
+  }
+  if (view.peer !== null) {
+    return {
+      kind: 'direct',
+      chatId: view.chatId,
+      peer: view.peer,
+      blockedByMe: view.blockedByMe ?? false,
+    }
+  }
+  return null
 }
 
 /**
@@ -357,8 +395,14 @@ export function MessengerPage() {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionPending, setActionPending] = useState(false)
   const [actionError, setActionError] = useState<unknown>(null)
-  /** The CreateGroupDialog lifetime (T029): closed = the entry button. */
-  const [createGroupOpen, setCreateGroupOpen] = useState(false)
+  /**
+   * The SINGLE modal shell form (T034, data-model 1.6/3.3): the
+   * sidebar main menu (T030) opens contacts / add-contact / profile /
+   * create-group here, the header confirmations ride the 'confirm'
+   * formId — one `.modal-back` for every form, formId switches never
+   * stack a second backdrop.
+   */
+  const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
   /**
    * The GroupInfoPanel card of the open group window (T046a): the
    * header toggle opens/closes it; a chat switch closes it together
@@ -557,8 +601,32 @@ export function MessengerPage() {
     setActiveChat(view)
   }, [])
 
+  /** Shell closure (data-model 3.3): Esc / фон / «Отмена» / успех submit. */
+  const closeShell = useCallback(() => {
+    setModalForm(null)
+    setPendingAction(null)
+  }, [])
+
   /**
-   * №27 success (T029): close the dialog, converge №12 (the creator's
+   * Opening a pair dialog FROM a modal form (T034): the shell closes
+   * (closeModal + selectChat прототипа), the №11 ChatView becomes the
+   * open window and №12 converges — the new chat lands in «Чаты» at
+   * once instead of waiting for the next sync round.
+   */
+  const handleOpenChatFromModal = useCallback(
+    (view: ChatView) => {
+      closeShell()
+      const next = activeChatOfView(view)
+      if (next !== null) {
+        openChatView(next)
+      }
+      reloadChatList()
+    },
+    [closeShell, openChatView, reloadChatList],
+  )
+
+  /**
+   * №27 success (T029): close the shell, converge №12 (the creator's
    * group materializes from the server aggregate — title, memberCount,
    * `myRole`, the FR-013 zero badge) and open the group window on the
    * fresh `GroupView` (quickstart §3.1: the group is immediately in
@@ -566,7 +634,7 @@ export function MessengerPage() {
    */
   const handleGroupCreated = useCallback(
     (group: GroupView) => {
-      setCreateGroupOpen(false)
+      setModalForm(null)
       reloadChatList()
       openChatView({
         kind: 'group',
@@ -779,140 +847,168 @@ export function MessengerPage() {
   const dialogOpen = activeChat !== null
   const confirmation =
     activeChat !== null && activeChat.kind === 'direct' && pendingAction !== null
-      ? confirmCopy(pendingAction, activeChat.peer.username)
+      ? confirmUiOf(pendingAction, activeChat.peer.username)
       : null
+  /**
+   * The shell formId (T034): a pending header confirmation rides
+   * 'confirm' — an open(X) → open(confirm) switch inside the SAME
+   * shell, never a second backdrop (data-model 3.3).
+   */
+  const shellFormId: ModalFormId | null = pendingAction !== null ? 'confirm' : modalForm
+  const shellTitle =
+    confirmation !== null
+      ? confirmation.title
+      : shellFormId !== null
+        ? MODAL_TITLES[shellFormId]
+        : ''
 
   return (
-    <div className="machine">
-      <div className="frame-body">
-        <aside className="sidebar panel" aria-label="Чаты и контакты">
-          <QueueOverflowBanner userId={currentUserId} />
-          <SyncIndicator syncing={syncing} />
-          {createGroupOpen ? (
-            <CreateGroupDialog
-              onCreated={handleGroupCreated}
-              onCancel={() => {
-                setCreateGroupOpen(false)
+    <ToastProvider>
+      <div className="machine">
+        <div className="frame-body">
+          <aside className="sidebar panel" aria-label="Чаты и контакты">
+            <QueueOverflowBanner userId={currentUserId} />
+            <SyncIndicator syncing={syncing} />
+            <ChatListPanel
+              chats={chats}
+              status={chatListStatus}
+              error={chatListError}
+              onReload={reloadChatList}
+              activeChatId={activeChatId}
+              onSelectChat={handleSelectChat}
+              currentUserId={currentUserId}
+              onOpenProfile={() => {
+                setModalForm('profile')
+              }}
+              onOpenContacts={() => {
+                setModalForm('contacts')
+              }}
+              onCreateGroup={() => {
+                setModalForm('create-group')
               }}
             />
-          ) : (
-            <div className="panel-actions">
-              <button
-                type="button"
-                className="panel-create-group"
-                onClick={() => {
-                  setCreateGroupOpen(true)
-                }}
-              >
-                Создать группу
-              </button>
-            </div>
-          )}
-          <ChatListPanel
-            chats={chats}
-            status={chatListStatus}
-            error={chatListError}
-            onReload={reloadChatList}
-            activeChatId={activeChatId}
-            onSelectChat={handleSelectChat}
-            currentUserId={currentUserId}
-          />
-        </aside>
-        <section className="chat panel" aria-label="Окно диалога">
-          {dialogOpen && activeChat !== null ? (
-            <>
-              <ChatHeader
-                chat={headerChatOf(activeChat, activeGroup)}
-                menuOpen={menuOpen}
-                onToggleMenu={() => {
-                  setMenuOpen((open) => !open)
-                }}
-                onDeleteChat={() => {
-                  setMenuOpen(false)
-                  setPendingAction('delete-chat')
-                }}
-                onToggleBlock={() => {
-                  setMenuOpen(false)
-                  setPendingAction(
-                    activeChat.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block',
-                  )
-                }}
-                groupInfoOpen={groupInfoOpen}
-                onToggleGroupInfo={() => {
-                  setGroupInfoOpen((open) => !open)
-                }}
-              />
-
-              {activeChat.kind === 'group' && groupInfoOpen && (
-                <GroupCard
-                  group={activeGroup}
-                  chatId={activeChat.chatId}
-                  status={activeGroupStatus}
-                  error={activeGroupError}
-                  currentUserId={currentUserId ?? ''}
-                  onReload={reloadActiveGroup}
-                  rosterActions={rosterActions}
-                  onMembersAdded={handleMembersAdded}
-                  onUpdated={handleGroupUpdated}
-                  onLeft={handleLeftGroup}
-                  onDeleted={handleDeletedGroup}
-                />
-              )}
-
-              {actionError !== null && (
-                <div className="dialog-action-error">
-                  <ErrorBanner
-                    error={actionError}
-                    onDismiss={() => {
-                      setActionError(null)
-                    }}
-                  />
-                </div>
-              )}
-
-              {confirmation !== null && pendingAction !== null && (
-                <ConfirmDialog
-                  confirmation={confirmation}
-                  pending={actionPending}
-                  onAccept={
-                    pendingAction === 'delete-chat'
-                      ? handleConfirmDeleteChat
-                      : handleConfirmBlockToggle
-                  }
-                  onCancel={() => {
-                    setPendingAction(null)
+          </aside>
+          <section className="chat panel" aria-label="Окно диалога">
+            {dialogOpen && activeChat !== null ? (
+              <>
+                <ChatHeader
+                  chat={headerChatOf(activeChat, activeGroup)}
+                  menuOpen={menuOpen}
+                  onToggleMenu={() => {
+                    setMenuOpen((open) => !open)
+                  }}
+                  onDeleteChat={() => {
+                    setMenuOpen(false)
+                    setPendingAction('delete-chat')
+                  }}
+                  onToggleBlock={() => {
+                    setMenuOpen(false)
+                    setPendingAction(
+                      activeChat.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block',
+                    )
+                  }}
+                  groupInfoOpen={groupInfoOpen}
+                  onToggleGroupInfo={() => {
+                    setGroupInfoOpen((open) => !open)
                   }}
                 />
-              )}
 
-              {status === 'error' && <ErrorBanner error={error} onDismiss={reload} />}
-              {composerError !== null && (
-                <p className="messenger-composer-error" role="alert">
-                  {composerError}
-                </p>
-              )}
-              <MessageList
-                messages={messages}
-                currentUserId={currentUserId ?? ''}
-                meUsername={meUsername ?? undefined}
-                peerUsername={activeChat.kind === 'direct' ? activeChat.peer.username : undefined}
-                outbox={chatOutbox}
-                onRetry={handleRetry}
-                onRemove={handleRemove}
-                hasOlder={hasOlder}
-                loadingOlder={loadingOlder}
-                onLoadOlder={loadOlder}
-                peerReadUpToSeq={peerReadUpToSeq}
-                members={activeGroupMembers}
-                othersReadUpToSeq={othersReadUpToSeq}
-              />
-              <MessageInput onSend={handleSend} disabled={currentUserId === null} />
-            </>
-          ) : (
-            <p className="messenger-empty">Чат не выбран</p>
-          )}
-        </section>
+                {activeChat.kind === 'group' && groupInfoOpen && (
+                  <GroupCard
+                    group={activeGroup}
+                    chatId={activeChat.chatId}
+                    status={activeGroupStatus}
+                    error={activeGroupError}
+                    currentUserId={currentUserId ?? ''}
+                    onReload={reloadActiveGroup}
+                    rosterActions={rosterActions}
+                    onMembersAdded={handleMembersAdded}
+                    onUpdated={handleGroupUpdated}
+                    onLeft={handleLeftGroup}
+                    onDeleted={handleDeletedGroup}
+                  />
+                )}
+
+                {actionError !== null && (
+                  <div className="dialog-action-error">
+                    <ErrorBanner
+                      error={actionError}
+                      onDismiss={() => {
+                        setActionError(null)
+                      }}
+                    />
+                  </div>
+                )}
+
+                {status === 'error' && <ErrorBanner error={error} onDismiss={reload} />}
+                {composerError !== null && (
+                  <p className="messenger-composer-error" role="alert">
+                    {composerError}
+                  </p>
+                )}
+                <MessageList
+                  messages={messages}
+                  currentUserId={currentUserId ?? ''}
+                  meUsername={meUsername ?? undefined}
+                  peerUsername={activeChat.kind === 'direct' ? activeChat.peer.username : undefined}
+                  outbox={chatOutbox}
+                  onRetry={handleRetry}
+                  onRemove={handleRemove}
+                  hasOlder={hasOlder}
+                  loadingOlder={loadingOlder}
+                  onLoadOlder={loadOlder}
+                  peerReadUpToSeq={peerReadUpToSeq}
+                  members={activeGroupMembers}
+                  othersReadUpToSeq={othersReadUpToSeq}
+                />
+                <MessageInput onSend={handleSend} disabled={currentUserId === null} />
+              </>
+            ) : (
+              <p className="messenger-empty">Чат не выбран</p>
+            )}
+          </section>
+        </div>
       </div>
-    </div>
+
+      {/* Единая модальная оболочка (T034, data-model 1.6/3.3): все формы
+          приложения — жители ОДНОГО .modal-back; переключение formId —
+          смена обитателя, подложка не удваивается. Тост-слот ToastProvider
+          (z-99) рендерится после — поверх модали (ui-behavior §5). */}
+      <ModalShell formId={shellFormId} title={shellTitle} onClose={closeShell}>
+        {(shellFormId === 'contacts' || shellFormId === 'add-contact') && (
+          <ContactsModal
+            chats={chats}
+            onOpenChat={handleOpenChatFromModal}
+            onFormChange={(form) => {
+              setModalForm(form === 'add' ? 'add-contact' : 'contacts')
+            }}
+          />
+        )}
+        {shellFormId === 'profile' && <ProfileModal onClose={closeShell} />}
+        {/* Промежуточный обитатель до grpForm-проекции T035: сама форма №27
+            (валидация 006) в стилях 006 — логика и ожидания не меняются. */}
+        {shellFormId === 'create-group' && (
+          <CreateGroupDialog onCreated={handleGroupCreated} onCancel={closeShell} />
+        )}
+        {shellFormId === 'confirm' && confirmation !== null && (
+          <ConfirmDialog
+            text={confirmation.text}
+            confirmLabel={confirmation.confirmLabel}
+            variant={confirmation.variant}
+            onConfirm={() => {
+              if (actionPending) {
+                return
+              }
+              if (pendingAction === 'delete-chat') {
+                handleConfirmDeleteChat()
+              } else {
+                handleConfirmBlockToggle()
+              }
+            }}
+            onCancel={closeShell}
+          />
+        )}
+      </ModalShell>
+    </ToastProvider>
   )
 }
