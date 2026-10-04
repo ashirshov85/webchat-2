@@ -52,13 +52,21 @@
  * (`${last?last.time:''}` of the prototype); long names/previews
  * truncate via CSS with the full text in `title` tooltips. The №12
  * `memberCount` LEAVES the row (the prototype carries no counter) and
- * returns as the «N участников» header status of US3 (T043); the 007
- * presence dot leaves the row markup until the Avatar presence wiring
- * of US3 (T040/T042). React.memo + the row's `content-visibility`
+ * returns as the «N участников» header status of US3 (T043).
+ *
+ * Presence dot (feature 008, US3, T042; FR-024, design-tokens §4,
+ * контракт T040): DIRECT rows only — the status comes from
+ * presenceStore 007 via `usePresenceStatus(peer.id)` (per-row surface
+ * registration + №36 backfill, семантика 007) and rides the Avatar's
+ * `presenceDot`: online — зелёная мерцающая, offline — тусклая,
+ * unknown — нейтральная (БЕЗ ложного «офлайн» до первого №36);
+ * a GROUP row carries no presence UI (006/007) — `null`.
+ * React.memo + the row's `content-visibility`
  * (chat-list-panel.css) keep a 200+ list at 60 fps (SC-011, §G).
  */
 import { memo } from 'react'
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
+import { usePresenceStatus } from '../../presence/usePresence'
 import { Avatar } from '../../ui/Avatar'
 import { formatTime } from '../../ui/time'
 
@@ -95,6 +103,10 @@ export const ChatListItem = memo(function ChatListItem({
   const last = item.lastMessage
   const isGroup = item.type === 'group'
   const title = isGroup ? item.title : item.peer?.username
+  const peerId = !isGroup && item.peer !== null ? item.peer.id : null
+  // Состояние — ТОЛЬКО из presenceStore 007 (T040): null-ключ (группа/
+  // защитный direct без peer) ничего не региструет и точку не даёт.
+  const presence = usePresenceStatus(peerId)
   const outgoing = last !== null && last.senderId === currentUserId
   const unreadLabel = item.unreadCount > UNREAD_CAP ? `${UNREAD_CAP}+` : String(item.unreadCount)
 
@@ -108,7 +120,11 @@ export const ChatListItem = memo(function ChatListItem({
           onSelect?.(item.chatId)
         }}
       >
-        <Avatar source={title ?? ''} shape={isGroup ? 'octagon' : 'circle'} />
+        <Avatar
+          source={title ?? ''}
+          shape={isGroup ? 'octagon' : 'circle'}
+          presenceDot={peerId !== null ? presence : null}
+        />
         <span className="c-main">
           <span className="c-top">
             <span className="c-name" title={title ?? ''}>

@@ -55,6 +55,14 @@
  *
  * Встраивание форм в ModalShell MessengerPage (заголовки «Контакты»/
  * «Добавить контакт», закрытие Esc/фоном) — T034.
+ *
+ * Presence-точки контактов (feature 008, US3, T042; FR-024,
+ * design-tokens §4, контракт T040): статус — ТОЛЬКО из presenceStore
+ * 007 через `usePresenceStatus(contact.user.id)` (per-row регистрация
+ * поверхности + №36-бэкфилл с микротаск-батчингом — один запрос на
+ * монтирование списка): online — зелёная мерцающая, offline — тусклая,
+ * unknown — нейтральная; до первого №36 ВСЕ точки нейтральные — ложный
+ * «офлайн» запрещён (семантика 007).
  */
 import {
   useCallback,
@@ -78,6 +86,7 @@ import {
 import type { ChatListItem, ChatView, ContactView } from '../../api/chats'
 import type { PublicUser } from '../../api/auth'
 import { problemMessage } from '../../auth/problem'
+import { usePresenceStatus } from '../../presence/usePresence'
 import { Avatar } from '../../ui/Avatar'
 import { ConfirmDialog, type ConfirmVariant } from '../../ui/ConfirmDialog'
 import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
@@ -170,6 +179,17 @@ interface ConfirmUi {
 
 /** Форма модали (переключение внутри одной оболочки, data-model 3.3): список / добавление. */
 export type ModalForm = 'list' | 'add'
+
+/**
+ * Аватар контакта с presence-точкой (T042): отдельный компонент — хук
+ * статуса нужен СТРОКЕ (контракт T040: per-peer ключ contact.user.id),
+ * а строки выводятся циклом. Регистрация поверхности и №36-бэкфилл —
+ * внутри `usePresenceStatus` (007).
+ */
+function ContactAvatar({ contact }: { readonly contact: ContactView }) {
+  const status = usePresenceStatus(contact.user.id)
+  return <Avatar source={contact.user.username} size={32} presenceDot={status} />
+}
 
 export function ContactsModal({
   chats,
@@ -597,7 +617,7 @@ export function ContactsModal({
                   handleRowActivate(contact)
                 }}
               >
-                <Avatar source={contact.user.username} size={32} />
+                <ContactAvatar contact={contact} />
                 <div className="c-main">
                   <div className="c-top">
                     <span className="c-name">{contact.user.username}</span>
