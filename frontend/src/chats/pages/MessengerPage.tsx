@@ -12,9 +12,9 @@
  * ONE `ModalShell` mounted here — the main menu items (T030) open
  * contacts / add-contact (ContactsModal — its internal list ↔ add
  * switch lifts into the shell formId via onFormChange) / profile
- * (ProfileModal) / create-group (the interim №27 CreateGroupDialog
- * until the T035 grpForm projection), and the header confirmations
- * (№14/№23/№24) ride the 'confirm' formId. A formId switch NEVER
+ * (ProfileModal) / create-group (the grpForm projection of the
+ * prototype, 008 T035), and the header confirmations (№14/№23/№24)
+ * ride the 'confirm' formId. A formId switch NEVER
  * adds a second `.modal-back` (edge case data-model 3.3 — the
  * confirmation swaps the inhabitant inside the same shell); closure
  * is uniform — Esc / backdrop press+release / «Отмена» / submit
@@ -985,8 +985,9 @@ export function MessengerPage() {
           />
         )}
         {shellFormId === 'profile' && <ProfileModal onClose={closeShell} />}
-        {/* Промежуточный обитатель до grpForm-проекции T035: сама форма №27
-            (валидация 006) в стилях 006 — логика и ожидания не меняются. */}
+        {/* grpForm-проекция прототипа (T035): №27 + валидация 006, тост
+            «Групповой чат создан — {title}» у формы, окно группы —
+            handleGroupCreated. */}
         {shellFormId === 'create-group' && (
           <CreateGroupDialog onCreated={handleGroupCreated} onCancel={closeShell} />
         )}

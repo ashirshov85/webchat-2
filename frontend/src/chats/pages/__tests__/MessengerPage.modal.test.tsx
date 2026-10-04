@@ -189,8 +189,11 @@ describe('MessengerPage единая ModalShell (T034, data-model 1.6/3.3)', () 
     expect(screen.queryByRole('button', { name: 'Создать группу' })).toBeNull()
 
     const dialog = await openShellForm('Создать групповой чат', 'Новый групповой чат')
-    // Промежуточный обитатель до T035 — сама форма №27 (валидация 006).
-    expect(within(dialog).getByLabelText('Название группы')).toBeInTheDocument()
+    // grpForm-проекция прототипа (T035): название + фильтр + подборщик.
+    expect(within(dialog).getByLabelText('Название')).toBeInTheDocument()
+    expect(
+      within(dialog).getByPlaceholderText('Поиск контакта — имя, username или email'),
+    ).toBeInTheDocument()
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
     await waitFor(() => {

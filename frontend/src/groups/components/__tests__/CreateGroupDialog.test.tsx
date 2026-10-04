@@ -1,20 +1,29 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
 import type { ContactView } from '../../../api/chats'
+import { ToastProvider } from '../../../ui/Toast'
 import { CreateGroupDialog } from '../CreateGroupDialog'
 
 /**
- * Group creation dialog (US1, T019 → T026; FR-001/FR-002): the form
- * carries the client half of the №27 validation — title trim 1–64,
- * description ≤256 — so an invalid draft never reaches the API, and
- * the initial members are MULTI-selected from the creator's №20
- * contacts. Submission goes through №27 `createGroup` (T025): the
- * trimmed title, the optional description and the picked
- * `memberUserIds` travel in one atomic request; a server problem
- * (422 `not_in_contacts` — the server-side half of FR-002) renders
- * without closing the dialog, and the created `GroupView` is handed
- * to the parent via `onCreated`.
+ * Модальная форма «Новый групповой чат» (feature 008, US2, T035; FR-023,
+ * ui-behavior §3, research §D): проекция #grpForm нормативного прототипа
+ * specs/008-chat-window-styling/design/chats.html — житель ЕДИНОЙ
+ * оболочки ModalShell (T034, MessengerPage). Поведенческие ожидания 006
+ * сохранены (FR-034): клиентская валидация названия (trim 1–64,
+ * groups/validation.ts — невалидный черновик не доходит до №27),
+ * мультивыбор участников из №20-контактов, один атомарный №27
+ * `createGroup` (обрезанный title + memberUserIds в порядке выбора),
+ * серверная проблема (422 not_in_contacts) видна БЕЗ закрытия формы.
+ *
+ * От прототипа (FR-001 — норматив): поля описания в создании НЕТ
+ * (группа из формы — только название + участники; описание — grpEditForm
+ * T056); пустой подбор участников отклоняется («Выберите хотя бы одного
+ * участника из контактов» — порядок проверок прототипа: участники,
+ * затем название); живой фильтр подборщика по username/email без
+ * регистра с сохранением выбора; пустые состояния «Нет контактов —
+ * сначала добавьте контакт» / «Ничего не найдено»; успех — ровно один
+ * тост «Групповой чат создан — {title}» (FR-025) + onCreated.
  */
 
 type GroupView = components['schemas']['GroupView']
@@ -63,16 +72,30 @@ function groupView(): GroupView {
     title: 'Проект Альфа',
     description: null,
     myRole: 'owner',
-    members: [{ user: peer(ME, 'me'), role: 'owner', joinedAt: '2026-09-20T12:00:00.000Z' }],
+    members: [
+      { user: peer(ME, 'me'), role: 'owner', joinedAt: '2026-09-20T12:00:00.000Z' },
+      { user: peer(ALICE, 'alice'), role: 'member', joinedAt: '2026-09-20T12:00:00.000Z' },
+    ],
   }
 }
 
-function fillTitle(value: string) {
-  fireEvent.change(screen.getByLabelText('Название группы'), { target: { value } })
+/** useToast требует ToastProvider — слот тоста проверяем в том же дереве. */
+function renderDialog(props: { onCreated?: (group: GroupView) => void; onCancel?: () => void }) {
+  render(
+    <ToastProvider>
+      <CreateGroupDialog {...props} />
+    </ToastProvider>,
+  )
 }
 
-function fillDescription(value: string) {
-  fireEvent.change(screen.getByLabelText('Описание группы'), { target: { value } })
+function fillTitle(value: string) {
+  fireEvent.change(screen.getByLabelText('Название'), { target: { value } })
+}
+
+function fillSearch(value: string) {
+  fireEvent.change(screen.getByPlaceholderText('Поиск контакта — имя, username или email'), {
+    target: { value },
+  })
 }
 
 function pick(username: string) {
@@ -80,7 +103,13 @@ function pick(username: string) {
 }
 
 function submit() {
-  fireEvent.click(screen.getByRole('button', { name: 'Создать группу' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Создать' }))
+}
+
+async function renderReady() {
+  mockListContacts.mockResolvedValueOnce(contacts())
+  renderDialog({})
+  await screen.findByRole('checkbox', { name: 'Выбрать alice' })
 }
 
 afterEach(() => {
@@ -88,24 +117,105 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
-describe('CreateGroupDialog form (FR-001)', () => {
-  it('renders the title/description fields and the №20 contacts to pick from', async () => {
+describe('CreateGroupDialog grpForm-проекция прототипа (T035, FR-001)', () => {
+  it('renders Название + фильтр + подборщик №20-контактов (строки с чекбоксом и подписью)', async () => {
     mockListContacts.mockResolvedValueOnce(contacts())
-    render(<CreateGroupDialog />)
+    renderDialog({})
 
-    expect(screen.getByLabelText('Название группы')).toBeInTheDocument()
-    expect(screen.getByLabelText('Описание группы')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Создать группу' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Название')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Название группового чата')).toBeInTheDocument()
+    expect(screen.getByText('Участники')).toBeInTheDocument()
+    expect(
+      screen.getByPlaceholderText('Поиск контакта — имя, username или email'),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Создать' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Отмена' })).toBeInTheDocument()
 
-    expect(await screen.findByRole('checkbox', { name: 'Выбрать alice' })).toBeInTheDocument()
+    const aliceRow = await screen.findByRole('checkbox', { name: 'Выбрать alice' })
+    expect(aliceRow).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Выбрать bob' })).toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Выбрать carol' })).toBeInTheDocument()
+    // Строка прототипа: имя + подпись «username · email».
+    expect(
+      within(aliceRow.closest('label') as HTMLElement).getByText('alice · alice@example.com'),
+    ).toBeInTheDocument()
   })
 
-  it('rejects an empty or whitespace-only title without calling №27', async () => {
+  it('renders empty states: нет контактов / ничего не найдено (renderPickList прототипа)', async () => {
+    mockListContacts.mockResolvedValueOnce([])
+    renderDialog({})
+    await screen.findByText('Нет контактов — сначала добавьте контакт')
+
+    // №20 пришёл — фильтр-промах даёт своё пустое состояние.
     mockListContacts.mockResolvedValueOnce(contacts())
-    render(<CreateGroupDialog />)
+    cleanup()
+    renderDialog({})
     await screen.findByRole('checkbox', { name: 'Выбрать alice' })
+    fillSearch('нет-такого')
+    expect(await screen.findByText('Ничего не найдено')).toBeInTheDocument()
+  })
+
+  it('filters the picker live by username/email case-insensitively and keeps picks across filters', async () => {
+    await renderReady()
+
+    fillSearch('AL')
+    expect(screen.getByRole('checkbox', { name: 'Выбрать alice' })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Выбрать bob' })).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: 'Выбрать carol' })).toBeNull()
+
+    fillSearch('BOB@EXAMPLE.COM')
+    expect(screen.getByRole('checkbox', { name: 'Выбрать bob' })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Выбрать alice' })).toBeNull()
+
+    // Выбор переживает фильтр: снятый с показа контакт остаётся выбранным.
+    fillSearch('carol')
+    pick('carol')
+    fillSearch('')
+    expect(screen.getByRole('checkbox', { name: 'Выбрать carol' })).toBeChecked()
+  })
+
+  it('№20 failure renders .modal-err with «Повторить» that refetches (expectation 004)', async () => {
+    mockListContacts.mockRejectedValueOnce({
+      title: 'Server Error',
+      status: 500,
+      detail: 'network down',
+    } satisfies Problem)
+    renderDialog({})
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/network down/i)
+
+    mockListContacts.mockResolvedValueOnce(contacts())
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
+    expect(await screen.findByRole('checkbox', { name: 'Выбрать alice' })).toBeInTheDocument()
+  })
+
+  it('«Отмена» hands control back to the shell owner (onCancel)', async () => {
+    const onCancel = vi.fn()
+    mockListContacts.mockResolvedValueOnce(contacts())
+    renderDialog({ onCancel })
+    await screen.findByRole('checkbox', { name: 'Выбрать alice' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
+    expect(onCancel).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('CreateGroupDialog валидация (006 + прототип, FR-001/FR-002)', () => {
+  it('rejects an empty participant pick without calling №27 (прототип: участники — первая проверка)', async () => {
+    await renderReady()
+
+    fillTitle('Проект Альфа')
+    submit()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Выберите хотя бы одного участника из контактов',
+    )
+    expect(mockCreateGroup).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty or whitespace-only title without calling №27 (validateGroupTitle 006)', async () => {
+    await renderReady()
+    pick('alice')
 
     submit()
     expect(screen.getByRole('alert')).toHaveTextContent(/64/)
@@ -118,9 +228,8 @@ describe('CreateGroupDialog form (FR-001)', () => {
   })
 
   it('rejects a 65-character title without calling №27', async () => {
-    mockListContacts.mockResolvedValueOnce(contacts())
-    render(<CreateGroupDialog />)
-    await screen.findByRole('checkbox', { name: 'Выбрать alice' })
+    await renderReady()
+    pick('alice')
 
     fillTitle('a'.repeat(65))
     submit()
@@ -128,27 +237,14 @@ describe('CreateGroupDialog form (FR-001)', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/64/)
     expect(mockCreateGroup).not.toHaveBeenCalled()
   })
+})
 
-  it('rejects a 257-character description without calling №27', async () => {
-    mockListContacts.mockResolvedValueOnce(contacts())
-    render(<CreateGroupDialog />)
-    await screen.findByRole('checkbox', { name: 'Выбрать alice' })
-
-    fillTitle('Проект Альфа')
-    fillDescription('d'.repeat(257))
-    submit()
-
-    expect(screen.getByRole('alert')).toHaveTextContent(/256/)
-    expect(mockCreateGroup).not.toHaveBeenCalled()
-  })
-
-  it('accepts the 64/256 boundary, trims the title and submits the picked member', async () => {
-    mockListContacts.mockResolvedValueOnce(contacts())
-    render(<CreateGroupDialog />)
-    await screen.findByRole('checkbox', { name: 'Выбрать alice' })
+describe('CreateGroupDialog №27 submission (FR-002, FR-025)', () => {
+  it('accepts the 64-boundary, trims the title and submits the picked members in pick order', async () => {
+    await renderReady()
 
     fillTitle(`  ${'a'.repeat(64)}  `)
-    fillDescription('d'.repeat(256))
+    pick('carol')
     pick('alice')
     submit()
 
@@ -157,22 +253,17 @@ describe('CreateGroupDialog form (FR-001)', () => {
     })
     expect(mockCreateGroup).toHaveBeenCalledWith({
       title: 'a'.repeat(64),
-      description: 'd'.repeat(256),
-      memberUserIds: [ALICE],
+      memberUserIds: [CAROL, ALICE],
     })
   })
-})
 
-describe('CreateGroupDialog member multiselect (FR-002)', () => {
-  it('submits every picked contact as memberUserIds and toggles picks off', async () => {
-    mockListContacts.mockResolvedValueOnce(contacts())
-    render(<CreateGroupDialog />)
-    await screen.findByRole('checkbox', { name: 'Выбрать alice' })
+  it('a toggled-off pick leaves the batch (мультивыбор 006)', async () => {
+    await renderReady()
 
     fillTitle('Проект Альфа')
     pick('alice')
     pick('bob')
-    pick('carol')
+    pick('alice')
     submit()
 
     await waitFor(() => {
@@ -180,32 +271,16 @@ describe('CreateGroupDialog member multiselect (FR-002)', () => {
     })
     expect(mockCreateGroup).toHaveBeenCalledWith({
       title: 'Проект Альфа',
-      memberUserIds: [ALICE, BOB, CAROL],
+      memberUserIds: [BOB],
     })
   })
 
-  it('omits memberUserIds when nothing is picked', async () => {
-    mockListContacts.mockResolvedValueOnce(contacts())
-    render(<CreateGroupDialog />)
-    await screen.findByRole('checkbox', { name: 'Выбрать alice' })
-
-    fillTitle('Проект Альфа')
-    submit()
-
-    await waitFor(() => {
-      expect(mockCreateGroup).toHaveBeenCalledTimes(1)
-    })
-    expect(mockCreateGroup).toHaveBeenCalledWith({ title: 'Проект Альфа' })
-  })
-})
-
-describe('CreateGroupDialog submission outcome', () => {
-  it('hands the created GroupView to onCreated (№27 201)', async () => {
+  it('shows exactly one toast and hands the GroupView to onCreated (№27 201)', async () => {
     const onCreated = vi.fn()
     const view = groupView()
     mockListContacts.mockResolvedValueOnce(contacts())
     mockCreateGroup.mockResolvedValueOnce(view)
-    render(<CreateGroupDialog onCreated={onCreated} />)
+    renderDialog({ onCreated })
     await screen.findByRole('checkbox', { name: 'Выбрать alice' })
 
     fillTitle('Проект Альфа')
@@ -215,16 +290,17 @@ describe('CreateGroupDialog submission outcome', () => {
     await waitFor(() => {
       expect(onCreated).toHaveBeenCalledWith(view)
     })
+    expect(await screen.findByText('Групповой чат создан — Проект Альфа')).toBeInTheDocument()
   })
 
-  it('renders the 422 problem code and keeps the form open (not_in_contacts)', async () => {
+  it('renders the 422 problem and keeps the form open with the draft (not_in_contacts)', async () => {
     mockListContacts.mockResolvedValueOnce(contacts())
     mockCreateGroup.mockRejectedValueOnce({
       title: 'Unprocessable Entity',
       status: 422,
       errors: { memberUserIds: ['not_in_contacts'] },
     } satisfies Problem)
-    render(<CreateGroupDialog />)
+    renderDialog({})
     await screen.findByRole('checkbox', { name: 'Выбрать alice' })
 
     fillTitle('Проект Альфа')
@@ -233,6 +309,7 @@ describe('CreateGroupDialog submission outcome', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('not_in_contacts')
-    expect(screen.getByLabelText('Название группы')).toBeInTheDocument()
+    expect(screen.getByLabelText('Название')).toHaveValue('Проект Альфа')
+    expect(screen.getByRole('checkbox', { name: 'Выбрать alice' })).toBeChecked()
   })
 })

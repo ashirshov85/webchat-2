@@ -200,14 +200,14 @@ afterEach(() => {
 })
 
 describe('MessengerPage «Создать группу» entry (US1, quickstart §3.1)', () => {
-  it('opens the CreateGroupDialog from the main menu and closes it on «Отмена»', async () => {
+  it('opens the grpForm from the main menu and closes it on «Отмена»', async () => {
     await renderPage([directRow()])
 
     await openCreateGroup()
-    expect(screen.getByRole('dialog', { name: 'Создание группы' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Новый групповой чат' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
-    expect(screen.queryByRole('dialog', { name: 'Создание группы' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Новый групповой чат' })).toBeNull()
     // The modal shell closed — the main menu entry stays reachable.
     expect(screen.getByRole('button', { name: 'Меню' })).toBeInTheDocument()
   })
@@ -216,13 +216,13 @@ describe('MessengerPage «Создать группу» entry (US1, quickstart �
     await renderPage([directRow()])
 
     await openCreateGroup()
-    fireEvent.change(await screen.findByLabelText('Название группы'), {
+    fireEvent.change(await screen.findByLabelText('Название'), {
       target: { value: 'Проект Альфа' },
     })
     fireEvent.click(await screen.findByRole('checkbox', { name: 'Выбрать alice' }))
     mockCreateGroup.mockResolvedValueOnce(createdGroupView())
     const callsBefore = mockChats.listChats.mock.calls.length
-    fireEvent.click(screen.getByRole('button', { name: 'Создать группу' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Создать' }))
 
     await waitFor(() => {
       expect(mockCreateGroup).toHaveBeenCalledWith({
@@ -233,27 +233,30 @@ describe('MessengerPage «Создать группу» entry (US1, quickstart �
     await waitFor(() => {
       expect(mockChats.listChats.mock.calls.length).toBeGreaterThan(callsBefore)
     })
-    expect(screen.queryByRole('dialog', { name: 'Создание группы' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Новый групповой чат' })).toBeNull()
     // The group window opened on the №27 result: its title is the header.
     expect(screen.getByRole('heading', { level: 2, name: 'Проект Альфа' })).toBeInTheDocument()
+    // FR-025: ровно один тост на завершённую операцию (прототип grpForm).
+    expect(await screen.findByText('Групповой чат создан — Проект Альфа')).toBeInTheDocument()
   })
 
   it('keeps the dialog open on a №27 problem so the draft stays fixable', async () => {
     await renderPage([directRow()])
 
     await openCreateGroup()
-    fireEvent.change(await screen.findByLabelText('Название группы'), {
+    fireEvent.change(await screen.findByLabelText('Название'), {
       target: { value: 'Проект Альфа' },
     })
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Выбрать alice' }))
     mockCreateGroup.mockRejectedValueOnce({
       title: 'Unprocessable Entity',
       status: 422,
       errors: { memberUserIds: ['not_in_contacts'] },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Создать группу' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Создать' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('not_in_contacts')
-    expect(screen.getByRole('dialog', { name: 'Создание группы' })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Новый групповой чат' })).toBeInTheDocument()
   })
 })
 

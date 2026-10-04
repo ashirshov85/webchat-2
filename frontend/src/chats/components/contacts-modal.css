@@ -121,21 +121,25 @@
   color: var(--err);
 }
 
-/* ============ ТЕЛО СТРОКИ КОНТАКТА (.c-* прототипа, скоуп формы) ============ */
+/* ============ ТЕЛО СТРОКИ ПИКЕРА (.c-* прототипа, скоуп .pick-row) ============ */
 
-.contacts-form .c-main {
+/* Скоуп .pick-row (0-2-0): переиспользуется формами T035+ (подборщик
+   участников grpForm, редактор состава grpEditForm) — не только
+   ctc-строками. */
+
+.pick-row .c-main {
   flex: 1;
   min-width: 0;
 }
 
-.contacts-form .c-top {
+.pick-row .c-top {
   display: flex;
   justify-content: space-between;
   gap: 8px;
   align-items: baseline;
 }
 
-.contacts-form .c-name {
+.pick-row .c-name {
   font: 600 14px var(--font-heading);
   color: var(--cream-bright);
   overflow: hidden;
@@ -145,7 +149,7 @@
 
 /* Блочный div — своя строка превью держит нормаль своего шрифта
    (паттерн chat-list-panel.css). */
-.contacts-form .c-prev {
+.pick-row .c-prev {
   display: block;
   font: italic 12px var(--font-body);
   color: var(--muted-2);
