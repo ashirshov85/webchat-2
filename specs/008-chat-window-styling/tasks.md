@@ -97,7 +97,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 
 ### Tests for User Story 2
 
-- [ ] T027 [P] [US2] Переписать тесты табов `frontend/src/chats/components/__tests__/ChatListPanel.test.tsx` на главное меню + модальные окна (research §D, FR-034)
+- [X] T027 [P] [US2] Переписать тесты табов `frontend/src/chats/components/__tests__/ChatListPanel.test.tsx` на главное меню + модальные окна (research §D, FR-034)
 - [ ] T028 [P] [US2] Перенести тесты `frontend/src/chats/components/__tests__/` для ContactList/UserSearchBox в тесты ContactsModal (поиск, добавление, «⋯»-действия, идемпотентность) — поведенческие ожидания 004 сохраняются
 
 ### Implementation for User Story 2

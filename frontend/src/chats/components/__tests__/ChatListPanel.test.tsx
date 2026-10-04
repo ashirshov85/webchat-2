@@ -1,23 +1,32 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatListItem, Message } from '../../../api/chats'
 import { ChatListPanel } from '../ChatListPanel'
 
 /**
  * Left panel of the messenger (US5, T058/T061; FR-013/014/020/021):
- * the «Чаты»/«Контакты» mode switch keeps both sections mounted (list
- * state survives the round trip), rows render the unread badge with
- * the «99+» cap and the blocker-side «заблокирован» mark, the open
- * dialog is highlighted, and after a per-user chat deletion (№14 +
- * useChatList reload) the dropped chat simply disappears from the
- * `chats` prop — down to the empty state when the last dialog is gone.
+ * rows render the unread badge with the «99+» cap and the blocker-side
+ * «заблокирован» mark, the open dialog is highlighted, and after a
+ * per-user chat deletion (№14 + useChatList reload) the dropped chat
+ * simply disappears from the `chats` prop — down to the empty state
+ * when the last dialog is gone.
  *
  * Feature 008 (US1, T017): the 004 class hooks of the rows
  * (`.chat-item`, `.chat-item-badge`, `.chat-item-blocked`) stay as
  * wrappers of the prototype row classes (research §C, FR-034); the
  * badge/preview nodes additionally carry the prototype hooks `.c-badge`
  * and `.c-prev` (T019/T020).
+ *
+ * Feature 008 (US2, T027; FR-006/007, research §D, ui-behavior §2):
+ * the «Чаты»/«Контакты» tabs are GONE — the chat list renders right
+ * away and contacts live in a modal (T028/T031). The search row hosts
+ * the MainMenuButton (T030): the «Меню» button opens the ContextMenu
+ * with «Мой профиль» / «Контакты» / «Создать групповой чат»; a repeated
+ * click, an outside click and Escape close it. Selecting an item opens
+ * the matching ModalShell form hosted by MessengerPage (T034) through
+ * the `onOpenProfile` / `onOpenContacts` / `onCreateGroup` callbacks —
+ * the 004 reachability of every operation is preserved, only the entry
+ * point changes (FR-034, SC-004).
  */
 
 const ME = '11111111-1111-1111-1111-111111111111'
@@ -49,15 +58,12 @@ function chatItem(overrides: Partial<ChatListItem> = {}): ChatListItem {
   }
 }
 
-/** Stateful probe for the «Контакты» slot: survives mode switches (FR-013). */
-function Probe() {
-  const [count, setCount] = useState(0)
-  return (
-    <button type="button" onClick={() => setCount((value) => value + 1)}>
-      probe-{count}
-    </button>
-  )
-}
+/** Menu items → single ModalShell forms of MessengerPage (T034, ui-behavior §3). */
+const MENU_ITEM_TO_PROP = [
+  { label: 'Мой профиль', prop: 'onOpenProfile' },
+  { label: 'Контакты', prop: 'onOpenContacts' },
+  { label: 'Создать групповой чат', prop: 'onCreateGroup' },
+] as const
 
 function panelElement(
   chats: readonly ChatListItem[],
@@ -68,37 +74,80 @@ function panelElement(
 
 afterEach(cleanup)
 
-describe('ChatListPanel mode switching (FR-013)', () => {
-  it('defaults to «Чаты» and renders the chat rows', () => {
+describe('ChatListPanel without tabs (FR-006)', () => {
+  it('renders the chat list right away — no «Чаты»/«Контакты» mode tabs at all', () => {
     render(panelElement([chatItem()]))
 
-    expect(screen.getByRole('tab', { name: 'Чаты' })).toHaveAttribute('aria-selected', 'true')
-    expect(screen.getByRole('tab', { name: 'Контакты' })).toHaveAttribute('aria-selected', 'false')
+    expect(screen.queryByRole('tablist')).toBeNull()
+    expect(screen.queryByRole('tab')).toBeNull()
     expect(screen.getByText('alice')).toBeVisible()
+    // Контакты больше не секция сайдбара — их дом теперь модаль (T028/T031).
+    expect(screen.queryByText('Контакты появятся здесь')).toBeNull()
+  })
+})
+
+describe('ChatListPanel main menu (FR-007, ui-behavior §2)', () => {
+  it('opens the «Меню» button menu with the three prototype items', () => {
+    const { container } = render(panelElement([chatItem()]))
+    const menuButton = screen.getByRole('button', { name: 'Меню' })
+    // T030: кнопка едет в прототипном классе `.menu-btn` строки поиска.
+    expect(menuButton).toHaveClass('menu-btn')
+    expect(menuButton.closest('.search-row')).toBe(container.querySelector('.search-row'))
+
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.click(menuButton)
+
+    const items = screen.getAllByRole('menuitem')
+    expect(items.map((item) => item.textContent)).toEqual([
+      'Мой профиль',
+      'Контакты',
+      'Создать групповой чат',
+    ])
   })
 
-  it('keeps both sections mounted: the contacts state survives the round trip', () => {
-    const { container } = render(panelElement([chatItem()], { contacts: <Probe /> }))
-    const chatsSection = container.querySelector('#chat-panel-section-chats') as HTMLElement
-    const contactsSection = container.querySelector('#chat-panel-section-contacts') as HTMLElement
-    expect(chatsSection.hasAttribute('hidden')).toBe(false)
-    expect(contactsSection.hasAttribute('hidden')).toBe(true)
+  it('closes the menu by a repeated button click, an outside click and Escape', () => {
+    render(panelElement([chatItem()]))
+    const menuButton = screen.getByRole('button', { name: 'Меню' })
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Контакты' }))
-    expect(screen.getByRole('tab', { name: 'Контакты' })).toHaveAttribute('aria-selected', 'true')
-    expect(chatsSection.hasAttribute('hidden')).toBe(true)
-    expect(contactsSection.hasAttribute('hidden')).toBe(false)
+    fireEvent.click(menuButton)
+    expect(screen.getByRole('menu')).toBeVisible()
 
-    fireEvent.click(screen.getByText('probe-0'))
-    expect(screen.getByText('probe-1')).toBeVisible()
+    fireEvent.click(menuButton)
+    expect(screen.queryByRole('menu')).toBeNull()
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Чаты' }))
-    expect(chatsSection.hasAttribute('hidden')).toBe(false)
-    expect(contactsSection.hasAttribute('hidden')).toBe(true)
+    fireEvent.click(menuButton)
+    expect(screen.getByRole('menu')).toBeVisible()
+    fireEvent.click(document.body)
+    expect(screen.queryByRole('menu')).toBeNull()
 
-    fireEvent.click(screen.getByRole('tab', { name: 'Контакты' }))
-    expect(screen.getByText('probe-1')).toBeVisible()
+    fireEvent.click(menuButton)
+    expect(screen.getByRole('menu')).toBeVisible()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('menu')).toBeNull()
   })
+
+  for (const { label, prop } of MENU_ITEM_TO_PROP) {
+    it(`«${label}» opens the matching modal form and closes the menu`, () => {
+      const handlers = {
+        onOpenProfile: vi.fn(),
+        onOpenContacts: vi.fn(),
+        onCreateGroup: vi.fn(),
+      }
+      render(panelElement([chatItem()], handlers))
+
+      fireEvent.click(screen.getByRole('button', { name: 'Меню' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: label }))
+
+      expect(screen.queryByRole('menu')).toBeNull()
+      expect(handlers[prop]).toHaveBeenCalledTimes(1)
+      // Ровно одна форма на действие пункта — остальные не трогаются.
+      for (const other of MENU_ITEM_TO_PROP) {
+        if (other.prop !== prop) {
+          expect(handlers[other.prop]).not.toHaveBeenCalled()
+        }
+      }
+    })
+  }
 })
 
 describe('ChatListPanel unread badge (FR-014)', () => {

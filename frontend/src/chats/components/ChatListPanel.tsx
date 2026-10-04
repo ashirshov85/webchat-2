@@ -84,6 +84,16 @@ export interface ChatListPanelProps {
   readonly contacts?: ReactNode
   /** Initial mode; FR-013 default is «Чаты». */
   readonly defaultMode?: ChatListPanelMode
+  /**
+   * US2 (T030/T034): the MainMenuButton of the search row opens the
+   * single ModalShell forms hosted by MessengerPage — «Мой профиль»
+   * (profile), «Контакты» (contacts), «Создать групповой чат»
+   * (create-group). The panel is only the entry point; declared now so
+   * the T027 tests compile ahead of the T030 button.
+   */
+  readonly onOpenProfile?: () => void
+  readonly onOpenContacts?: () => void
+  readonly onCreateGroup?: () => void
 }
 
 export function ChatListPanel({
