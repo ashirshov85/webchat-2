@@ -622,3 +622,109 @@ describe('MessageList ЧЧ:ММ footers and date dividers (FR-019, T026 baseline
     expect(complete.container.querySelectorAll('.date-divider')).toHaveLength(2)
   })
 })
+
+describe('MessageList date dividers at pagination junctions (US3-AS3, T041, data-model 1.3)', () => {
+  /**
+   * T041: the T026 block above fixed the baseline-parity RENDER of the
+   * `.date-divider`; this block pins the remaining data-model 1.3 rules
+   * of the US3 acceptance — the junction between two PAGES is decided
+   * by comparing the adjacent messages across it (the last row of the
+   * prepended page vs the first message of the previously loaded
+   * window): a day change inserts EXACTLY ONE divider there (never one
+   * per page), a same-day prepend inserts none, and an empty feed
+   * carries no dividers at all.
+   */
+
+  /** Local-day instants — robust under any runner timezone. */
+  function localIso(year: number, month: number, day: number, hh: number, mm: number): string {
+    return new Date(year, month - 1, day, hh, mm).toISOString()
+  }
+
+  function dividerLabels(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll('.date-divider')).map(
+      (divider) => divider.textContent ?? '',
+    )
+  }
+
+  /** Ordered feed sketch — pins the divider to the junction position. */
+  function rowSketch(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll('.message-list > li')).map((row) =>
+      row.classList.contains('date-divider') ? 'divider' : 'message',
+    )
+  }
+
+  it('inserts exactly one divider at a cross-day junction, labeled by the newer page first message', () => {
+    // The hook's `loadOlder` prepends the older page above the loaded
+    // window and re-renders — exactly the MessengerPage wiring.
+    const olderPage = [
+      message({ id: 'a', seq: 1, createdAt: localIso(2026, 9, 19, 10, 0) }),
+      message({ id: 'b', seq: 2, createdAt: localIso(2026, 9, 19, 10, 30) }),
+    ]
+    const loadedWindow = [
+      message({ id: 'c', seq: 3, createdAt: localIso(2026, 9, 20, 9, 0) }),
+      message({ id: 'd', seq: 4, createdAt: localIso(2026, 9, 20, 9, 5) }),
+    ]
+    const props = (messages: readonly Message[], hasOlder: boolean) => (
+      <MessageList messages={messages} currentUserId={ME} hasOlder={hasOlder} />
+    )
+
+    // Latest page on screen, older history may exist — no dividers yet.
+    const { container, rerender } = render(props(loadedWindow, true))
+    expect(dividerLabels(container)).toEqual([])
+
+    // The older page of 19 September lands above: the junction carries
+    // EXACTLY ONE divider, labeled with the day of the first message of
+    // the newer page (the data-model 1.3 comparison target) — a naive
+    // per-page divider would render it twice.
+    rerender(props([...olderPage, ...loadedWindow], true))
+    expect(dividerLabels(container)).toEqual([formatDate(localIso(2026, 9, 20, 9, 0))])
+    expect(rowSketch(container)).toEqual(['message', 'message', 'divider', 'message', 'message'])
+
+    // The boundary answer exhausts the history: the prepended day gains
+    // its own top divider — the junction one stays single.
+    rerender(props([...olderPage, ...loadedWindow], false))
+    expect(dividerLabels(container)).toEqual([
+      formatDate(localIso(2026, 9, 19, 10, 0)),
+      formatDate(localIso(2026, 9, 20, 9, 0)),
+    ])
+  })
+
+  it('grows no divider when the prepended page is the same day', () => {
+    const props = (messages: readonly Message[], hasOlder: boolean) => (
+      <MessageList messages={messages} currentUserId={ME} hasOlder={hasOlder} />
+    )
+    const loadedWindow = [message({ id: 'new-1', seq: 3, createdAt: localIso(2026, 9, 19, 10, 0) })]
+    const olderPage = [
+      message({ id: 'old-1', seq: 1, createdAt: localIso(2026, 9, 19, 9, 0) }),
+      message({ id: 'old-2', seq: 2, createdAt: localIso(2026, 9, 19, 9, 2) }),
+    ]
+
+    const { container, rerender } = render(props(loadedWindow, true))
+    rerender(props([...olderPage, ...loadedWindow], true))
+    // The junction sits inside one calendar day — the run never grows
+    // a divider at the page boundary itself.
+    expect(dividerLabels(container)).toEqual([])
+
+    rerender(props([...olderPage, ...loadedWindow], false))
+    expect(dividerLabels(container)).toEqual([formatDate(localIso(2026, 9, 19, 9, 0))])
+  })
+
+  it('renders no dividers on an empty feed, with or without local optimistic rows', () => {
+    const empty = render(<MessageList messages={[]} currentUserId={ME} />)
+    expect(empty.container.querySelector('.message-list')).toBeNull()
+    expect(empty.container.querySelector('.date-divider')).toBeNull()
+    cleanup()
+
+    // Optimistic entries carry no server timestamp — a fresh chat's
+    // local rows never sprout a divider (data-model 1.3: пустая лента).
+    const localOnly = render(
+      <MessageList
+        messages={[]}
+        currentUserId={ME}
+        pending={[{ clientMessageId: 'cm-1', text: 'Первое сообщение' }]}
+      />,
+    )
+    expect(localOnly.container.querySelectorAll('.message')).toHaveLength(1)
+    expect(localOnly.container.querySelector('.date-divider')).toBeNull()
+  })
+})
