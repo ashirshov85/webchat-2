@@ -7,12 +7,11 @@
 
    Аватар — 46px заголовка с инициалами 13px (design-tokens §4, проекция
    .head-av .avatar прототипа); строка статуса .status-row: direct —
-   лампа .lamp (+ .off только для настоящего offline из store 007) и
-   подпись .status-txt «В сети»/«офлайн»/«неизвестно» (US3/T043),
-   group — «N участников», чей hover/focus открывает подсказку состава
-   .members-tip (портал в body, стили ниже). Правые кнопки —
-   промежуточные 004/006 («Действия», «Информация о группе») в словаре
-   машины; «шестерёнка» ChatGearMenu встаёт сюда в US4/T054.
+    лампа .lamp (+ .off только для настоящего offline из store 007) и
+    подпись .status-txt «В сети»/«офлайн»/«неизвестно» (US3/T043),
+    group — «N участников», чей hover/focus открывает подсказку состава
+    .members-tip (портал в body, стили ниже). Правая кнопка — одна:
+    «шестерёнка» ChatGearMenu (US4/T054), словарь .ch-btn прототипа.
 
    Селекторы скоупятся под .chat-head: глобальные element-стили index.css
    (auth-наследие: синие кнопки, отступ h2) не должны просвечивать сквозь
@@ -125,7 +124,7 @@
   color: var(--err);
 }
 
-/* ============ ПРАВЫЕ КНОПКИ (.ch-btns §7; interim 004/006) ============ */
+/* ============ ПРАВЫЕ КНОПКИ (.ch-btns §7; «шестерёнка» T054) ============ */
 
 .chat-head .ch-btns {
   display: flex;
@@ -133,82 +132,50 @@
   flex: none;
 }
 
-/* Промежуточные текстовые пластины (до «шестерёнки» T054): словарь
-   машины — как .chat-panel-retry (полная перекрыка auth-наследия). */
-.chat-head .dialog-menu-toggle,
-.chat-head .dialog-group-info-toggle {
-  align-self: center;
-  padding: 9px 16px;
-  border-radius: var(--r-field);
+/* Дословно .ch-btn прототипа §7 (34px, латунная рамка, золотой штрих):
+   единственная кнопка заголовка — «шестерёнка» #btnGear. Глобальные
+   button-стили index.css (auth-наследие: синий фон/паддинги/
+   align-self) перекрыты по каждому свойству; hover держит свой фон —
+   иначе :hover:not(:disabled) зальёт акцентом (паттерн .menu-btn). */
+.chat-head .ch-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
   cursor: pointer;
+  display: grid;
+  place-items: center;
   transition: 0.15s;
+  align-self: center;
+  padding: 0;
   border: 1px solid var(--gold-dark);
   color: var(--gold);
   background: var(--input-bg);
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
-  font: 700 11px var(--font-heading);
-  letter-spacing: 2px;
-  text-transform: uppercase;
 }
 
-.chat-head .dialog-menu-toggle:hover,
-.chat-head .dialog-group-info-toggle:hover {
-  color: var(--gold-light);
+.chat-head .ch-btn:hover {
   border-color: var(--gold-light);
+  color: var(--gold-light);
   background: rgba(40, 34, 26, 0.9);
 }
 
-.chat-head .dialog-menu-toggle:focus-visible,
-.chat-head .dialog-group-info-toggle:focus-visible {
+.chat-head .ch-btn:active {
+  transform: translateY(1px);
+}
+
+.chat-head .ch-btn:focus-visible {
   outline: 2px solid var(--gold-light);
   outline-offset: -2px;
 }
 
-/* Раскрывающееся меню «Действия» (004): пластина меню словаря
-   .ctx-menu прототипа, якорь — под своей кнопкой. */
-.chat-head .dialog-menu {
-  position: relative;
-}
-
-.chat-head .dialog-menu-items {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 6px);
-  z-index: var(--z-ctx-menu);
-  min-width: 200px;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  border-radius: var(--r-menu);
-  border: 1px solid var(--gold-dark);
-  background: #191510;
-  box-shadow:
-    0 14px 40px rgba(0, 0, 0, 0.7),
-    0 0 0 1px rgba(201, 162, 74, 0.18);
-}
-
-.chat-head .dialog-menu-item {
-  padding: 9px 12px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  border-radius: 6px;
-  color: var(--cream);
-  font: 14px var(--font-body);
-  transition: 0.15s;
-  align-self: stretch;
-}
-
-.chat-head .dialog-menu-item:hover {
-  background: rgba(201, 162, 74, 0.12);
-  color: var(--gold-light);
-}
-
-.chat-head .dialog-menu-item:focus-visible {
-  outline: 2px solid var(--gold-light);
-  outline-offset: -2px;
+/* Шестерёнка — габариты/штрих прототипа §7 (#btnGear svg) */
+.chat-head .ch-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
 }
 
 /* ============ ПОДСКАЗКА СОСТАВА ГРУППЫ (.members-tip §9, US3 T043) ============

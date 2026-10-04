@@ -82,9 +82,9 @@
  * from the server aggregate for the creator at once) and OPENS the
  * group window on the fresh `GroupView`. A group row of the unified
  * list (T028) opens the same window: the header renders the group
- * title, and the direct-only «Действия» menu (№14/№23/№24 — a 004
- * pair-dialog feature; blocks never apply to groups) stays absent
- * until the group card of US3 joins here. The window body is the
+ * title, and the gear menu carries the GROUP items only (T054,
+ * FR-023) — the direct-only №14/№23/№24 entries never appear there
+ * (blocks never apply to groups). The window body is the
  * chatId-agnostic MessageList/MessageInput pair: the №16 history of
  * an active member loads already, while SENDING before the US2 gate
  * (T035) may be refused by the server — the documented interim US1
@@ -105,8 +105,10 @@
  * moved into `useGroup` (one №28 per open, optimistic `group.*`
  * frames on the shared №18 stream, `reload()` convergence), which
  * feeds BOTH the dialog pair (attribution/✓✓, the T038 need) and the
- * GroupInfoPanel card (T046): the header's «Информация о группе»
- * toggle opens the card under the header. The №31 success converges
+ * GroupInfoPanel card (T046): since T054 the gear's «Участники»/
+ * «Редактировать чат» items open the card under the header (interim —
+ * the members/group-edit modal forms of T055/T056/T057 replace it).
+ * The №31 success converges
  * through `reload()`; the №32/№34/№35 roster actions mount their
  * mutex with useGroupMembers (T047). The full realtime set
  * (`group.you_removed` etc.) lands with T048/T058.
@@ -140,22 +142,31 @@
  * (~3 с) на каждую ЗАВЕРШАЮЩУЮСЯ операцию во всех точках. Формы-
  * обитатели оболочки выдают свои тосты сами (ContactsModal №21/№22/
  * №23/№24/№14, ProfileModal №38, CreateGroupDialog №27 — слоты
- * T028/T031–T035); операции-владельцы СТРАНИЦЫ — «Действия» прямого
- * чата (№14 «Чат удалён — контакт сохранён», №23/№24 «Контакт
- * заблокирован/разблокирован — {username}») и групповые №33/№30 окна
+ * T028/T031–T035); операции-владельцы СТРАНИЦЫ — «шестерёнка» чата
+ * (T054): direct №14 «Чат удалён — контакт сохранён», №23/№24 «Контакт
+ * заблокирован/разблокирован — {username}», №21 «Контакт добавлен/
+ * Уже в контактах — {username}» и групповые №33/№30 окна
  * («Вы вышли из чата — {title}», «Групповой чат удалён») — живут в
  * механизме ПОД провайдером (MessengerMachine ниже), поэтому страница
  * тонкая: <ToastProvider> + машина. Тексты — дословно из прототипа
- * (deleteChat/askBlock/askUnblock/askLeaveGroup); сбои тостом НЕ
- * отмечаются — только инлайн-ошибки поверхностей (контракт форм
- * T028–T035); тост — результат операции, завершившейся на сервере.
+ * (deleteChat/askBlock/askUnblock/askLeaveGroup/addContact); сбои
+ * тостом НЕ отмечаются — только инлайн-ошибки поверхностей (контракт
+ * форм T028–T035); тост — результат операции, завершившейся на сервере.
  */
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
-import type { GroupView } from '../../api/groups'
-import { blockUser, deleteChat, getChat, unblockUser } from '../../api/chats'
-import type { ChatView, Message } from '../../api/chats'
+import type { GroupMember, GroupView } from '../../api/groups'
+import { deleteGroup, leaveGroup } from '../../api/groups'
+import {
+  addContact,
+  blockUser,
+  deleteChat,
+  getChat,
+  listContacts,
+  unblockUser,
+} from '../../api/chats'
+import type { ChatView, ContactView, Message } from '../../api/chats'
 import { getAckBatcher } from '../../sync/ack'
 import { advanceCursor } from '../../sync/cursors'
 import { useSync } from '../../sync/hooks/useSync'
@@ -200,25 +211,29 @@ interface DirectChatView {
  * The open GROUP window (feature 006, T029; US1): the №12/№13/№27
  * `title` + `memberCount` are the server-owned basis of the US1
  * header (ChatHeader, 008 T021) — the live №28 GroupView of the open
- * window (useGroup below) overrides both while it is live; the
- * roster/roles card is US3 (T046), the window actions are US3/US6.
+ * window (useGroup below) overrides both while it is live; the №12/
+ * №13/№27 `myRole` basis feeds the gear matrix (T054) until №28 lands.
+ * The roster/roles card is US3 (T046), the window actions are US3/US6.
  */
 interface GroupChatView {
   readonly kind: 'group'
   readonly chatId: string
   readonly title: string
   readonly memberCount: number | null
+  /** №12/№13/№27 role basis — the gear menu matrix before №28 is live. */
+  readonly myRole: GroupMember['role'] | null
 }
 
 /** The open dialog of either kind (T029): one window, two headers. */
 type ActiveChat = DirectChatView | GroupChatView
 
 /**
- * A confirmation awaiting the user's decision («диалоговое меню») —
- * the actions are DIRECT-dialog only (T029: a group window carries no
- * №14/№23/№24 controls until the US3/US6 group card joins).
+ * A confirmation awaiting the user's decision — the «шестерёнка»
+ * entries (T054, ui-behavior §4): the direct items (T029/T060) and the
+ * group №33/№30 items that replaced the card-only controls of US6
+ * (SC-007: 100% деструктивных операций требуют подтверждения).
  */
-type PendingAction = 'delete-chat' | 'block' | 'unblock'
+type PendingAction = 'delete-chat' | 'block' | 'unblock' | 'leave-group' | 'delete-group'
 
 /** The shell 'confirm' inhabitant copy (SC-007: имя — <b>, FR-033). */
 interface ConfirmUi {
@@ -227,6 +242,16 @@ interface ConfirmUi {
   readonly confirmLabel: string
   readonly variant: ConfirmVariant
 }
+
+/** The direct-kind entries of PendingAction (a group window carries none). */
+const DIRECT_PENDING_ACTIONS: ReadonlySet<PendingAction> = new Set([
+  'delete-chat',
+  'block',
+  'unblock',
+])
+
+/** The group-kind entries — №33/№30 from the gear menu (T054). */
+const GROUP_PENDING_ACTIONS: ReadonlySet<PendingAction> = new Set(['leave-group', 'delete-group'])
 
 function confirmUiOf(action: PendingAction, peerName: string): ConfirmUi {
   if (action === 'delete-chat') {
@@ -254,6 +279,28 @@ function confirmUiOf(action: PendingAction, peerName: string): ConfirmUi {
       variant: 'danger',
     }
   }
+  if (action === 'delete-group') {
+    // Прототип askDeleteChat (групповая ветвь, без имени).
+    return {
+      title: 'Удаление чата',
+      text: 'Групповой чат будет удалён.',
+      confirmLabel: 'Удалить',
+      variant: 'danger',
+    }
+  }
+  if (action === 'leave-group') {
+    // Прототип askLeaveGroup: имя чата — <b>-выделение (SC-007).
+    return {
+      title: 'Выйти из группового чата',
+      text: (
+        <>
+          Вы покинете чат <b>{peerName}</b>.
+        </>
+      ),
+      confirmLabel: 'Выйти',
+      variant: 'danger',
+    }
+  }
   return {
     title: 'Разблокировка пользователя',
     text: (
@@ -278,15 +325,15 @@ const MODAL_TITLES: Record<ModalFormId, string> = {
 }
 
 /**
- * The header props of the open window (T029 → 008 T021/T043): the page
- * resolves the server-owned chat data into the ChatHeader variant —
- * the GROUP window the №28 title/memberCount/roster (or the №12/№27
- * basis), the direct dialog the peer + the «Действия» menu wiring
- * (T060).
+ * The header props of the open window (T029 → 008 T021/T043/T054): the
+ * page resolves the server-owned chat data into the ChatHeader variant —
+ * the GROUP window the №28 title/roster/role (or the №12/№27 basis),
+ * the direct dialog the peer + the №20 membership for the gear matrix.
  */
 function headerChatOf(
   chat: ActiveChat,
   group: GroupView | null,
+  contacts: readonly ContactView[],
   meUserId: string | null,
   meUsername: string | null,
 ): ChatHeaderChat {
@@ -296,14 +343,15 @@ function headerChatOf(
     // then; the roster length IS the memberCount (me included). The
     // live roster + myRole feed the members-tip (008 T043, FR-017);
     // the №12 basis carries no names — null keeps the status row a
-    // non-source until №28 lands.
+    // non-source until №28 lands. myRole: live №28, else the basis —
+    // the gear matrix driver (T054).
     const live = group !== null && group.chatId === chat.chatId
     return {
       kind: 'group',
       title: live ? group.title : chat.title,
       memberCount: live ? group.members.length : chat.memberCount,
       members: live ? group.members : null,
-      myRole: live ? group.myRole : null,
+      myRole: live ? group.myRole : chat.myRole,
       meUserId,
       meUsername,
     }
@@ -313,6 +361,7 @@ function headerChatOf(
     peerId: chat.peer.id,
     username: chat.peer.username,
     blockedByMe: chat.blockedByMe,
+    peerInContacts: contacts.some((contact) => contact.user.id === chat.peer.id),
   }
 }
 
@@ -324,6 +373,7 @@ function activeChatOfView(view: ChatView): ActiveChat | null {
       chatId: view.chatId,
       title: view.title ?? '',
       memberCount: view.memberCount ?? null,
+      myRole: view.myRole ?? null,
     }
   }
   if (view.peer !== null) {
@@ -439,11 +489,18 @@ function MessengerMachine() {
   const [meUsername, setMeUsername] = useState<string | null>(null)
   const [activeChat, setActiveChat] = useState<ActiveChat | null>(null)
   const [composerError, setComposerError] = useState<string | null>(null)
-  /** Dialog action menu (T060) + its pending confirmation. */
-  const [menuOpen, setMenuOpen] = useState(false)
+  /** The pending «шестерёнка» confirmation + its in-flight guard (T054). */
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionPending, setActionPending] = useState(false)
   const [actionError, setActionError] = useState<unknown>(null)
+  /**
+   * The №20 address book of the viewer (T054): the gear's «Добавить в
+   * контакты» visibility for the open direct dialog. Fetched on boot
+   * and on every shell closure (the contacts form mutates the book);
+   * a stale copy is harmless — №21 is idempotent (201/200), a wrong
+   * offer converges to the «Уже в контактах» toast.
+   */
+  const [contacts, setContacts] = useState<readonly ContactView[]>([])
   /**
    * The SINGLE modal shell form (T034, data-model 1.6/3.3): the
    * sidebar main menu (T030) opens contacts / add-contact / profile /
@@ -453,11 +510,31 @@ function MessengerMachine() {
    */
   const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
   /**
-   * The GroupInfoPanel card of the open group window (T046a): the
-   * header toggle opens/closes it; a chat switch closes it together
-   * with the action menu below.
+   * The GroupInfoPanel card of the open group window (T046a → T054
+   * interim): the gear's «Участники»/«Редактировать чат» items open it
+   * until the members/group-edit forms land (T055/T056/T057); a chat
+   * switch closes it together with the pending confirmation below.
    */
   const [groupInfoOpen, setGroupInfoOpen] = useState(false)
+
+  /** №20 refetch of the gear's address-book basis (T054). */
+  const reloadContacts = useCallback(() => {
+    if (currentUserId === null) {
+      return
+    }
+    void (async () => {
+      try {
+        setContacts(await listContacts('login'))
+      } catch {
+        // Non-fatal: a stale book only risks a redundant (idempotent,
+        // №21) offer of «Добавить в контакты».
+      }
+    })()
+  }, [currentUserId])
+
+  useEffect(() => {
+    reloadContacts()
+  }, [reloadContacts])
 
   useEffect(() => {
     let cancelled = false
@@ -555,11 +632,10 @@ function MessengerMachine() {
   )
   const outbox = useOutbox(currentUserId, { onConfirmed: handleConfirmed })
 
-  // Chat switches close the action menu and its confirmation; a stale
-  // dialog must never act on a chat that is no longer open. The group
-  // card folds together with its window.
+  // Chat switches close the pending confirmation; a stale dialog must
+  // never act on a chat that is no longer open. The group card folds
+  // together with its window.
   useEffect(() => {
-    setMenuOpen(false)
     setPendingAction(null)
     setGroupInfoOpen(false)
   }, [activeChatId])
@@ -654,7 +730,10 @@ function MessengerMachine() {
   const closeShell = useCallback(() => {
     setModalForm(null)
     setPendingAction(null)
-  }, [])
+    // The contacts form may have mutated the №20 book (№21/№22) — the
+    // gear basis converges with the closure (T054).
+    reloadContacts()
+  }, [reloadContacts])
 
   /**
    * Opening a pair dialog FROM a modal form (T034): the shell closes
@@ -690,6 +769,7 @@ function MessengerMachine() {
         chatId: group.chatId,
         title: group.title,
         memberCount: group.members.length,
+        myRole: group.myRole,
       })
     },
     [reloadChatList, openChatView],
@@ -700,13 +780,14 @@ function MessengerMachine() {
       const item = chats.find((entry) => entry.chatId === chatId)
       if (item?.type === 'group') {
         // The unified list (T028): a group row opens the GROUP window —
-        // the №12 title/memberCount is the server-owned header basis
-        // of US1 (superseded by the №28 view once it is live).
+        // the №12 title/memberCount/myRole is the server-owned header
+        // basis of US1 (superseded by the №28 view once it is live).
         openChatView({
           kind: 'group',
           chatId: item.chatId,
           title: item.title ?? '',
           memberCount: item.memberCount ?? null,
+          myRole: item.myRole ?? null,
         })
         return
       }
@@ -730,6 +811,7 @@ function MessengerMachine() {
               chatId: view.chatId,
               title: view.title ?? '',
               memberCount: view.memberCount ?? null,
+              myRole: view.myRole ?? null,
             })
             return
           }
@@ -816,6 +898,60 @@ function MessengerMachine() {
       }
     })()
   }, [activeChat, reloadChatList, showToast])
+
+  /**
+   * «Добавить в контакты» of the gear menu (T054, FR-012): №21 with the
+   * peer's userId — идемпотентно 201/200 без дублей, поэтому без
+   * подтверждения; «уже в контактах» видно по текущей книге (паттерн
+   * ContactsModal), один тост прототипа addContact, №20 сходится.
+   */
+  const handleGearAddContact = useCallback(() => {
+    const target = activeChat
+    if (target?.kind !== 'direct') {
+      return
+    }
+    const known = contacts.some((contact) => contact.user.id === target.peer.id)
+    void (async () => {
+      try {
+        await addContact(target.peer.id)
+        showToast(
+          known
+            ? `Уже в контактах — ${target.peer.username}`
+            : `Контакт добавлен — ${target.peer.username}`,
+        )
+        reloadContacts()
+      } catch (cause) {
+        // Сбой — инлайн-ошибкой окна, тостом не отмечается (T045).
+        setActionError(cause)
+      }
+    })()
+  }, [activeChat, contacts, reloadContacts, showToast])
+
+  /**
+   * «Заблокировать/Разблокировать контакт» of the gear (T054): entry to
+   * the confirm form — №23/№24 stay with handleConfirmBlockToggle above.
+   */
+  const handleGearToggleBlock = useCallback(() => {
+    setPendingAction(activeChat?.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block')
+  }, [activeChat])
+
+  /**
+   * «Удалить чат» of the gear (T054): direct — №14, group — №30; the
+   * entries ride the SAME confirm form of the shell (SC-007).
+   */
+  const handleGearDeleteChat = useCallback(() => {
+    setPendingAction(activeChat?.kind === 'group' ? 'delete-group' : 'delete-chat')
+  }, [activeChat])
+
+  /**
+   * Group «Участники»/«Редактировать чат» of the gear (T054 INTERIM):
+   * both open the №28 GroupInfoPanel card under the header — the
+   * roster/rename surfaces of 006 stay reachable until the members /
+   * group-edit modal forms land (T055/T056/T057 rewire to the shell).
+   */
+  const handleOpenGroupCard = useCallback(() => {
+    setGroupInfoOpen(true)
+  }, [])
 
   /**
    * №14 success FROM the contacts form (008 T037; FR-032,
@@ -909,7 +1045,7 @@ function MessengerMachine() {
     [currentUserId, reloadChatList],
   )
 
-  /** №33 leave success of the open group window (LeaveDeleteControls). */
+  /** №33 leave success of the open group window (LeaveDeleteControls / gear, T054). */
   const handleLeftGroup = useCallback(() => {
     if (activeGroupChatId !== null) {
       // T045 (FR-025): один тост на завершённый №33 — текст
@@ -922,7 +1058,7 @@ function MessengerMachine() {
     }
   }, [activeGroupChatId, activeGroup, activeChat, handleWindowGroupGone, showToast])
 
-  /** №30 hard-delete success of the open group window (LeaveDeleteControls). */
+  /** №30 hard-delete success of the open group window (LeaveDeleteControls / gear, T054). */
   const handleDeletedGroup = useCallback(() => {
     if (activeGroupChatId !== null) {
       // T045 (FR-025): один тост на завершённый №30 — текст прототипа
@@ -932,12 +1068,67 @@ function MessengerMachine() {
     }
   }, [activeGroupChatId, handleWindowGroupGone, showToast])
 
+  /**
+   * №33 leave confirmed FROM the gear menu (T054): the askLeaveGroup
+   * confirm runs №33 here — success rides the SAME toast + window
+   * convergence as the card controls (handleLeftGroup above); a
+   * failure stays an inline window error, toast-free (T045).
+   */
+  const handleConfirmLeaveGroup = useCallback(() => {
+    const target = activeChat
+    if (target?.kind !== 'group' || actionPending) {
+      return
+    }
+    setActionPending(true)
+    void (async () => {
+      try {
+        await leaveGroup(target.chatId)
+        setPendingAction(null)
+        handleLeftGroup()
+      } catch (cause) {
+        setActionError(cause)
+        setPendingAction(null)
+      } finally {
+        setActionPending(false)
+      }
+    })()
+  }, [activeChat, actionPending, handleLeftGroup])
+
+  /**
+   * №30 hard-delete confirmed FROM the gear menu (T054): the group
+   * branch of askDeleteChat runs №30 here — the shared toast + window
+   * convergence of handleDeletedGroup above.
+   */
+  const handleConfirmDeleteGroup = useCallback(() => {
+    const target = activeChat
+    if (target?.kind !== 'group' || actionPending) {
+      return
+    }
+    setActionPending(true)
+    void (async () => {
+      try {
+        await deleteGroup(target.chatId)
+        setPendingAction(null)
+        handleDeletedGroup()
+      } catch (cause) {
+        setActionError(cause)
+        setPendingAction(null)
+      } finally {
+        setActionPending(false)
+      }
+    })()
+  }, [activeChat, actionPending, handleDeletedGroup])
+
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
   const dialogOpen = activeChat !== null
   const confirmation =
-    activeChat !== null && activeChat.kind === 'direct' && pendingAction !== null
-      ? confirmUiOf(pendingAction, activeChat.peer.username)
+    pendingAction !== null && activeChat !== null
+      ? DIRECT_PENDING_ACTIONS.has(pendingAction) && activeChat.kind === 'direct'
+        ? confirmUiOf(pendingAction, activeChat.peer.username)
+        : GROUP_PENDING_ACTIONS.has(pendingAction) && activeChat.kind === 'group'
+          ? confirmUiOf(pendingAction, activeChat.title)
+          : null
       : null
   /**
    * The shell formId (T034): a pending header confirmation rides
@@ -982,24 +1173,14 @@ function MessengerMachine() {
             {dialogOpen && activeChat !== null ? (
               <>
                 <ChatHeader
-                  chat={headerChatOf(activeChat, activeGroup, currentUserId, meUsername)}
-                  menuOpen={menuOpen}
-                  onToggleMenu={() => {
-                    setMenuOpen((open) => !open)
-                  }}
-                  onDeleteChat={() => {
-                    setMenuOpen(false)
-                    setPendingAction('delete-chat')
-                  }}
-                  onToggleBlock={() => {
-                    setMenuOpen(false)
-                    setPendingAction(
-                      activeChat.kind === 'direct' && activeChat.blockedByMe ? 'unblock' : 'block',
-                    )
-                  }}
-                  groupInfoOpen={groupInfoOpen}
-                  onToggleGroupInfo={() => {
-                    setGroupInfoOpen((open) => !open)
+                  chat={headerChatOf(activeChat, activeGroup, contacts, currentUserId, meUsername)}
+                  onAddContact={handleGearAddContact}
+                  onToggleBlock={handleGearToggleBlock}
+                  onDeleteChat={handleGearDeleteChat}
+                  onOpenMembers={handleOpenGroupCard}
+                  onOpenEdit={handleOpenGroupCard}
+                  onLeaveChat={() => {
+                    setPendingAction('leave-group')
                   }}
                 />
 
@@ -1098,6 +1279,10 @@ function MessengerMachine() {
               }
               if (pendingAction === 'delete-chat') {
                 handleConfirmDeleteChat()
+              } else if (pendingAction === 'leave-group') {
+                handleConfirmLeaveGroup()
+              } else if (pendingAction === 'delete-group') {
+                handleConfirmDeleteGroup()
               } else {
                 handleConfirmBlockToggle()
               }

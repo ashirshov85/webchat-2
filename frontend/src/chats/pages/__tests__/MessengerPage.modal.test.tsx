@@ -10,7 +10,7 @@ import { MessengerPage } from '../MessengerPage'
  * оболочке — пункты главного меню сайдбара (T030, FR-007) открывают
  * profile / contacts / create-group, инлайн-«Добавить контакт»
  * переключает форму ВНУТРИ оболочки, подтверждение «шестерёнки»-действий
- * прямого чата (№14/№23/№24, T060 wiring) — форма confirm. Переключение
+ * прямого чата (№14/№23/№24, T054 wiring) — форма confirm. Переключение
  * formId НЕ рождает вторую подложку `.modal-back` (edge case data-model
  * 3.3); закрытие — Esc / фон / «Отмена» / успех submit. Поведенческие
  * ожидания 004–007 сохранены (FR-034): №20/№11/№14 едут теми же путями.
@@ -237,12 +237,13 @@ describe('MessengerPage единая ModalShell (T034, data-model 1.6/3.3)', () 
   })
 })
 
-describe('MessengerPage форма confirm действий чата в оболочке (T034, SC-007)', () => {
+describe('MessengerPage форма confirm действий чата в оболочке (T034 → T054, SC-007)', () => {
+  /** «Шестерёнка» заголовка (T054) → «Удалить чат» → форма confirm. */
   async function openDeleteConfirm(): Promise<HTMLElement> {
     const list = screen.getByRole('list', { name: 'Список чатов' })
     fireEvent.click(within(list).getByText('alice').closest('button') as HTMLElement)
     await screen.findByRole('heading', { level: 2, name: 'alice' })
-    fireEvent.click(screen.getByRole('button', { name: 'Действия' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить чат' }))
     return screen.findByRole('dialog', { name: 'Удаление чата' })
   }
@@ -306,9 +307,10 @@ describe('MessengerPage композер заблокированного кон
       'Контакт заблокирован — разблокируйте, чтобы писать сообщения',
     )
 
-    // Разблокировка: «Действия» → «Разблокировать пользователя» → confirm (№24).
-    fireEvent.click(screen.getByRole('button', { name: 'Действия' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Разблокировать пользователя' }))
+    // Разблокировка: «шестерёнка» (T054) → «Разблокировать контакт» →
+    // confirm (№24).
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Разблокировать контакт' }))
     const dialog = await screen.findByRole('dialog', { name: 'Разблокировка пользователя' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Разблокировать' }))
 

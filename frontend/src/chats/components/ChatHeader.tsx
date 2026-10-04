@@ -29,11 +29,14 @@
  *    (mePresenceDot) is not carried: data-model 2.3 derives the tip
  *    from members + myRole only.
  *
- * The «шестерёнка» ChatGearMenu is US4 (T054) — until then the
- * 004/006 controls keep their behavior: the direct «Действия» menu
- * (№14 delete + №23/№24 block toggle) and the group «Информация о
- * группе» card toggle. The prototype search/sound buttons never join
- * the header (FR-016: 013/008a are out of scope).
+ * US4 (T054): the ONLY right-side control is the «шестерёнка»
+ * ChatGearMenu (ui-behavior §4) — direct: №21 add / №23-24 block
+ * toggle / №14 delete (подтверждения — у страницы через форму confirm
+ * оболочки T034); group: the №28 myRole matrix of 006 («Участники» /
+ * «Редактировать чат» / «Удалить чат» vs «Выйти из чата»). While the
+ * role is unknown (no live №28 and no basis) the group header carries
+ * no gear — the menu matrix needs the role. The prototype search/sound
+ * buttons never join the header (FR-016: 013/008a are out of scope).
  *
  * The avatar derives from the peer username (circle) or the group
  * title (octagon, FR-024) via ui/Avatar and recalculates on renames;
@@ -48,6 +51,8 @@ import { Avatar } from '../../ui/Avatar'
 import { pluralRu } from '../../ui/time'
 import { usePresenceStatus } from '../../presence/usePresence'
 import type { PresenceStatus } from '../../presence/presenceStore'
+import { ChatGearMenu } from './ChatGearMenu'
+import type { GearMenuChat } from './ChatGearMenu'
 import './chat-header.css'
 
 /** Header avatar size — design-tokens §4 (заголовок 46px). */
@@ -69,6 +74,8 @@ export interface DirectChatHeaderData {
   readonly username: string
   /** The blocker-side mark «заблокирован» (№12 projection, FR-020). */
   readonly blockedByMe: boolean
+  /** №20 membership of the peer — the gear's «Добавить в контакты» visibility (T054). */
+  readonly peerInContacts: boolean
 }
 
 /** The group window of the header (feature 006). */
@@ -83,7 +90,13 @@ export interface GroupChatHeaderData {
    * the status row is no tip source until then.
    */
   readonly members: readonly GroupMember[] | null
-  /** The viewer's №28 role — the «администратор» mark of the «Вы» row. */
+  /**
+   * The viewer's role — the live №28 myRole while the view is open,
+   * the №12/№13/№27 basis until then (T054): the «администратор» mark
+   * of the «Вы» tip row (only rendered when №28 is live) AND the gear
+   * menu matrix of 006 (ui-behavior §4); null — no basis at all, the
+   * group header carries no gear.
+   */
   readonly myRole: GroupMember['role'] | null
   /** The viewer's user id — filters the own №28 row out of the tip. */
   readonly meUserId: string | null
@@ -99,14 +112,18 @@ export type ChatHeaderChat =
 export interface ChatHeaderProps {
   /** The open dialog of either kind — drives avatar shape and status. */
   readonly chat: ChatHeaderChat
-  /** The direct «Действия» menu state + its №14/№23-24 actions (T060 wiring). */
-  readonly menuOpen: boolean
-  readonly onToggleMenu: () => void
-  readonly onDeleteChat: () => void
-  readonly onToggleBlock: () => void
-  /** The group card toggle state (US3 T046a wiring). */
-  readonly groupInfoOpen: boolean
-  readonly onToggleGroupInfo: () => void
+  /** direct: «Добавить в контакты» — №21 belongs to the page (T054). */
+  readonly onAddContact?: () => void
+  /** direct: «Заблокировать/Разблокировать контакт» — №23/№24 of the page. */
+  readonly onToggleBlock?: () => void
+  /** «Удалить чат» (подтверждение): direct №14 / group №30 — the page's. */
+  readonly onDeleteChat?: () => void
+  /** group: «Участники» → the members form (T055; interim — the №28 card). */
+  readonly onOpenMembers?: () => void
+  /** group owner/admin: «Редактировать чат» → group-edit (T056; interim — the card). */
+  readonly onOpenEdit?: () => void
+  /** group member: «Выйти из чата» (danger, подтверждение) — №33 of the page. */
+  readonly onLeaveChat?: () => void
 }
 
 /** «N участников» — the prototype membersCount (§7 chatView, ui/time pluralRu). */
@@ -228,63 +245,30 @@ function MembersTip({ meUsername, myRole, members, tipRef }: MembersTipProps) {
   )
 }
 
-interface DirectActionsMenuProps {
-  readonly blockedByMe: boolean
-  readonly menuOpen: boolean
-  readonly onToggleMenu: () => void
-  readonly onDeleteChat: () => void
-  readonly onToggleBlock: () => void
-}
-
-/** The direct «Действия» menu (004 T060): №14 delete + №23/№24 block toggle. */
-function DirectActionsMenu({
-  blockedByMe,
-  menuOpen,
-  onToggleMenu,
-  onDeleteChat,
-  onToggleBlock,
-}: DirectActionsMenuProps) {
-  return (
-    <div className="dialog-menu">
-      <button
-        type="button"
-        className="dialog-menu-toggle"
-        aria-haspopup="menu"
-        aria-expanded={menuOpen}
-        onClick={onToggleMenu}
-      >
-        Действия
-      </button>
-      {menuOpen && (
-        <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
-          <button type="button" role="menuitem" className="dialog-menu-item" onClick={onDeleteChat}>
-            Удалить чат
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="dialog-menu-item"
-            onClick={onToggleBlock}
-          >
-            {blockedByMe ? 'Разблокировать пользователя' : 'Заблокировать пользователя'}
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
-
 export function ChatHeader({
   chat,
-  menuOpen,
-  onToggleMenu,
-  onDeleteChat,
+  onAddContact,
   onToggleBlock,
-  groupInfoOpen,
-  onToggleGroupInfo,
+  onDeleteChat,
+  onOpenMembers,
+  onOpenEdit,
+  onLeaveChat,
 }: ChatHeaderProps) {
   const isGroup = chat.kind === 'group'
   const name = isGroup ? chat.title : chat.username
+
+  // The gear menu data (T054): direct — the №20 membership of the peer
+  // + the block mark; group — the resolved role (live №28, else the
+  // №12/№13/№27 basis); null — no basis yet, no gear in the header.
+  const gearChat: GearMenuChat | null = isGroup
+    ? chat.myRole !== null
+      ? { kind: 'group', myRole: chat.myRole }
+      : null
+    : {
+        kind: 'direct',
+        peerInContacts: chat.peerInContacts,
+        blockedByMe: chat.blockedByMe,
+      }
 
   // The 007 surface of the open 1:1 dialog (T040): the status comes
   // ONLY from the presenceStore — a group header registers nothing.
@@ -376,27 +360,22 @@ export function ChatHeader({
           <DirectStatusRow presence={presence} blockedByMe={chat.blockedByMe} />
         )}
       </div>
-      <div className="ch-btns">
-        {isGroup ? (
-          <button
-            type="button"
-            className="dialog-group-info-toggle"
-            aria-expanded={groupInfoOpen}
-            aria-controls="dialog-group-card"
-            onClick={onToggleGroupInfo}
-          >
-            Информация о группе
-          </button>
-        ) : (
-          <DirectActionsMenu
-            blockedByMe={chat.blockedByMe}
-            menuOpen={menuOpen}
-            onToggleMenu={onToggleMenu}
-            onDeleteChat={onDeleteChat}
+      {/* Единственная кнопка заголовка — «шестерёнка» (FR-016, T054):
+           direct — всегда; group — с известной ролью (живой №28 или
+           базис №12/№13/№27) — без роли матрица пунктов 006 не определена. */}
+      {gearChat !== null && (
+        <div className="ch-btns">
+          <ChatGearMenu
+            chat={gearChat}
+            onAddContact={onAddContact}
             onToggleBlock={onToggleBlock}
+            onDeleteChat={onDeleteChat}
+            onOpenMembers={onOpenMembers}
+            onOpenEdit={onOpenEdit}
+            onLeaveChat={onLeaveChat}
           />
-        )}
-      </div>
+        </div>
+      )}
       {/* Подсказка состава (FR-017) — портал в body, как #membersTip
           прототипа: fixed-позиционирование относительно вьюпорта,
           поверх машины (z-56), pointer-events: none — чистый ховер. */}

@@ -11,12 +11,14 @@ import { MessengerPage } from '../MessengerPage'
  * №38, CreateGroupDialog №27) закреплены их собственными наборами
  * (T028/T031–T035); здесь — ТОЧКИ СТРАНИЦЫ, до T045 завершавшиеся молча:
  *
- *  - «Действия» прямого чата: №14 «Удалить чат» → «Чат удалён — контакт
- *    сохранён», №23/№24 → «Контакт заблокирован/разблокирован —
- *    {username}» (прототип chats.html: deleteChat/askBlock/askUnblock —
- *    пути меню окна чата, строки 1130/1469/1479);
+ *  - «шестерёнка» чата (T054 — была «Действия» 004): direct №14 «Удалить
+ *    чат» → «Чат удалён — контакт сохранён», №23/№24 → «Контакт
+ *    заблокирован/разблокирован — {username}» (прототип chats.html:
+ *    deleteChat/askBlock/askUnblock — пути меню окна чата, строки
+ *    1130/1469/1479);
  *  - группы: №33 выход → «Вы вышли из чата — {title}» (askLeaveGroup,
- *    строка 1507), №30 удаление → «Групповой чат удалён» (строка 1130),
+ *    строка 1507), №30 удаление → «Групповой чат удалён» (строка 1130)
+ *    — оба теперь едут через пункты «шестерёнки» + confirm (SC-007),
  *    №29 переименование — тост формы GroupInfoPanel (строка 1734,
  *    отдельный набор в groups/).
  *
@@ -190,16 +192,17 @@ async function openDirect(): Promise<void> {
   await screen.findByRole('heading', { level: 2, name: 'alice' })
 }
 
-/** Открыть групповое окно + карточку №28 (носитель LeaveDeleteControls). */
-async function openGroupCard(myRole: GroupMember['role']): Promise<void> {
+/**
+ * Открыть групповое окно и дождаться живого №28: статус-строка «N
+ * участников» становится кнопкой-источником подсказки только по живому
+ * ростеру — к этому моменту «шестерёнка» несёт live myRole (T054), а
+ * не №12-базис.
+ */
+async function openGroup(myRole: GroupMember['role']): Promise<void> {
   mockGroups.getGroup.mockResolvedValue(groupView(myRole))
   fireEvent.click(screen.getByRole('button', { name: /Проект Альфа/ }))
   await screen.findByRole('heading', { level: 2, name: 'Проект Альфа' })
-  fireEvent.click(screen.getByRole('button', { name: 'Информация о группе' }))
-  // №28 готов — карточка с ролями на месте (кнопка половины по роли).
-  await screen.findByRole('button', {
-    name: myRole === 'owner' ? 'Удалить группу' : 'Выйти из группы',
-  })
+  await screen.findByRole('button', { name: '2 участника' })
 }
 
 /**
@@ -222,13 +225,13 @@ function expectNoToast(): void {
   expect(toasts[0]).toHaveTextContent('')
 }
 
-/** «Действия» прямого чата → пункт → confirm кнопка. */
+/** «Шестерёнка» заголовка (T054) → пункт → confirm кнопка. */
 async function runHeaderAction(
   menuItem: string,
   dialogTitle: string,
   confirmLabel: string,
 ): Promise<void> {
-  fireEvent.click(screen.getByRole('button', { name: 'Действия' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
   fireEvent.click(screen.getByRole('menuitem', { name: menuItem }))
   const dialog = await screen.findByRole('dialog', { name: dialogTitle })
   fireEvent.click(within(dialog).getByRole('button', { name: confirmLabel }))
@@ -239,7 +242,7 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
-describe('MessengerPage тосты «Действий» прямого чата (T045, FR-025, US3-AS4)', () => {
+describe('MessengerPage тосты «шестерёнки» прямого чата (T045 → T054, FR-025, US3-AS4)', () => {
   it('№14 «Удалить чат»: ровно один тост «Чат удалён — контакт сохранён»', async () => {
     await renderPage()
     await openDirect()
@@ -274,12 +277,12 @@ describe('MessengerPage тосты «Действий» прямого чата 
     expectNoToast()
   })
 
-  it('№23 «Заблокировать пользователя»: ровно один тост «Контакт заблокирован — alice»', async () => {
+  it('№23 «Заблокировать контакт»: ровно один тост «Контакт заблокирован — alice»', async () => {
     await renderPage()
     await openDirect()
     mockChats.blockUser.mockResolvedValue(undefined)
 
-    await runHeaderAction('Заблокировать пользователя', 'Блокировка пользователя', 'Заблокировать')
+    await runHeaderAction('Заблокировать контакт', 'Блокировка пользователя', 'Заблокировать')
 
     await waitFor(() => {
       expect(mockChats.blockUser).toHaveBeenCalledWith(ALICE)
@@ -292,11 +295,7 @@ describe('MessengerPage тосты «Действий» прямого чата 
     await openDirect()
     mockChats.unblockUser.mockResolvedValue(undefined)
 
-    await runHeaderAction(
-      'Разблокировать пользователя',
-      'Разблокировка пользователя',
-      'Разблокировать',
-    )
+    await runHeaderAction('Разблокировать контакт', 'Разблокировка пользователя', 'Разблокировать')
 
     await waitFor(() => {
       expect(mockChats.unblockUser).toHaveBeenCalledWith(ALICE)
@@ -305,13 +304,13 @@ describe('MessengerPage тосты «Действий» прямого чата 
   })
 })
 
-describe('MessengerPage тосты групповых операций окна (T045, FR-025)', () => {
-  it('№33 «Выйти из группы»: ровно один тост «Вы вышли из чата — {title}»', async () => {
+describe('MessengerPage тосты групповых операций «шестерёнки» (T045 → T054, FR-025)', () => {
+  it('№33 «Выйти из чата»: ровно один тост «Вы вышли из чата — {title}»', async () => {
     await renderPage([groupRow(), directRow()])
-    await openGroupCard('member')
+    await openGroup('member')
     mockGroups.leaveGroup.mockResolvedValue(undefined)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Выйти из группы' }))
+    await runHeaderAction('Выйти из чата', 'Выйти из группового чата', 'Выйти')
 
     await waitFor(() => {
       expect(mockGroups.leaveGroup).toHaveBeenCalledWith(GROUP_ID)
@@ -324,28 +323,32 @@ describe('MessengerPage тосты групповых операций окна 
     await expectSingleToast('Вы вышли из чата — Проект Альфа')
   })
 
-  it('№33 сбой — тоста нет (ошибка в карточке, окно живо)', async () => {
+  it('№33 сбой — тоста нет: инлайн-ошибка окна, окно живо', async () => {
     await renderPage([groupRow(), directRow()])
-    await openGroupCard('member')
+    await openGroup('member')
     mockGroups.leaveGroup.mockRejectedValueOnce(new Error('server says no'))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Выйти из группы' }))
+    await runHeaderAction('Выйти из чата', 'Выйти из группового чата', 'Выйти')
 
     await waitFor(() => {
       expect(mockGroups.leaveGroup).toHaveBeenCalledTimes(1)
     })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Выйти из группового чата' })).toBeNull()
+    })
     expect(
       await screen.findByRole('heading', { level: 2, name: 'Проект Альфа' }),
     ).toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
     expectNoToast()
   })
 
-  it('№30 «Удалить группу» (owner): ровно один тост «Групповой чат удалён»', async () => {
+  it('№30 «Удалить чат» (owner): ровно один тост «Групповой чат удалён»', async () => {
     await renderPage([groupRow(), directRow()])
-    await openGroupCard('owner')
+    await openGroup('owner')
     mockGroups.deleteGroup.mockResolvedValue(undefined)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Удалить группу' }))
+    await runHeaderAction('Удалить чат', 'Удаление чата', 'Удалить')
 
     await waitFor(() => {
       expect(mockGroups.deleteGroup).toHaveBeenCalledWith(GROUP_ID)

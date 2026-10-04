@@ -21,10 +21,15 @@ import { ModalShell } from '../../../ui/ModalShell'
  * opens the `.members-tip` roster: «Вы» first (mark «администратор»
  * when owning), then the №28 members minus me with the mark for
  * owner/admin roles (FR-017). The tip closes on mouseleave/blur and
- * Esc (the top layer of data-model 3.1). The «шестерёнка» ChatGearMenu
- * is US4 (T054) — until then the 004/006 controls («Действия» menu,
- * «Информация о группе» toggle) keep their behavioral expectations
- * (SC-002, FR-034).
+ * Esc (the top layer of data-model 3.1).
+ *
+ * US4 (T054): the ONLY right-side control is the «шестерёнка»
+ * ChatGearMenu — the per-kind item sets live in their own suite
+ * (ChatGearMenu.test.tsx); here the embedding is pinned: the direct
+ * entries fire the page callbacks (№21/№23-24/№14 — the confirm shell
+ * belongs to the page, T034), the group matrix follows myRole
+ * (№33/№30/«Участники»/«Редактировать чат»), and a group without a
+ * role (no №28, no basis) carries no gear at all.
  */
 
 const presence = vi.hoisted(() => ({ status: 'unknown' }))
@@ -38,13 +43,19 @@ const BOB = '33333333-3333-3333-3333-333333333333'
 const ME = '11111111-1111-1111-1111-111111111111'
 
 function directChat(
-  overrides: Partial<{ peerId: string; username: string; blockedByMe: boolean }> = {},
+  overrides: Partial<{
+    peerId: string
+    username: string
+    blockedByMe: boolean
+    peerInContacts: boolean
+  }> = {},
 ) {
   return {
     kind: 'direct' as const,
     peerId: ALICE,
     username: 'alice',
     blockedByMe: false,
+    peerInContacts: true,
     ...overrides,
   }
 }
@@ -95,15 +106,15 @@ function ownerRoster(): readonly GroupMember[] {
   ]
 }
 
-function headerProps(overrides: Partial<{ menuOpen: boolean; groupInfoOpen: boolean }> = {}) {
+/** The gear callbacks of the page (T054) — every entry is a plain wire. */
+function headerProps() {
   return {
-    menuOpen: false,
-    onToggleMenu: vi.fn(),
-    onDeleteChat: vi.fn(),
+    onAddContact: vi.fn(),
     onToggleBlock: vi.fn(),
-    groupInfoOpen: false,
-    onToggleGroupInfo: vi.fn(),
-    ...overrides,
+    onDeleteChat: vi.fn(),
+    onOpenMembers: vi.fn(),
+    onOpenEdit: vi.fn(),
+    onLeaveChat: vi.fn(),
   }
 }
 
@@ -436,51 +447,85 @@ describe('ChatHeader members-tip: clamp at screen edges and the Esc top layer (T
   })
 })
 
-describe('ChatHeader interim controls keep the 004/006 behavior (SC-002, FR-034)', () => {
-  it('toggles the direct «Действия» menu and fires №14/№23-24 actions', () => {
-    const { unmount, props } = renderHeader(directChat())
+describe('ChatHeader embeds the ChatGearMenu — the ONLY header button (T054, FR-016, ui-behavior §4)', () => {
+  /** Прототип #btnGear: title «Настройки чата» — открывает меню чата. */
+  function openGearMenu(): HTMLElement {
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    return screen.getByRole('menu')
+  }
 
-    // The menu is page-controlled (menuOpen prop): the closed render
-    // only fires the toggle — the 004 MessengerPage wiring keeps it.
-    const toggle = screen.getByRole('button', { name: 'Действия' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByRole('menu', { name: 'Действия с чатом' })).toBeNull()
+  it('direct: the gear opens the menu; each item fires its page action and closes it', () => {
+    const { props } = renderHeader(directChat({ peerInContacts: false }))
+    const gear = screen.getByRole('button', { name: 'Настройки чата' })
+    expect(gear).toHaveAttribute('aria-haspopup', 'menu')
+    expect(gear).toHaveAttribute('aria-expanded', 'false')
 
-    fireEvent.click(toggle)
-    expect(props.onToggleMenu).toHaveBeenCalledTimes(1)
+    fireEvent.click(gear)
+    expect(screen.getByRole('menu')).toBeVisible()
+    expect(gear).toHaveAttribute('aria-expanded', 'true')
 
-    // The open render carries both items; each fires its action.
-    unmount()
-    cleanup()
-    const { props: openProps } = renderHeader(directChat(), headerProps({ menuOpen: true }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Добавить в контакты' }))
+    expect(props.onAddContact).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('menu')).toBeNull()
 
-    expect(screen.getByRole('button', { name: 'Действия' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
+    fireEvent.click(gear)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Заблокировать контакт' }))
+    expect(props.onToggleBlock).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('menu')).toBeNull()
+
+    fireEvent.click(gear)
     fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить чат' }))
-    expect(openProps.onDeleteChat).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Заблокировать пользователя' }))
-    expect(openProps.onToggleBlock).toHaveBeenCalledTimes(1)
+    expect(props.onDeleteChat).toHaveBeenCalledTimes(1)
   })
 
-  it('shows the blocker mark and the unblock item of a blocked direct chat', () => {
-    renderHeader(directChat({ blockedByMe: true }), headerProps({ menuOpen: true }))
+  it('direct blocked: the mark stays and the toggle flips to «Разблокировать контакт»', () => {
+    renderHeader(directChat({ blockedByMe: true }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
 
     expect(screen.getByText('заблокирован')).toBeVisible()
-    expect(screen.getByRole('menuitem', { name: 'Разблокировать пользователя' })).toBeVisible()
+    expect(screen.getByRole('menuitem', { name: 'Разблокировать контакт' })).toBeVisible()
+    expect(screen.queryByRole('menuitem', { name: 'Заблокировать контакт' })).toBeNull()
   })
 
-  it('toggles «Информация о группе» from the group header and carries no direct menu there', () => {
-    const { props } = renderHeader(groupChat())
+  it('group owner: «Участники»/«Редактировать чат»/danger «Удалить чат» fire their wires (№33 hidden)', () => {
+    const { props } = renderHeader(groupChat({ myRole: 'owner' }))
 
-    const toggle = screen.getByRole('button', { name: 'Информация о группе' })
-    expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(toggle).toHaveAttribute('aria-controls', 'dialog-group-card')
+    openGearMenu()
+    expect(screen.getByRole('menuitem', { name: 'Удалить чат' }).classList.contains('danger')).toBe(
+      true,
+    )
+    expect(screen.queryByRole('menuitem', { name: 'Выйти из чата' })).toBeNull()
 
-    fireEvent.click(toggle)
-    expect(props.onToggleGroupInfo).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Участники' }))
+    expect(props.onOpenMembers).toHaveBeenCalledTimes(1)
 
-    expect(screen.queryByRole('button', { name: 'Действия' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Редактировать чат' }))
+    expect(props.onOpenEdit).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить чат' }))
+    expect(props.onDeleteChat).toHaveBeenCalledTimes(1)
+    expect(props.onLeaveChat).not.toHaveBeenCalled()
+  })
+
+  it('group member: danger «Выйти из чата» fires onLeaveChat; edit/delete hidden (not_group_owner)', () => {
+    const { props } = renderHeader(groupChat({ myRole: 'member' }))
+
+    openGearMenu()
+    expect(screen.queryByRole('menuitem', { name: 'Редактировать чат' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'Удалить чат' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Выйти из чата' }))
+    expect(props.onLeaveChat).toHaveBeenCalledTimes(1)
+    expect(props.onDeleteChat).not.toHaveBeenCalled()
+  })
+
+  it('group without a role (no №28, no basis): no gear — the matrix needs the role', () => {
+    const { container } = renderHeader(groupChat())
+
+    expect(screen.queryByRole('button', { name: 'Настройки чата' })).toBeNull()
+    expect(container.querySelector('.chat-head .ch-btns')).toBeNull()
   })
 })

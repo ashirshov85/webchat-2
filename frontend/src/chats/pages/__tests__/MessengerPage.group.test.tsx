@@ -24,7 +24,7 @@ import { MessengerPage } from '../MessengerPage'
 type GroupView = components['schemas']['GroupView']
 type ChatView = components['schemas']['ChatView']
 
-const { mockGetCurrentUser, mockChats, mockCreateGroup, mockSse } = vi.hoisted(() => ({
+const { mockGetCurrentUser, mockChats, mockCreateGroup, mockGroups, mockSse } = vi.hoisted(() => ({
   mockGetCurrentUser: vi.fn(),
   mockChats: {
     listChats: vi.fn(),
@@ -45,6 +45,11 @@ const { mockGetCurrentUser, mockChats, mockCreateGroup, mockSse } = vi.hoisted((
     unblockUser: vi.fn(),
   },
   mockCreateGroup: vi.fn(),
+  mockGroups: {
+    getGroup: vi.fn(),
+    leaveGroup: vi.fn(),
+    deleteGroup: vi.fn(),
+  },
   mockSse: { streamUserEvents: vi.fn() },
 }))
 
@@ -56,6 +61,9 @@ vi.mock('../../../api/chats', () => mockChats)
 
 vi.mock('../../../api/groups', () => ({
   createGroup: mockCreateGroup,
+  getGroup: mockGroups.getGroup,
+  leaveGroup: mockGroups.leaveGroup,
+  deleteGroup: mockGroups.deleteGroup,
 }))
 
 vi.mock('../../../api/sse', () => mockSse)
@@ -173,6 +181,9 @@ async function renderPage(
   )
   mockChats.listMessages.mockResolvedValue({ messages: [] })
   mockChats.listContacts.mockResolvedValue(contacts())
+  // №28 жив по умолчанию (owner) — матрица «шестерёнки» и карточка №28
+  // работают на живом ростере; сбой №28 — исключение конкретных тестов.
+  mockGroups.getGroup.mockResolvedValue(createdGroupView())
   installStream()
   render(<MessengerPage />)
   await screen.findByRole('list', { name: 'Список чатов' })
@@ -261,7 +272,7 @@ describe('MessengerPage «Создать группу» entry (US1, quickstart �
 })
 
 describe('MessengerPage group window from the unified list (US1)', () => {
-  it('opens the group window on a group row: title header, composer, no direct-only action menu', async () => {
+  it('opens the group window on a group row: title header, composer, the gear carries group items only', async () => {
     await renderPage([groupRow(), directRow()])
 
     fireEvent.click(screen.getByRole('button', { name: /Проект Альфа/ }))
@@ -271,26 +282,46 @@ describe('MessengerPage group window from the unified list (US1)', () => {
     })
     expect(screen.getByRole('heading', { level: 2, name: 'Проект Альфа' })).toBeInTheDocument()
     expect(screen.getByLabelText('Текст сообщения')).toBeInTheDocument()
-    // №14/№23/№24 are pair-dialog actions — a group window carries none.
-    expect(screen.queryByRole('button', { name: 'Действия' })).toBeNull()
+    // FR-016/FR-023 (T054): the gear is the only header control; a group
+    // window carries the GROUP matrix — never the direct №14-direct/
+    // №23/№24 entries (blocks never apply to groups). The №28 basis
+    // (getGroup is not mocked here → error state) leaves the №12 myRole
+    // ('owner') driving the matrix.
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    expect(screen.getByRole('menuitem', { name: 'Участники' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: 'Заблокировать контакт' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'Добавить в контакты' })).toBeNull()
     // Presence (007, T022): a group window carries NO presence UI.
     const groupDialog = screen.getByRole('region', { name: 'Окно диалога' })
     expect(groupDialog.querySelector('.presence-indicator')).toBeNull()
     expect(within(groupDialog).queryByText('неизвестно')).toBeNull()
   })
 
-  it('keeps the direct dialog intact: peer header with the action menu', async () => {
+  it('keeps the direct dialog intact: peer header with the gear chat menu', async () => {
     await renderPage([groupRow(), directRow()])
 
     fireEvent.click(chatRowButton('alice'))
 
     expect(screen.getByRole('heading', { level: 2, name: 'alice' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Действия' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Настройки чата' })).toBeInTheDocument()
     // Presence (007, T022): the 1:1 header is the ONLY surface with a
     // VISIBLE text label — neutral «неизвестно» before the first №36
     // snapshot (never a false «офлайн»).
     const directDialog = screen.getByRole('region', { name: 'Окно диалога' })
     expect(within(directDialog).getByText('неизвестно')).toBeVisible()
+  })
+
+  it('gear «Участники»/«Редактировать чат» open the №28 card under the header (T054 interim — the members/group-edit forms land in T055/T056)', async () => {
+    await renderPage([groupRow(), directRow()])
+
+    fireEvent.click(screen.getByRole('button', { name: /Проект Альфа/ }))
+    await screen.findByRole('heading', { level: 2, name: 'Проект Альфа' })
+    // №28 жив — ростер и №33/№30-половина карточки достижимы пунктом
+    // «Участники» (SC-004: вся функциональность 006 без старой кнопки
+    // заголовка «Информация о группе»).
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Участники' }))
+    expect(await screen.findByRole('button', { name: 'Удалить группу' })).toBeInTheDocument()
   })
 })
 

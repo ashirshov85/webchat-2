@@ -281,13 +281,13 @@ describe('ChatHeader direct status (T040 → T043, US3-AS2, FR-016, data-model 2
   function renderDirectHeader(peerId: string = ALICE) {
     return render(
       <ChatHeader
-        chat={{ kind: 'direct', peerId, username: 'alice', blockedByMe: false }}
-        menuOpen={false}
-        onToggleMenu={vi.fn()}
-        onDeleteChat={vi.fn()}
-        onToggleBlock={vi.fn()}
-        groupInfoOpen={false}
-        onToggleGroupInfo={vi.fn()}
+        chat={{
+          kind: 'direct',
+          peerId,
+          username: 'alice',
+          blockedByMe: false,
+          peerInContacts: true,
+        }}
       />,
     )
   }
