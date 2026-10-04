@@ -1,7 +1,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { GroupMember } from '../../../api/groups'
 import { ChatHeader } from '../ChatHeader'
+import { ModalShell } from '../../../ui/ModalShell'
 
 /**
  * The open dialog header rebuilt per the prototype (feature 008, US1
@@ -331,6 +332,107 @@ describe('ChatHeader members-tip (T043, FR-017, data-model 2.3, ui-behavior §4)
     expect(row instanceof HTMLElement).toBe(true)
     fireEvent.mouseEnter(row as HTMLElement)
     expect(tip()).toBeNull()
+  })
+})
+
+describe('ChatHeader members-tip: clamp at screen edges and the Esc top layer (T046, FR-027/FR-035 edge case, data-model 3.1)', () => {
+  /** The tip is portaled to document.body (the prototype #membersTip) — screen-level lookup. */
+  function tip(): HTMLElement | null {
+    return document.querySelector('.members-tip')
+  }
+
+  /** The group status row — the tip anchor (hover/focus source). */
+  function statusRow(container: HTMLElement): HTMLElement {
+    const row = container.querySelector('.chat-head .status-row')
+    if (!(row instanceof HTMLElement)) {
+      throw new Error('status-row не найден')
+    }
+    return row
+  }
+
+  function liveOwnerGroup() {
+    return groupChat({ members: ownerRoster(), myRole: 'owner', meUserId: ME, meUsername: 'me' })
+  }
+
+  /** Габариты подсказки для clamp-тестов (jsdom не считает layout — стаб). */
+  const TIP_W = 240
+  const TIP_H = 160
+
+  let widthSpy: MockInstance<() => number>
+  let heightSpy: MockInstance<() => number>
+
+  beforeEach(() => {
+    widthSpy = vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(TIP_W)
+    heightSpy = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(TIP_H)
+    Object.defineProperty(window, 'innerWidth', { value: 1000, configurable: true })
+    Object.defineProperty(window, 'innerHeight', { value: 700, configurable: true })
+  })
+
+  afterEach(() => {
+    widthSpy.mockRestore()
+    heightSpy.mockRestore()
+    Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true })
+    Object.defineProperty(window, 'innerHeight', { value: 768, configurable: true })
+    cleanup()
+  })
+
+  /** Открывает подсказку с якорем-строкой статуса в заданном rect (формулы showMembersTip). */
+  function openTipAt(container: HTMLElement, rect: DOMRect): void {
+    vi.spyOn(statusRow(container), 'getBoundingClientRect').mockReturnValue(rect)
+    fireEvent.mouseEnter(statusRow(container))
+    expect(tip()).not.toBeNull()
+  }
+
+  it('в середине экрана: у левого края якоря, top = низ якоря + 6 (формулы прототипа)', () => {
+    const { container } = renderHeader(liveOwnerGroup())
+    openTipAt(container, new DOMRect(20, 80, 120, 16))
+
+    expect(tip()?.style.left).toBe('20px')
+    expect(tip()?.style.top).toBe('102px')
+  })
+
+  it('clamp по правому краю: left ≤ innerWidth − ширина − 8, не обрезается', () => {
+    const { container } = renderHeader(liveOwnerGroup())
+    openTipAt(container, new DOMRect(990, 80, 40, 16))
+
+    expect(tip()?.style.left).toBe(`${1000 - TIP_W - 8}px`)
+  })
+
+  it('clamp по левому краю: left ≥ 8', () => {
+    const { container } = renderHeader(liveOwnerGroup())
+    openTipAt(container, new DOMRect(-50, 80, 70, 16))
+
+    expect(tip()?.style.left).toBe('8px')
+  })
+
+  it('clamp по нижнему краю: top ≤ innerHeight − высота − 8', () => {
+    const { container } = renderHeader(liveOwnerGroup())
+    openTipAt(container, new DOMRect(20, 690, 120, 16))
+
+    expect(tip()?.style.top).toBe(`${700 - TIP_H - 8}px`)
+  })
+
+  it('Esc закрывает подсказку над открытой модалью, не проваливаясь в неё; следующий Esc — модаль', () => {
+    const onModalClose = vi.fn()
+    const { container } = render(
+      <>
+        <ModalShell formId="profile" title="Мой профиль" onClose={onModalClose}>
+          <input placeholder="username" />
+        </ModalShell>
+        <ChatHeader chat={liveOwnerGroup()} {...headerProps()} />
+      </>,
+    )
+    openTipAt(container, new DOMRect(20, 80, 120, 16))
+
+    // Esc на строке-якоре (клавиатурный путь FR-035): capture-слушатель
+    // подсказки гасит событие — модаль ниже не закрывается (data-model 3.1).
+    fireEvent.keyDown(statusRow(container), { key: 'Escape' })
+    expect(tip()).toBeNull()
+    expect(onModalClose).not.toHaveBeenCalled()
+
+    // Подсказка закрыта — модаль теперь верхний слой, её Esc работает.
+    fireEvent.keyDown(document.body, { key: 'Escape' })
+    expect(onModalClose).toHaveBeenCalledTimes(1)
   })
 })
 
