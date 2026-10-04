@@ -42,12 +42,17 @@ body:has(.machine) main > h1 {
 }
 
 /* ============ ОКНО ЧАТА (каркас, прототип §7) ============ */
+/* `padding:0; margin-top:0` глушат auth-наследие index.css (`section`
+   несёт 24px обоих — прототипный main.chat прижат к раме заподлицо,
+   FR-001: побеждает прототип); фон/рамку/радиус перекрывает .panel. */
 .chat {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding: 0;
+  margin-top: 0;
 }
 
 /* ============ ПУСТЫЕ СОСТОЯНИЯ (предъединение T059) ============ */

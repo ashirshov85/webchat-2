@@ -235,7 +235,11 @@
   flex: none;
 }
 
+/* .c-prev прототипа — блочный div: своя строка превью держит нормаль
+   своего шрифта (12px → 15px); inline-span набрал бы унаследованный
+   line-height 24px тела index.css и раздул строку на 1px (FR-001). */
 .chat-panel .c-prev {
+  display: block;
   font: italic 12px var(--font-body);
   color: var(--muted-2);
   overflow: hidden;

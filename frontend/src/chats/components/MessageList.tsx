@@ -72,8 +72,10 @@
  * auto` (message-list.css) keep a 1000+ feed at 60 fps (SC-010,
  * research §G); the `pop` entrance is transform/opacity-only and
  * dies under prefers-reduced-motion (FR-004 via machine.css). The
- * ЧЧ:ММ time and date dividers of the `.b-time` footer — with
- * T044 (US3).
+ * ЧЧ:ММ time of the `.b-time` footer and the `.date-divider`
+ * between calendar days (FR-019) are rendered since T026 — the
+ * T016(а) feed baselines carry both, so SC-001 at the US1
+ * checkpoint needs them; the US3/T044 polish builds on top.
  *
  * Delivery-stamp animation (US1, T023, FR-018 edge case): the
  * engraved tick plays the prototype `tickStamp` (.32s,
@@ -99,12 +101,13 @@
  * avalanche); the spent `.anim` marker stays in the class list so
  * the animation never replays on unrelated re-renders.
  */
-import { memo, useEffect, useRef } from 'react'
+import { Fragment, memo, useEffect, useRef } from 'react'
 import type { Message } from '../../api/chats'
 import type { GroupMember } from '../../api/groups'
 import { QUEUE_OVERFLOW_ERROR_CODE } from '../outbox'
 import type { OutboxRecord } from '../outbox'
 import { Avatar } from '../../ui/Avatar'
+import { formatDate, formatTime } from '../../ui/time'
 import './message-list.css'
 
 /** Distance from the top (px) that triggers an older-page request. */
@@ -112,6 +115,14 @@ const TOP_LOAD_THRESHOLD = 48
 
 /** Feed avatar size — design-tokens §4 (лента 34px). */
 const FEED_AVATAR_SIZE = 34
+
+/**
+ * Local calendar day of an ISO instant — the divider granularity
+ * (FR-019): consecutive messages of one local day share the key.
+ */
+function dayKeyOf(iso: string): string {
+  return new Date(iso).toDateString()
+}
 
 export interface PendingMessage {
   /** Client-generated UUID (FR-004) — becomes message.id on the server. */
@@ -249,11 +260,10 @@ const FeedRow = memo(function FeedRow({
       <div className="bubble">
         {sender !== undefined && <div className="sender message-sender">{sender}</div>}
         <div className="b-text message-text">{message.text}</div>
-        {outgoing && (
-          <div className="b-time">
-            <Tick read={read} animate={stampAnim} />
-          </div>
-        )}
+        <div className="b-time">
+          {formatTime(message.createdAt)}
+          {outgoing && <Tick read={read} animate={stampAnim} />}
+        </div>
       </div>
     </li>
   )
@@ -418,20 +428,32 @@ export function MessageList({
           Загрузка истории…
         </li>
       )}
-      {messages.map((message) => {
+      {messages.map((message, index) => {
         const outgoing = message.senderId === currentUserId
         const read = outgoing && message.seq <= readUpToSeq
         const sender = outgoing ? undefined : senderNames?.get(message.senderId)
+        // Date divider (FR-019): one per local calendar-day run — before
+        // a message whose day differs from its predecessor's, and above
+        // the oldest row once the history is known complete (`hasOlder`
+        // false); a same-day pagination junction never grows a second
+        // one (data-model 1.3).
+        const previous = index > 0 ? messages[index - 1] : undefined
+        const startsNewDay =
+          previous === undefined
+            ? !hasOlder
+            : dayKeyOf(message.createdAt) !== dayKeyOf(previous.createdAt)
         return (
-          <FeedRow
-            key={message.id}
-            message={message}
-            outgoing={outgoing}
-            read={read}
-            sender={sender}
-            avatarSource={outgoing ? meAvatarSource : incomingAvatarSource(message.senderId)}
-            stampAnim={localIdsRef.current.has(message.id)}
-          />
+          <Fragment key={message.id}>
+            {startsNewDay && <li className="date-divider">{formatDate(message.createdAt)}</li>}
+            <FeedRow
+              message={message}
+              outgoing={outgoing}
+              read={read}
+              sender={sender}
+              avatarSource={outgoing ? meAvatarSource : incomingAvatarSource(message.senderId)}
+              stampAnim={localIdsRef.current.has(message.id)}
+            />
+          </Fragment>
         )
       })}
       {activePending.map((entry) => (

@@ -69,13 +69,22 @@ function demoUser(suffix: string, username: string, email: string): PublicUser {
   return { id: userId(suffix), username, email, status: 'active', createdAt: FIXED_PAST_INSTANT }
 }
 
-/** USERS of the prototype: u1–u5 (chats), u6–u8 (search-only), u9–u13 (contacts without chats). */
+/**
+ * USERS of the prototype: u1–u5 (chats), u6–u8 (search-only), u9–u13 (contacts without chats).
+ *
+ * T026: the API's only name field is `username` — to reproduce «те же
+ * имена» of the prototype demo (research §B) the u1–u5 display names ride
+ * it verbatim, so the list/header/feed surfaces render the very names the
+ * T016 baselines depict (avatar colours stay derived, FR-024 — §E). The
+ * login-style ids stay in the emails; u6–u13 keep logins (search/contacts
+ * surfaces compare at fullscreen budgets later — US2+).
+ */
 const users: PublicUser[] = [
-  demoUser('01', 'acarter', 'alex.carter@aethergram.io'),
-  demoUser('02', 'maria', 'maria.lopez@aethergram.io'),
-  demoUser('03', 'jwhitmore', 'james.whitmore@aethergram.io'),
-  demoUser('04', 'eleanor', 'eleanor.pritchard@aethergram.io'),
-  demoUser('05', 'treed', 'thomas.reed@aethergram.io'),
+  demoUser('01', 'Alex Carter', 'alex.carter@aethergram.io'),
+  demoUser('02', 'Maria Lopez', 'maria.lopez@aethergram.io'),
+  demoUser('03', 'James Whitmore', 'james.whitmore@aethergram.io'),
+  demoUser('04', 'Eleanor Pritchard', 'eleanor.pritchard@aethergram.io'),
+  demoUser('05', 'Thomas Reed', 'thomas.reed@aethergram.io'),
   demoUser('06', 'hargrove', 'h.hargrove@aethergram.io'),
   demoUser('07', 'vhart', 'viola.hart@aethergram.io'),
   demoUser('08', 'cogsworth', 'n.cogsworth@aethergram.io'),

@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
 import type { ChatView, Message, MessagePage } from '../../../api/chats'
+import { formatDate, formatTime } from '../../../ui/time'
 import { useChatMessages } from '../../hooks/useChatMessages'
 import type { SyncPageUpdate } from '../../hooks/useChatMessages'
 import { MessageList } from '../MessageList'
@@ -513,5 +514,111 @@ describe('read receipt throttle (US4, T044: ≤1 POST /read per 500 ms)', () => 
     expect(mockedMarkChatRead).toHaveBeenLastCalledWith('chat-1', 30)
     // The intermediate watermark 20 never hits the wire on its own.
     expect(mockedMarkChatRead.mock.calls.map((call) => call[1])).toEqual([10, 30])
+  })
+})
+
+describe('MessageList ЧЧ:ММ footers and date dividers (FR-019, T026 baseline parity)', () => {
+  // T026: the T016(а) feed baselines carry the prototype's `.b-time`
+  // («18:41» before the outgoing tick) and the `.date-divider` between
+  // calendar days — SC-001 at the US1 checkpoint needs both rendered,
+  // so the feed-scoped half of T044 rides with this task (its full
+  // watermark/UX polish stays US3).
+
+  /** Local-day instants — robust under any runner timezone. */
+  function localIso(year: number, month: number, day: number, hh: number, mm: number): string {
+    return new Date(year, month - 1, day, hh, mm).toISOString()
+  }
+
+  it('renders the ЧЧ:ММ of every bubble: bare time on incoming, time before the tick on outgoing', () => {
+    const incomingAt = localIso(2026, 9, 20, 18, 41)
+    const outgoingAt = localIso(2026, 9, 20, 18, 43)
+    const { container } = render(
+      <MessageList
+        messages={[
+          message({ id: 'in-1', senderId: PEER, text: 'Вопрос', seq: 1, createdAt: incomingAt }),
+          message({ id: 'out-1', senderId: ME, text: 'Ответ', seq: 2, createdAt: outgoingAt }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+
+    const footers = Array.from(container.querySelectorAll('.message .b-time'))
+    expect(footers).toHaveLength(2)
+    expect(footers[0]?.textContent).toBe(formatTime(incomingAt))
+    expect(footers[0]?.querySelector('.tick')).toBeNull()
+    expect(footers[1]?.textContent).toContain(formatTime(outgoingAt))
+    expect(footers[1]?.querySelector('.tick.dlv')).not.toBeNull()
+  })
+
+  it('puts exactly one divider per calendar-day run and labels it with the long date', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          message({ id: 'a', seq: 1, createdAt: localIso(2026, 9, 19, 10, 0) }),
+          message({ id: 'b', seq: 2, createdAt: localIso(2026, 9, 19, 11, 30) }),
+          message({ id: 'c', seq: 3, createdAt: localIso(2026, 9, 20, 9, 0) }),
+          message({ id: 'd', seq: 4, createdAt: localIso(2026, 9, 20, 9, 5) }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+
+    const dividers = Array.from(container.querySelectorAll('.date-divider'))
+    expect(dividers.map((divider) => divider.textContent)).toEqual([
+      formatDate(localIso(2026, 9, 19, 10, 0)),
+      formatDate(localIso(2026, 9, 20, 9, 0)),
+    ])
+    // The divider sits between the day runs, not inside them.
+    expect(container.querySelectorAll('.message')).toHaveLength(4)
+  })
+
+  it('starts a new divider at midnight (23:59 → 00:01)', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          message({ id: 'late', seq: 1, createdAt: localIso(2026, 9, 19, 23, 59) }),
+          message({ id: 'early', seq: 2, createdAt: localIso(2026, 9, 20, 0, 1) }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+
+    expect(container.querySelectorAll('.date-divider')).toHaveLength(2)
+  })
+
+  it('keeps a single divider at a same-day pagination junction', () => {
+    // The hook merges an older same-day page above the loaded window —
+    // the merged list must not grow a second divider of that day.
+    const { container } = render(
+      <MessageList
+        messages={[
+          message({ id: 'old-1', seq: 1, createdAt: localIso(2026, 9, 19, 9, 0) }),
+          message({ id: 'old-2', seq: 2, createdAt: localIso(2026, 9, 19, 9, 2) }),
+          message({ id: 'new-1', seq: 3, createdAt: localIso(2026, 9, 19, 10, 0) }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+
+    expect(container.querySelectorAll('.date-divider')).toHaveLength(1)
+  })
+
+  it('hides the top divider while older history may exist above the rendered window', () => {
+    const sameList = [
+      message({ id: 'a', seq: 1, createdAt: localIso(2026, 9, 19, 10, 0) }),
+      message({ id: 'b', seq: 2, createdAt: localIso(2026, 9, 20, 11, 0) }),
+    ]
+
+    const partial = render(<MessageList messages={sameList} currentUserId={ME} hasOlder />)
+    // The oldest rendered row may not be the start of its day — the
+    // divider appears only once the history is known complete.
+    expect(partial.container.querySelectorAll('.date-divider')).toHaveLength(1)
+    expect(partial.container.querySelector('.date-divider')?.textContent).toBe(
+      formatDate(localIso(2026, 9, 20, 11, 0)),
+    )
+
+    cleanup()
+    const complete = render(<MessageList messages={sameList} currentUserId={ME} hasOlder={false} />)
+    expect(complete.container.querySelectorAll('.date-divider')).toHaveLength(2)
   })
 })

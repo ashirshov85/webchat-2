@@ -28,9 +28,21 @@ const ORDERED_PREVIEWS = [
   'Next week, once the fabric arrives from Manchester.',
 ]
 
+/**
+ * Paint-independent row texts: `innerText` of a `content-visibility:
+ * auto` row reads empty until first paint (parallel background pages
+ * defer rendering), so the catalogue is read as `textContent` —
+ * normalized back to spaced words for the `includes` matching below.
+ */
+function rowTexts(locator: import('@playwright/test').Locator): Promise<string[]> {
+  return locator
+    .allTextContents()
+    .then((rows) => rows.map((row) => row.replace(/\s+/g, ' ').trim()))
+}
+
 visualTest.describe('aethergram fixture harness', () => {
   visualTest('serves the demo chat catalogue in the prototype order', async ({ messenger }) => {
-    const rows = await messenger.chatItems.allInnerTexts()
+    const rows = await rowTexts(messenger.chatItems)
     expect(rows).toHaveLength(ORDERED_PREVIEWS.length)
 
     let previousPosition = -1
@@ -41,24 +53,29 @@ visualTest.describe('aethergram fixture harness', () => {
       previousPosition = position
     }
 
-    const badges = await messenger.page.locator('.chat-item-badge').allInnerTexts()
+    const badges = await messenger.page.locator('.chat-item-badge').allTextContents()
     expect(badges.sort()).toEqual(['1', '2', '3'])
   })
 
   visualTest('opens the demo dialog and renders its history', async ({ messenger }) => {
     await messenger.openChat('night to remember')
-    await expect(messenger.page.getByText('Hey! Are you free this evening?')).toBeVisible()
-    await expect(messenger.page.getByText('Will do. See you at the tower!')).toBeVisible()
+    // History presence is asserted ATTACHED: the feed starts at its top
+    // (no auto-scroll in the 004 wiring) and on narrow viewports the
+    // lower rows sit unpainted under `content-visibility: auto` —
+    // paint itself is the screenshot specs' business, the harness
+    // guards the deterministic dataset.
+    await expect(messenger.page.getByText('Hey! Are you free this evening?')).toBeAttached()
+    await expect(messenger.page.getByText('Will do. See you at the tower!')).toBeAttached()
     await expect(
       messenger.page.getByText('The old observatory? Sounds intriguing! Count me in.'),
-    ).toBeVisible()
+    ).toBeAttached()
   })
 
   visualTest('serves the same catalogue after a reload', async ({ messenger }) => {
-    const before = await messenger.chatItems.allInnerTexts()
+    const before = await rowTexts(messenger.chatItems)
     await messenger.page.reload()
     await expect(messenger.chatItems).toHaveCount(ORDERED_PREVIEWS.length)
-    const after = await messenger.chatItems.allInnerTexts()
+    const after = await rowTexts(messenger.chatItems)
     expect(after).toEqual(before)
   })
 })
