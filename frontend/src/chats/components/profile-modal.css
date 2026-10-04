@@ -1,0 +1,88 @@
+/* Модальная форма «Мой профиль» (feature 008, US2, T033; FR-015,
+   ui-behavior §3) — проекция #profileForm прототипа
+   specs/008-chat-window-styling/design/chats.html (раздел «9. МОДАЛЬНОЕ
+   ОКНО») БЕЗ имени-поля (редактирование имени — 008a); при расхождениях
+   побеждает прототип (FR-001). Форма — обитатель ЕДИНОЙ оболочки
+   ModalShell (T012/T034): каркас подложки/окна/заголовка —
+   ui/modal-shell.css, кнопочная система .m-btn/.modal-btns и .modal-err —
+   ui/confirm-dialog.css / contacts-modal.css. Здесь — переключатель
+   .tgl-row/.tgl-txt прототипа и readonly-строки .modal-ro.
+
+   .modal-ro определены здесь впервые и переиспользуются задачами T035+
+   (renameForm и пр.). Значения — на токенах theme/tokens.css (FR-002):
+   --gold, --cream, --muted-2/--muted-3, --font-body/--font-mono.
+   prefers-reduced-motion (FR-004) — глобальное правило theme/machine.css
+   (здесь только transition border-color — свойства, не трансформы). */
+
+/* ============ ФОРМА (#profileForm прототипа: колонка gap 8) ============ */
+
+.profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ============ ПЕРЕКЛЮЧАТЕЛЬ «РЕЖИМ ИНКОГНИТО» (прототип .tgl-row) ============ */
+
+.tgl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--r-field);
+  cursor: pointer;
+  border: 1px dashed rgba(138, 106, 44, 0.45);
+  background: rgba(25, 21, 16, 0.5);
+  transition: border-color 0.2s;
+}
+
+.tgl-row:hover {
+  border-color: var(--gold-light);
+}
+
+.tgl-row input {
+  accent-color: var(--gold);
+  width: 15px;
+  height: 15px;
+  flex: none;
+  cursor: pointer;
+}
+
+.tgl-row:focus-within {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 1px;
+}
+
+.tgl-txt {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font: italic 13px var(--font-body);
+  color: var(--cream);
+}
+
+.tgl-txt small {
+  font: italic 11.5px var(--font-body);
+  color: var(--muted-3);
+}
+
+/* ============ READONLY-СТРОКИ username/email (прототип .modal-ro) ============ */
+
+.modal-ro {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--r-field);
+  border: 1px dashed rgba(138, 106, 44, 0.45);
+  background: rgba(25, 21, 16, 0.5);
+  font: 13px var(--font-mono);
+  color: var(--muted-2);
+}
+
+.modal-ro b {
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
