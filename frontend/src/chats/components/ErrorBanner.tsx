@@ -5,8 +5,13 @@
  * (problemMessage, feature 002 conventions). Renders nothing while
  * `error` is null/undefined; `onDismiss` optionally adds a close
  * control for recoverable errors.
+ *
+ * 008 (US4, T052; FR-030): skinned with the machine's design tokens —
+ * status-banners.css, shared with the other delivery notifications;
+ * the DOM and its positions are unchanged.
  */
 import { problemMessage } from '../../auth/problem'
+import './status-banners.css'
 
 export interface ErrorBannerProps {
   /** ApiProblem-shaped error (api/auth toApiProblem) or any thrown value. */
