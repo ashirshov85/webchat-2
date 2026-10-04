@@ -47,6 +47,7 @@ import type { ChatListItem as ChatListItemData } from '../../api/chats'
 import type { ChatListStatus } from '../hooks/useChatList'
 import { ErrorBanner } from './ErrorBanner'
 import { ChatListItem } from './ChatListItem'
+import { MainMenuButton } from './MainMenuButton'
 import './chat-list-panel.css'
 
 /**
@@ -82,8 +83,8 @@ export interface ChatListPanelProps {
    * US2 (T030/T034): the MainMenuButton of the search row opens the
    * single ModalShell forms hosted by MessengerPage — «Мой профиль»
    * (profile), «Контакты» (contacts), «Создать групповой чат»
-   * (create-group). The panel is only the entry point; declared now so
-   * the T027 tests compile ahead of the T030 button.
+   * (create-group). The panel is only the entry point (passed through
+   * to MainMenuButton).
    */
   readonly onOpenProfile?: () => void
   readonly onOpenContacts?: () => void
@@ -98,6 +99,9 @@ export function ChatListPanel({
   activeChatId = null,
   onSelectChat,
   currentUserId = null,
+  onOpenProfile,
+  onOpenContacts,
+  onCreateGroup,
 }: ChatListPanelProps) {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
@@ -107,8 +111,11 @@ export function ChatListPanel({
   return (
     <div className="chat-panel">
       <div className="search-row">
-        {/* .menu-btn (главное меню, US2/T030) встраивается сюда же —
-            слева от поля, как в прототипе §5. */}
+        <MainMenuButton
+          onOpenProfile={onOpenProfile}
+          onOpenContacts={onOpenContacts}
+          onCreateGroup={onCreateGroup}
+        />
         <div className="search-wrap">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <circle cx="10.5" cy="10.5" r="6.5" />

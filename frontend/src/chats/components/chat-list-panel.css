@@ -8,7 +8,7 @@
    Табов «Чаты»/«Контакты» больше нет — US2/T029 снял их (FR-006,
    research §D, ui-behavior §2): список рендерится сразу, контакты живут
    в модали (T031). Строка поиска несёт прототипную структуру
-   .search-row > .search-wrap — MainMenuButton (T030) встанет слева от
+   .search-row > .search-wrap — MainMenuButton (T030) стоит слева от
    поля. Строки списка (.contact, T020) — ниже: дословная проекция §5.
 
    Все селекторы скоупятся под .chat-panel: общие element-стили index.css
@@ -38,6 +38,53 @@
   position: relative;
   flex: 1;
   min-width: 0;
+}
+
+/* Кнопка «три полоски» главного меню (US2/T030; FR-007, ui-behavior §2):
+   дословно .menu-btn прототипа §5 — 40px у ЛЕВОГО края строки поиска,
+   латунная рамка/золотые полоски; пункты — ContextMenu (ui/ContextMenu.tsx),
+   кнопка — только якорь. Глобальные button-стили index.css (auth-наследие:
+   синий фон/паддинги/align-self) перекрыты по каждому свойству, hover
+   повторно держит input-bg — иначе :hover:not(:disabled) зальёт акцентом. */
+.chat-panel .menu-btn {
+  flex: none;
+  width: 40px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  border-radius: var(--r-field);
+  transition: 0.15s;
+  align-self: stretch;
+  padding: 0;
+  border: 1px solid var(--gold-dark);
+  color: var(--gold);
+  background: var(--input-bg);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+}
+
+.chat-panel .menu-btn:hover {
+  border-color: var(--gold-light);
+  color: var(--gold-light);
+  background: var(--input-bg);
+}
+
+.chat-panel .menu-btn:active {
+  transform: translateY(1px);
+}
+
+.chat-panel .menu-btn:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+/* Три полоски — габариты/штрих прототипа §5 */
+.chat-panel .menu-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
 }
 
 /* Гравированная лупа */
