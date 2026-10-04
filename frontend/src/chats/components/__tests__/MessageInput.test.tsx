@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MessageInput } from '../MessageInput'
 import { MESSAGE_MAX_LENGTH } from '../../validation'
@@ -30,13 +30,16 @@ import { MESSAGE_MAX_LENGTH } from '../../validation'
  * the normal «Сообщение…» placeholder.
  */
 
-function renderInput(overrides: Partial<{ disabled: boolean; blocked: boolean }> = {}) {
+function renderInput(
+  overrides: Partial<{ disabled: boolean; blocked: boolean; floodRetryAt: number | null }> = {},
+) {
   const onSend = vi.fn()
   const view = render(
     <MessageInput
       onSend={onSend}
       disabled={overrides.disabled ?? false}
       blocked={overrides.blocked ?? false}
+      floodRetryAt={overrides.floodRetryAt}
     />,
   )
   const field = view.container.querySelector('#message-composer') as HTMLTextAreaElement
@@ -220,6 +223,107 @@ describe('MessageInput blocked-contact state (T036, FR-022, US2-AS5)', () => {
     // без блокировки ввод активен; блокировка глушит его сама по себе.
     const { field } = renderInput({ disabled: false, blocked: true })
     expect(field).toBeDisabled()
+  })
+})
+
+describe('MessageInput flood-limit retry line (T051, FR-030, Clarification)', () => {
+  /**
+   * A 429/503 deferral of the open chat is a PATIENCE state, not an
+   * input lock: the head `retryAt` record (outbox.ts headFloodRetryAt,
+   * wired by MessengerPage over the open chat's records) drives a
+   * single status line «Повтор через N с» above the field — ONE
+   * interval ticks the ONE element (ui-behavior §4 «Композер»), the
+   * waiting bubble itself stays static «отправляется» (MessageList),
+   * and the field/button stay active: a new message transparently
+   * enqueues as another optimistic row (005 semantics, SC-002).
+   */
+  it('renders no line while no deferral is pending — the composer stays plain', () => {
+    const { container } = renderInput()
+
+    expect(container.querySelector('.message-input-retry')).toBeNull()
+  })
+
+  it('shows «Повтор через N с» above the field — N is the ceil of the remainder', () => {
+    vi.useFakeTimers()
+    const { container } = renderInput({ floodRetryAt: Date.now() + 5000 })
+
+    const line = container.querySelector('.message-input-retry') as HTMLElement
+    expect(line).toBeInstanceOf(HTMLOutputElement)
+    expect(line.textContent).toBe('Повтор через 5 с')
+    // Над полем: строка стоит раньше золотой рамы в порядке формы.
+    const frame = container.querySelector('.input-frame') as HTMLElement
+    expect(line.compareDocumentPosition(frame) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('ticks ONE element — a single line decrements each second, no second surface appears', () => {
+    vi.useFakeTimers()
+    const { container } = renderInput({ floodRetryAt: Date.now() + 5000 })
+
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(container.querySelectorAll('.message-input-retry')).toHaveLength(1)
+    expect(container.querySelector('.message-input-retry')?.textContent).toBe('Повтор через 4 с')
+
+    act(() => {
+      vi.advanceTimersByTime(2500)
+    })
+    expect(container.querySelector('.message-input-retry')?.textContent).toBe('Повтор через 2 с')
+
+    // Ровно один живой элемент отсчёта на всю форму — не по записям.
+    const form = container.querySelector('form.message-input') as HTMLElement
+    expect(form.querySelectorAll('output')).toHaveLength(1)
+  })
+
+  it('hides the line at the deadline — the 005 engine retries by itself', () => {
+    vi.useFakeTimers()
+    const { container } = renderInput({ floodRetryAt: Date.now() + 3000 })
+
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(container.querySelector('.message-input-retry')).toBeNull()
+  })
+
+  it('keeps the input ACTIVE while the countdown shows — typing and sending still work', () => {
+    vi.useFakeTimers()
+    const { onSend, field } = renderInput({ floodRetryAt: Date.now() + 60_000 })
+
+    expect(field).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'ОТПРАВИТЬ' })).toBeEnabled()
+
+    fireEvent.change(field, { target: { value: '  В очереди  ' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('В очереди')
+
+    // Отсчёт — не блокировка: строка живёт своей жизнью поверх ввода.
+    expect(document.querySelector('.message-input-retry')?.textContent).toBe('Повтор через 60 с')
+  })
+
+  it('re-targets on a new deferral and hides when the head record is gone', () => {
+    vi.useFakeTimers()
+    const onSend = vi.fn()
+    const view = render(<MessageInput onSend={onSend} floodRetryAt={Date.now() + 5000} />)
+    expect(view.container.querySelector('.message-input-retry')?.textContent).toBe(
+      'Повтор через 5 с',
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+    expect(view.container.querySelector('.message-input-retry')?.textContent).toBe(
+      'Повтор через 3 с',
+    )
+
+    // Новая отсрочка (ещё один 429) — головная запись уехала дальше.
+    view.rerender(<MessageInput onSend={onSend} floodRetryAt={Date.now() + 8000} />)
+    expect(view.container.querySelector('.message-input-retry')?.textContent).toBe(
+      'Повтор через 8 с',
+    )
+
+    // Сервер подтвердил головную запись — головы больше нет.
+    view.rerender(<MessageInput onSend={onSend} floodRetryAt={null} />)
+    expect(view.container.querySelector('.message-input-retry')).toBeNull()
   })
 })
 

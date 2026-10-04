@@ -36,8 +36,20 @@
  * of 005 never disable input (FR-030, Clarification); unblocking
  * (№24, wired by the page through `blockedByMe`) restores the
  * activity and the normal «Сообщение…» placeholder. The 004
- * `disabled` prop stays its own independent wiring (no user). The
- * flood-limit retry line (FR-030) is US4 (T051).
+ * `disabled` prop stays its own independent wiring (no user).
+ *
+ * The flood-limit retry line (US4, T051; FR-030, Clarification): a
+ * 429/503 deferral of the open chat is a patience state, not an
+ * input lock — `floodRetryAt` (the HEAD retryAt record of the open
+ * chat, outbox.ts `headFloodRetryAt`, wired by the page) drives a
+ * single status line «Повтор через N с» above the field (a polite
+ * live region like SyncIndicator): ONE interval ticks the ONE
+ * element (ui-behavior §4 — no per-record timers), the countdown
+ * hides at the deadline (the 005 engine retries by itself,
+ * useOutbox SC-002), and the field/button stay active — a new
+ * message transparently enqueues as another optimistic
+ * «отправляется» row. The waiting bubble itself never carries a
+ * countdown (Clarification).
  */
 import { useEffect, useRef, useState } from 'react'
 import type {
@@ -83,11 +95,24 @@ export interface MessageInputProps {
   readonly disabled?: boolean
   /** Blocked-contact chat (FR-022): the only input lock of the composer. */
   readonly blocked?: boolean
+  /**
+   * Epoch-ms deadline of the HEAD retryAt record of the open chat
+   * (429/503 deferral, outbox.ts `headFloodRetryAt`): drives the
+   * single «Повтор через N с» countdown line (FR-030). Null — no
+   * deferral, no line; the input stays active either way.
+   */
+  readonly floodRetryAt?: number | null
 }
 
-export function MessageInput({ onSend, disabled = false, blocked = false }: MessageInputProps) {
+export function MessageInput({
+  onSend,
+  disabled = false,
+  blocked = false,
+  floodRetryAt = null,
+}: MessageInputProps) {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [floodSecondsLeft, setFloodSecondsLeft] = useState<number | null>(null)
   const fieldRef = useRef<HTMLTextAreaElement>(null)
   const steamRef = useRef<HTMLDivElement>(null)
   const puffTimersRef = useRef<number[]>([])
@@ -103,6 +128,26 @@ export function MessageInput({ onSend, disabled = false, blocked = false }: Mess
     },
     [],
   )
+
+  // Отсчёт флуд-лимита (FR-030): ОДИН интервал тикает ОДИН элемент —
+  // строку «Повтор через N с» из головной retryAt-записи (ui-behavior
+  // §4); на дедлайне строка гаснет — ретрай делает сам движок 005
+  // (useOutbox), новая отсрочка приедет новой головой через проп.
+  useEffect(() => {
+    if (floodRetryAt === null) {
+      setFloodSecondsLeft(null)
+      return
+    }
+    const tick = () => {
+      const seconds = Math.ceil((floodRetryAt - Date.now()) / 1000)
+      setFloodSecondsLeft(seconds > 0 ? seconds : null)
+    }
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [floodRetryAt])
 
   function send() {
     const validation = validateMessageText(value)
@@ -157,6 +202,9 @@ export function MessageInput({ onSend, disabled = false, blocked = false }: Mess
         <p className="message-input-error" role="alert">
           {error}
         </p>
+      )}
+      {floodSecondsLeft !== null && (
+        <output className="message-input-retry">Повтор через {floodSecondsLeft} с</output>
       )}
       <div className="steam" ref={steamRef} aria-hidden="true" />
       <div className="input-frame">

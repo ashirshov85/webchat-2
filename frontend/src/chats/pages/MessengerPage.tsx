@@ -173,6 +173,7 @@ import { useChatList } from '../hooks/useChatList'
 import { useChatMessages } from '../hooks/useChatMessages'
 import { useOutbox } from '../hooks/useOutbox'
 import { useRealtime } from '../hooks/useRealtime'
+import { headFloodRetryAt } from '../outbox'
 import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
 import { GroupInfoPanel } from '../../groups/components/GroupInfoPanel'
 import { LeaveDeleteControls } from '../../groups/components/LeaveDeleteControls'
@@ -1054,6 +1055,7 @@ function MessengerMachine() {
                   onSend={handleSend}
                   disabled={currentUserId === null}
                   blocked={activeChat.kind === 'direct' && activeChat.blockedByMe}
+                  floodRetryAt={headFloodRetryAt(chatOutbox)}
                 />
               </>
             ) : (
