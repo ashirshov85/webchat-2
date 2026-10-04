@@ -263,21 +263,34 @@ const MODAL_TITLES: Record<ModalFormId, string> = {
 }
 
 /**
- * The header props of the open window (T029 → 008 T021): the page
+ * The header props of the open window (T029 → 008 T021/T043): the page
  * resolves the server-owned chat data into the ChatHeader variant —
- * the GROUP window the №28 title/memberCount (or the №12/№27 basis),
- * the direct dialog the peer + the «Действия» menu wiring (T060).
+ * the GROUP window the №28 title/memberCount/roster (or the №12/№27
+ * basis), the direct dialog the peer + the «Действия» menu wiring
+ * (T060).
  */
-function headerChatOf(chat: ActiveChat, group: GroupView | null): ChatHeaderChat {
+function headerChatOf(
+  chat: ActiveChat,
+  group: GroupView | null,
+  meUserId: string | null,
+  meUsername: string | null,
+): ChatHeaderChat {
   if (chat.kind === 'group') {
     // №28 title/roster while the view is live (the optimistic
     // `group.updated` half of the header), the №12/№27 basis until
-    // then; the roster length IS the memberCount (me included).
+    // then; the roster length IS the memberCount (me included). The
+    // live roster + myRole feed the members-tip (008 T043, FR-017);
+    // the №12 basis carries no names — null keeps the status row a
+    // non-source until №28 lands.
     const live = group !== null && group.chatId === chat.chatId
     return {
       kind: 'group',
       title: live ? group.title : chat.title,
       memberCount: live ? group.members.length : chat.memberCount,
+      members: live ? group.members : null,
+      myRole: live ? group.myRole : null,
+      meUserId,
+      meUsername,
     }
   }
   return {
@@ -920,7 +933,7 @@ export function MessengerPage() {
             {dialogOpen && activeChat !== null ? (
               <>
                 <ChatHeader
-                  chat={headerChatOf(activeChat, activeGroup)}
+                  chat={headerChatOf(activeChat, activeGroup, currentUserId, meUsername)}
                   menuOpen={menuOpen}
                   onToggleMenu={() => {
                     setMenuOpen((open) => !open)

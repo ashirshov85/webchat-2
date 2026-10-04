@@ -1,14 +1,16 @@
-/* Заголовок окна чата (feature 008, US1, T021; FR-016): дословная
-   проекция блока .chat-head прототипа
+/* Заголовок окна чата (feature 008, US1 T021 → US3 T043; FR-016/017):
+   дословная проекция блока .chat-head прототипа
    specs/008-chat-window-styling/design/chats.html (§7 «ЧАТ»); при
    расхождениях побеждает прототип (FR-001). Константы — theme/tokens.css
    (FR-002); каркас .chat/.panel — chats/pages/messenger.css (T018).
    Подключается компонентом chats/components/ChatHeader.tsx.
 
    Аватар — 46px заголовка с инициалами 13px (design-tokens §4, проекция
-   .head-av .avatar прототипа); базовый статус — .status-row:
-   direct — точка+подпись 007 PresenceIndicator (лампа и members-tip —
-   US3/T043), group — «N участников» .status-txt. Правые кнопки —
+   .head-av .avatar прототипа); строка статуса .status-row: direct —
+   лампа .lamp (+ .off только для настоящего offline из store 007) и
+   подпись .status-txt «В сети»/«офлайн»/«неизвестно» (US3/T043),
+   group — «N участников», чей hover/focus открывает подсказку состава
+   .members-tip (портал в body, стили ниже). Правые кнопки —
    промежуточные 004/006 («Действия», «Информация о группе») в словаре
    машины; «шестерёнка» ChatGearMenu встаёт сюда в US4/T054.
 
@@ -64,6 +66,27 @@
   min-width: 0;
 }
 
+/* Лампа присутствия direct (US3, T043; прототип §7 .lamp): online —
+   зелёная со свечением и мерцанием flick 4s (keyframes — ui/avatar.css,
+   reduced-motion глушит глобально), offline — тусклая .off; нейтральной
+   лампе (.unknown нет — семантика 007) класс .off ЗАПРЕЩЁН. */
+.chat-head .lamp {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: #9dbb7d;
+  box-shadow:
+    0 0 6px rgba(157, 187, 125, 0.9),
+    0 0 12px rgba(157, 187, 125, 0.5);
+  animation: flick 4s infinite;
+}
+
+.chat-head .lamp.off {
+  background: #b6a26a;
+  box-shadow: 0 0 5px rgba(182, 162, 106, 0.5);
+}
+
 .chat-head .status-txt {
   font: italic 12px var(--font-body);
   color: var(--muted-2);
@@ -72,41 +95,17 @@
   white-space: nowrap;
 }
 
-/* Промежуточный статус 007 в строке статуса (до лампы US3/T043):
-   точка 8px по состояниям прототипа (online #9dbb7d / offline #6b5c39 /
-   нейтральная --muted-3), подпись — курсив .status-txt. */
-.chat-head .presence-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
+/* Строка статуса группы — якорь подсказки состава (US3, T043;
+   FR-017): фокус видим (FR-035), пока №28 жив; без ростера строка
+   не интерактивна. */
+.chat-head .status-row.tip-source {
+  cursor: default;
 }
 
-.chat-head .presence-indicator-dot {
-  width: 8px;
-  height: 8px;
-  flex: none;
-  fill: currentColor;
-}
-
-.chat-head .presence-online {
-  color: #9dbb7d;
-}
-
-.chat-head .presence-offline {
-  color: #6b5c39;
-}
-
-.chat-head .presence-unknown {
-  color: var(--muted-3);
-}
-
-.chat-head .presence-indicator-label {
-  font: italic 12px var(--font-body);
-  color: var(--muted-2);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.chat-head .status-row.tip-source:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 /* Метка блокирующего (FR-020): err-цвет и курсив тела прототипа. */
@@ -200,4 +199,70 @@
 .chat-head .dialog-menu-item:focus-visible {
   outline: 2px solid var(--gold-light);
   outline-offset: -2px;
+}
+
+/* ============ ПОДСКАЗКА СОСТАВА ГРУППЫ (.members-tip §9, US3 T043) ============
+   Дословно из прототипа (showMembersTip + CSS #membersTip): портал в
+   body, fixed, z-56 (--z-members-tip из design-tokens §6), чистый
+   ховер — pointer-events: none. Позицию ставит компонент кламп-
+   формулами прототипа; аватары строк — 24px с инициалами 9px. */
+
+.members-tip {
+  position: fixed;
+  z-index: var(--z-members-tip);
+  display: none;
+  min-width: 220px;
+  max-width: 300px;
+  padding: 8px;
+  pointer-events: none;
+  border-radius: 10px;
+  border: 1px solid var(--gold-dark);
+  background: #191510;
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(201, 162, 74, 0.18);
+}
+
+.members-tip.show {
+  display: block;
+}
+
+.members-tip .mt-title {
+  font: 600 11px var(--font-heading);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--gold-light);
+  padding: 2px 6px 6px;
+}
+
+.members-tip .mt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.members-tip .mt-row .avatar {
+  width: 24px;
+  height: 24px;
+}
+
+.members-tip .mt-row .avatar .av-in span {
+  font-size: 9px;
+}
+
+.members-tip .mt-row .mt-name {
+  font: 14px var(--font-body);
+  color: var(--cream);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.members-tip .mt-me {
+  margin-left: auto;
+  font: italic 11.5px var(--font-body);
+  color: var(--muted-2);
+  flex: none;
 }

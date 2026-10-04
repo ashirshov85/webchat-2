@@ -1,27 +1,39 @@
 /**
- * The open dialog header (feature 008, US1, T021; FR-016 base part,
- * data-model 2.3): the `.chat-head` block of the prototype
+ * The open dialog header (feature 008, US1 T021 → US3 T043; FR-016,
+ * FR-017, data-model 2.3): the `.chat-head` block of the prototype
  * specs/008-chat-window-styling/design/chats.html §7 — `.head-av`
  * avatar + `.chat-title` (`.chat-name` + `.status-row`) + the
  * right-side controls, styled by chat-header.css (FR-001: a verbatim
  * projection; the prototype wins on conflicts). The name keeps the
  * 004 hook `dialog-title` on its h2 (research §C, FR-034).
  *
- * The BASIC status rides EXISTING data only (the T021 scope):
- *  * direct — the 007 PresenceIndicator with its visible label
- *    (feature 007 T022 semantics: neutral «неизвестно» before the
- *    first №36 snapshot and for №36 `unknown` — never a false
- *    «офлайн») plus the blocker-side «заблокирован» mark (FR-020);
- *  * group — «N участников» with the prototype pluralRu over the
- *    live №28 roster length or the №12/№13/№27 memberCount; the
- *    status row stays empty while the count is unknown (the
- *    prototype `hide` on an empty status).
- * The presence-лампа and the members-tip of the status row are US3
- * (T043), the «шестерёнка» ChatGearMenu is US4 (T054) — until then
- * the 004/006 controls keep their behavior: the direct «Действия»
- * menu (№14 delete + №23/№24 block toggle) and the group
- * «Информация о группе» card toggle. The prototype search/sound
- * buttons never join the header (FR-016: 013/008a are out of scope).
+ * The status row is the FULL US3 projection (T043):
+ *  * direct — the prototype presence-лампа `.lamp` + `.status-txt`
+ *    label «В сети»/«офлайн»/«неизвестно» driven by the 007
+ *    presenceStore through `usePresenceStatus(peerId)` (the T040
+ *    contract: `.off` ONLY for a true store offline — a missing №36
+ *    snapshot and №36 `unknown` stay neutral, never a false
+ *    «офлайн»); the blocker-side «заблокирован» mark follows (FR-020);
+ *  * group — «N участников» with the prototype pluralRu; hover/focus
+ *    of the status row opens the `.members-tip` roster (FR-017):
+ *    «Вы» first (mark «администратор» when `myRole` is owner), then
+ *    the live №28 members minus me with the mark for owner/admin
+ *    roles. The tip is portaled to document.body — the prototype's
+ *    body-level `#membersTip` (fixed, z-56, pointer-events: none) —
+ *    positioned by the prototype clamp formulas against the status
+ *    row rect and closed by mouseleave/blur/Esc; Esc is captured as
+ *    the top layer of data-model 3.1 so it never falls through to a
+ *    modal/drawer below. While №28 is not live (the №12 basis only,
+ *    `members === null`) the row is no tip source — not focusable,
+ *    hover is a no-op. The prototype's own-row presence dot
+ *    (mePresenceDot) is not carried: data-model 2.3 derives the tip
+ *    from members + myRole only.
+ *
+ * The «шестерёнка» ChatGearMenu is US4 (T054) — until then the
+ * 004/006 controls keep their behavior: the direct «Действия» menu
+ * (№14 delete + №23/№24 block toggle) and the group «Информация о
+ * группе» card toggle. The prototype search/sound buttons never join
+ * the header (FR-016: 013/008a are out of scope).
  *
  * The avatar derives from the peer username (circle) or the group
  * title (octagon, FR-024) via ui/Avatar and recalculates on renames;
@@ -29,13 +41,25 @@
  * while the view is open (the optimistic `group.updated` half), the
  * №12/№27 answer until then.
  */
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import type { GroupMember } from '../../api/groups'
 import { Avatar } from '../../ui/Avatar'
 import { pluralRu } from '../../ui/time'
-import { PresenceIndicator } from '../../presence/PresenceIndicator'
+import { usePresenceStatus } from '../../presence/usePresence'
 import './chat-header.css'
 
 /** Header avatar size — design-tokens §4 (заголовок 46px). */
 const HEADER_AVATAR_SIZE = 46
+
+/** Members-tip avatar size — prototype `.mt-row .avatar` (24px). */
+const TIP_AVATAR_SIZE = 24
+
+/** Поле clamp-формул прототипа (showMembersTip: 8px). */
+const TIP_VIEWPORT_MARGIN = 8
+
+/** Отступ подсказки от низа якоря (прототип: r.bottom + 6). */
+const TIP_ANCHOR_GAP = 6
 
 /** The direct dialog of the header (the 004 pair dialog surface). */
 export interface DirectChatHeaderData {
@@ -52,6 +76,18 @@ export interface GroupChatHeaderData {
   readonly title: string
   /** Live №28 roster length or the №12/№13/№27 memberCount; null — unknown. */
   readonly memberCount: number | null
+  /**
+   * The live №28 roster — the members-tip source (US3 T043, FR-017);
+   * null while №28 is not live (the №12 basis carries no names) —
+   * the status row is no tip source until then.
+   */
+  readonly members: readonly GroupMember[] | null
+  /** The viewer's №28 role — the «администратор» mark of the «Вы» row. */
+  readonly myRole: GroupMember['role'] | null
+  /** The viewer's user id — filters the own №28 row out of the tip. */
+  readonly meUserId: string | null
+  /** The viewer's username — the «Вы» avatar derivation source. */
+  readonly meUsername: string | null
 }
 
 /** One header, two variants — the page discriminates by `kind`. */
@@ -77,6 +113,13 @@ function membersStatus(count: number): string {
   return `${count} ${pluralRu(count, 'участник', 'участника', 'участников')}`
 }
 
+/** `.status-txt` of the direct row (T040: «В сети»/«офлайн»/«неизвестно»). */
+const DIRECT_STATUS_TEXT: Readonly<Record<'online' | 'offline' | 'unknown', string>> = {
+  online: 'В сети',
+  offline: 'офлайн',
+  unknown: 'неизвестно',
+}
+
 export function ChatHeader({
   chat,
   menuOpen,
@@ -89,6 +132,79 @@ export function ChatHeader({
   const isGroup = chat.kind === 'group'
   const name = isGroup ? chat.title : chat.username
 
+  // The 007 surface of the open 1:1 dialog (T040): the status comes
+  // ONLY from the presenceStore — a group header registers nothing.
+  const presence = usePresenceStatus(!isGroup ? chat.peerId : null)
+
+  // The members-tip anchor (the ContextMenu pattern): the status row
+  // rect captured at open — null keeps the tip out of the DOM.
+  const [tipAnchor, setTipAnchor] = useState<DOMRect | null>(null)
+  const statusRowRef = useRef<HTMLDivElement>(null)
+  const tipRef = useRef<HTMLDivElement>(null)
+  const closeTip = (): void => {
+    setTipAnchor(null)
+  }
+
+  const rosterLive = isGroup && chat.members !== null
+  const tipOpen = rosterLive && tipAnchor !== null
+
+  const openTip = (): void => {
+    if (!rosterLive) {
+      return
+    }
+    const rect = statusRowRef.current?.getBoundingClientRect()
+    if (rect !== undefined) {
+      setTipAnchor(rect)
+    }
+  }
+
+  // The tip rows (FR-017): «Вы» first, then the №28 members minus me.
+  const tipMembers =
+    isGroup && chat.members !== null
+      ? chat.members.filter((member) => member.user.id !== chat.meUserId)
+      : []
+  const meIsOwner = isGroup && chat.myRole === 'owner'
+
+  // Prototype clamp formulas (showMembersTip): left — no further than
+  // the viewport edge less the measured width, top — under the anchor.
+  // Re-clamped when the roster lands/grows under an open hover so the
+  // growth never pushes the tip past the bottom edge.
+  useLayoutEffect(() => {
+    const tip = tipRef.current
+    if (tipAnchor === null || tip === null) {
+      return
+    }
+    const left = Math.max(
+      TIP_VIEWPORT_MARGIN,
+      Math.min(tipAnchor.left, window.innerWidth - tip.offsetWidth - TIP_VIEWPORT_MARGIN),
+    )
+    const top = Math.min(
+      tipAnchor.bottom + TIP_ANCHOR_GAP,
+      window.innerHeight - tip.offsetHeight - TIP_VIEWPORT_MARGIN,
+    )
+    tip.style.left = `${left}px`
+    tip.style.top = `${top}px`
+  }, [tipAnchor, tipMembers])
+
+  // Esc closes the tip as the TOP layer (data-model 3.1: ctx-menu/
+  // members-tip → modal → drawer) — capture + stopPropagation keep it
+  // from falling through to a modal or the drawer below.
+  useEffect(() => {
+    if (!tipOpen) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.stopPropagation()
+        closeTip()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown, true)
+    }
+  }, [tipOpen])
+
   return (
     <header className="chat-head">
       <div className="head-av">
@@ -100,13 +216,26 @@ export function ChatHeader({
         </h2>
         {isGroup ? (
           chat.memberCount !== null && (
-            <div className="status-row">
+            <div
+              className={rosterLive ? 'status-row tip-source' : 'status-row'}
+              ref={statusRowRef}
+              tabIndex={rosterLive ? 0 : undefined}
+              onMouseEnter={openTip}
+              onMouseLeave={() => {
+                closeTip()
+              }}
+              onFocus={openTip}
+              onBlur={() => {
+                closeTip()
+              }}
+            >
               <span className="status-txt">{membersStatus(chat.memberCount)}</span>
             </div>
           )
         ) : (
           <div className="status-row">
-            <PresenceIndicator userId={chat.peerId} showLabel={true} />
+            <span className={presence === 'offline' ? 'lamp off' : 'lamp'} aria-hidden="true" />
+            <span className="status-txt">{DIRECT_STATUS_TEXT[presence]}</span>
             {chat.blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
           </div>
         )}
@@ -156,6 +285,32 @@ export function ChatHeader({
           </div>
         )}
       </div>
+      {/* Подсказка состава (FR-017) — портал в body, как #membersTip
+          прототипа: fixed-позиционирование относительно вьюпорта,
+          поверх машины (z-56), pointer-events: none — чистый ховер. */}
+      {tipOpen &&
+        isGroup &&
+        chat.members !== null &&
+        createPortal(
+          <div className="members-tip show" role="tooltip" ref={tipRef}>
+            <div className="mt-title">Участники</div>
+            <div className="mt-row">
+              <Avatar source={chat.meUsername ?? ''} size={TIP_AVATAR_SIZE} />
+              <span className="mt-name">Вы</span>
+              {meIsOwner && <span className="mt-me">администратор</span>}
+            </div>
+            {tipMembers.map((member) => (
+              <div className="mt-row" key={member.user.id}>
+                <Avatar source={member.user.username} size={TIP_AVATAR_SIZE} />
+                <span className="mt-name">{member.user.username}</span>
+                {(member.role === 'owner' || member.role === 'admin') && (
+                  <span className="mt-me">администратор</span>
+                )}
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
     </header>
   )
 }
