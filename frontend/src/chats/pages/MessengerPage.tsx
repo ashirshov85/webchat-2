@@ -46,6 +46,9 @@
  *    block toggles driven by `blockedByMe` (the only block projection
  *    the API exposes); after either action the list refetches so the
  *    «заблокирован» mark and the badge converge to the server state.
+ *    The composer lock rides the same flag (008 T036, FR-022): a
+ *    blocked direct chat renders MessageInput with the block hint —
+ *    field and «ОТПРАВИТЬ» disabled, the ONLY input lock of the app.
  *
  * The unread badge of the open dialog resets locally (FR-014) as its
  * messages render — the same display events that advance the read
@@ -961,7 +964,11 @@ export function MessengerPage() {
                   members={activeGroupMembers}
                   othersReadUpToSeq={othersReadUpToSeq}
                 />
-                <MessageInput onSend={handleSend} disabled={currentUserId === null} />
+                <MessageInput
+                  onSend={handleSend}
+                  disabled={currentUserId === null}
+                  blocked={activeChat.kind === 'direct' && activeChat.blockedByMe}
+                />
               </>
             ) : (
               <p className="messenger-empty">Чат не выбран</p>

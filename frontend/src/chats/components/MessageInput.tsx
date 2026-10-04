@@ -27,9 +27,17 @@
  * 1.1s flight (the timers are tracked for the unmount);
  * prefers-reduced-motion kills the flight via machine.css (FR-004).
  *
- * The blocked-contact hint (FR-022) is US2 (T036), the flood-limit
- * retry line (FR-030) is US4 (T051) — until then the only disabled
- * wiring is the 004 `disabled` prop.
+ * The blocked-contact state (US2, T036; FR-022, US2-AS5) is the
+ * prototype §7 `updateInputState()` verbatim: the field AND the
+ * «ОТПРАВИТЬ» button go disabled while the placeholder carries the
+ * block hint «Контакт заблокирован — разблокируйте, чтобы писать
+ * сообщения» (the only hint surface of the prototype). It is the
+ * ONLY input lock of the composer — the flood-limit/overflow states
+ * of 005 never disable input (FR-030, Clarification); unblocking
+ * (№24, wired by the page through `blockedByMe`) restores the
+ * activity and the normal «Сообщение…» placeholder. The 004
+ * `disabled` prop stays its own independent wiring (no user). The
+ * flood-limit retry line (FR-030) is US4 (T051).
  */
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
@@ -43,13 +51,18 @@ const PUFF_COUNT = 3
 /** Puff lifetime (ms) — the 1.1s flight + margin, prototype JS. */
 const PUFF_LIFETIME_MS = 1400
 
+/** Block hint of a blocked-contact chat — prototype §7 updateInputState(). */
+const BLOCKED_PLACEHOLDER = 'Контакт заблокирован — разблокируйте, чтобы писать сообщения'
+
 export interface MessageInputProps {
   /** Receives the normalized (trimmed) valid text only. */
   readonly onSend: (text: string) => void
   readonly disabled?: boolean
+  /** Blocked-contact chat (FR-022): the only input lock of the composer. */
+  readonly blocked?: boolean
 }
 
-export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
+export function MessageInput({ onSend, disabled = false, blocked = false }: MessageInputProps) {
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const fieldRef = useRef<HTMLTextAreaElement>(null)
@@ -138,9 +151,9 @@ export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
           className="msg-input"
           ref={fieldRef}
           value={value}
-          placeholder="Сообщение…"
+          placeholder={blocked ? BLOCKED_PLACEHOLDER : 'Сообщение…'}
           rows={1}
-          disabled={disabled}
+          disabled={disabled || blocked}
           onChange={(event) => {
             setValue(event.target.value)
             setError(null)
@@ -151,7 +164,7 @@ export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
       <button
         type="submit"
         className="send-btn"
-        disabled={disabled}
+        disabled={disabled || blocked}
         onMouseDown={handleSendMouseDown}
       >
         ОТПРАВИТЬ

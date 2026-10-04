@@ -76,13 +76,13 @@ function peer(id: string, username: string) {
   }
 }
 
-function directRow(): ChatListItem {
+function directRow(blockedByMe = false): ChatListItem {
   return {
     chatId: DIRECT_ID,
     peer: peer(ALICE, 'alice'),
     lastMessage: null,
     unreadCount: 0,
-    blockedByMe: false,
+    blockedByMe,
   }
 }
 
@@ -101,9 +101,9 @@ function contacts(): ContactView[] {
   return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z' }]
 }
 
-async function renderPage(chats: ChatListItem[] = [directRow()]): Promise<void> {
+/** Общая подготовка страницы БЕЗ №12-мока — его ставит вызывающий тест. */
+async function renderPageBase(): Promise<void> {
   mockGetCurrentUser.mockResolvedValue(peer(ME, 'me'))
-  mockChats.listChats.mockResolvedValue(chats)
   mockChats.listMessages.mockResolvedValue({ messages: [] })
   mockChats.listContacts.mockResolvedValue(contacts())
   mockChats.ensureChat.mockResolvedValue(directChatView())
@@ -115,6 +115,11 @@ async function renderPage(chats: ChatListItem[] = [directRow()]): Promise<void> 
   }))
   render(<MessengerPage />)
   await screen.findByRole('list', { name: 'Список чатов' })
+}
+
+async function renderPage(chats: ChatListItem[] = [directRow()]): Promise<void> {
+  mockChats.listChats.mockResolvedValue(chats)
+  await renderPageBase()
 }
 
 /** Пункт главного меню сайдбара (T030): «Меню» → пункт. */
@@ -256,5 +261,52 @@ describe('MessengerPage форма confirm действий чата в обол
       expect(screen.queryByRole('dialog', { name: 'Удаление чата' })).toBeNull()
     })
     expect(screen.getByRole('region', { name: 'Окно диалога' })).toHaveTextContent('Чат не выбран')
+  })
+})
+
+describe('MessengerPage композер заблокированного контакта (T036, FR-022, US2-AS5)', () => {
+  it('заблокированный чат глушит поле и кнопку с подсказкой; разблокировка (№24 через confirm) возвращает активность', async () => {
+    // №12-агрегат — мутируемое состояние мока: стартовый ответ несёт
+    // блокировку, всё после разблокировки сходится к свободному чату
+    // (любой порядок фетчей даёт один и тот же итог — рефетч №24
+    // перезаписывает блокированное состояние).
+    let blockedByMe = true
+    mockChats.listChats.mockImplementation(() => Promise.resolve([directRow(blockedByMe)]))
+    await renderPageBase()
+    await screen.findByText('alice')
+    blockedByMe = false
+    mockChats.unblockUser.mockResolvedValue(undefined)
+
+    const list = screen.getByRole('list', { name: 'Список чатов' })
+    fireEvent.click(within(list).getByText('alice').closest('button') as HTMLElement)
+    await screen.findByRole('heading', { level: 2, name: 'alice' })
+
+    // FR-022: поле и кнопка неактивны, подсказка о блокировке — в плейсхолдере
+    // (прототип §7 updateInputState, дословно).
+    const field = screen.getByLabelText('Текст сообщения')
+    expect(field).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'ОТПРАВИТЬ' })).toBeDisabled()
+    expect(field).toHaveAttribute(
+      'placeholder',
+      'Контакт заблокирован — разблокируйте, чтобы писать сообщения',
+    )
+
+    // Разблокировка: «Действия» → «Разблокировать пользователя» → confirm (№24).
+    fireEvent.click(screen.getByRole('button', { name: 'Действия' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Разблокировать пользователя' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Разблокировка пользователя' })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Разблокировать' }))
+
+    await waitFor(() => {
+      expect(mockChats.unblockUser).toHaveBeenCalledWith(ALICE)
+    })
+    // US2-AS5: композер снова активен. Оптимистический сброс и рефетч №12
+    // сходятся сюда при любом порядке эффектов — ждём конечное состояние
+    // (поле, кнопка и обычный плейсхолдер).
+    await waitFor(() => {
+      expect(screen.getByLabelText('Текст сообщения')).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'ОТПРАВИТЬ' })).toBeEnabled()
+      expect(screen.getByLabelText('Текст сообщения')).toHaveAttribute('placeholder', 'Сообщение…')
+    })
   })
 })

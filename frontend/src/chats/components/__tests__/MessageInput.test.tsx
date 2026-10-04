@@ -20,11 +20,25 @@ import { MESSAGE_MAX_LENGTH } from '../../validation'
  * keeps firing the local error instead of `onSend`. The prototype
  * «steam» (3 `.puff`s above the composer on send, design-tokens §5)
  * rides the `.steam` container of the block.
+ *
+ * The blocked-contact state (US2, T036; FR-022, US2-AS5) is the
+ * prototype §7 `updateInputState()`: the field AND the «ОТПРАВИТЬ»
+ * button go disabled while the placeholder carries the block hint —
+ * «Контакт заблокирован — разблокируйте, чтобы писать сообщения».
+ * It is the ONLY input lock of the composer (flood-limit/overflow
+ * never disable input, FR-030); unblocking restores the activity and
+ * the normal «Сообщение…» placeholder.
  */
 
-function renderInput(overrides: Partial<{ disabled: boolean }> = {}) {
+function renderInput(overrides: Partial<{ disabled: boolean; blocked: boolean }> = {}) {
   const onSend = vi.fn()
-  const view = render(<MessageInput onSend={onSend} disabled={overrides.disabled ?? false} />)
+  const view = render(
+    <MessageInput
+      onSend={onSend}
+      disabled={overrides.disabled ?? false}
+      blocked={overrides.blocked ?? false}
+    />,
+  )
   const field = view.container.querySelector('#message-composer') as HTMLTextAreaElement
   return { ...view, onSend, field }
 }
@@ -157,6 +171,55 @@ describe('MessageInput disabled state (004 wiring preserved)', () => {
 
     expect(screen.getByLabelText('Текст сообщения')).toBeDisabled()
     expect(screen.getByRole('button', { name: 'ОТПРАВИТЬ' })).toBeDisabled()
+  })
+})
+
+describe('MessageInput blocked-contact state (T036, FR-022, US2-AS5)', () => {
+  it('disables the field and the «ОТПРАВИТЬ» button and swaps the placeholder into the block hint', () => {
+    const { field } = renderInput({ blocked: true })
+
+    // Прототип §7 updateInputState(): inp.disabled / sendBtn.disabled /
+    // placeholder = 'Контакт заблокирован — …' (FR-001: дословно).
+    expect(field).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'ОТПРАВИТЬ' })).toBeDisabled()
+    expect(field).toHaveAttribute(
+      'placeholder',
+      'Контакт заблокирован — разблокируйте, чтобы писать сообщения',
+    )
+  })
+
+  it('never fires onSend while blocked — both submit paths are dead', () => {
+    const { onSend, field } = renderInput({ blocked: true })
+
+    fireEvent.keyDown(field, { key: 'Enter' })
+    fireEvent.click(screen.getByRole('button', { name: 'ОТПРАВИТЬ' }))
+
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('unblocking restores the activity and the normal placeholder (US2-AS5)', () => {
+    const onSend = vi.fn()
+    const view = render(<MessageInput onSend={onSend} blocked />)
+    const field = view.container.querySelector('#message-composer') as HTMLTextAreaElement
+    expect(field).toBeDisabled()
+
+    view.rerender(<MessageInput onSend={onSend} blocked={false} />)
+
+    expect(field).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'ОТПРАВИТЬ' })).toBeEnabled()
+    expect(field).toHaveAttribute('placeholder', 'Сообщение…')
+
+    // Композер снова полноценно отправляет.
+    fireEvent.change(field, { target: { value: '  Снова на связи  ' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('Снова на связи')
+  })
+
+  it('keeps the block lock independent of the 004 disabled wiring', () => {
+    // 004-провод `disabled` остаётся своей веткой: без пользователя и
+    // без блокировки ввод активен; блокировка глушит его сама по себе.
+    const { field } = renderInput({ disabled: false, blocked: true })
+    expect(field).toBeDisabled()
   })
 })
 
