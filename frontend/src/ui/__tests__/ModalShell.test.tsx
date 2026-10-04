@@ -115,7 +115,9 @@ describe('ModalShell — единая оболочка: DOM и formId (FR-026, d
     expectSingleBackdrop()
     expect(backdrop().className).toBe('modal-back show')
     const dlg = dialog()
-    expect(dlg).toHaveAttribute('role', 'dialog')
+    // Нативный <dialog> (S6819): роль dialog — неявная у самого элемента.
+    expect(dlg.tagName).toBe('DIALOG')
+    expect(screen.getByRole('dialog')).toBe(dlg)
     expect(dlg).toHaveAttribute('aria-modal', 'true')
     expect(dlg).toHaveAccessibleName('Контакты')
     expect(document.querySelector('.modal-title')?.textContent).toBe('Контакты')

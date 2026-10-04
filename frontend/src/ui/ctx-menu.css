@@ -17,6 +17,7 @@
 .ctx-sep {
   height: 1px;
   margin: 4px 6px;
+  border: none;
   background: linear-gradient(90deg, transparent, var(--gold-dark), transparent);
 }
 

@@ -30,7 +30,7 @@
  *   проблема (422 not_in_contacts, сеть) — .modal-err без закрытия:
  *   черновик и выбор остаются исправимыми.
  */
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type SubmitEvent } from 'react'
 import { listContacts } from '../../api/chats'
 import type { ContactView } from '../../api/chats'
 import { createGroup } from '../../api/groups'
@@ -115,7 +115,7 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
   }, [contacts, normalizedQuery])
 
   const handleSubmit = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
+    (event: SubmitEvent<HTMLFormElement>) => {
       event.preventDefault()
       if (pending) {
         return
@@ -167,8 +167,9 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
         }}
       />
 
-      <label>Участники</label>
+      <label htmlFor="grp-search">Участники</label>
       <input
+        id="grp-search"
         type="text"
         className="grp-search"
         placeholder="Поиск контакта — имя, username или email"
@@ -180,11 +181,7 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
       />
 
       <div className="pick-list grp-members">
-        {contactsStatus === 'loading' && (
-          <div className="pick-empty" role="status">
-            Загрузка…
-          </div>
-        )}
+        {contactsStatus === 'loading' && <output className="pick-empty">Загрузка…</output>}
         {contactsStatus === 'error' && (
           <>
             <div className="modal-err" role="alert">

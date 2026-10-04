@@ -13,7 +13,7 @@
  * Переключение formId внутри одной оболочки — без второй подложки
  * (stackPolicy: одна на приложение, data-model 1.6).
  */
-import { useEffect, useId, useRef, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ReactNode } from 'react'
 import './modal-shell.css'
 
 /** Формы-обитатели оболочки (data-model 1.6). */
@@ -49,7 +49,9 @@ const FOCUSABLE_SELECTOR = [
 
 export function ModalShell({ formId, title, onClose, children }: ModalShellProps) {
   const open = formId !== null
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  /** Подложка: нативные mousedown/mouseup-слушатели закрытия по фону. */
+  const backRef = useRef<HTMLDivElement>(null)
   /** Инициатор открытия: сюда возвращается фокус при закрытии (ui-behavior §1). */
   const initiatorRef = useRef<HTMLElement | null>(null)
   /** Левая кнопка нажата на самой подложке (press-фаза закрытия по фону). */
@@ -124,30 +126,42 @@ export function ModalShell({ formId, title, onClose, children }: ModalShellProps
     ;(first ?? root).focus()
   }, [open, formId])
 
-  /** Press-фаза: учитывается только левая кнопка на самой подложке. */
-  const handleBackdropMouseDown = (event: ReactMouseEvent<HTMLDivElement>): void => {
-    pressOnBackRef.current = event.button === 0 && event.target === event.currentTarget
-  }
-
-  /** Release-фаза: закрытие только если и нажатие, и отпускание — на фоне. */
-  const handleBackdropMouseUp = (event: ReactMouseEvent<HTMLDivElement>): void => {
-    const releasedOnBack = event.button === 0 && event.target === event.currentTarget
-    if (pressOnBackRef.current && releasedOnBack) {
-      onClose()
+  // Закрытие по фону «press+release» (ui-behavior §3): нативные слушатели
+  // на самой подложке (JSX-хендлеры на статичном div — S6848). Учитывается
+  // только левая кнопка, нажатая И отпущенная на самой подложке —
+  // перетаскивание из окна/в окно не закрывает.
+  useEffect(() => {
+    const back = backRef.current
+    if (back === null) {
+      return
     }
-    pressOnBackRef.current = false
-  }
+    const onMouseDown = (event: MouseEvent): void => {
+      pressOnBackRef.current = event.button === 0 && event.target === event.currentTarget
+    }
+    const onMouseUp = (event: MouseEvent): void => {
+      const releasedOnBack = event.button === 0 && event.target === event.currentTarget
+      if (pressOnBackRef.current && releasedOnBack) {
+        onCloseRef.current()
+      }
+      pressOnBackRef.current = false
+    }
+    back.addEventListener('mousedown', onMouseDown)
+    back.addEventListener('mouseup', onMouseUp)
+    return () => {
+      back.removeEventListener('mousedown', onMouseDown)
+      back.removeEventListener('mouseup', onMouseUp)
+    }
+  }, [])
 
   return (
     <div
+      ref={backRef}
       className={open ? 'modal-back show' : 'modal-back'}
       aria-hidden={open ? undefined : true}
-      onMouseDown={handleBackdropMouseDown}
-      onMouseUp={handleBackdropMouseUp}
     >
-      <div
+      <dialog
+        open
         className="modal panel"
-        role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
@@ -161,7 +175,7 @@ export function ModalShell({ formId, title, onClose, children }: ModalShellProps
             {children}
           </>
         )}
-      </div>
+      </dialog>
     </div>
   )
 }

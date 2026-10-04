@@ -883,12 +883,12 @@ export function MessengerPage() {
    * shell, never a second backdrop (data-model 3.3).
    */
   const shellFormId: ModalFormId | null = pendingAction !== null ? 'confirm' : modalForm
-  const shellTitle =
-    confirmation !== null
-      ? confirmation.title
-      : shellFormId !== null
-        ? MODAL_TITLES[shellFormId]
-        : ''
+  let shellTitle = ''
+  if (confirmation !== null) {
+    shellTitle = confirmation.title
+  } else if (shellFormId !== null) {
+    shellTitle = MODAL_TITLES[shellFormId]
+  }
 
   return (
     <ToastProvider>

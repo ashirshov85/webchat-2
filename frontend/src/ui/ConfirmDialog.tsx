@@ -15,7 +15,7 @@
  * ModalShell, потребитель сводит к отмене); подтверждение — submit формы
  * (кнопка type=submit, как confirmForm прототипа).
  */
-import { type FormEvent, type ReactNode } from 'react'
+import { type ReactNode, type SubmitEvent } from 'react'
 import './confirm-dialog.css'
 
 /** Вариант кнопки действия (ui-behavior §3): обычная / основная / опасная. */
@@ -48,7 +48,7 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
+  const handleSubmit = (event: SubmitEvent<HTMLFormElement>): void => {
     event.preventDefault()
     onConfirm()
   }

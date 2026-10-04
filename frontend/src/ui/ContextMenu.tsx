@@ -161,14 +161,15 @@ export function ContextMenu({ open, anchor, items, align = 'start', onClose }: C
     if (buttons.length === 0) {
       return
     }
-    const index = buttons.findIndex((button) => button === document.activeElement)
+    const active = document.activeElement
+    const index = active instanceof HTMLButtonElement ? buttons.indexOf(active) : -1
     const step = event.key === 'ArrowDown' ? 1 : -1
-    const nextIndex =
-      index === -1
-        ? step === 1
-          ? 0
-          : buttons.length - 1
-        : (index + step + buttons.length) % buttons.length
+    let nextIndex: number
+    if (index === -1) {
+      nextIndex = step === 1 ? 0 : buttons.length - 1
+    } else {
+      nextIndex = (index + step + buttons.length) % buttons.length
+    }
     const next = buttons.at(nextIndex)
     if (next !== undefined) {
       next.focus()
@@ -180,10 +181,16 @@ export function ContextMenu({ open, anchor, items, align = 'start', onClose }: C
   }
 
   return (
-    <div className="ctx-menu show" role="menu" ref={menuRef} onKeyDown={handleKeyDown}>
-      {items.map((item, index) => (
-        <Fragment key={index}>
-          {item.sepBefore === true && <div className="ctx-sep" role="separator" />}
+    <div
+      className="ctx-menu show"
+      role="menu"
+      tabIndex={-1}
+      ref={menuRef}
+      onKeyDown={handleKeyDown}
+    >
+      {items.map((item) => (
+        <Fragment key={item.label}>
+          {item.sepBefore === true && <hr className="ctx-sep" />}
           <button
             type="button"
             role="menuitem"

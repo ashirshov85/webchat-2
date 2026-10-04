@@ -102,6 +102,24 @@
   outline-offset: -2px;
 }
 
+/* Строка-«кнопка» .ctc-row — нативный <button> (S6819): полный сброс
+   auth-наследия index.css `button` и UA-стилей кнопки, чтобы остаться
+   пиксельно равной див-строке прототипа (T039: hover-фон — прототипный
+   золотой, а не --accent-hover). */
+button.pick-row {
+  align-self: stretch;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.pick-row:hover:not(:disabled) {
+  background: rgba(201, 162, 74, 0.08);
+}
+
 .pick-row .avatar {
   width: 32px;
   height: 32px;

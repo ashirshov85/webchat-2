@@ -107,7 +107,7 @@ describe('ProfileModal', () => {
     mockFetch.mockResolvedValueOnce({ incognito: true })
     renderModal()
 
-    expect(await waitFor(() => expect(incognitoToggle()).toBeChecked()))
+    await waitFor(() => expect(incognitoToggle()).toBeChecked())
     expect(mockFetch).toHaveBeenCalledTimes(1)
   })
 
@@ -155,7 +155,7 @@ describe('ProfileModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
 
     expect(await screen.findByText('Too Many Requests')).toBeVisible()
-    expect(await waitFor(() => expect(incognitoToggle()).not.toBeChecked()))
+    await waitFor(() => expect(incognitoToggle()).not.toBeChecked())
     expect(screen.queryByRole('status')?.textContent).toBe('')
     expect(onClose).not.toHaveBeenCalled()
   })
@@ -171,7 +171,7 @@ describe('ProfileModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
 
     expect(await screen.findByText('hargrove')).toBeVisible()
-    expect(await waitFor(() => expect(incognitoToggle()).toBeChecked()))
+    await waitFor(() => expect(incognitoToggle()).toBeChecked())
   })
 
   it('«Отмена» closes without PUT and without toast', async () => {

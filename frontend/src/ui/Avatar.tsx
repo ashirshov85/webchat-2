@@ -37,6 +37,10 @@ const PRESENCE_LABELS: Readonly<Record<AvatarPresence, string>> = {
   unknown: 'неизвестно',
 }
 
+/** Прозрачный пиксель: саму точку рисует CSS .av-dot, src нужен только
+ *  нативному <img> (роль/имя — из alt, S6819). */
+const AV_DOT_SRC = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
+
 export interface AvatarProps {
   /** Источник деривации: username (пользователи) либо title (группы). */
   readonly source: string
@@ -76,10 +80,10 @@ export function Avatar({
         <span>{initials}</span>
       </div>
       {presenceDot !== null && (
-        <i
+        <img
           className={PRESENCE_DOT_CLASS[presenceDot]}
-          role="img"
-          aria-label={PRESENCE_LABELS[presenceDot]}
+          src={AV_DOT_SRC}
+          alt={PRESENCE_LABELS[presenceDot]}
         />
       )}
     </div>

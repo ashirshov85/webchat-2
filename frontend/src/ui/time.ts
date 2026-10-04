@@ -14,12 +14,15 @@ const dateFormatterWithYear = new Intl.DateTimeFormat('ru-RU', {
   year: 'numeric',
 })
 
-function toDate(value: Date | string | number): Date {
+/** Аргумент времени/даты: Date, ISO-строка или epoch-миллисекунды. */
+type DateInput = Date | string | number
+
+function toDate(value: DateInput): Date {
   return value instanceof Date ? value : new Date(value)
 }
 
 /** Время ЧЧ:ММ (24-часовое, Intl ru-RU) из createdAt; невалидная дата — ''. */
-export function formatTime(value: Date | string | number): string {
+export function formatTime(value: DateInput): string {
   const date = toDate(value)
   if (Number.isNaN(date.getTime())) return ''
   return timeFormatter.format(date)
@@ -29,7 +32,7 @@ export function formatTime(value: Date | string | number): string {
  * Разделитель дат — длинный формат «19 сентября» (day:'numeric',
  * month:'long'); год добавляется при отличии от текущего (design-tokens §6).
  */
-export function formatDate(value: Date | string | number, now: Date = new Date()): string {
+export function formatDate(value: DateInput, now: Date = new Date()): string {
   const date = toDate(value)
   if (Number.isNaN(date.getTime())) return ''
   const formatter = date.getFullYear() === now.getFullYear() ? dateFormatter : dateFormatterWithYear

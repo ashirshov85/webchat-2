@@ -40,8 +40,11 @@
  * flood-limit retry line (FR-030) is US4 (T051).
  */
 import { useEffect, useRef, useState } from 'react'
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react'
-import type { SubmitEvent } from 'react'
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  SubmitEvent,
+} from 'react'
 import { validateMessageText } from '../validation'
 import './message-input.css'
 
@@ -53,6 +56,26 @@ const PUFF_LIFETIME_MS = 1400
 
 /** Block hint of a blocked-contact chat — prototype §7 updateInputState(). */
 const BLOCKED_PLACEHOLDER = 'Контакт заблокирован — разблокируйте, чтобы писать сообщения'
+
+/**
+ * Cryptographically strong uniform random in [min, max) — the flight
+ * offsets of the steam puffs (the prototype's Math.random replaced by
+ * Crypto API: the only consumer, but no weak PRNG anywhere).
+ */
+function randomBetween(min: number, max: number): number {
+  const buffer = new Uint32Array(1)
+  crypto.getRandomValues(buffer)
+  return min + ((max - min) * (buffer[0] ?? 0)) / 2 ** 32
+}
+
+/**
+ * Фокус остаётся в поле — кнопка не забирает его на mousedown (FR-021,
+ * US1-AS4): default предотвращён до click-отправки. Модульная область —
+ * состояния компонента не требует (S7721).
+ */
+function handleSendMouseDown(event: ReactMouseEvent<HTMLButtonElement>) {
+  event.preventDefault()
+}
 
 export interface MessageInputProps {
   /** Receives the normalized (trimmed) valid text only. */
@@ -107,12 +130,6 @@ export function MessageInput({ onSend, disabled = false, blocked = false }: Mess
     }
   }
 
-  function handleSendMouseDown(event: ReactMouseEvent<HTMLButtonElement>) {
-    // Фокус остаётся в поле — кнопка не забирает его на mousedown
-    // (FR-021, US1-AS4): default предотвращён до click-отправки.
-    event.preventDefault()
-  }
-
   /** «Пар» над композером при отправке — прототип puffSteam(), §7 JS. */
   function puffSteam() {
     const steam = steamRef.current
@@ -122,8 +139,8 @@ export function MessageInput({ onSend, disabled = false, blocked = false }: Mess
     for (let index = 0; index < PUFF_COUNT; index += 1) {
       const puff = document.createElement('i')
       puff.className = 'puff'
-      puff.style.left = `${10 + Math.random() * 60}px`
-      puff.style.setProperty('--dx', `${Math.random() * 40 - 20}px`)
+      puff.style.left = `${randomBetween(10, 70)}px`
+      puff.style.setProperty('--dx', `${randomBetween(-20, 20)}px`)
       puff.style.animationDelay = `${index * 0.08}s`
       steam.appendChild(puff)
       puffTimersRef.current.push(

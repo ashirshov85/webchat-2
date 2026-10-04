@@ -21,13 +21,13 @@ export const AVATAR_PALETTE = [
 export type AvatarColor = (typeof AVATAR_PALETTE)[number]
 
 /**
- * FNV-1a 32-bit по code units строки (research §E): стабилен, быстр,
+ * FNV-1a 32-bit по code points строки (research §E): стабилен, быстр,
  * беззнаковый результат 0..0xFFFFFFFF — основа выбора цвета.
  */
 export function fnv1a32(source: string): number {
   let h = 0x811c9dc5
   for (let i = 0; i < source.length; i++) {
-    h ^= source.charCodeAt(i)
+    h ^= source.codePointAt(i) ?? 0
     h = Math.imul(h, 0x01000193)
   }
   return h >>> 0

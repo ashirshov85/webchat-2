@@ -33,7 +33,14 @@
   pointer-events: auto;
 }
 
+/* Окно — нативный <dialog class="modal panel"> (S6819: роль dialog —
+   неявная): UA-стили диалога (margin auto, canvastext, max-width)
+   сброшены до див-паритета; фон/рамка/позиция — theme/machine.css .panel. */
 .modal {
+  position: relative;
+  margin: 0;
+  color: inherit;
+  max-width: none;
   width: min(420px, 92vw);
   padding: 20px;
   display: flex;

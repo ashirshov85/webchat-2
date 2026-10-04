@@ -197,7 +197,7 @@ export interface MessageListProps {
  * in the class list (a stable className never restarts the CSS
  * animation) and a first paint of history stays settled.
  */
-function Tick({ read, animate = false }: { read: boolean; animate?: boolean }) {
+function Tick({ read, animate = false }: { readonly read: boolean; readonly animate?: boolean }) {
   const stampedRef = useRef(animate)
   const prevReadRef = useRef(read)
   // One-shot latches (render-phase but idempotent: once set they

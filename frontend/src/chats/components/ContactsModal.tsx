@@ -61,9 +61,9 @@ import {
   useEffect,
   useMemo,
   useState,
-  type FormEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type SubmitEvent,
 } from 'react'
 import {
   addContact,
@@ -135,7 +135,7 @@ function boundChatOf(chats: readonly ChatListItem[], contact: ContactView): Boun
 /** Пометки строки (renderContactsModal прототипа): «заблокирован», «чат удалён». */
 function contactFlags(bound: BoundChat | null): string[] {
   const flags: string[] = []
-  if (bound !== null && bound.blockedByMe) {
+  if (bound?.blockedByMe) {
     flags.push('заблокирован')
   }
   if (bound === null) {
@@ -259,7 +259,7 @@ export function ContactsModal({
    * 0..1 ответ: промах — спокойная ошибка прототипа без №21, находка —
    * подтверждение поверх (pending), поле сохранено до исхода.
    */
-  const handleAddSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleAddSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
     const trimmed = addQuery.trim()
     if (trimmed === '' || adding) {
@@ -301,7 +301,7 @@ export function ContactsModal({
       return []
     }
     const bound = boundChatOf(chats, menuContact)
-    const blocked = bound !== null && bound.blockedByMe
+    const blocked = bound?.blockedByMe === true
     return [
       {
         label: blocked ? 'Разблокировать' : 'Заблокировать',
@@ -580,28 +580,21 @@ export function ContactsModal({
           )}
           {visibleContacts.map((contact) => {
             const bound = boundChatOf(chats, contact)
-            const blocked = bound !== null && bound.blockedByMe
+            const blocked = bound?.blockedByMe === true
             const flags = contactFlags(bound)
             return (
-              <div
+              <button
+                type="button"
                 key={contact.user.id}
                 className={
                   'pick-row ctc-row' +
                   (blocked ? ' blocked' : '') +
                   (bound === null ? ' nochat' : '')
                 }
-                role="button"
-                tabIndex={0}
                 aria-label={`Контакт ${contact.user.username}`}
                 title={bound !== null ? 'Открыть чат' : 'Чат удалён — создайте через меню ⋯'}
                 onClick={() => {
                   handleRowActivate(contact)
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
-                    handleRowActivate(contact)
-                  }
                 }}
               >
                 <Avatar source={contact.user.username} size={32} />
@@ -627,7 +620,7 @@ export function ContactsModal({
                     <circle cx="12" cy="19" r="1.8" />
                   </svg>
                 </button>
-              </div>
+              </button>
             )
           })}
         </div>

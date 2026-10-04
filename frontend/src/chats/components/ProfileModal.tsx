@@ -31,7 +31,7 @@
  * Встраивание в ModalShell MessengerPage (заголовок «Мой профиль»,
  * закрытие Esc/фоном) — T034; Отмена здесь — только колбэк onClose.
  */
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type SubmitEvent } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import { problemMessage } from '../../auth/problem'
 import { fetchPresenceSettings, updatePresenceSettings } from '../../presence/presenceApi'
@@ -78,7 +78,7 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
   }, [loadProfile])
 
   /** Submit #profileForm прототипа: №38 PUT → тост → закрытие; сбой — откат чекбокса. */
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const handleSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (saving) {
       return
@@ -107,11 +107,7 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
   if (status !== 'ready') {
     return (
       <div className="profile-form">
-        {status === 'loading' && (
-          <div className="pick-empty" role="status">
-            Загрузка…
-          </div>
-        )}
+        {status === 'loading' && <output className="pick-empty">Загрузка…</output>}
         {status === 'error' && (
           <>
             <div className="modal-err" role="alert">
@@ -140,7 +136,7 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
           }}
         />
         <span className="tgl-txt">
-          Режим инкогнито
+          {'Режим инкогнито '}
           <small>Всем участникам вы отображаетесь как offline</small>
         </span>
       </label>
