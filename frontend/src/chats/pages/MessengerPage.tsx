@@ -914,7 +914,8 @@ function MessengerMachine() {
       // T045 (FR-025): один тост на завершённый №33 — текст
       // прототипа askLeaveGroup; имя — живой №28-титул, иначе №12-базис.
       const live = activeGroup?.chatId === activeGroupChatId
-      const title = live ? activeGroup.title : activeChat?.kind === 'group' ? activeChat.title : ''
+      const basisTitle = activeChat?.kind === 'group' ? activeChat.title : ''
+      const title = live ? activeGroup.title : basisTitle
       showToast(`Вы вышли из чата — ${title}`)
       handleWindowGroupGone(activeGroupChatId)
     }

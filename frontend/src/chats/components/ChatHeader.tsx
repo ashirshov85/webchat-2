@@ -41,12 +41,13 @@
  * while the view is open (the optimistic `group.updated` half), the
  * №12/№27 answer until then.
  */
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { GroupMember } from '../../api/groups'
 import { Avatar } from '../../ui/Avatar'
 import { pluralRu } from '../../ui/time'
 import { usePresenceStatus } from '../../presence/usePresence'
+import type { PresenceStatus } from '../../presence/presenceStore'
 import './chat-header.css'
 
 /** Header avatar size — design-tokens §4 (заголовок 46px). */
@@ -120,6 +121,159 @@ const DIRECT_STATUS_TEXT: Readonly<Record<'online' | 'offline' | 'unknown', stri
   unknown: 'неизвестно',
 }
 
+/** The tip rows (FR-017): the live №28 members minus me ([] until №28 is live). */
+function tipMembersOf(chat: ChatHeaderChat): readonly GroupMember[] {
+  if (chat.kind !== 'group' || chat.members === null) {
+    return []
+  }
+  return chat.members.filter((member) => member.user.id !== chat.meUserId)
+}
+
+interface DirectStatusRowProps {
+  /** The merged 007 status of the peer (T040). */
+  readonly presence: PresenceStatus
+  /** The blocker-side mark «заблокирован» (№12 projection, FR-020). */
+  readonly blockedByMe: boolean
+}
+
+/** The direct `.status-row` — the prototype presence lamp + label (US3 T043). */
+function DirectStatusRow({ presence, blockedByMe }: DirectStatusRowProps) {
+  return (
+    <div className="status-row">
+      <span className={presence === 'offline' ? 'lamp off' : 'lamp'} aria-hidden="true" />
+      <span className="status-txt">{DIRECT_STATUS_TEXT[presence]}</span>
+      {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
+    </div>
+  )
+}
+
+interface GroupStatusRowProps {
+  readonly chat: GroupChatHeaderData
+  /** №28 live — the row is a focusable tip source; the №12 basis is inert. */
+  readonly rosterLive: boolean
+  readonly statusRowRef: RefObject<HTMLButtonElement | null>
+  readonly openTip: () => void
+  readonly closeTip: () => void
+}
+
+/**
+ * The group `.status-row` — «N участников», the members-tip anchor
+ * (US3 T043, FR-017): while №28 is live the row is a native `<button>`
+ * — the focusable tip source (FR-035); until then a plain div — no
+ * tip source, not focusable, hover a no-op. null — no memberCount yet.
+ */
+function GroupStatusRow({
+  chat,
+  rosterLive,
+  statusRowRef,
+  openTip,
+  closeTip,
+}: GroupStatusRowProps) {
+  if (chat.memberCount === null) {
+    return null
+  }
+  if (!rosterLive) {
+    return (
+      <div className="status-row">
+        <span className="status-txt">{membersStatus(chat.memberCount)}</span>
+      </div>
+    )
+  }
+  return (
+    <button
+      type="button"
+      className="status-row tip-source"
+      ref={statusRowRef}
+      tabIndex={0}
+      onMouseEnter={openTip}
+      onMouseLeave={closeTip}
+      onFocus={openTip}
+      onBlur={closeTip}
+    >
+      <span className="status-txt">{membersStatus(chat.memberCount)}</span>
+    </button>
+  )
+}
+
+interface MembersTipProps {
+  /** The «Вы» avatar derivation source. */
+  readonly meUsername: string | null
+  /** The viewer's №28 role — the «администратор» mark of the «Вы» row. */
+  readonly myRole: GroupMember['role'] | null
+  /** The live №28 members minus me (FR-017). */
+  readonly members: readonly GroupMember[]
+  readonly tipRef: RefObject<HTMLDivElement | null>
+}
+
+/** The `.members-tip` roster body (FR-017): «Вы» first, then №28 minus me. */
+function MembersTip({ meUsername, myRole, members, tipRef }: MembersTipProps) {
+  return (
+    <div className="members-tip show" role="tooltip" ref={tipRef}>
+      <div className="mt-title">Участники</div>
+      <div className="mt-row">
+        <Avatar source={meUsername ?? ''} size={TIP_AVATAR_SIZE} />
+        <span className="mt-name">Вы</span>
+        {myRole === 'owner' && <span className="mt-me">администратор</span>}
+      </div>
+      {members.map((member) => (
+        <div className="mt-row" key={member.user.id}>
+          <Avatar source={member.user.username} size={TIP_AVATAR_SIZE} />
+          <span className="mt-name">{member.user.username}</span>
+          {(member.role === 'owner' || member.role === 'admin') && (
+            <span className="mt-me">администратор</span>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+interface DirectActionsMenuProps {
+  readonly blockedByMe: boolean
+  readonly menuOpen: boolean
+  readonly onToggleMenu: () => void
+  readonly onDeleteChat: () => void
+  readonly onToggleBlock: () => void
+}
+
+/** The direct «Действия» menu (004 T060): №14 delete + №23/№24 block toggle. */
+function DirectActionsMenu({
+  blockedByMe,
+  menuOpen,
+  onToggleMenu,
+  onDeleteChat,
+  onToggleBlock,
+}: DirectActionsMenuProps) {
+  return (
+    <div className="dialog-menu">
+      <button
+        type="button"
+        className="dialog-menu-toggle"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        onClick={onToggleMenu}
+      >
+        Действия
+      </button>
+      {menuOpen && (
+        <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
+          <button type="button" role="menuitem" className="dialog-menu-item" onClick={onDeleteChat}>
+            Удалить чат
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="dialog-menu-item"
+            onClick={onToggleBlock}
+          >
+            {blockedByMe ? 'Разблокировать пользователя' : 'Заблокировать пользователя'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ChatHeader({
   chat,
   menuOpen,
@@ -139,7 +293,7 @@ export function ChatHeader({
   // The members-tip anchor (the ContextMenu pattern): the status row
   // rect captured at open — null keeps the tip out of the DOM.
   const [tipAnchor, setTipAnchor] = useState<DOMRect | null>(null)
-  const statusRowRef = useRef<HTMLDivElement>(null)
+  const statusRowRef = useRef<HTMLButtonElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
   const closeTip = (): void => {
     setTipAnchor(null)
@@ -159,11 +313,7 @@ export function ChatHeader({
   }
 
   // The tip rows (FR-017): «Вы» first, then the №28 members minus me.
-  const tipMembers =
-    isGroup && chat.members !== null
-      ? chat.members.filter((member) => member.user.id !== chat.meUserId)
-      : []
-  const meIsOwner = isGroup && chat.myRole === 'owner'
+  const tipMembers = tipMembersOf(chat)
 
   // Prototype clamp formulas (showMembersTip): left — no further than
   // the viewport edge less the measured width, top — under the anchor.
@@ -215,29 +365,15 @@ export function ChatHeader({
           {name}
         </h2>
         {isGroup ? (
-          chat.memberCount !== null && (
-            <div
-              className={rosterLive ? 'status-row tip-source' : 'status-row'}
-              ref={statusRowRef}
-              tabIndex={rosterLive ? 0 : undefined}
-              onMouseEnter={openTip}
-              onMouseLeave={() => {
-                closeTip()
-              }}
-              onFocus={openTip}
-              onBlur={() => {
-                closeTip()
-              }}
-            >
-              <span className="status-txt">{membersStatus(chat.memberCount)}</span>
-            </div>
-          )
+          <GroupStatusRow
+            chat={chat}
+            rosterLive={rosterLive}
+            statusRowRef={statusRowRef}
+            openTip={openTip}
+            closeTip={closeTip}
+          />
         ) : (
-          <div className="status-row">
-            <span className={presence === 'offline' ? 'lamp off' : 'lamp'} aria-hidden="true" />
-            <span className="status-txt">{DIRECT_STATUS_TEXT[presence]}</span>
-            {chat.blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
-          </div>
+          <DirectStatusRow presence={presence} blockedByMe={chat.blockedByMe} />
         )}
       </div>
       <div className="ch-btns">
@@ -252,37 +388,13 @@ export function ChatHeader({
             Информация о группе
           </button>
         ) : (
-          <div className="dialog-menu">
-            <button
-              type="button"
-              className="dialog-menu-toggle"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={onToggleMenu}
-            >
-              Действия
-            </button>
-            {menuOpen && (
-              <div className="dialog-menu-items" role="menu" aria-label="Действия с чатом">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="dialog-menu-item"
-                  onClick={onDeleteChat}
-                >
-                  Удалить чат
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="dialog-menu-item"
-                  onClick={onToggleBlock}
-                >
-                  {chat.blockedByMe ? 'Разблокировать пользователя' : 'Заблокировать пользователя'}
-                </button>
-              </div>
-            )}
-          </div>
+          <DirectActionsMenu
+            blockedByMe={chat.blockedByMe}
+            menuOpen={menuOpen}
+            onToggleMenu={onToggleMenu}
+            onDeleteChat={onDeleteChat}
+            onToggleBlock={onToggleBlock}
+          />
         )}
       </div>
       {/* Подсказка состава (FR-017) — портал в body, как #membersTip
@@ -292,23 +404,12 @@ export function ChatHeader({
         isGroup &&
         chat.members !== null &&
         createPortal(
-          <div className="members-tip show" role="tooltip" ref={tipRef}>
-            <div className="mt-title">Участники</div>
-            <div className="mt-row">
-              <Avatar source={chat.meUsername ?? ''} size={TIP_AVATAR_SIZE} />
-              <span className="mt-name">Вы</span>
-              {meIsOwner && <span className="mt-me">администратор</span>}
-            </div>
-            {tipMembers.map((member) => (
-              <div className="mt-row" key={member.user.id}>
-                <Avatar source={member.user.username} size={TIP_AVATAR_SIZE} />
-                <span className="mt-name">{member.user.username}</span>
-                {(member.role === 'owner' || member.role === 'admin') && (
-                  <span className="mt-me">администратор</span>
-                )}
-              </div>
-            ))}
-          </div>,
+          <MembersTip
+            meUsername={chat.meUsername}
+            myRole={chat.myRole}
+            members={tipMembers}
+            tipRef={tipRef}
+          />,
           document.body,
         )}
     </header>

@@ -329,7 +329,7 @@ describe('ChatHeader members-tip (T043, FR-017, data-model 2.3, ui-behavior §4)
   it('the direct header never opens a members-tip', () => {
     const { container } = renderHeader(directChat())
     const row = container.querySelector('.chat-head .status-row')
-    expect(row instanceof HTMLElement).toBe(true)
+    expect(row).toBeInstanceOf(HTMLElement)
     fireEvent.mouseEnter(row as HTMLElement)
     expect(tip()).toBeNull()
   })

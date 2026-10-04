@@ -96,8 +96,18 @@
 }
 
 /* Строка статуса группы — якорь подсказки состава (US3, T043;
-   FR-017): фокус видим (FR-035), пока №28 жив; без ростера строка
-   не интерактивна. */
+   FR-017): пока №28 жив — нативная <button> (фокус видим, FR-035;
+   сброс UA-стилей кнопки — проекция .status-row прототипа дословно),
+   без ростера строка не интерактивна (div). */
+.chat-head button.status-row {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
 .chat-head .status-row.tip-source {
   cursor: default;
 }
