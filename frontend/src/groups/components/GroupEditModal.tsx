@@ -296,7 +296,7 @@ export function GroupEditModal({
         }}
       />
 
-      <label>Участники</label>
+      <label htmlFor="grp-edit-search">Участники</label>
       <div className="pick-list grp-edit-members">
         {draftIds.length === 0 ? (
           <div className="pick-empty">Нет участников</div>

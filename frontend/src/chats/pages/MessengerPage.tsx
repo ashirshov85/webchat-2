@@ -328,6 +328,35 @@ const MODAL_TITLES: Record<ModalFormId, string> = {
 }
 
 /**
+ * Заголовок оболочки (T034): ожидающее подтверждение несёт свой
+ * заголовок, иначе — заголовок открытой формы; пустая оболочка — ''.
+ */
+function shellTitleOf(confirmation: ConfirmUi | null, formId: ModalFormId | null): string {
+  if (confirmation !== null) {
+    return confirmation.title
+  }
+  return formId !== null ? MODAL_TITLES[formId] : ''
+}
+
+/**
+ * The pending confirmation's copy (T054): null — nothing pending or
+ * the window kind carries no such entry; direct entries take the peer
+ * username, group ones the chat title.
+ */
+function confirmationOf(action: PendingAction | null, chat: ActiveChat | null): ConfirmUi | null {
+  if (action === null || chat === null) {
+    return null
+  }
+  if (DIRECT_PENDING_ACTIONS.has(action) && chat.kind === 'direct') {
+    return confirmUiOf(action, chat.peer.username)
+  }
+  if (GROUP_PENDING_ACTIONS.has(action) && chat.kind === 'group') {
+    return confirmUiOf(action, chat.title)
+  }
+  return null
+}
+
+/**
  * The header props of the open window (T029 → 008 T021/T043/T054): the
  * page resolves the server-owned chat data into the ChatHeader variant —
  * the GROUP window the №28 title/roster/role (or the №12/№27 basis),
@@ -1160,26 +1189,14 @@ function MessengerMachine() {
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
   const dialogOpen = activeChat !== null
-  const confirmation =
-    pendingAction !== null && activeChat !== null
-      ? DIRECT_PENDING_ACTIONS.has(pendingAction) && activeChat.kind === 'direct'
-        ? confirmUiOf(pendingAction, activeChat.peer.username)
-        : GROUP_PENDING_ACTIONS.has(pendingAction) && activeChat.kind === 'group'
-          ? confirmUiOf(pendingAction, activeChat.title)
-          : null
-      : null
+  const confirmation = confirmationOf(pendingAction, activeChat)
   /**
    * The shell formId (T034): a pending header confirmation rides
    * 'confirm' — an open(X) → open(confirm) switch inside the SAME
    * shell, never a second backdrop (data-model 3.3).
    */
   const shellFormId: ModalFormId | null = pendingAction !== null ? 'confirm' : modalForm
-  let shellTitle = ''
-  if (confirmation !== null) {
-    shellTitle = confirmation.title
-  } else if (shellFormId !== null) {
-    shellTitle = MODAL_TITLES[shellFormId]
-  }
+  const shellTitle = shellTitleOf(confirmation, shellFormId)
 
   return (
     <>

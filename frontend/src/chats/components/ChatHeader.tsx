@@ -245,6 +245,23 @@ function MembersTip({ meUsername, myRole, members, tipRef }: MembersTipProps) {
   )
 }
 
+/**
+ * The gear menu data of the header chat (T054): direct — the №20
+ * membership of the peer + the block mark; group — the resolved role
+ * (live №28, else the №12/№13/№27 basis); null — no basis yet, no
+ * gear in the header.
+ */
+function gearChatOf(chat: ChatHeaderChat): GearMenuChat | null {
+  if (chat.kind !== 'group') {
+    return {
+      kind: 'direct',
+      peerInContacts: chat.peerInContacts,
+      blockedByMe: chat.blockedByMe,
+    }
+  }
+  return chat.myRole !== null ? { kind: 'group', myRole: chat.myRole } : null
+}
+
 export function ChatHeader({
   chat,
   onAddContact,
@@ -256,19 +273,7 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const isGroup = chat.kind === 'group'
   const name = isGroup ? chat.title : chat.username
-
-  // The gear menu data (T054): direct — the №20 membership of the peer
-  // + the block mark; group — the resolved role (live №28, else the
-  // №12/№13/№27 basis); null — no basis yet, no gear in the header.
-  const gearChat: GearMenuChat | null = isGroup
-    ? chat.myRole !== null
-      ? { kind: 'group', myRole: chat.myRole }
-      : null
-    : {
-        kind: 'direct',
-        peerInContacts: chat.peerInContacts,
-        blockedByMe: chat.blockedByMe,
-      }
+  const gearChat = gearChatOf(chat)
 
   // The 007 surface of the open 1:1 dialog (T040): the status comes
   // ONLY from the presenceStore — a group header registers nothing.
