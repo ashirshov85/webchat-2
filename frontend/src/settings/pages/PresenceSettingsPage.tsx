@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { problemMessage } from '../../auth/problem'
 import { fetchPresenceSettings, updatePresenceSettings } from '../../presence/presenceApi'
+import '../../chats/components/profile-modal.css'
+import './settings.css'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -11,6 +13,12 @@ type LoadState = 'loading' | 'ready' | 'error'
  * value, PUT flips it. While incognito the user appears offline to
  * everyone (indistinguishable from a real offline, FR-007) and still
  * sees everyone else's statuses.
+ *
+ * T058 (FR-031): restyled into the «Aethergram» design system — the page
+ * is a .panel of the machine (settings.css); the toggle reuses the very
+ * .tgl-row/.tgl-txt classes of ProfileModal (chats/components/
+ * profile-modal.css) so the №38 control looks identical to «Мой профиль»
+ * (FR-034). Routes, semantics and texts are unchanged.
  */
 export function PresenceSettingsPage() {
   const [loadState, setLoadState] = useState<LoadState>('loading')
@@ -52,30 +60,38 @@ export function PresenceSettingsPage() {
   }
 
   return (
-    <section>
-      <h2>Presence visibility</h2>
-      {loadState === 'loading' && <output>Loading your presence settings…</output>}
+    <section className="panel settings-page">
+      <h2 className="settings-title">Presence visibility</h2>
+      {loadState === 'loading' && (
+        <output className="settings-status">Loading your presence settings…</output>
+      )}
       {loadState === 'error' && (
-        <p role="alert">Could not load your presence settings. Please refresh the page.</p>
+        <p className="settings-error" role="alert">
+          Could not load your presence settings. Please refresh the page.
+        </p>
       )}
       {loadState === 'ready' && (
-        <section aria-label="Incognito mode">
-          <h3>Incognito mode</h3>
-          <p>
+        <section aria-label="Incognito mode" className="settings-block">
+          <h3 className="settings-subtitle">Incognito mode</h3>
+          <p className="settings-note">
             While incognito you appear offline to everyone — indistinguishable from being really
             offline — and you keep seeing everyone else&apos;s statuses. The mode applies to your
             whole account, not a single device, and stays after you sign in again.
           </p>
-          <label>
+          <label className="tgl-row">
             <input
               type="checkbox"
               checked={incognito}
               disabled={saving}
               onChange={(event) => void toggle(event.target.checked)}
-            />{' '}
-            Incognito mode
+            />
+            <span className="tgl-txt">Incognito mode</span>
           </label>
-          {saveError !== null && <p role="alert">{saveError}</p>}
+          {saveError !== null && (
+            <p className="settings-error" role="alert">
+              {saveError}
+            </p>
+          )}
         </section>
       )}
     </section>
