@@ -4,6 +4,18 @@ import type { Message } from '../../../api/chats'
 import type { OutboxRecord } from '../../outbox'
 import { MessageList } from '../MessageList'
 
+/**
+ * Outbox states on the reskinned feed (feature 008, US4, T048;
+ * FR-030/FR-034): the 005 behavioral expectations — the SC-002 status
+ * texts «отправляется»/«не отправлено (переполнение очереди)», the
+ * «Повторить»/«Удалить» actions addressed by the SAME clientMessageId,
+ * the server-copy convergence — run unchanged; the adaptation pins
+ * them onto the PROTOTYPE markup (research §C): every local row rides
+ * `.msg.me` + `.bubble` (`.b-text` body, `.b-time` footer hosting the
+ * status and the actions), so the T050 design-system pass restyles
+ * the states without ever leaving the bubble surface.
+ */
+
 const ME = '11111111-1111-1111-1111-111111111111'
 const PEER = '22222222-2222-2222-2222-222222222222'
 const CHAT = 'chat-1'
@@ -58,6 +70,14 @@ describe('MessageList outbox rendering', () => {
 
     expect(renderedTexts(container)).toEqual(['Раз', 'Летит'])
     expect(container.querySelectorAll('.message.outgoing')).toHaveLength(1)
+    // T048: the optimistic row rides the prototype bubble markup — the
+    // status lives in the `.b-time` footer of its own bubble, and a
+    // local row never carries a delivery tick (FR-030 surface for T050).
+    const sendingRow = container.querySelector('.message.outgoing') as HTMLElement
+    expect(sendingRow).toHaveClass('msg', 'me')
+    expect(sendingRow.querySelector('.bubble .b-text')?.textContent).toBe('Летит')
+    expect(sendingRow.querySelector('.b-time .message-status')?.textContent).toBe('отправляется')
+    expect(sendingRow.querySelector('.tick')).toBeNull()
     expect(screen.getByText('отправляется')).toBeVisible()
     expect(screen.queryByText(/не отправлено/)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull()
@@ -75,6 +95,17 @@ describe('MessageList outbox rendering', () => {
     expect(screen.getByRole('button', { name: 'Повторить' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Удалить' })).toBeVisible()
     expect(container.querySelectorAll('.message.outgoing')).toHaveLength(1)
+    // T048: the failure state stays ON the bubble — the reason and the
+    // manual actions sit in its `.b-time` footer with their 005 hook
+    // classes intact (the design-system surface T050 must keep).
+    const failedRow = container.querySelector('.message.outgoing') as HTMLElement
+    expect(failedRow).toHaveClass('msg', 'me')
+    expect(failedRow.querySelector('.bubble .b-text')?.textContent).toBe('Не ушло')
+    expect(failedRow.querySelector('.b-time .message-status-failed')?.textContent).toBe(
+      'не отправлено',
+    )
+    expect(failedRow.querySelector('.b-time .message-retry')).toBeInstanceOf(HTMLButtonElement)
+    expect(failedRow.querySelector('.b-time .message-remove')).toBeInstanceOf(HTMLButtonElement)
   })
 })
 
@@ -130,6 +161,8 @@ describe('MessageList failed-message actions', () => {
     )
 
     expect(container.querySelectorAll('.message')).toHaveLength(2)
+    // Both failures render as prototype bubbles of their own (T048).
+    expect(container.querySelectorAll('.msg.me .bubble')).toHaveLength(2)
 
     const retryButtons = screen.getAllByRole('button', { name: 'Повторить' })
     const deleteButtons = screen.getAllByRole('button', { name: 'Удалить' })
@@ -157,7 +190,9 @@ describe('MessageList outbox convergence', () => {
     )
 
     expect(container.querySelectorAll('.message')).toHaveLength(1)
-    expect(screen.getByText('доставлено ✓')).toBeVisible()
+    // The confirmed copy carries the ✓ tick stamp — «Доставлено» rides
+    // its title (US1 T023, SC-002).
+    expect(container.querySelector('.tick.dlv')).toHaveAttribute('title', 'Доставлено')
     expect(screen.queryByText(/не отправлено/)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Повторить' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Удалить' })).toBeNull()
@@ -174,6 +209,7 @@ describe('MessageList outbox convergence', () => {
 
     const incoming = screen.getByText('Ответ').closest('li')
     expect(incoming?.querySelector('.message-status')).toBeNull()
+    expect(incoming?.querySelector('.tick')).toBeNull()
     expect(incoming?.querySelectorAll('button')).toHaveLength(0)
   })
 })

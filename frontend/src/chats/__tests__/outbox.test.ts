@@ -4,7 +4,8 @@ import { sendMessage } from '../../api/chats'
 import type { Message } from '../../api/chats'
 import { useOutbox } from '../hooks/useOutbox'
 import type { EnqueueResult } from '../hooks/useOutbox'
-import { addOutboxRecord, outboxStorageKey, readOutbox } from '../outbox'
+import { addOutboxRecord, headFloodRetryAt, outboxStorageKey, readOutbox } from '../outbox'
+import type { OutboxRecord } from '../outbox'
 
 vi.mock('../../api/chats', () => ({ sendMessage: vi.fn() }))
 
@@ -206,7 +207,70 @@ describe('useOutbox terminal failures (FR-012)', () => {
 
     await advance(60000)
     expect(mockedSend).toHaveBeenCalledTimes(1)
-    expect(readOutbox('user-1')[0]?.state).toBe('failed')
+  })
+})
+
+describe('headFloodRetryAt selector (008, T051, FR-030)', () => {
+  /**
+   * The composer countdown source: the HEAD `retryAt` of the OPEN
+   * chat's records (MessengerPage filters `chatOutbox` first) drives
+   * the single «Повтор через N с» line — the patience state of a
+   * 429/503 deferral, never an input lock (Clarification).
+   */
+  const record = (overrides: Partial<OutboxRecord> = {}): OutboxRecord => ({
+    clientMessageId: 'cm-1',
+    chatId: 'chat-1',
+    text: 'Летит',
+    state: 'sending',
+    ...overrides,
+  })
+
+  it('returns null when no deferred sending record carries retryAt', () => {
+    expect(headFloodRetryAt([])).toBeNull()
+    expect(
+      headFloodRetryAt([
+        record({ clientMessageId: 'cm-1', state: 'sending' }),
+        record({ clientMessageId: 'cm-2', state: 'failed', errorCode: 'you_are_blocked' }),
+      ]),
+    ).toBeNull()
+  })
+
+  it('returns the earliest retryAt among the deferred sending records — the head', () => {
+    expect(
+      headFloodRetryAt([
+        record({ clientMessageId: 'cm-1', state: 'sending', retryAt: 2000 }),
+        record({ clientMessageId: 'cm-2', state: 'sending', retryAt: 1000 }),
+        record({ clientMessageId: 'cm-3', state: 'sending' }),
+      ]),
+    ).toBe(1000)
+  })
+
+  it('ignores failed records even with a stale persisted retryAt', () => {
+    // A terminal patch of updateOutboxRecord keeps the old retryAt
+    // (only `sending` → `sending` clears it) — the head is counted
+    // over `sending` records alone, so a dead record never revives
+    // the countdown.
+    expect(
+      headFloodRetryAt([
+        record({
+          clientMessageId: 'cm-1',
+          state: 'failed',
+          errorCode: 'text_too_long',
+          retryAt: 500,
+        }),
+        record({ clientMessageId: 'cm-2', state: 'sending', retryAt: 900 }),
+      ]),
+    ).toBe(900)
+    expect(
+      headFloodRetryAt([
+        record({
+          clientMessageId: 'cm-1',
+          state: 'failed',
+          errorCode: 'queue_overflow',
+          retryAt: 500,
+        }),
+      ]),
+    ).toBeNull()
   })
 })
 

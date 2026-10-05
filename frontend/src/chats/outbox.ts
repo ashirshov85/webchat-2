@@ -124,6 +124,28 @@ export function readOutbox(userId: string): OutboxRecord[] {
   return parsed.filter(isOutboxRecord)
 }
 
+/**
+ * Head `retryAt` of the given records — the earliest deferral deadline
+ * of the still-`sending` ones (feature 008, T051, FR-030): the single
+ * source of the composer countdown line «Повтор через N с» of the open
+ * chat (the caller filters the records per chat first). `failed`
+ * records are ignored even when a stale `retryAt` survives in storage
+ * (a terminal patch does not clear it — see updateOutboxRecord): a
+ * dead record never revives the countdown. Returns null when nothing
+ * is deferred — no line.
+ */
+export function headFloodRetryAt(records: readonly OutboxRecord[]): number | null {
+  let head: number | null = null
+  for (const record of records) {
+    if (record.state === 'sending' && record.retryAt !== undefined) {
+      if (head === null || record.retryAt < head) {
+        head = record.retryAt
+      }
+    }
+  }
+  return head
+}
+
 function writeOutbox(userId: string, records: OutboxRecord[]): void {
   try {
     window.localStorage.setItem(outboxStorageKey(userId), JSON.stringify(records))

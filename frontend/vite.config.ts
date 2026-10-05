@@ -16,5 +16,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
+    // Unit/component suites live under src/**; tests/visual/** is the
+    // Playwright domain (package script test:visual, own playwright.config)
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
 })

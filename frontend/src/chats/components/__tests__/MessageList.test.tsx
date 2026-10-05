@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
 import type { ChatView, Message, MessagePage } from '../../../api/chats'
+import { formatDate, formatTime } from '../../../ui/time'
 import { useChatMessages } from '../../hooks/useChatMessages'
 import type { SyncPageUpdate } from '../../hooks/useChatMessages'
 import { MessageList } from '../MessageList'
@@ -42,11 +43,22 @@ function renderedTexts(container: HTMLElement): string[] {
   )
 }
 
-/** Per-message status mark (US4): `null` — no mark (incoming messages). */
+/**
+ * Per-message delivery mark (feature 008, US1, T022/T023): a
+ * server-confirmed outgoing message carries the engraved ✓/✓✓ tick
+ * stamp — its SC-002 text rides the prototype `title`
+ * («Доставлено»/«Прочитано», design-tokens §6); local outbox entries
+ * keep the 005 text statuses inside `.message-status`; incoming
+ * messages carry no mark at all (`null`).
+ */
 function statusTexts(container: HTMLElement): Array<string | null> {
-  return Array.from(container.querySelectorAll('.message')).map(
-    (item) => item.querySelector('.message-status')?.textContent ?? null,
-  )
+  return Array.from(container.querySelectorAll('.message')).map((item) => {
+    const tick = item.querySelector('.tick')
+    if (tick !== null) {
+      return tick.getAttribute('title')
+    }
+    return item.querySelector('.message-status')?.textContent ?? null
+  })
 }
 
 function chatView(overrides: Partial<ChatView> = {}): ChatView {
@@ -155,7 +167,16 @@ describe('MessageList delivery statuses', () => {
     )
 
     expect(screen.getByText('Привет')).toBeVisible()
-    expect(screen.getByText('доставлено ✓')).toBeVisible()
+    // T022/T023: the ✓ stamp is the engraved tick — «Доставлено» rides
+    // its title (SC-002), `.dlv` is the single-check variant.
+    const tick = container.querySelector('.tick') as HTMLElement
+    expect(tick).toHaveClass('dlv')
+    expect(tick).toHaveAttribute('title', 'Доставлено')
+    expect(container.querySelector('.tick.read')).toBeNull()
+    // The row carries the prototype bubble hooks alongside the preserved
+    // 004 test hooks (research §C, FR-034).
+    expect(container.querySelector('.message.outgoing')).toHaveClass('msg', 'me')
+    expect(container.querySelector('.msg.me .bubble .b-text')?.textContent).toBe('Привет')
     expect(container.querySelectorAll('.message.outgoing')).toHaveLength(1)
   })
 
@@ -167,7 +188,10 @@ describe('MessageList delivery statuses', () => {
     expect(screen.getByText('Ответ')).toBeVisible()
     expect(screen.queryByText(/доставлено/)).toBeNull()
     expect(screen.queryByText(/отправляется/)).toBeNull()
+    expect(container.querySelector('.tick')).toBeNull()
     expect(container.querySelector('.message-status')).toBeNull()
+    expect(container.querySelector('.message.incoming')).toHaveClass('msg', 'them')
+    expect(container.querySelector('.msg.them .bubble .b-text')?.textContent).toBe('Ответ')
     expect(container.querySelectorAll('.message.incoming')).toHaveLength(1)
   })
 
@@ -199,7 +223,7 @@ describe('MessageList idempotent render', () => {
 
     expect(container.querySelectorAll('.message')).toHaveLength(1)
     expect(screen.getByText('Подтверждено')).toBeVisible()
-    expect(screen.getByText('доставлено ✓')).toBeVisible()
+    expect(container.querySelector('.tick.dlv')).toHaveAttribute('title', 'Доставлено')
     expect(screen.queryByText('отправляется')).toBeNull()
   })
 
@@ -242,8 +266,9 @@ describe('MessageList read status by watermark (US4, T045)', () => {
     )
 
     // The boundary is inclusive: seq ≤ peerReadUpToSeq counts as read.
-    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓', 'доставлено ✓'])
-    expect(container.querySelectorAll('.message-status-read')).toHaveLength(1)
+    expect(statusTexts(container)).toEqual([null, 'Прочитано', 'Доставлено'])
+    expect(container.querySelectorAll('.tick.read')).toHaveLength(1)
+    expect(container.querySelectorAll('.tick.dlv')).toHaveLength(1)
   })
 
   it('renders everything as delivered when no watermark is given (default 0)', () => {
@@ -254,7 +279,7 @@ describe('MessageList read status by watermark (US4, T045)', () => {
       />,
     )
 
-    expect(statusTexts(container)).toEqual(['доставлено ✓', 'доставлено ✓'])
+    expect(statusTexts(container)).toEqual(['Доставлено', 'Доставлено'])
   })
 
   it('flips ✓ to ✓✓ when the watermark advances and covers more outgoing messages', () => {
@@ -262,11 +287,11 @@ describe('MessageList read status by watermark (US4, T045)', () => {
     const { container, rerender } = render(
       <MessageList messages={messages} currentUserId={ME} peerReadUpToSeq={2} />,
     )
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'доставлено ✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Доставлено'])
 
     rerender(<MessageList messages={messages} currentUserId={ME} peerReadUpToSeq={3} />)
 
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
   })
 })
 
@@ -280,13 +305,13 @@ describe('MessageList read status via chat.read (US4, T045)', () => {
     const { container } = render(<DialogWindow chatId="chat-1" currentUserId={ME} />)
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual([null, 'доставлено ✓'])
+      expect(statusTexts(container)).toEqual([null, 'Доставлено'])
     })
 
     emitChatRead(stream, 'chat-1', 2)
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓'])
+      expect(statusTexts(container)).toEqual([null, 'Прочитано'])
     })
   })
 
@@ -300,12 +325,12 @@ describe('MessageList read status via chat.read (US4, T045)', () => {
     const { container } = render(<DialogWindow chatId="chat-1" currentUserId={ME} />)
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+      expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
     })
 
     emitChatRead(stream, 'chat-1', 2)
 
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
   })
 
   it('ignores chat.read frames of other chats', async () => {
@@ -315,12 +340,12 @@ describe('MessageList read status via chat.read (US4, T045)', () => {
     const { container } = render(<DialogWindow chatId="chat-1" currentUserId={ME} />)
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['доставлено ✓'])
+      expect(statusTexts(container)).toEqual(['Доставлено'])
     })
 
     emitChatRead(stream, 'chat-2', 2)
 
-    expect(statusTexts(container)).toEqual(['доставлено ✓'])
+    expect(statusTexts(container)).toEqual(['Доставлено'])
   })
 })
 
@@ -370,7 +395,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
     )
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual([null, 'доставлено ✓', 'доставлено ✓'])
+      expect(statusTexts(container)).toEqual([null, 'Доставлено', 'Доставлено'])
     })
 
     // The peer read up to seq 2 while the user was offline; the §3.1
@@ -384,7 +409,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
       />,
     )
 
-    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓', 'доставлено ✓'])
+    expect(statusTexts(container)).toEqual([null, 'Прочитано', 'Доставлено'])
   })
 
   it('applies each status event once: a repeated identical delta keeps the statuses stable (quickstart §3.2)', async () => {
@@ -397,7 +422,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
     )
 
     await waitFor(() => {
-      expect(statusTexts(container)).toEqual(['доставлено ✓', 'доставлено ✓'])
+      expect(statusTexts(container)).toEqual(['Доставлено', 'Доставлено'])
     })
 
     rerender(
@@ -407,7 +432,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
         update={{ chatId: 'chat-1', messages: [], peerReadUpToSeq: 3 }}
       />,
     )
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
 
     // A repeated №26 with the same cursors redelivers the same
     // watermark — every message renders once, no doubled statuses.
@@ -420,7 +445,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
     )
 
     expect(container.querySelectorAll('.message')).toHaveLength(2)
-    expect(statusTexts(container)).toEqual(['прочитано ✓✓', 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual(['Прочитано', 'Прочитано'])
   })
 
   it('renders own delta messages that were read while offline straight as ✓✓ (FR-003 status catch-up)', async () => {
@@ -450,7 +475,7 @@ describe('MessageList read status via sync deltas (feature 005, T036, US3-8)', (
     )
 
     expect(renderedTexts(container)).toEqual(['text-in-1', 'text-out-1'])
-    expect(statusTexts(container)).toEqual([null, 'прочитано ✓✓'])
+    expect(statusTexts(container)).toEqual([null, 'Прочитано'])
   })
 })
 
@@ -489,5 +514,217 @@ describe('read receipt throttle (US4, T044: ≤1 POST /read per 500 ms)', () => 
     expect(mockedMarkChatRead).toHaveBeenLastCalledWith('chat-1', 30)
     // The intermediate watermark 20 never hits the wire on its own.
     expect(mockedMarkChatRead.mock.calls.map((call) => call[1])).toEqual([10, 30])
+  })
+})
+
+describe('MessageList ЧЧ:ММ footers and date dividers (FR-019, T026 baseline parity)', () => {
+  // T026: the T016(а) feed baselines carry the prototype's `.b-time`
+  // («18:41» before the outgoing tick) and the `.date-divider` between
+  // calendar days — SC-001 at the US1 checkpoint needs both rendered,
+  // so the feed-scoped half of T044 rides with this task (its full
+  // watermark/UX polish stays US3).
+
+  /** Local-day instants — robust under any runner timezone. */
+  function localIso(year: number, month: number, day: number, hh: number, mm: number): string {
+    return new Date(year, month - 1, day, hh, mm).toISOString()
+  }
+
+  it('renders the ЧЧ:ММ of every bubble: bare time on incoming, time before the tick on outgoing', () => {
+    const incomingAt = localIso(2026, 9, 20, 18, 41)
+    const outgoingAt = localIso(2026, 9, 20, 18, 43)
+    const { container } = render(
+      <MessageList
+        messages={[
+          message({ id: 'in-1', senderId: PEER, text: 'Вопрос', seq: 1, createdAt: incomingAt }),
+          message({ id: 'out-1', senderId: ME, text: 'Ответ', seq: 2, createdAt: outgoingAt }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+
+    const footers = Array.from(container.querySelectorAll('.message .b-time'))
+    expect(footers).toHaveLength(2)
+    expect(footers[0]?.textContent).toBe(formatTime(incomingAt))
+    expect(footers[0]?.querySelector('.tick')).toBeNull()
+    expect(footers[1]?.textContent).toContain(formatTime(outgoingAt))
+    expect(footers[1]?.querySelector('.tick.dlv')).not.toBeNull()
+  })
+
+  it('puts exactly one divider per calendar-day run and labels it with the long date', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          message({ id: 'a', seq: 1, createdAt: localIso(2026, 9, 19, 10, 0) }),
+          message({ id: 'b', seq: 2, createdAt: localIso(2026, 9, 19, 11, 30) }),
+          message({ id: 'c', seq: 3, createdAt: localIso(2026, 9, 20, 9, 0) }),
+          message({ id: 'd', seq: 4, createdAt: localIso(2026, 9, 20, 9, 5) }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+
+    const dividers = Array.from(container.querySelectorAll('.date-divider'))
+    expect(dividers.map((divider) => divider.textContent)).toEqual([
+      formatDate(localIso(2026, 9, 19, 10, 0)),
+      formatDate(localIso(2026, 9, 20, 9, 0)),
+    ])
+    // The divider sits between the day runs, not inside them.
+    expect(container.querySelectorAll('.message')).toHaveLength(4)
+  })
+
+  it('starts a new divider at midnight (23:59 → 00:01)', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          message({ id: 'late', seq: 1, createdAt: localIso(2026, 9, 19, 23, 59) }),
+          message({ id: 'early', seq: 2, createdAt: localIso(2026, 9, 20, 0, 1) }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+
+    expect(container.querySelectorAll('.date-divider')).toHaveLength(2)
+  })
+
+  it('keeps a single divider at a same-day pagination junction', () => {
+    // The hook merges an older same-day page above the loaded window —
+    // the merged list must not grow a second divider of that day.
+    const { container } = render(
+      <MessageList
+        messages={[
+          message({ id: 'old-1', seq: 1, createdAt: localIso(2026, 9, 19, 9, 0) }),
+          message({ id: 'old-2', seq: 2, createdAt: localIso(2026, 9, 19, 9, 2) }),
+          message({ id: 'new-1', seq: 3, createdAt: localIso(2026, 9, 19, 10, 0) }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+
+    expect(container.querySelectorAll('.date-divider')).toHaveLength(1)
+  })
+
+  it('hides the top divider while older history may exist above the rendered window', () => {
+    const sameList = [
+      message({ id: 'a', seq: 1, createdAt: localIso(2026, 9, 19, 10, 0) }),
+      message({ id: 'b', seq: 2, createdAt: localIso(2026, 9, 20, 11, 0) }),
+    ]
+
+    const partial = render(<MessageList messages={sameList} currentUserId={ME} hasOlder />)
+    // The oldest rendered row may not be the start of its day — the
+    // divider appears only once the history is known complete.
+    expect(partial.container.querySelectorAll('.date-divider')).toHaveLength(1)
+    expect(partial.container.querySelector('.date-divider')?.textContent).toBe(
+      formatDate(localIso(2026, 9, 20, 11, 0)),
+    )
+
+    cleanup()
+    const complete = render(<MessageList messages={sameList} currentUserId={ME} hasOlder={false} />)
+    expect(complete.container.querySelectorAll('.date-divider')).toHaveLength(2)
+  })
+})
+
+describe('MessageList date dividers at pagination junctions (US3-AS3, T041, data-model 1.3)', () => {
+  /**
+   * T041: the T026 block above fixed the baseline-parity RENDER of the
+   * `.date-divider`; this block pins the remaining data-model 1.3 rules
+   * of the US3 acceptance — the junction between two PAGES is decided
+   * by comparing the adjacent messages across it (the last row of the
+   * prepended page vs the first message of the previously loaded
+   * window): a day change inserts EXACTLY ONE divider there (never one
+   * per page), a same-day prepend inserts none, and an empty feed
+   * carries no dividers at all.
+   */
+
+  /** Local-day instants — robust under any runner timezone. */
+  function localIso(year: number, month: number, day: number, hh: number, mm: number): string {
+    return new Date(year, month - 1, day, hh, mm).toISOString()
+  }
+
+  function dividerLabels(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll('.date-divider')).map(
+      (divider) => divider.textContent ?? '',
+    )
+  }
+
+  /** Ordered feed sketch — pins the divider to the junction position. */
+  function rowSketch(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll('.message-list > li')).map((row) =>
+      row.classList.contains('date-divider') ? 'divider' : 'message',
+    )
+  }
+
+  it('inserts exactly one divider at a cross-day junction, labeled by the newer page first message', () => {
+    // The hook's `loadOlder` prepends the older page above the loaded
+    // window and re-renders — exactly the MessengerPage wiring.
+    const olderPage = [
+      message({ id: 'a', seq: 1, createdAt: localIso(2026, 9, 19, 10, 0) }),
+      message({ id: 'b', seq: 2, createdAt: localIso(2026, 9, 19, 10, 30) }),
+    ]
+    const loadedWindow = [
+      message({ id: 'c', seq: 3, createdAt: localIso(2026, 9, 20, 9, 0) }),
+      message({ id: 'd', seq: 4, createdAt: localIso(2026, 9, 20, 9, 5) }),
+    ]
+    const props = (messages: readonly Message[], hasOlder: boolean) => (
+      <MessageList messages={messages} currentUserId={ME} hasOlder={hasOlder} />
+    )
+
+    // Latest page on screen, older history may exist — no dividers yet.
+    const { container, rerender } = render(props(loadedWindow, true))
+    expect(dividerLabels(container)).toEqual([])
+
+    // The older page of 19 September lands above: the junction carries
+    // EXACTLY ONE divider, labeled with the day of the first message of
+    // the newer page (the data-model 1.3 comparison target) — a naive
+    // per-page divider would render it twice.
+    rerender(props([...olderPage, ...loadedWindow], true))
+    expect(dividerLabels(container)).toEqual([formatDate(localIso(2026, 9, 20, 9, 0))])
+    expect(rowSketch(container)).toEqual(['message', 'message', 'divider', 'message', 'message'])
+
+    // The boundary answer exhausts the history: the prepended day gains
+    // its own top divider — the junction one stays single.
+    rerender(props([...olderPage, ...loadedWindow], false))
+    expect(dividerLabels(container)).toEqual([
+      formatDate(localIso(2026, 9, 19, 10, 0)),
+      formatDate(localIso(2026, 9, 20, 9, 0)),
+    ])
+  })
+
+  it('grows no divider when the prepended page is the same day', () => {
+    const props = (messages: readonly Message[], hasOlder: boolean) => (
+      <MessageList messages={messages} currentUserId={ME} hasOlder={hasOlder} />
+    )
+    const loadedWindow = [message({ id: 'new-1', seq: 3, createdAt: localIso(2026, 9, 19, 10, 0) })]
+    const olderPage = [
+      message({ id: 'old-1', seq: 1, createdAt: localIso(2026, 9, 19, 9, 0) }),
+      message({ id: 'old-2', seq: 2, createdAt: localIso(2026, 9, 19, 9, 2) }),
+    ]
+
+    const { container, rerender } = render(props(loadedWindow, true))
+    rerender(props([...olderPage, ...loadedWindow], true))
+    // The junction sits inside one calendar day — the run never grows
+    // a divider at the page boundary itself.
+    expect(dividerLabels(container)).toEqual([])
+
+    rerender(props([...olderPage, ...loadedWindow], false))
+    expect(dividerLabels(container)).toEqual([formatDate(localIso(2026, 9, 19, 9, 0))])
+  })
+
+  it('renders no dividers on an empty feed, with or without local optimistic rows', () => {
+    const empty = render(<MessageList messages={[]} currentUserId={ME} />)
+    expect(empty.container.querySelector('.message-list')).toBeNull()
+    expect(empty.container.querySelector('.date-divider')).toBeNull()
+    cleanup()
+
+    // Optimistic entries carry no server timestamp — a fresh chat's
+    // local rows never sprout a divider (data-model 1.3: пустая лента).
+    const localOnly = render(
+      <MessageList
+        messages={[]}
+        currentUserId={ME}
+        pending={[{ clientMessageId: 'cm-1', text: 'Первое сообщение' }]}
+      />,
+    )
+    expect(localOnly.container.querySelectorAll('.message')).toHaveLength(1)
+    expect(localOnly.container.querySelector('.date-divider')).toBeNull()
   })
 })

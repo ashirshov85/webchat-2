@@ -1,0 +1,245 @@
+/* Заголовок окна чата (feature 008, US1 T021 → US3 T043; FR-016/017):
+   дословная проекция блока .chat-head прототипа
+   specs/008-chat-window-styling/design/chats.html (§7 «ЧАТ»); при
+   расхождениях побеждает прототип (FR-001). Константы — theme/tokens.css
+   (FR-002); каркас .chat/.panel — chats/pages/messenger.css (T018).
+   Подключается компонентом chats/components/ChatHeader.tsx.
+
+   Аватар — 46px заголовка с инициалами 13px (design-tokens §4, проекция
+   .head-av .avatar прототипа); строка статуса .status-row: direct —
+    лампа .lamp (+ .off только для настоящего offline из store 007) и
+    подпись .status-txt «В сети»/«офлайн»/«неизвестно» (US3/T043),
+    group — «N участников», чей hover/focus открывает подсказку состава
+    .members-tip (портал в body, стили ниже). Правая кнопка — одна:
+    «шестерёнка» ChatGearMenu (US4/T054), словарь .ch-btn прототипа.
+
+   Селекторы скоупятся под .chat-head: глобальные element-стили index.css
+   (auth-наследие: синие кнопки, отступ h2) не должны просвечивать сквозь
+   машину (перекрытие по каждому свойству, как в chat-list-panel.css). */
+
+.chat-head {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 2px solid rgba(138, 106, 44, 0.55);
+  background: linear-gradient(#1d1812, #14110c);
+}
+
+/* ============ АВАТАР ЗАГОЛОВКА (46px, инициалы 13px — §4/§7) ============ */
+
+.chat-head .head-av .avatar {
+  width: 46px;
+  height: 46px;
+}
+
+.chat-head .head-av .avatar .av-in {
+  font-size: 13px;
+}
+
+/* ============ ИМЯ И СТАТУС (.chat-title, дословно §7) ============ */
+
+.chat-head .chat-title {
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-head .chat-name {
+  margin: 0; /* h2 auth-наследия index.css */
+  font: 600 16px var(--font-heading);
+  color: var(--cream-bright);
+  letter-spacing: 0.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-head .status-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  min-width: 0;
+}
+
+/* Лампа присутствия direct (US3, T043; прототип §7 .lamp): online —
+   зелёная со свечением и мерцанием flick 4s (keyframes — ui/avatar.css,
+   reduced-motion глушит глобально), offline — тусклая .off; нейтральной
+   лампе (.unknown нет — семантика 007) класс .off ЗАПРЕЩЁН. */
+.chat-head .lamp {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: #9dbb7d;
+  box-shadow:
+    0 0 6px rgba(157, 187, 125, 0.9),
+    0 0 12px rgba(157, 187, 125, 0.5);
+  animation: flick 4s infinite;
+}
+
+.chat-head .lamp.off {
+  background: #b6a26a;
+  box-shadow: 0 0 5px rgba(182, 162, 106, 0.5);
+}
+
+.chat-head .status-txt {
+  font: italic 12px var(--font-body);
+  color: var(--muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Строка статуса группы — якорь подсказки состава (US3, T043;
+   FR-017): пока №28 жив — нативная <button> (фокус видим, FR-035;
+   сброс UA-стилей кнопки — проекция .status-row прототипа дословно),
+   без ростера строка не интерактивна (div). */
+.chat-head button.status-row {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.chat-head .status-row.tip-source {
+  cursor: default;
+}
+
+.chat-head .status-row.tip-source:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Метка блокирующего (FR-020): err-цвет и курсив тела прототипа. */
+.chat-head .chat-item-blocked {
+  flex: none;
+  font: italic 11px var(--font-body);
+  color: var(--err);
+}
+
+/* ============ ПРАВЫЕ КНОПКИ (.ch-btns §7; «шестерёнка» T054) ============ */
+
+.chat-head .ch-btns {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+/* Дословно .ch-btn прототипа §7 (34px, латунная рамка, золотой штрих):
+   единственная кнопка заголовка — «шестерёнка» #btnGear. Глобальные
+   button-стили index.css (auth-наследие: синий фон/паддинги/
+   align-self) перекрыты по каждому свойству; hover держит свой фон —
+   иначе :hover:not(:disabled) зальёт акцентом (паттерн .menu-btn). */
+.chat-head .ch-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: 0.15s;
+  align-self: center;
+  padding: 0;
+  border: 1px solid var(--gold-dark);
+  color: var(--gold);
+  background: var(--input-bg);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+}
+
+.chat-head .ch-btn:hover {
+  border-color: var(--gold-light);
+  color: var(--gold-light);
+  background: rgba(40, 34, 26, 0.9);
+}
+
+.chat-head .ch-btn:active {
+  transform: translateY(1px);
+}
+
+.chat-head .ch-btn:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+/* Шестерёнка — габариты/штрих прототипа §7 (#btnGear svg) */
+.chat-head .ch-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+/* ============ ПОДСКАЗКА СОСТАВА ГРУППЫ (.members-tip §9, US3 T043) ============
+   Дословно из прототипа (showMembersTip + CSS #membersTip): портал в
+   body, fixed, z-56 (--z-members-tip из design-tokens §6), чистый
+   ховер — pointer-events: none. Позицию ставит компонент кламп-
+   формулами прототипа; аватары строк — 24px с инициалами 9px. */
+
+.members-tip {
+  position: fixed;
+  z-index: var(--z-members-tip);
+  display: none;
+  min-width: 220px;
+  max-width: 300px;
+  padding: 8px;
+  pointer-events: none;
+  border-radius: 10px;
+  border: 1px solid var(--gold-dark);
+  background: #191510;
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(201, 162, 74, 0.18);
+}
+
+.members-tip.show {
+  display: block;
+}
+
+.members-tip .mt-title {
+  font: 600 11px var(--font-heading);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--gold-light);
+  padding: 2px 6px 6px;
+}
+
+.members-tip .mt-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.members-tip .mt-row .avatar {
+  width: 24px;
+  height: 24px;
+}
+
+.members-tip .mt-row .avatar .av-in span {
+  font-size: 9px;
+}
+
+.members-tip .mt-row .mt-name {
+  font: 14px var(--font-body);
+  color: var(--cream);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.members-tip .mt-me {
+  margin-left: auto;
+  font: italic 11.5px var(--font-body);
+  color: var(--muted-2);
+  flex: none;
+}

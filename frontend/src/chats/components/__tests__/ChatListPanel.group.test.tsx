@@ -68,6 +68,9 @@ describe('ChatListPanel unified list (FR-014)', () => {
 
     const list = container.querySelector('.chat-list') as HTMLElement
     expect(list.querySelectorAll('.chat-item')).toHaveLength(2)
+    // T019 (research §C): the search field keeps the 004
+    // `chat-panel-search` hook inside the prototype search row.
+    expect(screen.getByRole('searchbox', { name: 'Поиск чатов' })).toHaveClass('chat-panel-search')
   })
 })
 

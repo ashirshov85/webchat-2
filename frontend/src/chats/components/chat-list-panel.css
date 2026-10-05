@@ -1,0 +1,299 @@
+/* Панель списка чатов (feature 008, US1, T019; FR-001): строка поиска и
+   «Чаты»-список — дословная проекция раздела «5. САЙДБАР» прототипа
+   specs/008-chat-window-styling/design/chats.html (#search/#chatList); при
+   расхождениях побеждает прототип. Константы — theme/tokens.css (FR-002),
+   каркас .sidebar/.panel — chats/pages/messenger.css (T018). Подключается
+   компонентом chats/components/ChatListPanel.tsx.
+
+   Табов «Чаты»/«Контакты» больше нет — US2/T029 снял их (FR-006,
+   research §D, ui-behavior §2): список рендерится сразу, контакты живут
+   в модали (T031). Строка поиска несёт прототипную структуру
+   .search-row > .search-wrap — MainMenuButton (T030) стоит слева от
+   поля. Строки списка (.contact, T020) — ниже: дословная проекция §5.
+
+   Все селекторы скоупятся под .chat-panel: общие element-стили index.css
+   (auth-наследие: синие кнопки, светлые поля) не должны просвечивать
+   сквозь машину (специфичность 0-2-0 против 0-0-1/0-2-1). */
+
+.chat-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============ СТРОКА ПОИСКА (прототип §5, дословно) ============ */
+
+.chat-panel .search-row {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  flex: none;
+  margin-top: 2px;
+  margin-bottom: 2px;
+}
+
+.chat-panel .search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Кнопка «три полоски» главного меню (US2/T030; FR-007, ui-behavior §2):
+   дословно .menu-btn прототипа §5 — 40px у ЛЕВОГО края строки поиска,
+   латунная рамка/золотые полоски; пункты — ContextMenu (ui/ContextMenu.tsx),
+   кнопка — только якорь. Глобальные button-стили index.css (auth-наследие:
+   синий фон/паддинги/align-self) перекрыты по каждому свойству, hover
+   повторно держит input-bg — иначе :hover:not(:disabled) зальёт акцентом. */
+.chat-panel .menu-btn {
+  flex: none;
+  width: 40px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  border-radius: var(--r-field);
+  transition: 0.15s;
+  align-self: stretch;
+  padding: 0;
+  border: 1px solid var(--gold-dark);
+  color: var(--gold);
+  background: var(--input-bg);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+}
+
+.chat-panel .menu-btn:hover {
+  border-color: var(--gold-light);
+  color: var(--gold-light);
+  background: var(--input-bg);
+}
+
+.chat-panel .menu-btn:active {
+  transform: translateY(1px);
+}
+
+.chat-panel .menu-btn:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+/* Три полоски — габариты/штрих прототипа §5 */
+.chat-panel .menu-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* Гравированная лупа */
+.chat-panel .search-wrap svg {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  stroke: var(--muted-3);
+  fill: none;
+  stroke-width: 2;
+}
+
+/* #search прототипа; класс `chat-panel-search` — хук тестов 004 (research §C,
+   FR-034), держится на поле и в прототипной раме. */
+.chat-panel .chat-panel-search {
+  width: 100%;
+  padding: 10px 12px 10px 34px;
+  border-radius: var(--r-field);
+  outline: none;
+  border: 1px solid var(--gold-dark);
+  background: var(--input-bg);
+  color: var(--cream-bright);
+  font: 14px var(--font-mono);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.chat-panel .chat-panel-search::placeholder {
+  color: var(--muted-3);
+}
+
+.chat-panel .chat-panel-search:focus-visible {
+  border-color: var(--gold-light);
+  box-shadow: 0 0 0 2px rgba(232, 200, 119, 0.25);
+  outline: none;
+}
+
+/* Нативный крестик type=search в эталоне отсутствует */
+.chat-panel .chat-panel-search::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+/* ============ СПИСОК (прототип §5: #chatList) ============ */
+
+.chat-panel .chat-list {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Дешёвая браузерная виртуализация offscreen-строк (research §G,
+   SC-011: 60 fps при 200+ чатах): невидимые строки не рендерятся;
+   contain-intrinsic-size держит скроллбар честным (58px строки + рамка),
+   auto-размер подхватывает реальный по мере прогрева. */
+.chat-panel .chat-list > li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 60px;
+}
+
+/* ============ СТРОКА СПИСКА (прототип §5: .contact; перестройка T020) ============ */
+
+/* Кнопка-строка целиком несёт прототипный .contact (research §C, FR-034):
+   каркас, hover и active-подсветка — дословно из §5. Глобальные
+   button-стили index.css (auth-наследие) перекрыты по каждому свойству
+   (фон/рамка/шрифт/цвет/выравнивание/ширина). Аватар (.avatar из
+   ui/avatar.css) — 40px списка (design-tokens §4). */
+.chat-panel .contact {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  align-self: stretch;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.chat-panel .contact:hover {
+  background: rgba(201, 162, 74, 0.07);
+  border-color: rgba(201, 162, 74, 0.3);
+}
+
+.chat-panel .contact.active {
+  background: rgba(201, 162, 74, 0.14);
+  border-color: rgba(201, 162, 74, 0.55);
+  box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.35);
+}
+
+.chat-panel .contact:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+/* .c-main/.c-top/.c-name/.c-time/.c-prev — дословно из §5 прототипа;
+   шрифтовые роли — токены (FR-002), усечение имён/превью — CSS-side
+   (полные тексты — в title-подсказках компонента, spec edge-case). */
+.chat-panel .c-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-panel .c-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.chat-panel .c-name {
+  font: 600 14px var(--font-heading);
+  color: var(--cream-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-panel .c-time {
+  font: 10.5px var(--font-heading);
+  color: var(--muted-3);
+  flex: none;
+}
+
+/* .c-prev прототипа — блочный div: своя строка превью держит нормаль
+   своего шрифта (12px → 15px); inline-span набрал бы унаследованный
+   line-height 24px тела index.css и раздул строку на 1px (FR-001). */
+.chat-panel .c-prev {
+  display: block;
+  font: italic 12px var(--font-body);
+  color: var(--muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+/* Пустое превью чуть тише обычного («Нет сообщений»). */
+.chat-panel .chat-item-preview-empty {
+  color: var(--muted-3);
+}
+
+/* Метка блокирующего (FR-020): в прототипе строки чатов пометки не
+   несут — Danger-цвет err и курсив тела прототипа, flex:none между
+   именем и временем. */
+.chat-panel .chat-item-blocked {
+  flex: none;
+  font: italic 11px var(--font-body);
+  color: var(--err);
+}
+
+/* Бейдж непрочитанных — дословно из §5 прототипа (тёмно-латунная
+   пластина, err-цифры Cormorant SC); «99+» — рендер компонента. */
+.chat-panel .c-badge {
+  flex: none;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(#7e3320, #4e1f12);
+  border: 1px solid rgba(255, 122, 102, 0.4);
+  color: var(--err);
+  font: 700 11px var(--font-heading);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+}
+
+/* ============ СОСТОЯНИЯ: ОШИБКА + ПОВТОР ============ */
+
+.chat-panel .chat-panel-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* Повтор — обычная машинная кнопка .m-btn прототипа (полная перекрыка
+   auth-наследия index.css: фон/цвет/шрифт/паддинги). */
+.chat-panel .chat-panel-retry {
+  align-self: flex-start;
+  padding: 9px 16px;
+  border-radius: var(--r-field);
+  cursor: pointer;
+  transition: 0.15s;
+  border: 1px solid var(--gold-dark);
+  color: var(--muted-2);
+  background: var(--input-bg);
+  font: 700 11px var(--font-heading);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.chat-panel .chat-panel-retry:hover {
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+}
+
+.chat-panel .chat-panel-retry:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}

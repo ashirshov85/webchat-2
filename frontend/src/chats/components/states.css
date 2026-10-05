@@ -1,0 +1,52 @@
+/* ЕДИНЫЙ СТИЛЬ СОСТОЯНИЙ СПИСКОВ И ОКНА (feature 008, US4, T059; FR-032):
+   пустые, загрузочные и ошибочные состояния машины оформлены одной
+   лексикой — курсив-подпись Old Standard TT 12.5px по центру на
+   приглушённом токене --muted-3. Нормативные якоря прототипа
+   specs/008-chat-window-styling/design/chats.html: .sr-hint (§5 —
+   пустой результат поиска сайдбара) и .pick-empty (пустые состояния
+   подборщиков модалей); при расхождениях побеждает прототип (FR-001).
+   Константы — theme/tokens.css (FR-002).
+
+   Семья состояний (аудит T059):
+   - пустые/загрузочные крупных поверхностей — .messenger-empty (здесь):
+     «Чат не выбран» и «Загрузка группы…» (MessengerPage), «Сообщений
+     пока нет» (MessageList), «Загрузка чатов…» / «Диалогов пока нет» /
+     «Ничего не найдено» (ChatListPanel — с паддингом подсказки
+     .sr-hint);
+   - пустые/загрузочные подборщиков модалей — .pick-empty
+     (contacts-modal.css, якорь прототипа): «Нет контактов», «Ничего не
+     найдено», «Нет участников», «Все контакты уже в чате», «Загрузка…»
+     (output);
+   - тихое пустое превью строки чата — .chat-item-preview-empty
+     (chat-list-panel.css, «Нет сообщений»);
+   - загрузка старых страниц ленты — .message-history
+     (message-list.css): лексика встроенных подписей ленты — курсив
+     12.5px на --muted дословно из .date-divider прототипа §7;
+   - ошибки загрузки — ErrorBanner (status-banners.css, danger-смывка
+     T052) с «Повторить» семейства .m-btn (chat-panel-retry — та же
+     лексика, скоуп сайдбара), инлайн-сбои форм — .modal-err
+     (contacts-modal.css).
+
+   До T059 .messenger-empty жил в chats/pages/messenger.css разросшимся
+   13px/--muted-2 — приведён к прототипной лексике подсказок и перенесён
+   к компонентам-рендерерам. Подключается компонентами, рисующими
+   .messenger-empty: ChatListPanel.tsx, MessageList.tsx,
+   pages/MessengerPage.tsx. */
+
+/* Окно/модаль-масштаб: «Чат не выбран», «Сообщений пока нет»,
+   «Загрузка группы…». `margin:0` глушит auth-наследие index.css (`p`
+   несёт свои поля), shorthand font — унаследованный line-height 24px
+   тела. */
+.messenger-empty {
+  margin: 0;
+  padding: 24px 12px;
+  text-align: center;
+  font: italic 12.5px var(--font-body);
+  color: var(--muted-3);
+}
+
+/* Сайдбар: масштаб подсказки .sr-hint прототипа §5 (padding 10px) —
+   «Загрузка чатов…», «Диалогов пока нет», «Ничего не найдено». */
+.chat-panel .messenger-empty {
+  padding: 10px;
+}

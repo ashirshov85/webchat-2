@@ -1,0 +1,74 @@
+/* Дизайн-токены «Aethergram» — единый источник визуальных констант всех поверхностей (FR-002).
+   Блок ниже — дословная проекция :root из прототипа specs/008-chat-window-styling/design/chats.html
+   (раздел «1. БАЗА, ПЕРЕМЕННЫЕ И ПАТТЕРНЫ»); при расхождениях побеждает прототип (FR-001).
+   Норматив констант: specs/008-chat-window-styling/contracts/design-tokens.md (§1 палитра, §3 паттерны).
+   Стили корпуса/панелей/зерна — theme/machine.css; подключение шрифтов — theme/fonts.css. */
+:root {
+  /* Палитра из auth-экрана */
+  --gold: #c9a24a;
+  --gold-light: #e8c877;
+  --gold-dark: #8a6a2c;
+  --gold-gradient: linear-gradient(
+    180deg,
+    var(--gold-light) 0%,
+    var(--gold) 45%,
+    var(--gold-dark) 100%
+  );
+  --panel-bg: rgba(15, 13, 10, 0.82);
+  --input-bg: rgba(25, 21, 16, 0.85);
+  --bg: #0d0b08;
+  --panel: #14110c;
+  --ink: #241b0c;
+  --cream: #e8dcc0;
+  --cream-bright: #eee2c8;
+  --muted: #b6a26a;
+  --muted-2: #a9986e;
+  --muted-3: #8d7f63;
+  --ok: #cfe0ae;
+  --err: #ffb4a3;
+  /* Опасность «гравировкой» на золотых пластинах (исходящий пузырь
+     «не отправлено», US4/T050): --err рассчитан на тёмный фон, на золоте
+     нужен тёмный тон того же семейства (в прототипе состояния нет —
+     производная константа дизайн-системы, FR-002) */
+  --err-ink: #5c1d0e;
+  --line: #8a6a2c;
+
+  /* Основной фон — тёмные обои с золотыми шестернями и заклёпками (статично) */
+  --pat-main: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='280' height='280'%3E%3Cdefs%3E%3ClinearGradient id='a' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%231a1510'/%3E%3Cstop offset='1' stop-color='%23100d09'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='280' height='280' fill='url(%23a)'/%3E%3Cg fill='none' stroke='%23c9a24a'%3E%3Cg transform='translate(140 140)' stroke-opacity='.13'%3E%3Ccircle r='44' stroke-width='9' stroke-dasharray='6.9 6.26'/%3E%3Ccircle r='38' stroke-width='1.6'/%3E%3Ccircle r='17' stroke-width='1.6'/%3E%3Ccircle r='6' stroke-width='1.6'/%3E%3Cpath d='M0 -17V-38M0 17V38M-17 0H-38M17 0H38' stroke-width='1.6'/%3E%3Cpath d='M-12 -12L-27 -27M12 12L27 27M-12 12L-27 27M12 -12L27 -27' stroke-width='1.1' stroke-opacity='.6'/%3E%3C/g%3E%3Cg stroke-opacity='.09'%3E%3Cg%3E%3Ccircle r='27' stroke-width='8' stroke-dasharray='6.8 7.3'/%3E%3Ccircle r='23' stroke-width='1.4'/%3E%3Ccircle r='10' stroke-width='1.4'/%3E%3Ccircle r='3.2' stroke-width='1.4'/%3E%3C/g%3E%3Cg transform='translate(280 0)'%3E%3Ccircle r='27' stroke-width='8' stroke-dasharray='6.8 7.3'/%3E%3Ccircle r='23' stroke-width='1.4'/%3E%3Ccircle r='10' stroke-width='1.4'/%3E%3Ccircle r='3.2' stroke-width='1.4'/%3E%3C/g%3E%3Cg transform='translate(0 280)'%3E%3Ccircle r='27' stroke-width='8' stroke-dasharray='6.8 7.3'/%3E%3Ccircle r='23' stroke-width='1.4'/%3E%3Ccircle r='10' stroke-width='1.4'/%3E%3Ccircle r='3.2' stroke-width='1.4'/%3E%3C/g%3E%3Cg transform='translate(280 280)'%3E%3Ccircle r='27' stroke-width='8' stroke-dasharray='6.8 7.3'/%3E%3Ccircle r='23' stroke-width='1.4'/%3E%3Ccircle r='10' stroke-width='1.4'/%3E%3Ccircle r='3.2' stroke-width='1.4'/%3E%3C/g%3E%3C/g%3E%3Cg stroke-opacity='.1'%3E%3Cg transform='translate(140 0)'%3E%3Ccircle r='8' stroke-width='4.5' stroke-dasharray='2.6 2.4'/%3E%3Ccircle r='5.5' stroke-width='1.2'/%3E%3C/g%3E%3Cg transform='translate(0 140)'%3E%3Ccircle r='8' stroke-width='4.5' stroke-dasharray='2.6 2.4'/%3E%3Ccircle r='5.5' stroke-width='1.2'/%3E%3C/g%3E%3Cg transform='translate(280 140)'%3E%3Ccircle r='8' stroke-width='4.5' stroke-dasharray='2.6 2.4'/%3E%3Ccircle r='5.5' stroke-width='1.2'/%3E%3C/g%3E%3Cg transform='translate(140 280)'%3E%3Ccircle r='8' stroke-width='4.5' stroke-dasharray='2.6 2.4'/%3E%3Ccircle r='5.5' stroke-width='1.2'/%3E%3C/g%3E%3C/g%3E%3Cg fill='%23c9a24a' fill-opacity='.16' stroke='none'%3E%3Ccircle cx='70' cy='70' r='1.6'/%3E%3Ccircle cx='210' cy='70' r='1.6'/%3E%3Ccircle cx='70' cy='210' r='1.6'/%3E%3Ccircle cx='210' cy='210' r='1.6'/%3E%3Ccircle cx='140' cy='70' r='1.3'/%3E%3Ccircle cx='140' cy='210' r='1.3'/%3E%3Ccircle cx='70' cy='140' r='1.3'/%3E%3Ccircle cx='210' cy='140' r='1.3'/%3E%3C/g%3E%3Ccircle cx='140' cy='140' r='96' stroke-opacity='.05' stroke-width='1'/%3E%3Ccircle cx='0' cy='0' r='60' stroke-opacity='.05' stroke-width='1'/%3E%3Ccircle cx='280' cy='280' r='60' stroke-opacity='.05' stroke-width='1'/%3E%3C/g%3E%3C/svg%3E");
+
+  /* Фон окна сообщений — статичный орнамент (цветы, зубчатые кольца, ромбы) */
+  --pat-msg: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Crect width='240' height='240' fill='%23140f08'/%3E%3Cg fill='none' stroke='%23c9a24a'%3E%3Cg transform='translate(120 120)'%3E%3Cg stroke-opacity='.11' stroke-width='1.5'%3E%3Cpath d='M0 -22C8 -13 12 -10 12 0C12 10 8 13 0 22C-8 13 -12 10 -12 0C-12 -10 -8 -13 0 -22Z'/%3E%3Cpath d='M-22 0C-13 -8 -10 -12 0 -12C10 -12 13 -8 22 0C13 10 10 12 0 12C-10 12 -13 10 -22 0Z'/%3E%3Ccircle r='5'/%3E%3C/g%3E%3Ccircle r='27' stroke-width='4' stroke-dasharray='4 4.5' stroke-opacity='.08'/%3E%3C/g%3E%3Cg stroke-opacity='.08' stroke-width='1.3'%3E%3Cg%3E%3Cpath d='M0 -15C5.5 -9 8 -7 8 0C8 7 5.5 9 0 15C-5.5 9 -8 7 -8 0C-8 -7 -5.5 -9 0 -15Z'/%3E%3Cpath d='M-15 0C-9 -5.5 -7 -8 0 -8C7 -8 9 -5.5 15 0C9 7 7 8 0 8C-7 8 -9 7 -15 0Z'/%3E%3Ccircle r='3.4'/%3E%3C/g%3E%3Cg transform='translate(240 0)'%3E%3Cpath d='M0 -15C5.5 -9 8 -7 8 0C8 7 5.5 9 0 15C-5.5 9 -8 7 -8 0C-8 -7 -5.5 -9 0 -15Z'/%3E%3Cpath d='M-15 0C-9 -5.5 -7 -8 0 -8C7 -8 9 -5.5 15 0C9 7 7 8 0 8C-7 8 -9 7 -15 0Z'/%3E%3Ccircle r='3.4'/%3E%3C/g%3E%3Cg transform='translate(0 240)'%3E%3Cpath d='M0 -15C5.5 -9 8 -7 8 0C8 7 5.5 9 0 15C-5.5 9 -8 7 -8 0C-8 -7 -5.5 -9 0 -15Z'/%3E%3Cpath d='M-15 0C-9 -5.5 -7 -8 0 -8C7 -8 9 -5.5 15 0C9 7 7 8 0 8C-7 8 -9 7 -15 0Z'/%3E%3Ccircle r='3.4'/%3E%3C/g%3E%3Cg transform='translate(240 240)'%3E%3Cpath d='M0 -15C5.5 -9 8 -7 8 0C8 7 5.5 9 0 15C-5.5 9 -8 7 -8 0C-8 -7 -5.5 -9 0 -15Z'/%3E%3Cpath d='M-15 0C-9 -5.5 -7 -8 0 -8C7 -8 9 -5.5 15 0C9 7 7 8 0 8C-7 8 -9 7 -15 0Z'/%3E%3Ccircle r='3.4'/%3E%3C/g%3E%3C/g%3E%3Cg stroke-opacity='.09'%3E%3Cg transform='translate(120 0)'%3E%3Cpath d='M0 -9L6 0L0 9L-6 0Z'/%3E%3Ccircle r='1.8' fill='%23c9a24a' fill-opacity='.12' stroke='none'/%3E%3C/g%3E%3Cg transform='translate(0 120)'%3E%3Cpath d='M0 -9L6 0L0 9L-6 0Z'/%3E%3Ccircle r='1.8' fill='%23c9a24a' fill-opacity='.12' stroke='none'/%3E%3C/g%3E%3Cg transform='translate(240 120)'%3E%3Cpath d='M0 -9L6 0L0 9L-6 0Z'/%3E%3Ccircle r='1.8' fill='%23c9a24a' fill-opacity='.12' stroke='none'/%3E%3C/g%3E%3Cg transform='translate(120 240)'%3E%3Cpath d='M0 -9L6 0L0 9L-6 0Z'/%3E%3Ccircle r='1.8' fill='%23c9a24a' fill-opacity='.12' stroke='none'/%3E%3C/g%3E%3C/g%3E%3Cg fill='%23c9a24a' fill-opacity='.1' stroke='none'%3E%3Ccircle cx='60' cy='60' r='1.4'/%3E%3Ccircle cx='180' cy='60' r='1.4'/%3E%3Ccircle cx='60' cy='180' r='1.4'/%3E%3Ccircle cx='180' cy='180' r='1.4'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  /* Проекция contracts/design-tokens.md §2 (шрифтовые роли) и §7 (радиусы, отступы, z-слои) */
+  /* Шрифтовые роли (самохостинг @fontsource — theme/fonts.css, FR-003; SC-006) */
+  --font-body: 'Old Standard TT', 'Times New Roman', serif;
+  --font-heading: 'Cormorant SC', Georgia, serif;
+  --font-mono: 'Anonymous Pro', 'Courier New', monospace;
+
+  /* Радиусы (design-tokens §7: машина 18 / панель 12 / поля и кнопки 6–8 / меню и тосты 6–10) */
+  --r-machine: 18px;
+  --r-machine-frame: 14px;
+  --r-panel: 12px;
+  --r-field: 6px;
+  --r-frame: 8px;
+  --r-menu: 10px;
+  --r-toast: 6px;
+
+  /* Ключевые отступы (design-tokens §7) */
+  --gap-frame: 12px;
+  --pad-frame: 12px;
+  --pad-head: 12px 16px;
+  --pad-composer: 12px 14px;
+  --pad-row: 9px 10px;
+  --pad-feed: 16px 18px 8px;
+
+  /* Z-порядок (design-tokens §7): grain → modal-back → vignette → sidebar-drawer → backdrop
+     → ctx-menu / members-tip → toast */
+  --z-grain: 50;
+  --z-modal-back: 47;
+  --z-vignette: 45;
+  --z-sidebar-drawer: 40;
+  --z-backdrop: 35;
+  --z-ctx-menu: 55;
+  --z-members-tip: 56;
+  --z-toast: 99;
+}

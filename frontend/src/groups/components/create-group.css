@@ -1,0 +1,73 @@
+/* Модальная форма «Новый групповой чат» (feature 008, US2, T035; FR-023,
+   ui-behavior §3) — проекция #grpForm прототипа
+   specs/008-chat-window-styling/design/chats.html (раздел «9. МОДАЛЬНОЕ
+   ОКНО»); при расхождениях побеждает прототип (FR-001). Форма — обитатель
+   ЕДИНОЙ оболочки ModalShell (T012/T034): каркас подложки/окна/заголовка —
+   ui/modal-shell.css, кнопочная система .m-btn/.modal-btns —
+   ui/confirm-dialog.css, пикер .pick-list/.pick-row/.pick-empty/.modal-err
+   и тело строки .c-* — chats/components/contacts-modal.css (T031 определил
+   их для переиспользования). Здесь — колонка формы, поля #grpName/#grpSearch
+   (дословно .modal input прототипа) и чекбокс .pick-row input — впервые
+   (переиспользуется grpEditForm T056). Переменные-токены —
+   theme/tokens.css (FR-002). prefers-reduced-motion (FR-004) — глобальное
+   правило theme/machine.css (здесь только transition свойств). */
+
+/* ============ ФОРМА (#grpForm прототипа: колонка gap 8) ============ */
+
+.grp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* .modal label прототипа: italic 12.5px, muted-2. */
+.grp-form label {
+  font: italic 12.5px var(--font-body);
+  color: var(--muted-2);
+}
+
+/* #grpName/#grpSearch — дословно .modal input:not([type=checkbox])
+   прототипа; полная перекрыка auth-наследия index.css (светлое поле,
+   синий focus-accent). */
+.grp-form input:not([type='checkbox']) {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-field);
+  outline: none;
+  border: 1px solid var(--gold-dark);
+  background: var(--input-bg);
+  color: var(--cream-bright);
+  font: 14px var(--font-mono);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.grp-form input:not([type='checkbox'])::placeholder {
+  color: var(--muted-3);
+}
+
+.grp-form input:not([type='checkbox']):focus-visible {
+  border-color: var(--gold-light);
+  box-shadow: 0 0 0 2px rgba(232, 200, 119, 0.25);
+  outline: none;
+}
+
+/* ============ ЧЕКБОКС СТРОКИ-ПИКЕРА (прототип .pick-row input) ============ */
+
+/* Золотой accent-color чекбоксов пикеров — определён здесь впервые и
+   переиспользуется задачами T056+ (редактор состава группы). */
+.pick-row input {
+  accent-color: var(--gold);
+  width: 15px;
+  height: 15px;
+  flex: none;
+  cursor: pointer;
+}
+
+/* FR-035: видимый focus-ring строки при фокусе чекбокса (паттерн
+   .tgl-row:focus-within профильной формы). */
+.pick-row:focus-within {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}

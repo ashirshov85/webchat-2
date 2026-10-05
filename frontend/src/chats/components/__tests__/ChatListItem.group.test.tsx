@@ -6,11 +6,31 @@ import { ChatListItem } from '../ChatListItem'
 /**
  * One «Чаты» row over the №12 group elements (US1, T019 → T028;
  * FR-014): the unified list discriminates rows by `type` — a group
- * row renders `title` + `memberCount` from the group fields while
- * `peer`/`blockedByMe` are null (api-contract.md §3), and a direct
- * row keeps rendering the peer login exactly as in 004 (the `type`
- * field may be absent — backward-friendly). The unread badge rules
- * of 004 (exact up to 99, «99+» above) apply to group rows alike.
+ * row renders `title` from the group fields while `peer`/
+ * `blockedByMe` are null (api-contract.md §3), and a direct row keeps
+ * rendering the peer login exactly as in 004 (the `type` field may be
+ * absent — backward-friendly). The unread badge rules of 004 (exact up
+ * to 99, «99+» above) apply to group rows alike.
+ *
+ * Feature 008 (US1, T017 → T020): the row is rebuilt per the
+ * prototype — avatar + `.c-name` + preview + time + badge. The №12
+ * `memberCount` LEAVES the row (the prototype carries no counter —
+ * FR-001) and returns as the «N участников» header status of US3
+ * (T043); the 007 presence dot leaves the row markup until the Avatar
+ * presence wiring of US3 (T040/T042). Neither is a row expectation
+ * anymore (data-model 2.1).
+ *
+ * T020 row shape (FR-008, data-model 2.1): the avatar derives from
+ * `title` (octagon) or `peer.username` (circle) via ui/Avatar; the
+ * `.c-time` node carries the ЧЧ:ММ of `lastMessage.createdAt` and
+ * renders EMPTY for a messageless chat; the truncated `.c-name`/
+ * `.c-prev` nodes carry the full texts in `title` tooltips (spec
+ * edge-cases). An INCOMING group message renders WITHOUT the «Имя: »
+ * prefix of FR-008: №12's `lastMessage` carries `senderId` only, the
+ * roster lives in №28 of the OPEN chat alone, SC-003 forbids contract
+ * changes and the panel issues no per-chat requests (004) — the
+ * name-prefixed preview stays the feed's privilege (T022, members
+ * prop); outgoing keeps the 004 «Вы: » prefix everywhere.
  */
 
 const ME = '11111111-1111-1111-1111-111111111111'
@@ -27,8 +47,14 @@ function peer(id: string, username: string) {
   }
 }
 
-function lastMessage(chatId: string, id: string, senderId: string, text: string): Message {
-  return { id, chatId, senderId, text, seq: 10, createdAt: '2026-09-20T12:00:00.000Z' }
+function lastMessage(
+  chatId: string,
+  id: string,
+  senderId: string,
+  text: string,
+  createdAt: string = '2026-09-20T12:00:00.000Z',
+): Message {
+  return { id, chatId, senderId, text, seq: 10, createdAt }
 }
 
 function directItem(overrides: Partial<ChatListItemData> = {}): ChatListItemData {
@@ -60,37 +86,21 @@ function groupItem(overrides: Partial<ChatListItemData> = {}): ChatListItemData 
 afterEach(cleanup)
 
 describe('ChatListItem type discrimination (№12 group elements, FR-014)', () => {
-  it('renders a group row from the group fields: title, member counter, no peer login', () => {
+  it('renders a group row from the group fields: title, no peer login', () => {
     render(
       <ul>
         <ChatListItem item={groupItem()} />
       </ul>,
     )
 
-    expect(screen.getByText('Проект Альфа')).toBeVisible()
+    // T020: the title rides the prototype `.c-name` hook.
+    expect(screen.getByText('Проект Альфа')).toHaveClass('c-name')
     expect(screen.queryByText('alice')).toBeNull()
     expect(screen.queryByText('заблокирован')).toBeNull()
   })
 
-  it('renders the member counter with Russian plurals', () => {
-    const { container } = render(
-      <ul>
-        <ChatListItem item={groupItem({ memberCount: 1 })} />
-        <ChatListItem item={groupItem({ chatId: 'group-2', memberCount: 3 })} />
-        <ChatListItem item={groupItem({ chatId: 'group-3', memberCount: 5 })} />
-      </ul>,
-    )
-    const counters = Array.from(container.querySelectorAll('.chat-item-members'))
-
-    expect(counters.map((counter) => counter.textContent)).toEqual([
-      '1 участник',
-      '3 участника',
-      '5 участников',
-    ])
-  })
-
-  it('keeps direct rows peer-driven and without a member counter (type absent or direct)', () => {
-    const { container } = render(
+  it('keeps direct rows peer-driven (type absent or direct)', () => {
+    render(
       <ul>
         <ChatListItem item={directItem()} />
         <ChatListItem
@@ -101,24 +111,6 @@ describe('ChatListItem type discrimination (№12 group elements, FR-014)', () =
 
     expect(screen.getByText('alice')).toBeVisible()
     expect(screen.getByText('bob')).toBeVisible()
-    expect(container.querySelector('.chat-item-members')).toBeNull()
-  })
-
-  it('mounts the presence dot on direct rows only — groups carry no presence UI (007, T022)', () => {
-    const { container } = render(
-      <ul>
-        <ChatListItem item={directItem()} />
-        <ChatListItem item={groupItem()} />
-      </ul>,
-    )
-    const rows = Array.from(container.querySelectorAll('.chat-item'))
-    const indicators = rows.map((row) => row.querySelector('.presence-indicator'))
-
-    // A direct row mounts the shared dot (neutral before the first №36
-    // snapshot — never a false «офлайн»); a group row mounts none.
-    expect(indicators[0]).not.toBeNull()
-    expect(indicators[0]).toHaveClass('presence-unknown')
-    expect(indicators[1]).toBeNull()
   })
 })
 
@@ -155,5 +147,76 @@ describe('ChatListItem group row actions', () => {
 
     fireEvent.click(screen.getByRole('button'))
     expect(onSelect).toHaveBeenCalledWith(GROUP_ID)
+  })
+})
+
+describe('ChatListItem prototype row rebuild (T020, FR-008, data-model 2.1)', () => {
+  it('renders the group row: octagon avatar from title, .c-main/.c-top structure, ЧЧ:ММ time', () => {
+    // Local-wall-clock instant → the ЧЧ:ММ expectation is timezone-safe.
+    const createdAt = new Date(2026, 8, 19, 12, 30).toISOString()
+    const { container } = render(
+      <ul>
+        <ChatListItem
+          item={groupItem({
+            lastMessage: lastMessage(GROUP_ID, 'm-1', PEER_A, 'привет всем', createdAt),
+          })}
+        />
+      </ul>,
+    )
+    const row = container.querySelector('.chat-item') as HTMLElement
+
+    // Avatar: octagon of the group title, initials «ПА» (FR-024).
+    expect(row.querySelector('.avatar.oct')).not.toBeNull()
+    expect(row.querySelector('.avatar .av-in span')?.textContent).toBe('ПА')
+
+    // Prototype structure: .c-main > .c-top (.c-name + .c-time) + .c-prev.
+    expect(row.querySelector('.c-main .c-top .c-name')?.textContent).toBe('Проект Альфа')
+    expect(row.querySelector('.c-time')?.textContent).toBe('12:30')
+
+    // An incoming group message renders bare — №12 carries senderId only
+    // (no «Имя: » prefix source; the header comment spells out the
+    // SC-003/004 constraints).
+    expect(row.querySelector('.c-prev')?.textContent).toBe('привет всем')
+  })
+
+  it('renders the direct row: circle avatar from peer username, truncated name with a title tooltip', () => {
+    const { container } = render(
+      <ul>
+        <ChatListItem item={directItem({ peer: peer(PEER_A, 'alice') })} />
+      </ul>,
+    )
+    const row = container.querySelector('.chat-item') as HTMLElement
+
+    expect(row.querySelector('.avatar:not(.oct)')).not.toBeNull()
+    expect(row.querySelector('.avatar .av-in span')?.textContent).toBe('A')
+    expect(row.querySelector('.c-name')?.textContent).toBe('alice')
+    // Truncation is CSS-side; the full name rides the title tooltip (spec
+    // edge-case «полный текст — во всплывающей подсказке»).
+    expect(row.querySelector('.c-name')?.getAttribute('title')).toBe('alice')
+
+    // Messageless chat: EMPTY time node (prototype `${last?last.time:''}`)
+    // and the muted «Нет сообщений» preview.
+    expect(row.querySelector('.c-time')?.textContent).toBe('')
+    expect(row.querySelector('.c-prev')?.textContent).toBe('Нет сообщений')
+  })
+
+  it('carries the full preview text in the .c-prev tooltip', () => {
+    const longText = 'а'.repeat(80)
+    const { container } = render(
+      <ul>
+        <ChatListItem
+          item={directItem({
+            lastMessage: lastMessage('chat-1', 'm-1', ME, longText),
+          })}
+          currentUserId={ME}
+        />
+      </ul>,
+    )
+    const preview = container.querySelector('.c-prev') as HTMLElement
+
+    // The DOM text stays clamped (№12 client render decision, 004).
+    expect(preview.textContent).toBe(`Вы: ${'а'.repeat(64)}…`)
+    // The tooltip carries the FULL text (spec edge-case).
+    expect(preview.getAttribute('title')).toBe(`Вы: ${longText}`)
   })
 })

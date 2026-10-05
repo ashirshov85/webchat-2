@@ -1,0 +1,62 @@
+/* Модальная оболочка «Aethergram» — проекция раздела «9. МОДАЛЬНОЕ ОКНО»
+   прототипа specs/008-chat-window-styling/design/chats.html; при
+   расхождениях побеждает прототип (FR-001). Здесь — только каркас
+   оболочки (подложка/окно/заголовок): стили форм-обитателей (inputs,
+   .m-btn, .confirm-text, .modal-ro, .pick-list) живут в задачах
+   T014/T031+. Норматив констант — contracts/design-tokens.md §7
+   (z-слой modal-back 47); переменные-токены — theme/tokens.css (FR-002):
+   z-порядок var(--z-modal-back), шрифтовая роль var(--font-heading) =
+   Cormorant SC. Окно — .modal.panel: корпус-панель с заклёпками из
+   theme/machine.css. Подключается компонентом ui/ModalShell.tsx (T012);
+   показ — классом .show на подложке; закрытие по фону — press+release
+   в ModalShell (перетаскивание не закрывает).
+
+   prefers-reduced-motion (FR-004) — глобальное правило theme/machine.css
+   (transition-duration .01s !important) покрывает и оболочку. */
+
+.modal-back {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal-back);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(5, 4, 2, 0.66);
+  backdrop-filter: blur(2px);
+  opacity: 0;
+  pointer-events: none;
+  transition: 0.25s;
+}
+
+.modal-back.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Окно — нативный <dialog class="modal panel"> (S6819: роль dialog —
+   неявная): UA-стили диалога (margin auto, canvastext, max-width)
+   сброшены до див-паритета; фон/рамка/позиция — theme/machine.css .panel. */
+.modal {
+  position: relative;
+  margin: 0;
+  color: inherit;
+  max-width: none;
+  width: min(420px, 92vw);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transform: translateY(14px) scale(0.98);
+  transition: 0.25s;
+}
+
+.modal-back.show .modal {
+  transform: none;
+}
+
+.modal-title {
+  font: 600 18px var(--font-heading);
+  color: var(--gold-light);
+  letter-spacing: 1.5px;
+  text-align: center;
+}

@@ -8,7 +8,13 @@
  * keep one steady indication instead of blinking per request. A
  * polite live region: screen readers announce the catch-up without
  * interrupting the realtime rendering that continues in parallel.
+ *
+ * 008 (US4, T052; FR-030): the strip is skinned with the machine's
+ * design tokens — status-banners.css, shared with the other delivery
+ * notifications; the DOM and its sidebar position are unchanged.
  */
+import './status-banners.css'
+
 export interface SyncIndicatorProps {
   /** A §3.1 catch-up cycle is running (useSync `syncing`, T019). */
   readonly syncing: boolean

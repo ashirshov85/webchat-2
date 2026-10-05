@@ -1,0 +1,29 @@
+/* Самохостинг шрифтов «Aethergram» через @fontsource (FR-003): woff2-сабсеты cyrillic+latin
+   бандлятся Vite со своего origin, внешний CDN запрещён (research §A).
+   Набор начертаний — проекция Google Fonts-запроса прототипа design/chats.html:
+   Old Standard TT 400/700 + italic 400 · Cormorant SC 400/600/700 · Anonymous Pro 400/700 + italic 400.
+   Резервные стеки ролей (--font-body/--font-heading/--font-mono) — theme/tokens.css (design-tokens §2). */
+
+/* Body — Old Standard TT: основной текст, курсивные подписи, пункты меню */
+@import '@fontsource/old-standard-tt/cyrillic-400.css';
+@import '@fontsource/old-standard-tt/cyrillic-400-italic.css';
+@import '@fontsource/old-standard-tt/cyrillic-700.css';
+@import '@fontsource/old-standard-tt/latin-400.css';
+@import '@fontsource/old-standard-tt/latin-400-italic.css';
+@import '@fontsource/old-standard-tt/latin-700.css';
+
+/* Heading — Cormorant SC: заголовки, имена, бейджи, время, надписи кнопок */
+@import '@fontsource/cormorant-sc/cyrillic-400.css';
+@import '@fontsource/cormorant-sc/cyrillic-600.css';
+@import '@fontsource/cormorant-sc/cyrillic-700.css';
+@import '@fontsource/cormorant-sc/latin-400.css';
+@import '@fontsource/cormorant-sc/latin-600.css';
+@import '@fontsource/cormorant-sc/latin-700.css';
+
+/* Mono — Anonymous Pro: поля ввода, текст сообщений, username/email */
+@import '@fontsource/anonymous-pro/cyrillic-400.css';
+@import '@fontsource/anonymous-pro/cyrillic-400-italic.css';
+@import '@fontsource/anonymous-pro/cyrillic-700.css';
+@import '@fontsource/anonymous-pro/latin-400.css';
+@import '@fontsource/anonymous-pro/latin-400-italic.css';
+@import '@fontsource/anonymous-pro/latin-700.css';

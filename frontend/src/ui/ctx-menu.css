@@ -1,0 +1,73 @@
+/* Контекстное меню «Aethergram» — проекция блока «кебаб-кнопка «⋯» +
+   контекстные меню» прототипа specs/008-chat-window-styling/design/chats.html
+   (.ctx-menu/.ctx-item/.ctx-sep); при расхождениях побеждает прототип (FR-001).
+   Норматив констант: contracts/design-tokens.md §7 (z-слой ctx-menu 55, радиус
+   меню 10px); переменные-токены — theme/tokens.css (FR-002): z-порядок
+   var(--z-ctx-menu), радиус var(--r-menu), шрифтовая роль var(--font-body) =
+   Old Standard TT (пункты меню, design-tokens §2). Формулы позиционирования
+   (у якоря + clamp 8px) — в ui/ContextMenu.tsx (T013); показ — рендер с
+   классом .show (display:flex), закрытие — клик-вне/Esc/выбор пункта.
+   Селекторы пунктов .ctx-menu .ctx-item — перекрывают глобальные
+   element-стили button из index.css (auth-наследие: фон/hover/align-self)
+   до прототипных значений. Focus-ring дизайн-системы (FR-035, research §D) —
+   золотая обводка :focus-visible.
+   prefers-reduced-motion (FR-004) — глобальное правило theme/machine.css
+   (transition-duration .01s !important) покрывает и меню. */
+
+.ctx-sep {
+  height: 1px;
+  margin: 4px 6px;
+  border: none;
+  background: linear-gradient(90deg, transparent, var(--gold-dark), transparent);
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: var(--z-ctx-menu);
+  min-width: 200px;
+  padding: 6px;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: var(--r-menu);
+  border: 1px solid var(--gold-dark);
+  background: #191510;
+  box-shadow:
+    0 14px 40px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(201, 162, 74, 0.18);
+}
+
+.ctx-menu.show {
+  display: flex;
+}
+
+.ctx-menu .ctx-item {
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  border-radius: 6px;
+  color: var(--cream);
+  font: 14px var(--font-body);
+  transition: 0.15s;
+  align-self: stretch;
+}
+
+.ctx-menu .ctx-item:hover {
+  background: rgba(201, 162, 74, 0.12);
+  color: var(--gold-light);
+}
+
+.ctx-menu .ctx-item.danger {
+  color: var(--err);
+}
+
+.ctx-menu .ctx-item.danger:hover {
+  background: rgba(126, 51, 32, 0.3);
+}
+
+.ctx-menu .ctx-item:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}

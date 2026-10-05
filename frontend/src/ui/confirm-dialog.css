@@ -1,0 +1,100 @@
+/* Подтверждение «Aethergram» — проекция стилей confirmForm прототипа
+   specs/008-chat-window-styling/design/chats.html (классы .confirm-text,
+   .confirm-sub, .modal-btns, .m-btn c .primary и .danger); при
+   расхождениях побеждает прототип (FR-001). Норматив констант —
+   contracts/design-tokens.md §2/§7 (шрифтовая роль heading для кнопок
+   UPPER, body для текста подтверждений; радиус кнопок 6px);
+   переменные-токены — theme/tokens.css (FR-002): var(--font-heading) и
+   var(--font-body), радиус var(--r-field), палитра --gold, --ink, --err,
+   --cream, --muted-2, --input-bg. Подключается компонентом
+   ui/ConfirmDialog.tsx (T014); .m-btn и .modal-btns — общая кнопочная
+   система форм-обитателей оболочки (ui-behavior §3), её переиспользуют
+   задачи T031+.
+
+   Селекторы .modal .m-btn — перекрывают глобальные element-стили button из
+   index.css (auth-наследие: фон --accent, hover, align-self) до прототипных
+   значений; :hover дублирует background явно, чтобы специфичность (0,3,0)
+   перебивала button:hover:not(:disabled) (0,2,1) — вычисляемые стили =
+   прототипу. Focus-ring дизайн-системы (FR-035, research §D) — золотая
+   обводка :focus-visible, как у .ctx-item. prefers-reduced-motion (FR-004)
+   — глобальное правило theme/machine.css (transition-duration .01s
+   !important) покрывает и подтверждение. */
+
+.modal-btns {
+  display: flex;
+  /* Строка прототипа (flex-direction не задан = row) — явно: auth-наследие
+     index.css `form div{flex-direction:column}` (0-0-2) колонкует кнопки
+     обитателей-<form> (create-group T035), укладывая «Отмена»/«Создать»
+     столбиком (+42px высоты модали — T039). */
+  flex-direction: row;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.modal .m-btn {
+  padding: 9px 16px;
+  border-radius: var(--r-field);
+  cursor: pointer;
+  transition: 0.15s;
+  border: 1px solid var(--gold-dark);
+  color: var(--muted-2);
+  background: var(--input-bg);
+  font: 700 11px var(--font-heading);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  align-self: stretch;
+}
+
+.modal .m-btn:hover {
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+  background: var(--input-bg);
+}
+
+.modal .m-btn.primary {
+  color: var(--ink);
+  background: var(--gold-gradient);
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.modal .m-btn.primary:hover {
+  filter: brightness(1.08);
+  color: var(--ink);
+  background: var(--gold-gradient);
+}
+
+.modal .m-btn.danger {
+  color: var(--err);
+  border-color: rgba(255, 180, 163, 0.45);
+}
+
+.modal .m-btn.danger:hover {
+  color: #ffd6cc;
+  border-color: rgba(255, 180, 163, 0.7);
+  background: rgba(126, 51, 32, 0.35);
+}
+
+.modal .m-btn:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+.confirm-text {
+  font: 14.5px/1.6 var(--font-body);
+  color: var(--cream);
+}
+
+.confirm-text b {
+  color: var(--gold-light);
+  font-weight: 600;
+}
+
+.confirm-sub {
+  display: block;
+  margin-top: 4px;
+  font: italic 12.5px var(--font-body);
+  color: var(--muted-2);
+}

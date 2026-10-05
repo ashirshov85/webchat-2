@@ -1,0 +1,318 @@
+/* Лента сообщений (feature 008, US1, T022; FR-001, FR-018): дословная
+   проекция раздела «7. ЧАТ» прототипа
+   specs/008-chat-window-styling/design/chats.html (.chat-scroll, .msg,
+   .bubble, .b-text/.b-time, .tick, .sender, @keyframes pop); при
+   расхождениях побеждает прототип. Константы — theme/tokens.css
+   (FR-002), каркас .chat панели — chats/pages/messenger.css (T018),
+   золотые скроллбары .chat-scroll — theme/machine.css. Подключается
+   компонентом chats/components/MessageList.tsx.
+
+   Локальные outbox-статусы 005 («отправляется», «не отправлено» +
+   Повторить/Удалить) не существуют в статическом прототипе — US4/T050
+   собирает их из лексик дизайн-системы (низ файла). Время ЧЧ:ММ и
+   разделители дат ножки — US3/T044.
+
+   Селекторы скоупятся под .message-list (общие element-стили index.css
+   не должны просвечивать сквозь машину). */
+
+/* ============ ЛЕНТА (прототип §7: .chat-scroll) ============ */
+
+.message-list.chat-scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0;
+  padding: var(--pad-feed);
+  list-style: none;
+  /* фон со статичным орнаментом --pat-msg + верхний латунный свет + затемнение */
+  background-color: #140f08;
+  background-image:
+    radial-gradient(130% 90% at 50% 0%, rgba(138, 106, 44, 0.12), transparent 55%),
+    linear-gradient(rgba(8, 6, 3, 0.28), rgba(8, 6, 3, 0.28)), var(--pat-msg);
+  background-size:
+    auto,
+    auto,
+    240px 240px;
+}
+
+/* Дешёвая браузерная виртуализация offscreen-строк (research §G,
+   SC-010: 60 fps при 1000+ сообщениях): невидимые строки не
+   рендерятся; contain-intrinsic-size держит скроллбар честным
+   (оценка высоты строки с ножкой), auto-размер подхватывает реальный
+   по мере прогрева. */
+.message-list > li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
+}
+
+/* ============ СТРОКА СООБЩЕНИЯ (прототип §7: .msg) ============ */
+
+.message-list .msg {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 14px;
+  animation: pop 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+
+.message-list .msg.me {
+  flex-direction: row-reverse;
+}
+
+/* Аватар ленты — 34px (design-tokens §4); каркас .avatar — ui/avatar.css */
+.message-list .msg .avatar {
+  width: 34px;
+  height: 34px;
+}
+
+.message-list .msg .bubble {
+  position: relative;
+  max-width: min(72%, 560px);
+  padding: 10px 14px 8px;
+}
+
+.message-list .b-text {
+  font: 14.5px/1.55 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* Ножка пузыря: время ЧЧ:ММ (FR-019) + штампы доставки (серверные)
+   и тексты outbox-статусов 005 (локальные) */
+.message-list .b-time {
+  font: 10.5px var(--font-heading);
+  letter-spacing: 1px;
+  text-align: right;
+  margin-top: 4px;
+}
+
+.message-list .msg.them .b-time {
+  color: rgba(232, 220, 192, 0.55);
+}
+
+.message-list .msg.me .b-time {
+  color: rgba(36, 27, 12, 0.65);
+  white-space: nowrap;
+}
+
+/* Время ЧЧ:ММ и разделители дат — прототип §7 (FR-019): ножка несёт
+   время каждого сообщения, смена календарного дня — разделитель
+   (длинный формат «19 сентября»); подтянуты в T026 для пиксельного
+   паритета с baseline-лентой T016(а), полная полировка — US3/T044. */
+
+/* ============ РАЗДЕЛИТЕЛЬ ДАТ (прототип §7, дословно) ============ */
+
+.message-list .date-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 16px;
+  font: italic 12.5px var(--font-body);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.message-list .date-divider::before,
+.message-list .date-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+}
+
+.message-list .date-divider::before {
+  background: linear-gradient(90deg, transparent, var(--gold-dark));
+}
+
+.message-list .date-divider::after {
+  background: linear-gradient(90deg, var(--gold-dark), transparent);
+}
+
+/* ============ ПУЗЫРИ (design-tokens §5) ============ */
+
+/* Входящие — тёмная панель, как поля auth-формы */
+.message-list .msg.them .bubble {
+  background: var(--input-bg);
+  color: var(--cream);
+  border: 1px solid var(--gold-dark);
+  border-radius: 12px 4px 12px 12px;
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.45),
+    inset 0 0 18px rgba(0, 0, 0, 0.35);
+}
+
+/* Исходящие — золотая пластина, как кнопка auth-submit */
+.message-list .msg.me .bubble {
+  background: var(--gold-gradient);
+  color: var(--ink);
+  border: 1px solid var(--gold-dark);
+  border-radius: 4px 12px 12px 12px;
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+/* Появление пузыря — только transform/opacity (research §G);
+   prefers-reduced-motion глушит глобально machine.css (FR-004) */
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ============ ШТАМПЫ ДОСТАВКИ (прототип §7: .tick) ============ */
+
+/* Тёмные «гравированные» штрихи с белым ребром тиснения, как клеймо
+   телеграфа: ✓ — доставлено (.dlv), ✓✓ — прочитано (.read) */
+.message-list .tick {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  vertical-align: -1px;
+  color: rgba(36, 27, 12, 0.55);
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.45));
+}
+
+.message-list .tick.read {
+  color: #241708;
+}
+
+.message-list .tick svg {
+  height: 10px;
+  width: auto;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* T023 (FR-018, design-tokens §5): tickStamp играет ТОЛЬКО при
+   смене штампа уже показанной строки — «телеграф отбил» (✓ на месте
+   оптимистичной строки) и ✓ → ✓✓ по вотермарке; первая отрисовка
+   истории/пагинации выходит без .anim. Преобразования
+   transform/opacity (research §G, SC-010);
+   prefers-reduced-motion глушит глобально machine.css (FR-004) */
+.message-list .tick.anim svg {
+  animation: tickStamp 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.25);
+}
+
+@keyframes tickStamp {
+  from {
+    transform: scale(0.45);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ============ ИМЯ ОТПРАВИТЕЛЯ (групповые входящие, прототип §7) ============ */
+
+.message-list .sender {
+  font: 700 10.5px var(--font-heading);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  color: var(--gold-light);
+}
+
+/* ============ ЛОКАЛЬНЫЕ СТАТУСЫ 005 (outbox/optimistic, US4/T050) ============ */
+
+/* Состояний доставки-очереди в статическом прототипе нет (baseline T060
+   фиксирует по реализованным снимкам — исключение SC-001), поэтому они
+   собраны из лексик дизайн-системы: подписи — в прототипной ножке .b-time
+   золотой пластины той же гравированной типографикой, что время/штампы;
+   ручные действия — компактные машинные кнопки .m-btn (проекция
+   confirm-dialog.css) с danger-вариантом «Удалить» (.m-btn.danger
+   прототипа). «отправляется» — статично (ui-behavior §4), как статичны
+   паттерны машины. Повтор/удаление идут по тому же clientMessageId
+   (идемпотентность 005 сохранена — FR-030). */
+
+.message-list .message-status {
+  font: 10.5px var(--font-heading);
+  letter-spacing: 1px;
+  color: rgba(36, 27, 12, 0.65);
+}
+
+/* Терминальный «не отправлено» — гравированная опасность на золоте:
+   тёмный тон --err-ink + белое ребро тиснения, как у штампов .tick
+   (design-tokens §5) */
+.message-list .message-status-failed {
+  color: var(--err-ink);
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.45));
+}
+
+/* Ручные действия неудавшейся записи — компактные машинные кнопки
+   (лексика .m-btn прототипа, полная перекрыка auth-наследия index.css) */
+.message-list .message-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 8px;
+  vertical-align: -1px;
+}
+
+.message-list .message-actions button {
+  padding: 3px 9px;
+  border-radius: var(--r-field);
+  cursor: pointer;
+  transition: 0.15s;
+  border: 1px solid var(--gold-dark);
+  color: var(--muted-2);
+  background: var(--input-bg);
+  font: 700 10px var(--font-heading);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  align-self: stretch;
+}
+
+.message-list .message-actions button:hover {
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+  background: var(--input-bg);
+}
+
+.message-list .message-actions button:active {
+  transform: translateY(1px);
+}
+
+/* «Удалить» — опасное действие: danger-вариант .m-btn.danger/.m-rm
+   прототипа (после generic-hover — равная специфичность решается
+   порядком источников) */
+.message-list .message-actions .message-remove {
+  color: var(--err);
+  border-color: rgba(255, 180, 163, 0.45);
+}
+
+.message-list .message-actions .message-remove:hover {
+  color: #ffd6cc;
+  border-color: rgba(255, 180, 163, 0.7);
+  background: rgba(126, 51, 32, 0.35);
+}
+
+.message-list .message-actions button:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+/* ============ ИНДИКАТОР ИСТОРИИ (пагинация 005, T039) ============ */
+
+/* Курсив muted-подписи машины — лексика .date-divider прототипа
+   (сами разделители дат — US3/T041/T044). T059 (FR-032): остаётся на
+   --muted сознательно — это ВСТРОЕННАЯ подпись ленты (дышит в одном
+   ряду с разделителями дат §7), а не отдельная подсказка поверхности;
+   обособленные пустые/загрузочные — states.css (--muted-3). */
+.message-list .message-history {
+  font: italic 12.5px var(--font-body);
+  color: var(--muted);
+  text-align: center;
+  padding: 4px 0 10px;
+}

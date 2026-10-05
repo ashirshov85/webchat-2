@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { linkSsoAuthorize, listIdentities, listSsoProviders, unlinkIdentity } from '../../api/sso'
 import type { Identity, SsoProvider } from '../../api/sso'
 import { problemMessage } from '../../auth/problem'
+import './settings.css'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -46,6 +47,14 @@ function isLastLoginMethodProblem(error: unknown): boolean {
 }
 
 export function SecurityPage() {
+  /**
+   * T058 (FR-031): restyled into the «Aethergram» design system — the
+   * page is a .panel of the machine (settings.css): banners/statuses in
+   * the state-strip lexicon of status-banners.css (danger wash /
+   * patient brass / toast-green), identity rows as .modal-ro-style
+   * fields, buttons as the .m-btn family (primary «Link», danger
+   * «Unlink»). Routes, semantics and texts are unchanged (FR-034).
+   */
   const [linkedProviderId] = useState(() => queryParam('linked'))
   const [ssoErrorCode] = useState(() => queryParam('sso_error'))
   const [loadState, setLoadState] = useState<LoadState>('loading')
@@ -121,30 +130,45 @@ export function SecurityPage() {
   )
 
   return (
-    <section>
-      <h2>Account security</h2>
-      {ssoErrorCode !== null && <p role="alert">{messageFor(ssoErrorCode)}</p>}
-      {linkedProviderId !== null && (
-        <output>Provider {linkedProviderName()} was linked to your account.</output>
+    <section className="panel settings-page">
+      <h2 className="settings-title">Account security</h2>
+      {ssoErrorCode !== null && (
+        <p className="settings-error" role="alert">
+          {messageFor(ssoErrorCode)}
+        </p>
       )}
-      {loadState === 'loading' && <output>Loading your sign-in methods…</output>}
+      {linkedProviderId !== null && (
+        <output className="settings-ok">
+          Provider {linkedProviderName()} was linked to your account.
+        </output>
+      )}
+      {loadState === 'loading' && (
+        <output className="settings-status">Loading your sign-in methods…</output>
+      )}
       {loadState === 'error' && (
-        <p role="alert">Could not load your sign-in methods. Please refresh the page.</p>
+        <p className="settings-error" role="alert">
+          Could not load your sign-in methods. Please refresh the page.
+        </p>
       )}
       {loadState === 'ready' && (
         <>
-          <section aria-label="Linked providers">
-            <h3>Linked providers</h3>
-            {identities.length === 0 && <p>No providers are linked to your account yet.</p>}
+          <section aria-label="Linked providers" className="settings-block">
+            <h3 className="settings-subtitle">Linked providers</h3>
+            {identities.length === 0 && (
+              <p className="settings-empty">No providers are linked to your account yet.</p>
+            )}
             {identities.length > 0 && (
-              <ul>
+              <ul className="settings-identity-list">
                 {identities.map((identity) => (
-                  <li key={identity.id}>
-                    <span>{providerLabel(identity)}</span>
-                    <span>{identity.email ?? '—'}</span>
-                    <span>{formatLinkedAt(identity.linkedAt)}</span>
+                  <li key={identity.id} className="settings-identity">
+                    <span className="s-id-main">
+                      <span className="s-id-name">{providerLabel(identity)}</span>
+                      <span className="s-id-email">{identity.email ?? '—'}</span>
+                    </span>
+                    <span className="s-id-date">{formatLinkedAt(identity.linkedAt)}</span>
                     <button
                       type="button"
+                      className="settings-btn danger"
                       disabled={unlinkingId !== null}
                       onClick={() => void unlink(identity)}
                     >
@@ -155,29 +179,38 @@ export function SecurityPage() {
               </ul>
             )}
             {unlinkError !== null && unlinkError.kind === 'lastLoginMethod' && (
-              <p role="alert">
+              <p className="settings-error" role="alert">
                 This is your last sign-in method, so it cannot be unlinked. Set a password first via
                 the <a href="/forgot-password">password reset email</a>, then unlink the provider.
               </p>
             )}
             {unlinkError !== null && unlinkError.kind === 'message' && (
-              <p role="alert">{unlinkError.text}</p>
+              <p className="settings-error" role="alert">
+                {unlinkError.text}
+              </p>
             )}
           </section>
           {linkableProviders.length > 0 && (
-            <section aria-label="Link a provider">
-              <h3>Link a provider</h3>
-              {linkError !== null && <p role="alert">{linkError}</p>}
-              {linkableProviders.map((provider) => (
-                <button
-                  key={provider.id}
-                  type="button"
-                  disabled={linkingId !== null}
-                  onClick={() => void linkProvider(provider)}
-                >
-                  {linkingId === provider.id ? 'Redirecting…' : `Link ${provider.displayName}`}
-                </button>
-              ))}
+            <section aria-label="Link a provider" className="settings-block">
+              <h3 className="settings-subtitle">Link a provider</h3>
+              {linkError !== null && (
+                <p className="settings-error" role="alert">
+                  {linkError}
+                </p>
+              )}
+              <div className="settings-provider-actions">
+                {linkableProviders.map((provider) => (
+                  <button
+                    key={provider.id}
+                    type="button"
+                    className="settings-btn primary"
+                    disabled={linkingId !== null}
+                    onClick={() => void linkProvider(provider)}
+                  >
+                    {linkingId === provider.id ? 'Redirecting…' : `Link ${provider.displayName}`}
+                  </button>
+                ))}
+              </div>
             </section>
           )}
         </>

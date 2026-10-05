@@ -1,0 +1,124 @@
+/* Модальная форма «Участники» (feature 008, US4, T055; FR-023,
+   ui-behavior §3) — проекция #membersForm/#membersList прототипа
+   specs/008-chat-window-styling/design/chats.html (раздел «9. МОДАЛЬНОЕ
+   ОКНО»); при расхождениях побеждает прототип (FR-001). Форма — обитатель
+   ЕДИНОЙ оболочки ModalShell (T012/T034): каркас подложки/окна/заголовка —
+   ui/modal-shell.css, пикер .pick-list/.pick-row/.pick-empty/.modal-err и
+   тело строки .c-* — chats/components/contacts-modal.css, каркас строки
+   ошибки — chats/components/status-banners.css (ErrorBanner, T052).
+   Здесь — колонка формы, кнопка «Добавить в контакты» .add-ctc-btn
+   (дословно из прототипа) и ростер-действия .member-action.
+
+   Ростер-действия в прототипе ОТСУТСТВУЮТ (membersForm упрощён) —
+   производная лексика машины по прецедентам T050/T052: компактные
+   кнопки семейства .m-btn (ui/confirm-dialog.css) с danger-вариантом
+   «Исключить» (.m-btn.danger прототипа дословно); baseline T060 — по
+   реализованным снимкам. Специфичность: main.tsx импортирует App РАНЬШЕ
+   index.css → компонентные CSS в сборке раньше auth-элементарных
+   button/button:hover:not(:disabled) — селекторы несут класс формы +
+   элемент (0-2-1+), :hover (0-3-1) с явным дублированием background —
+   паттерн T052 (status-banners.css). Переменные-токены —
+   theme/tokens.css (FR-002). prefers-reduced-motion (FR-004) —
+   глобальное правило theme/machine.css (здесь только transition). */
+
+/* ============ ФОРМА (#membersForm прототипа: колонка gap 8) ============ */
+
+.members-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Строки списка не кликабны (навигации по клику в контракте нет) —
+   курсор строки по умолчанию, паттерн #grpEditMembers прототипа
+   (cursor:default поверх базового .pick-row). */
+.members-form .pick-row {
+  cursor: default;
+}
+
+/* ============ РОСТЕР-ДЕЙСТВИЯ (.member-action, лексика .m-btn) ============ */
+
+/* Компактные машинные кнопки строки (Исключить/Назначить админом/
+   Снять админа/Передать владение): (0-2-1) перекрывает button
+   auth-наследия по каждому свойству, focus-ring FR-035 — паттерн .m-btn. */
+.members-form .member-actions {
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+  flex: none;
+}
+
+.members-form button.member-action {
+  flex: none;
+  align-self: auto;
+  padding: 4px 9px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: 0.15s;
+  border: 1px solid var(--gold-dark);
+  color: var(--muted-2);
+  background: var(--input-bg);
+  font: 700 9.5px var(--font-heading);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.members-form button.member-action:hover {
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+  background: var(--input-bg);
+}
+
+/* Danger-вариант «Исключить» — семейство .m-btn.danger прототипа. */
+.members-form button.member-action.danger {
+  color: var(--err);
+  border-color: rgba(255, 180, 163, 0.45);
+}
+
+.members-form button.member-action.danger:hover {
+  color: #ffd6cc;
+  border-color: rgba(255, 180, 163, 0.7);
+  background: rgba(126, 51, 32, 0.35);
+}
+
+.members-form button.member-action:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+/* ============ КНОПКА «ДОБАВИТЬ В КОНТАКТЫ» (.add-ctc-btn прототипа) ============ */
+
+/* Дословно из прототипа (padding 6px 10px, Cormorant SC 700 10px UPPER,
+   золотой градиент с тиснением); специфичность (0-2-1) — перекрыка
+   button auth-наследия, :hover (0-3-1) — button:hover:not(:disabled)
+   (0-2-1) с явным дублированием background (паттерн T052). */
+.members-form button.add-ctc-btn {
+  flex: none;
+  padding: 6px 10px;
+  border-radius: var(--r-field);
+  cursor: pointer;
+  transition: 0.15s;
+  border: 1px solid var(--gold-dark);
+  color: var(--ink);
+  background: var(--gold-gradient);
+  font: 700 10px var(--font-heading);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  box-shadow:
+    0 2px 5px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.members-form button.add-ctc-btn:hover {
+  filter: brightness(1.08);
+  background: var(--gold-gradient);
+}
+
+.members-form button.add-ctc-btn:active {
+  transform: translateY(1px);
+}
+
+.members-form button.add-ctc-btn:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}

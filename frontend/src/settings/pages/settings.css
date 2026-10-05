@@ -1,0 +1,270 @@
+/* Страницы настроек в дизайн-системе «Aethergram» (feature 008, US4,
+   T058; FR-031): PresenceSettingsPage (/settings/presence) и SecurityPage
+   (/settings/security). В статическом прототипе
+   specs/008-chat-window-styling/design/chats.html страниц настроек НЕТ —
+   лексика производная от машины (исключение SC-001: baseline — снимки по
+   реализации), как у врезок T050–T052:
+
+   - панель страницы — класс .panel корпуса theme/machine.css (фон
+     --panel-bg, латунный бордер, заклёпки), каркас колонки — как окно
+     .modal (ui/modal-shell.css: 20px паддинг, gap 12, ширина 420);
+   - заголовок .settings-title — дословно .modal-title (Cormorant SC 600
+     18px, --gold-light, letter-spacing 1.5);
+   - подсекция .settings-block — прозрачная колонка с пунктирной латунной
+     линией-разделителем (перекрывает карточку auth-наследия `section`);
+   - переключатель №38 .tgl-row/.tgl-txt — дословно из
+     chats/components/profile-modal.css (импортируется страницей присутствия
+     тем же классом, что в «Моём профиле» — единый облик контроля, FR-034);
+   - строки идентичностей — поля .modal-ro/.tgl-row лексики (пунктирная
+     рамка, тёмная полевая плашка), имя — Cormorant SC, email — моно-роль;
+   - полосы состояний — лексика status-banners.css (T052): ошибка —
+     danger-смывка .error-banner, ожидание — «терпеливая латунь»
+     .sync-indicator, успех привязки — плашка тоста ui/toast.css (--ok);
+     пустое состояние — .pick-empty (contacts-modal.css);
+   - кнопки .settings-btn — семейство .m-btn (ui/confirm-dialog.css) c
+     primary (золотой градиент, «Link …») и danger («Unlink»).
+
+   Маршруты и функции не меняются (FR-031): DOM-изменения — только
+   классы/обёртки, поведенческие ожидания 007 дословны (FR-034).
+   Селекторы .settings-page … (0-2-0+) перекрывают auth-наследие index.css
+   (section/[role=alert]/output/button идёт ПОСЛЕ компонентных CSS в сборке
+   — main.tsx импортирует App раньше './index.css') по каждому свойству;
+   :hover (0-3-0) — button:hover:not(:disabled) (0-2-1) с явным
+   дублированием background (паттерн T052). Переменные-токены —
+   theme/tokens.css (FR-002). prefers-reduced-motion (FR-004) — глобальное
+   правило theme/machine.css (здесь только transition свойств). */
+
+/* ============ ПАНЕЛЬ СТРАНИЦЫ (machine.css .panel + каркас .modal) ============ */
+
+.settings-page {
+  width: min(420px, 100%);
+  margin: 0 auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Заголовок — .modal-title (ui/modal-shell.css); (0-1-0) перебивает h2
+   auth-наследия (0-0-1): метрики и поляна сброшены шрифтовой shorthand. */
+.settings-page .settings-title {
+  margin: 0;
+  font: 600 18px var(--font-heading);
+  color: var(--gold-light);
+  letter-spacing: 1.5px;
+  text-align: center;
+}
+
+/* Подсекция — прозрачная колонка (перекрывает карточку auth-наследия
+   `section`: фон/рамка/радиус/паддинги), блоки разделяет пунктирная
+   латунная линия (рамочный словарь .tgl-row/.modal-ro). */
+.settings-page .settings-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 12px 0 0;
+  background: none;
+  border: 0;
+  border-top: 1px dashed rgba(138, 106, 44, 0.35);
+  border-radius: 0;
+}
+
+/* Подзаголовок — подпись-«гравировка» форм машины: heading-роль,
+   UPPER, латунь приглушённая. */
+.settings-page .settings-subtitle {
+  margin: 0;
+  font: 700 12px var(--font-heading);
+  color: var(--muted);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* Пояснительный текст — курсив-подпись .tgl-txt/.confirm-text. */
+.settings-page .settings-note {
+  margin: 0;
+  font: italic 13px/1.6 var(--font-body);
+  color: var(--muted-2);
+  overflow-wrap: break-word;
+}
+
+/* ============ ПОЛОСЫ СОСТОЯНИЙ (лексика status-banners.css, T052) ============ */
+
+/* Ошибка — danger-смывка машины (бордер/фон/текст .error-banner):
+   (0-2-0) перекрывает светлую danger-карточку [role=alert] auth-наследия. */
+.settings-page .settings-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 180, 163, 0.45);
+  border-radius: var(--r-toast);
+  background: rgba(126, 51, 32, 0.35);
+  color: var(--err);
+  font: italic 12.5px/1.55 var(--font-body);
+  overflow-wrap: break-word;
+}
+
+/* Ссылка совета «last sign-in method» — светлый тон опасности
+   (hover-цвет .m-btn.danger) вместо --accent auth-наследия. */
+.settings-page .settings-error a {
+  color: #ffd6cc;
+}
+
+/* Статус ожидания — «терпеливая латунь» (T051/T052): полевая плашка с
+   латунной рамкой и золотым текстом; (0-2-1) перекрывает output,
+   [role=status] auth-наследия (светлая success-карточка). */
+.settings-page output.settings-status {
+  display: block;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(138, 106, 44, 0.55);
+  border-radius: var(--r-toast);
+  background: var(--input-bg);
+  color: var(--gold-light);
+  font: italic 12.5px/1.55 var(--font-body);
+  overflow-wrap: break-word;
+}
+
+/* Успех привязки (?linked=) — плашка тоста машины (ui/toast.css:
+   тёмно-зелёная смывка, латунный бордер, --ok). */
+.settings-page output.settings-ok {
+  display: block;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(201, 162, 74, 0.4);
+  border-radius: var(--r-toast);
+  background: rgba(32, 46, 26, 0.78);
+  color: var(--ok);
+  font: italic 12.5px/1.55 var(--font-body);
+  overflow-wrap: break-word;
+}
+
+/* Пустое состояние — .pick-empty (contacts-modal.css). */
+.settings-page .settings-empty {
+  margin: 0;
+  padding: 8px;
+  font: italic 12.5px var(--font-body);
+  color: var(--muted-3);
+  text-align: center;
+}
+
+/* ============ СПИСОК ИДЕНТИЧНОСТЕЙ (строки-поля .modal-ro лексики) ============ */
+
+.settings-page .settings-identity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Строка провайдера — тёмное поле с пунктирной латунной рамкой (как
+   .tgl-row/.modal-ro profile-modal.css), НЕ интерактивна (без hover). */
+.settings-page .settings-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px dashed rgba(138, 106, 44, 0.45);
+  border-radius: var(--r-field);
+  background: rgba(25, 21, 16, 0.5);
+}
+
+.settings-page .s-id-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Имя провайдера — заголовочная роль прототипных строк (c-top). */
+.settings-page .s-id-name {
+  font: 700 13px var(--font-heading);
+  color: var(--cream-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Email — моно-роль readonly-строк (.modal-ro). */
+.settings-page .s-id-email {
+  font: 12px var(--font-mono);
+  color: var(--muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Дата привязки — курсив-подпись малой плоскости (.tgl-txt small). */
+.settings-page .s-id-date {
+  flex: none;
+  font: italic 11.5px var(--font-body);
+  color: var(--muted-3);
+}
+
+/* ============ КНОПКИ (семейство .m-btn, ui/confirm-dialog.css) ============ */
+
+/* Машинные кнопки страницы: (0-2-0) перекрывает button auth-наследия
+   (фон --accent, hover, align-self) до значений .m-btn; focus-ring
+   дизайн-системы — золотой (FR-035), паттерн .m-btn. */
+.settings-page .settings-btn {
+  flex: none;
+  align-self: auto;
+  padding: 8px 14px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-field);
+  background: var(--input-bg);
+  color: var(--muted-2);
+  font: 700 11px var(--font-heading);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: 0.15s;
+}
+
+.settings-page .settings-btn:hover {
+  background: var(--input-bg);
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+}
+
+/* «Link …» — основная золотая пластина с тиснением (.m-btn.primary). */
+.settings-page .settings-btn.primary {
+  background: var(--gold-gradient);
+  color: var(--ink);
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.settings-page .settings-btn.primary:hover {
+  background: var(--gold-gradient);
+  color: var(--ink);
+  filter: brightness(1.08);
+}
+
+/* «Unlink» — опасное действие: danger-семейство .m-btn.danger. */
+.settings-page .settings-btn.danger {
+  border-color: rgba(255, 180, 163, 0.45);
+  color: var(--err);
+}
+
+.settings-page .settings-btn.danger:hover {
+  background: rgba(126, 51, 32, 0.35);
+  border-color: rgba(255, 180, 163, 0.7);
+  color: #ffd6cc;
+}
+
+.settings-page .settings-btn:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+/* Ряд кнопок привязки (строка с переносом — как .modal-btns). */
+.settings-page .settings-provider-actions {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+}

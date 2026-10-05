@@ -1,0 +1,83 @@
+/* Аватары «Aethergram» — проекция раздела «6. АВАТАРЫ» прототипа
+   specs/008-chat-window-styling/design/chats.html; при расхождениях побеждает
+   прототип (FR-001). Норматив констант — contracts/design-tokens.md §4;
+   переменные-токены — theme/tokens.css (FR-002), шрифтовая роль —
+   var(--font-heading) = Cormorant SC (design-tokens §2). Подключается
+   компонентом ui/Avatar.tsx (T010); наличие точки/presence и форма
+   (круг/октагон) управляются классами .av-dot[.off|.unknown] и .oct. */
+
+.avatar {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  padding: 2px;
+  border-radius: 50%;
+  background: var(--gold-gradient);
+}
+
+.avatar .av-in {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(130% 130% at 30% 22%, rgba(255, 255, 255, 0.32), rgba(0, 0, 0, 0.38) 75%),
+    var(--av);
+  color: #f5e8c8;
+  font: 700 12px var(--font-heading);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.45);
+}
+
+/* Октагон групповых чатов: clip-path 30/70% + border-radius 22% (design-tokens §4) */
+.avatar.oct,
+.avatar.oct .av-in {
+  border-radius: 22%;
+  clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%);
+}
+
+/* Presence-точка 11px: online — зелёная со свечением и мерцанием flick 4s */
+.av-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid var(--panel);
+  background: #9dbb7d;
+  box-shadow: 0 0 7px rgba(157, 187, 125, 0.8);
+  animation: flick 4s infinite;
+}
+
+/* «Выключенная лампочка» — offline: тусклая, без анимации */
+.av-dot.off {
+  background: #6b5c39;
+  box-shadow: 0 0 4px rgba(182, 162, 106, 0.3);
+  animation: none;
+}
+
+/* unknown — нейтральная: без ложного «офлайн» (семантика 007, design-tokens §4) */
+.av-dot.unknown {
+  background: var(--muted-3);
+  box-shadow: none;
+  animation: none;
+}
+
+@keyframes flick {
+  0%,
+  91%,
+  94%,
+  98%,
+  100% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 0.45;
+  }
+  96% {
+    opacity: 0.7;
+  }
+}

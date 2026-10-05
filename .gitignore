@@ -10,7 +10,14 @@ build
 # Frontend (no trailing slash: also ignores node_modules symlinks, e.g. on WSL/drvfs)
 node_modules
 dist/
+coverage/
 .scannerwork/
+
+# Playwright (visual regression): run artifacts only —
+# tests/visual/__screenshots__/ baselines stay committed (SC-001, research §B)
+frontend/test-results/
+frontend/tests/visual/test-results/
+frontend/playwright-report/
 
 # Secrets / local env
 .env

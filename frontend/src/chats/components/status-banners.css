@@ -1,0 +1,148 @@
+/* Служебные полосы устойчивости 005 — QueueOverflowBanner / ErrorBanner /
+   SyncIndicator (008 US4, T052; FR-030, SC-002): уведомления доставки в
+   дизайн-токенах «Aethergram». В статическом прототипе
+   specs/008-chat-window-styling/design/chats.html этих состояний НЕТ —
+   лексика производная от машины (исключение SC-001: baseline — снимки по
+   реализации, T060), как у врезок T050/T051: подпись-курсив Old Standard
+   TT 12.5px (как .modal-err / .message-input-retry), опасность --err на
+   тёмно-красной смывке .m-btn.danger, «терпеливая латунь» --gold-light
+   для статуса, вспышка внимания — srFlash прототипа (дословные keyframes
+   из .msg.flash .bubble). Норматив констант — contracts/design-tokens.md
+   §1/§7/§8; переменные-токены — theme/tokens.css (FR-002).
+
+   Подключается всеми тремя компонентами (ErrorBanner.tsx,
+   QueueOverflowBanner.tsx, SyncIndicator.tsx); DOM/позиции не меняются
+   (FR-030): полоса переполнения и индикатор — верх сайдбара, ошибка —
+   окно чата. Селекторы несут класс+элемент/атрибут (0-2-0+): index.css
+   идёт ПОСЛЕ компонентных CSS в сборке (main.tsx импортирует App раньше
+   './index.css'), поэтому перекрытие auth-наследия [role=alert] /
+   output,[role=status] / button по КАЖДОМУ свойству требует запаса
+   специфичности — паттерн .message-input .message-input-retry (T051).
+   prefers-reduced-motion (FR-004) глушит flick/srFlash глобально
+   theme/machine.css. */
+
+/* ============ ОБЩАЯ ПОЛОСА-СТРИП ============ */
+
+/* Корни трёх полос: flex-строка (текст гибкий, точка/«×» фиксированы),
+   отступ снизу 10px к следующей поверхности; радиус тостов/уведомлений
+   (design-tokens §7); переносы слов — как у auth-полос 004. */
+.error-banner[role='alert'],
+output.queue-overflow-banner,
+output.sync-indicator {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: var(--r-toast);
+  font: italic 12.5px/1.55 var(--font-body);
+  overflow-wrap: break-word;
+  animation: srFlash 1.8s ease-out;
+}
+
+/* Вспышка внимания при появлении — дословный srFlash прототипа
+   (раздел «4. ЛЕНТА»: .msg.flash .bubble); одноразовая, на покоящихся
+   полосах не остаётся */
+@keyframes srFlash {
+  0%,
+  25% {
+    box-shadow: 0 0 0 3px rgba(232, 200, 119, 0.65);
+  }
+  100% {
+    box-shadow: 0 0 0 3px rgba(232, 200, 119, 0);
+  }
+}
+
+/* ============ ОПАСНОСТЬ (ошибки + переполнение очереди) ============ */
+
+/* Тёмно-красная смывка danger-семейства машины (.m-btn.danger:
+   бордер rgba(255,180,163,.45), hover-фон rgba(126,51,32,.35)) —
+   ошибки окна чата и вытеснение очереди одинаковой плашкой: оба
+   состояния «что-то не отправится само» */
+.error-banner[role='alert'],
+output.queue-overflow-banner {
+  border: 1px solid rgba(255, 180, 163, 0.45);
+  background: rgba(126, 51, 32, 0.35);
+  color: var(--err);
+}
+
+/* Текст ошибки: курсив-подпись на всю ширину плашки; отдельное правило
+   p.error-banner-text (0-1-1) перекрывает auth-наследие [role=alert]
+   (светлая danger-карточка) и для строки вне плашки — внешний
+   потребитель ушёл вместе с карточкой группы (GroupInfoPanel, T057) */
+p.error-banner-text {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font: italic 12.5px/1.55 var(--font-body);
+  color: var(--err);
+  overflow-wrap: break-word;
+}
+
+.error-banner[role='alert'] .error-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+output.queue-overflow-banner .queue-overflow-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ============ СТАТУС СИНХРОНИЗАЦИИ («терпеливая латунь») ============ */
+
+/* Тёмная полевая плашка с латунной рамкой (как рамка композера) и
+   золотым текстом — статус ожидания, НЕ ошибка: та же роль, что у
+   строки «Повтор через N с» (T051, ui-behavior §Композер) */
+output.sync-indicator {
+  align-items: center;
+  border: 1px solid rgba(138, 106, 44, 0.55);
+  background: var(--input-bg);
+  color: var(--gold-light);
+}
+
+/* Точка-«лампа» дозагрузки: латунь со свечением и мерцанием flick —
+   ключевые кадры переиспользуются из ui/avatar.css (паттерн
+   chat-header.css), reduced-motion глушит глобально */
+output.sync-indicator .sync-indicator-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--gold-light);
+  box-shadow: 0 0 7px rgba(232, 200, 119, 0.8);
+  animation: flick 4s infinite;
+}
+
+/* ============ КНОПКА-«×» ЗАКРЫТИЯ ============ */
+
+/* Тихий машинный контрол (фон прозрачен, «×» приглушён, hover — латунь):
+   (0-2-0) перекрывает button auth-наследия (фон/цвет/шрифт/паддинги),
+   :hover (0-3-0) — button:hover:not(:disabled) (0-2-1), фон продублирован
+   явно; focus-ring FR-035 — паттерн .m-btn */
+.error-banner[role='alert'] .error-banner-dismiss,
+output.queue-overflow-banner .queue-overflow-banner-dismiss {
+  flex: none;
+  align-self: auto;
+  padding: 1px 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted-2);
+  font: 700 14px/1.2 var(--font-body);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.error-banner[role='alert'] .error-banner-dismiss:hover,
+output.queue-overflow-banner .queue-overflow-banner-dismiss:hover {
+  background: none;
+  color: var(--gold-light);
+}
+
+.error-banner[role='alert'] .error-banner-dismiss:focus-visible,
+output.queue-overflow-banner .queue-overflow-banner-dismiss:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 1px;
+}

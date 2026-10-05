@@ -12,9 +12,14 @@
  * their dialogs as «не отправлено (переполнение очереди)» with the
  * manual retry action (MessageList, T028); the banner explains why
  * they appeared and that auto-retries have stopped.
+ *
+ * 008 (US4, T052; FR-030): skinned with the machine's design tokens —
+ * status-banners.css, shared with the other delivery notifications;
+ * the DOM and its sidebar position are unchanged.
  */
 import { useEffect, useState } from 'react'
 import { onOutboxOverflow } from '../outbox'
+import './status-banners.css'
 
 export interface QueueOverflowBannerProps {
   /** Signed-in account: only its evictions are announced. */
