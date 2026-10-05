@@ -118,9 +118,9 @@ export interface ChatHeaderProps {
   readonly onToggleBlock?: () => void
   /** «Удалить чат» (подтверждение): direct №14 / group №30 — the page's. */
   readonly onDeleteChat?: () => void
-  /** group: «Участники» → the members form (T055; interim — the №28 card). */
+  /** group: «Участники» → the members form of the shell (T055/T057). */
   readonly onOpenMembers?: () => void
-  /** group owner/admin: «Редактировать чат» → group-edit (T056; interim — the card). */
+  /** group owner/admin: «Редактировать чат» → group-edit of the shell (T056/T057). */
   readonly onOpenEdit?: () => void
   /** group member: «Выйти из чата» (danger, подтверждение) — №33 of the page. */
   readonly onLeaveChat?: () => void

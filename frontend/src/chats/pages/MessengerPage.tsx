@@ -100,15 +100,17 @@
  * The roster is guarded by chatId, so a direct dialog opened next
  * never sees the stale group roster.
  *
- * US3 group card (feature 006, T046a; FR-015): the №28 lifecycle of
- * the open group window — the snapshot AND the live roster/metadata —
- * moved into `useGroup` (one №28 per open, optimistic `group.*`
- * frames on the shared №18 stream, `reload()` convergence), which
- * feeds BOTH the dialog pair (attribution/✓✓, the T038 need) and the
- * GroupInfoPanel card (T046): since T054 the gear's «Участники»/
- * «Редактировать чат» items open the card under the header (interim —
- * the members/group-edit modal forms of T055/T056/T057 replace it).
- * The №31 success converges
+ * US3/US4 group forms (feature 006 T046a → 008 T057; FR-015/FR-023):
+ * the №28 lifecycle of the open group window — the snapshot AND the
+ * live roster/metadata — lives in `useGroup` (one №28 per open,
+ * optimistic `group.*` frames on the shared №18 stream, `reload()`
+ * convergence), which feeds the dialog pair (attribution/✓✓, the
+ * T038 need) and the SHELL FORMS: since T057 the gear's «Участники»/
+ * «Редактировать чат» items open the GroupMembersModal/GroupEditModal
+ * inhabitants (T055/T056) of the single ModalShell — the interim №28
+ * card under the header (006 GroupInfoPanel/LeaveDeleteControls/
+ * MemberList/AddMembersPicker) is deleted, its №28 loading/error
+ * states live in the shell slot. The №31/№29 success converges
  * through `reload()`; the №32/№34/№35 roster actions mount their
  * mutex with useGroupMembers (T047). The full realtime set
  * (`group.you_removed` etc.) lands with T048/T058.
@@ -126,11 +128,11 @@
  * batcher-side tombstone also absorbs the late acks useSync/
  * useChatMessages may still feed through the §1 order race.
  *
- * US6 leave/delete wiring (feature 006, T066; FR-005/FR-006): the
- * group card mounts the №33/№30 LeaveDeleteControls in its slot —
- * leave for admin/member, hard-delete for the owner, the 403 problem
- * codes (`owner_must_transfer`/`not_group_owner`) surfacing as the
- * card's error hints — and a 204 closes the window at once (the §3.6
+ * US6 leave/delete wiring (feature 006, T066 → 008 T054/T057; FR-005/
+ * FR-006): the №33/№30 entries live in the gear menu behind the shell
+ * 'confirm' form (SC-007) — «Выйти из чата» for admin/member,
+ * «Удалить чат» for the owner (the card-only LeaveDeleteControls are
+ * deleted, T057) — and a 204 closes the window at once (the §3.6
  * `group.you_removed {reason:'left'}` / §3.5 `group.deleted` frames of
  * the same commit converge «Чаты» and the batcher tombstone
  * deterministically; the №12 reload the handler fires covers the
@@ -153,7 +155,7 @@
  * тостом НЕ отмечаются — только инлайн-ошибки поверхностей (контракт
  * форм T028–T035); тост — результат операции, завершившейся на сервере.
  */
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
 import type { GroupMember, GroupView } from '../../api/groups'
@@ -186,8 +188,8 @@ import { useOutbox } from '../hooks/useOutbox'
 import { useRealtime } from '../hooks/useRealtime'
 import { headFloodRetryAt } from '../outbox'
 import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
-import { GroupInfoPanel } from '../../groups/components/GroupInfoPanel'
-import { LeaveDeleteControls } from '../../groups/components/LeaveDeleteControls'
+import { GroupEditModal } from '../../groups/components/GroupEditModal'
+import { GroupMembersModal } from '../../groups/components/GroupMembersModal'
 import { useGroup } from '../../groups/hooks/useGroup'
 import type { GroupStatus } from '../../groups/hooks/useGroup'
 import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
@@ -388,56 +390,64 @@ function activeChatOfView(view: ChatView): ActiveChat | null {
 }
 
 /**
- * The group card (T046a): the №28 GroupInfoPanel under the header —
- * loading/error states of the №28 lifecycle stay local to the card,
- * the №16 history below is the window's own error surface.
+ * The group forms of the single shell (008 T057; FR-023, ui-behavior
+ * §3): the №28 lifecycle of the inhabitant slot — loading/error
+ * states stay local to the slot (the modal lexicon: ErrorBanner +
+ * «Повторить»), the ready roster feeds the members (T055) / edit
+ * (T056) forms. The №32/№34/№35 roster actions ride the page's
+ * useGroupMembers mutex (T047) verbatim; the №21 offer of the
+ * members rows belongs to the page (its toast too, T045).
  */
-interface GroupCardProps {
+interface GroupShellFormProps {
+  readonly formId: 'group-members' | 'group-edit'
   readonly group: GroupView | null
   readonly chatId: string
   readonly status: GroupStatus
   readonly error: unknown
-  readonly currentUserId: string
-  readonly onReload: () => void
+  readonly currentUserId: string | null
   readonly rosterActions: UseGroupMembersResult
+  /** №20 keys of the viewer's book — hides the «Добавить в контакты» offer. */
+  readonly contactUserIds: ReadonlySet<string>
+  readonly onAddContact: (userId: string) => void
+  readonly onReload: () => void
   readonly onMembersAdded: () => void
   readonly onUpdated: () => void
-  readonly onLeft: () => void
-  readonly onDeleted: () => void
+  readonly onCancel: () => void
 }
 
-function GroupCard({
+function GroupShellForm({
+  formId,
   group,
   chatId,
   status,
   error,
   currentUserId,
-  onReload,
   rosterActions,
+  contactUserIds,
+  onAddContact,
+  onReload,
   onMembersAdded,
   onUpdated,
-  onLeft,
-  onDeleted,
-}: GroupCardProps) {
+  onCancel,
+}: GroupShellFormProps) {
   return (
-    <div className="dialog-group-card" id="dialog-group-card">
+    <>
       {status === 'loading' && <p className="messenger-empty">Загрузка группы…</p>}
       {status === 'error' && (
-        <div className="chat-panel-error">
+        <>
           <ErrorBanner error={error} />
-          <button type="button" className="chat-panel-retry" onClick={onReload}>
-            Повторить
-          </button>
-        </div>
+          <div className="modal-btns">
+            <button type="button" className="m-btn" onClick={onReload}>
+              Повторить
+            </button>
+          </div>
+        </>
       )}
-      {group?.chatId === chatId && status === 'ready' && (
-        <GroupInfoPanel
-          chatId={group.chatId}
-          title={group.title}
-          description={group.description}
+      {group?.chatId === chatId && status === 'ready' && formId === 'group-members' && (
+        <GroupMembersModal
           members={group.members}
           myRole={group.myRole}
-          currentUserId={currentUserId}
+          currentUserId={currentUserId ?? ''}
           onKick={(userId) => {
             void rosterActions.kick(userId)
           }}
@@ -449,22 +459,24 @@ function GroupCard({
           }}
           pendingUserId={rosterActions.pendingUserId}
           rosterError={rosterActions.error}
-          onMembersAdded={onMembersAdded}
-          onUpdated={onUpdated}
-          leaveDeleteControls={
-            // US6 (T066): the №33 leave / №30 hard-delete controls of
-            // the card — the reachable half by `myRole`, the 403 hints
-            // of a stale role race render inside the component.
-            <LeaveDeleteControls
-              chatId={group.chatId}
-              myRole={group.myRole}
-              onLeft={onLeft}
-              onDeleted={onDeleted}
-            />
-          }
+          contactUserIds={contactUserIds}
+          onAddContact={onAddContact}
         />
       )}
-    </div>
+      {group?.chatId === chatId && status === 'ready' && formId === 'group-edit' && (
+        <GroupEditModal
+          chatId={chatId}
+          title={group.title}
+          description={group.description}
+          members={group.members}
+          currentUserId={currentUserId ?? undefined}
+          onUpdated={onUpdated}
+          onMembersAdded={onMembersAdded}
+          onMemberRemoved={onMembersAdded}
+          onCancel={onCancel}
+        />
+      )}
+    </>
   )
 }
 
@@ -509,13 +521,6 @@ function MessengerMachine() {
    * stack a second backdrop.
    */
   const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
-  /**
-   * The GroupInfoPanel card of the open group window (T046a → T054
-   * interim): the gear's «Участники»/«Редактировать чат» items open it
-   * until the members/group-edit forms land (T055/T056/T057); a chat
-   * switch closes it together with the pending confirmation below.
-   */
-  const [groupInfoOpen, setGroupInfoOpen] = useState(false)
 
   /** №20 refetch of the gear's address-book basis (T054). */
   const reloadContacts = useCallback(() => {
@@ -531,6 +536,15 @@ function MessengerMachine() {
       }
     })()
   }, [currentUserId])
+
+  /**
+   * №20 keys of the viewer's book (T057): the «Добавить в контакты»
+   * offer basis of the members modal rows (T049/T055 contract).
+   */
+  const contactUserIds = useMemo(
+    () => new Set(contacts.map((contact) => contact.user.id)),
+    [contacts],
+  )
 
   useEffect(() => {
     reloadContacts()
@@ -566,10 +580,10 @@ function MessengerMachine() {
 
   const activeChatId = activeChat?.chatId ?? null
 
-  // №28 lifecycle of the open group window (US3, T046a): useGroup owns
-  // the GroupView — one №28 per open, optimistic `group.*` frames,
+  // №28 lifecycle of the open group window (US3, T046a → T057): useGroup
+  // owns the GroupView — one №28 per open, optimistic `group.*` frames,
   // `reload()` convergence — feeding both the dialog pair (the T038
-  // attribution/✓✓ roster) and the GroupInfoPanel card below. The
+  // attribution/✓✓ roster) and the group forms of the shell below. The
   // chatId guard keeps a direct dialog opened next free of the stale
   // group view before useGroup's switch reset lands.
   const activeGroupChatId = activeChat?.kind === 'group' ? activeChat.chatId : null
@@ -582,12 +596,12 @@ function MessengerMachine() {
   const activeGroupMembers =
     activeGroup !== null && activeGroup.chatId === activeChatId ? activeGroup.members : undefined
 
-  // №32/№34/№35 roster actions of the open group card (US3, T047):
+  // №32/№34/№35 roster actions of the members form (US3, T047 → T057):
   // useGroupMembers runs every roster mutation through ONE local
-  // mutex — `pendingUserId` disables the in-flight MemberList row, a
+  // mutex — `pendingUserId` disables the in-flight modal row, a
   // problem (`role_hierarchy_violation`, `not_group_owner`, network)
-  // surfaces as the card's rosterError and unblocks the roster. A
-  // successful action converges the №28 card through `reload()` (the
+  // surfaces as the form's rosterError and unblocks the roster. A
+  // successful action converges the №28 roster through `reload()` (the
   // `group.member.removed`/`group.role.changed` frames land on top,
   // idempotently — T048).
   const rosterActions = useGroupMembers(activeGroupChatId, reloadActiveGroup)
@@ -632,12 +646,16 @@ function MessengerMachine() {
   )
   const outbox = useOutbox(currentUserId, { onConfirmed: handleConfirmed })
 
-  // Chat switches close the pending confirmation; a stale dialog must
-  // never act on a chat that is no longer open. The group card folds
-  // together with its window.
+  // Chat switches close the pending confirmation and the group forms
+  // of the shell; a stale dialog must never act on a chat that is no
+  // longer open. The realtime group.you_removed/group.deleted frames
+  // can fold the window under an open «Участники»/«Редактировать
+  // чат» form — the form never outlives its window. Menu-opened forms
+  // do not see this path: every modal → chat transition closes the
+  // shell first (handleOpenChatFromModal).
   useEffect(() => {
     setPendingAction(null)
-    setGroupInfoOpen(false)
+    setModalForm(null)
   }, [activeChatId])
 
   // Applied catch-up pages (feature 005, T023): the list adopts
@@ -944,14 +962,29 @@ function MessengerMachine() {
   }, [activeChat])
 
   /**
-   * Group «Участники»/«Редактировать чат» of the gear (T054 INTERIM):
-   * both open the №28 GroupInfoPanel card under the header — the
-   * roster/rename surfaces of 006 stay reachable until the members /
-   * group-edit modal forms land (T055/T056/T057 rewire to the shell).
+   * «Добавить в контакты» строки модали «Участники» (T055/T057,
+   * FR-012): №21 с id участника — идемпотентно 201/200 без дублей,
+   * один тост прототипа addContact (имя — из живого №28-ростра),
+   * №20-база шестерёнки/модали сходится; сбой — инлайн-ошибка окна,
+   * тостом не отмечается (T045).
    */
-  const handleOpenGroupCard = useCallback(() => {
-    setGroupInfoOpen(true)
-  }, [])
+  const handleMemberAddContact = useCallback(
+    (userId: string) => {
+      const known = contacts.some((contact) => contact.user.id === userId)
+      const username =
+        activeGroup?.members.find((member) => member.user.id === userId)?.user.username ?? ''
+      void (async () => {
+        try {
+          await addContact(userId)
+          showToast(known ? `Уже в контактах — ${username}` : `Контакт добавлен — ${username}`)
+          reloadContacts()
+        } catch (cause) {
+          setActionError(cause)
+        }
+      })()
+    },
+    [activeGroup, contacts, reloadContacts, showToast],
+  )
 
   /**
    * №14 success FROM the contacts form (008 T037; FR-032,
@@ -1011,14 +1044,18 @@ function MessengerMachine() {
   }, [reloadActiveGroup])
 
   /**
-   * №29 success (US4, T053): the №28 `reload()` converges the card and
-   * the window header to the server metadata at once; the §3.1
-   * `group.updated` frame of the same commit lands on the «Чаты» row
-   * (useChatList) and every other viewer's state optimistically.
+   * №29 success (US4, T053 → T056/T057): прототип grpEditForm
+   * закрывает оболочку на завершённый submit (closeModal), №28
+   * `reload()` сходится сразу; конвейер №31/№32 остатка доедет в фоне
+   * теми же колбэками (handleMembersAdded). Тост завершённого submit
+   * выдаёт сама форма (T045). The §3.1 `group.updated` frame of the
+   * same commit lands on the «Чаты» row (useChatList) and every other
+   * viewer's state optimistically.
    */
   const handleGroupUpdated = useCallback(() => {
+    closeShell()
     reloadActiveGroup()
-  }, [reloadActiveGroup])
+  }, [closeShell, reloadActiveGroup])
 
   /**
    * №33/№30 success (US6, T066; FR-005/FR-006): the 204 means the
@@ -1045,7 +1082,7 @@ function MessengerMachine() {
     [currentUserId, reloadChatList],
   )
 
-  /** №33 leave success of the open group window (LeaveDeleteControls / gear, T054). */
+  /** №33 leave success of the open group window (gear → confirm, T054/T057). */
   const handleLeftGroup = useCallback(() => {
     if (activeGroupChatId !== null) {
       // T045 (FR-025): один тост на завершённый №33 — текст
@@ -1058,7 +1095,7 @@ function MessengerMachine() {
     }
   }, [activeGroupChatId, activeGroup, activeChat, handleWindowGroupGone, showToast])
 
-  /** №30 hard-delete success of the open group window (LeaveDeleteControls / gear, T054). */
+  /** №30 hard-delete success of the open group window (gear → confirm, T054/T057). */
   const handleDeletedGroup = useCallback(() => {
     if (activeGroupChatId !== null) {
       // T045 (FR-025): один тост на завершённый №30 — текст прототипа
@@ -1177,28 +1214,16 @@ function MessengerMachine() {
                   onAddContact={handleGearAddContact}
                   onToggleBlock={handleGearToggleBlock}
                   onDeleteChat={handleGearDeleteChat}
-                  onOpenMembers={handleOpenGroupCard}
-                  onOpenEdit={handleOpenGroupCard}
+                  onOpenMembers={() => {
+                    setModalForm('group-members')
+                  }}
+                  onOpenEdit={() => {
+                    setModalForm('group-edit')
+                  }}
                   onLeaveChat={() => {
                     setPendingAction('leave-group')
                   }}
                 />
-
-                {activeChat.kind === 'group' && groupInfoOpen && (
-                  <GroupCard
-                    group={activeGroup}
-                    chatId={activeChat.chatId}
-                    status={activeGroupStatus}
-                    error={activeGroupError}
-                    currentUserId={currentUserId ?? ''}
-                    onReload={reloadActiveGroup}
-                    rosterActions={rosterActions}
-                    onMembersAdded={handleMembersAdded}
-                    onUpdated={handleGroupUpdated}
-                    onLeft={handleLeftGroup}
-                    onDeleted={handleDeletedGroup}
-                  />
-                )}
 
                 {actionError !== null && (
                   <div className="dialog-action-error">
@@ -1268,6 +1293,30 @@ function MessengerMachine() {
         {shellFormId === 'create-group' && (
           <CreateGroupDialog onCreated={handleGroupCreated} onCancel={closeShell} />
         )}
+        {/* Групповые формы «шестерёнки» (T057): №28-ростер сходится в
+            слот оболочки — «Участники» (T055) несут ростер-действия
+            мьютекса useGroupMembers и №21-предложение строки (тост — у
+            страницы), «Редактировать» (T056) — конвейер №29+№31/№32;
+            успех №29 закрывает оболочку (прототип grpEditForm →
+            closeModal), тост завершённого submit — у самой формы (T045). */}
+        {(shellFormId === 'group-members' || shellFormId === 'group-edit') &&
+          activeChat?.kind === 'group' && (
+            <GroupShellForm
+              formId={shellFormId}
+              group={activeGroup}
+              chatId={activeChat.chatId}
+              status={activeGroupStatus}
+              error={activeGroupError}
+              currentUserId={currentUserId}
+              rosterActions={rosterActions}
+              contactUserIds={contactUserIds}
+              onAddContact={handleMemberAddContact}
+              onReload={reloadActiveGroup}
+              onMembersAdded={handleMembersAdded}
+              onUpdated={handleGroupUpdated}
+              onCancel={closeShell}
+            />
+          )}
         {shellFormId === 'confirm' && confirmation !== null && (
           <ConfirmDialog
             text={confirmation.text}

@@ -181,8 +181,9 @@ async function renderPage(
   )
   mockChats.listMessages.mockResolvedValue({ messages: [] })
   mockChats.listContacts.mockResolvedValue(contacts())
-  // №28 жив по умолчанию (owner) — матрица «шестерёнки» и карточка №28
-  // работают на живом ростере; сбой №28 — исключение конкретных тестов.
+  // №28 жив по умолчанию (owner) — матрица «шестерёнки» и групповые
+  // формы оболочки работают на живом ростере; сбой №28 — исключение
+  // конкретных тестов.
   mockGroups.getGroup.mockResolvedValue(createdGroupView())
   installStream()
   render(<MessengerPage />)
@@ -311,17 +312,46 @@ describe('MessengerPage group window from the unified list (US1)', () => {
     expect(within(directDialog).getByText('неизвестно')).toBeVisible()
   })
 
-  it('gear «Участники»/«Редактировать чат» open the №28 card under the header (T054 interim — the members/group-edit forms land in T055/T056)', async () => {
+  it('gear «Участники»/«Редактировать чат» open the members/edit forms of the single shell (T055/T056/T057)', async () => {
     await renderPage([groupRow(), directRow()])
 
     fireEvent.click(screen.getByRole('button', { name: /Проект Альфа/ }))
     await screen.findByRole('heading', { level: 2, name: 'Проект Альфа' })
-    // №28 жив — ростер и №33/№30-половина карточки достижимы пунктом
-    // «Участники» (SC-004: вся функциональность 006 без старой кнопки
-    // заголовка «Информация о группе»).
+    // №28 жив — «2 участника» статус-строка сходится к ростеру; форма
+    // «Участники» открывается по живым данным (SC-004: вся
+    // функциональность 006 — без карточки под заголовком).
+    await screen.findByRole('button', { name: '2 участника' })
+
     fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Участники' }))
-    expect(await screen.findByRole('button', { name: 'Удалить группу' })).toBeInTheDocument()
+    const members = await screen.findByRole('dialog', { name: 'Участники' })
+    // Ростер №28 минус собственная строка; ростер-действия владельца
+    // достижимы из оболочки (контракт T049/T055).
+    expect(within(members).getByText('alice')).toBeInTheDocument()
+    expect(within(members).queryByText(/me \(вы\)/)).toBeNull()
+    expect(within(members).getByRole('button', { name: 'Исключить alice' })).toBeInTheDocument()
+    // Одна подложка на приложение (data-model 1.6).
+    expect(document.querySelectorAll('.modal-back')).toHaveLength(1)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Участники' })).toBeNull()
+    })
+
+    // «Редактировать чат» (T056/T057): черновик = №28 минус себя,
+    // название предзаполнено; «Отмена» возвращает оболочку.
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Редактировать чат' }))
+    const edit = await screen.findByRole('dialog', { name: 'Редактировать групповой чат' })
+    expect(within(edit).getByLabelText('Название')).toHaveValue('Проект Альфа')
+    expect(
+      within(edit).getByRole('button', { name: 'Удалить участника alice' }),
+    ).toBeInTheDocument()
+
+    fireEvent.click(within(edit).getByRole('button', { name: 'Отмена' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Редактировать групповой чат' })).toBeNull()
+    })
   })
 })
 

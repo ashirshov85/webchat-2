@@ -68,8 +68,8 @@ output.queue-overflow-banner {
 
 /* Текст ошибки: курсив-подпись на всю ширину плашки; отдельное правило
    p.error-banner-text (0-1-1) перекрывает auth-наследие [role=alert]
-   (светлая danger-карточка) и для потребителя вне компонента —
-   <p class="error-banner-text"> карточки группы (GroupInfoPanel) */
+   (светлая danger-карточка) и для строки вне плашки — внешний
+   потребитель ушёл вместе с карточкой группы (GroupInfoPanel, T057) */
 p.error-banner-text {
   margin: 0;
   padding: 0;
