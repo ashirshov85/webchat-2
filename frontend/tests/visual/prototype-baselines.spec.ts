@@ -16,6 +16,18 @@
  * (consumed by T047), the open burger-drawer @900×700 and the chat window
  * @480×800.
  *
+ * T060 (US4) extension — the three group-management states of the «phoenix»
+ * demo group (mine:true): the gear menu with the owner item set
+ * («Участники»/«Редактировать чат»/«Удалить чат» — the one gear variant the
+ * implementation renders verbatim, ui-behavior §4), the #membersForm roster
+ * and the #grpEditForm editor. Both modals compare against their captures
+ * in us4-fullscreens except grpEdit, whose app form carries the
+ * contract-mandated «Описание» field (ui-behavior §3, validation 006) the
+ * static prototype lacks — that baseline stays here as the prototype's own
+ * reference, while the app assertion settles against its implemented
+ * snapshot (the exception class T060 sanctions for prototype-absent
+ * content).
+ *
  * Determinism: `animations: 'disabled'` cancels the infinite `flick` lamps to
  * their initial state and fast-forwards the finite `pop`/transitions;
  * `caret: 'hide'` removes the text caret; fonts resolve to the inlined
@@ -147,6 +159,41 @@ prototypeTest.describe('T016(б) — US2+ fullscreens', () => {
     await prototype.page.locator('#statusRow').hover()
     await expect(prototype.page.locator('#membersTip.show')).toBeVisible()
     await expect(prototype.page).toHaveScreenshot('us3-members-tip.png', SHOT)
+  })
+
+  prototypeTest.describe('T060 — US4 group-management states (phoenix)', () => {
+    /** Opens the gear menu of the open «phoenix» group (#btnGear ≙ .ch-btn). */
+    async function openPhoenixGear(page: import('@playwright/test').Page): Promise<void> {
+      await page.locator('#btnGear').click()
+      await expect(page.locator('#chatMenu.show')).toBeVisible()
+    }
+
+    prototypeTest('group gear context menu (owner item set)', async ({ prototype }) => {
+      onlyProject(DESKTOP)
+      await prototype.openChat('phoenix')
+      await openPhoenixGear(prototype.page)
+      await expect(prototype.page.locator('#chatMenu .ctx-item')).toHaveCount(3)
+      await expect(prototype.page).toHaveScreenshot('us4-gear-menu-group.png', SHOT)
+    })
+
+    prototypeTest('group members modal', async ({ prototype }) => {
+      onlyProject(DESKTOP)
+      await prototype.openChat('phoenix')
+      await openPhoenixGear(prototype.page)
+      await prototype.page.locator('#chatMenu .ctx-item', { hasText: 'Участники' }).click()
+      await expect(prototype.page.locator('#membersList .pick-row')).toHaveCount(3)
+      await expect(prototype.page).toHaveScreenshot('us4-group-members-modal.png', SHOT)
+    })
+
+    prototypeTest('group edit modal', async ({ prototype }) => {
+      onlyProject(DESKTOP)
+      await prototype.openChat('phoenix')
+      await openPhoenixGear(prototype.page)
+      await prototype.page.locator('#chatMenu .ctx-item', { hasText: 'Редактировать чат' }).click()
+      await expect(prototype.page.locator('#grpEditMembers .pick-row')).toHaveCount(3)
+      await expect(prototype.page.locator('#grpEditAdd .pick-row')).toHaveCount(7)
+      await expect(prototype.page).toHaveScreenshot('us4-group-edit-modal.png', SHOT)
+    })
   })
 
   prototypeTest('open burger drawer', async ({ prototype }) => {

@@ -118,7 +118,14 @@ export function ContextMenu({ open, anchor, items, align = 'start', onClose }: C
     document.addEventListener('keydown', onDocKeyDown, true)
     document.addEventListener('click', onDocClick)
 
-    menu?.querySelector<HTMLButtonElement>('.ctx-item')?.focus()
+    // preventScroll: Chromium's focus-reveal would scroll every scrollable
+    // ANCESTOR of the menu to its static position — the gear menu (T060)
+    // proved it in the real browser: the fixed .ctx-menu's static box sits
+    // right of the chat column, so section.chat (overflow:hidden) got
+    // scrolled 380px sideways and the whole window shifted under the open
+    // menu. jsdom has no layout — the unit suite never saw it. The item
+    // still receives focus (FR-035); only the side-effect scroll dies.
+    menu?.querySelector<HTMLButtonElement>('.ctx-item')?.focus({ preventScroll: true })
 
     return () => {
       document.removeEventListener('keydown', onDocKeyDown, true)
