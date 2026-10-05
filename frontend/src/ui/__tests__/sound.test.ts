@@ -205,7 +205,11 @@ describe('синтез «динь-динь» — WebAudio без файлов (F
   it('suspended-контекст будится resume(); в running повторного вызова нет', () => {
     sound.playBellTone()
     const context = singleContext()
-    expect(context.state).toBe('suspended')
+    // resume() переводит state в 'running' синхронно (WebAudio-спека и фейк
+    // ниже, строка this.state = 'running') — «suspended» после успешного
+    // будильника быть не может; стабилизация паттерна T032, контракт
+    // «ровно один resume при suspended, ни одного в running» неизменен.
+    expect(context.state).toBe('running')
     expect(context.resumeCalls).toBe(1)
     sound.playBellTone()
     expect(context.resumeCalls).toBe(1)
