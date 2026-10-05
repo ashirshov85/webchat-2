@@ -118,6 +118,7 @@ import type { OutboxRecord } from '../outbox'
 import { Avatar } from '../../ui/Avatar'
 import { formatDate, formatTime } from '../../ui/time'
 import './message-list.css'
+import './states.css'
 
 /** Distance from the top (px) that triggers an older-page request. */
 const TOP_LOAD_THRESHOLD = 48

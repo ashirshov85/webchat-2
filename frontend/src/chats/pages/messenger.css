@@ -55,11 +55,7 @@ body:has(.machine) main > h1 {
   margin-top: 0;
 }
 
-/* ============ ПУСТЫЕ СОСТОЯНИЯ (предъединение T059) ============ */
-.messenger-empty {
-  margin: 0;
-  padding: 24px 12px;
-  text-align: center;
-  font: italic 13px var(--font-body);
-  color: var(--muted-2);
-}
+/* Пустые/загрузочные состояния .messenger-empty («Чат не выбран»,
+   «Загрузка группы…», состояния сайдбара/ленты) унифицированы T059
+   (FR-032) в chats/components/states.css — у компонентных
+   рендереров; здесь остаётся только каркас поверхностей. */

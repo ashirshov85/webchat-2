@@ -199,6 +199,7 @@ import type { ConfirmVariant } from '../../ui/ConfirmDialog'
 import { ModalShell } from '../../ui/ModalShell'
 import type { ModalFormId } from '../../ui/ModalShell'
 import { ToastProvider, useToast } from '../../ui/Toast'
+import '../components/states.css'
 import './messenger.css'
 
 /** The open direct dialog: everything the header actions need (T060). */
