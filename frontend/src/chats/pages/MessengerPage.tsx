@@ -154,8 +154,20 @@
  * (deleteChat/askBlock/askUnblock/askLeaveGroup/addContact); сбои
  * тостом НЕ отмечаются — только инлайн-ошибки поверхностей (контракт
  * форм T028–T035); тост — результат операции, завершившейся на сервере.
+ *
+ * US5 звук приёма (T064; FR-028, research §F, ui-behavior §6): страница
+ * подключает ровно ДВА триггера «латунного звоночка» ui/sound (T061/
+ * T063 — синтез и молчаливый пропуск запрета автозвука живут там):
+ * реальное время — onMessageCreated(null, …) одного сигнала на
+ * входящее событие ЛЮБОГО чата, включая фоновые; массовая доставка —
+ * счётчик входящих применённых страниц цикла catch-up (onChatUpdate)
+ * сбрасывается одним chimeOnSyncBatch(итог) на завершении цикла
+ * (фронт syncing true→false). История №16, пагинация №15 и отправка
+ * сигналом не сопровождаются вовсе (Clarification: отправка — только
+ * визуально), собственные сообщения молчат (в т.ч. с другого
+ * устройства). Настроек и персистентности нет — «всегда включено».
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
 import type { GroupMember, GroupView } from '../../api/groups'
@@ -199,6 +211,7 @@ import type { ConfirmVariant } from '../../ui/ConfirmDialog'
 import { ModalShell } from '../../ui/ModalShell'
 import type { ModalFormId } from '../../ui/ModalShell'
 import { ToastProvider, useToast } from '../../ui/Toast'
+import { chimeOnRealtimeIncoming, chimeOnSyncBatch } from '../../ui/sound'
 import '../components/states.css'
 import './messenger.css'
 
@@ -700,6 +713,41 @@ function MessengerMachine() {
     })
   }, [onChatUpdate, applyChatListSync, applyDialogSync])
 
+  // US5 приём-звоночек, массовая доставка (T064; FR-028, research §F):
+  // РОВНО один сигнал на пакет пропущенного после разрыва — счётчик
+  // входящих (senderId ≠ me) копится по применённым страницам цикла
+  // catch-up (дельты №26 и №15-хвосты hasMore одного цикла складываются)
+  // и сбрасывается одним chimeOnSyncBatch(итог цикла) на завершении
+  // цикла — фронт true→false флага syncing (setSyncing(false) в finally
+  //useSync — после всех emit), поэтому вызов всегда один на цикл;
+  // тишина нуля — контракт самого sound (T061). История №16 и пагинация
+  // композера страницы этим путём не идут вовсе, отправка звука не
+  // имеет (Clarification); sync-цикл не тронут — только слушатель
+  // страницы (research «Сводка без изменений»).
+  const syncIncomingRef = useRef(0)
+  const syncCycleRanRef = useRef(false)
+  useEffect(() => {
+    return onChatUpdate((update) => {
+      for (const message of update.messages) {
+        if (message.senderId !== currentUserId) {
+          syncIncomingRef.current += 1
+        }
+      }
+    })
+  }, [onChatUpdate, currentUserId])
+  useEffect(() => {
+    if (syncing) {
+      syncCycleRanRef.current = true
+      return
+    }
+    if (!syncCycleRanRef.current) {
+      return
+    }
+    syncCycleRanRef.current = false
+    chimeOnSyncBatch(syncIncomingRef.current)
+    syncIncomingRef.current = 0
+  }, [syncing])
+
   // Applied realtime frames confirm through the same shared №25
   // batcher as the catch-up pages (sync-protocol.md §2): the frame's
   // `seq` acks its chat and the local cursor echoes it — realtime and
@@ -712,6 +760,23 @@ function MessengerMachine() {
     return realtime.onMessageCreated(null, (event) => {
       batcher.ack(event.chatId, event.message.seq)
       advanceCursor(currentUserId, event.chatId, event.message.seq)
+    })
+  }, [currentUserId, realtime])
+
+  // US5 приём-звоночек, реальное время (T064; FR-028, research §F,
+  // ui-behavior §6): один сигнал на каждое входящее событие ЛЮБОГО
+  // чата, включая фоновые — null-подписка демультиплексора useRealtime
+  // получает события всех диалогов. Фильтр senderId ≠ me (собственные
+  // сообщения молчат, в том числе с другого устройства — отправка
+  // подтверждается только визуально) и сам синтез живут в ui/sound
+  // (T061/T063); сюда приходит каждое событие №18 потока, «двойного»
+  // сигнала на событие нет — слушатель один.
+  useEffect(() => {
+    if (currentUserId === null) {
+      return
+    }
+    return realtime.onMessageCreated(null, (event) => {
+      chimeOnRealtimeIncoming(event, currentUserId)
     })
   }, [currentUserId, realtime])
 
