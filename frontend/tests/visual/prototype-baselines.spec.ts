@@ -32,11 +32,16 @@
  * their initial state and fast-forwards the finite `pop`/transitions;
  * `caret: 'hide'` removes the text caret; fonts resolve to the inlined
  * @fontsource binaries (see fixtures/prototype.ts); all captured states are
- * static prototype data. Baselines from the prototype double as its own
- * regression guard: any later change to chats.html fails here until the
- * reference is consciously re-captured.
+ * static prototype data. The two mobile captures (T068) additionally replay
+ * the prototype's own scrollBottom() after the fonts settle — its boot-time
+ * call rides the font-swap race and lands short of the bottom by whatever
+ * the layout grew, so the feed position of those captures is pinned to the
+ * canonical newest-messages state instead. Baselines from the prototype
+ * double as its own regression guard: any later change to chats.html fails
+ * here until the reference is consciously re-captured.
  */
 import { expect } from '@playwright/test'
+import type { Page } from '@playwright/test'
 import { prototypeTest } from './fixtures/prototype'
 
 const DESKTOP = 'chromium-1440x900'
@@ -50,6 +55,16 @@ function onlyProject(project: string): void {
 
 /** Shared capture options — see the file header. */
 const SHOT = { animations: 'disabled', caret: 'hide' } as const
+
+/** Replays the prototype's own scrollBottom() — a window global of its
+ *  classic inline script (the boot path of selectChat). Typed locally:
+ *  the page window is not the app's DOM lib. */
+function replayScrollBottom(page: Page): Promise<void> {
+  return page.evaluate(() => {
+    const scrollBottom = (window as { scrollBottom?: (smooth?: boolean) => void }).scrollBottom
+    scrollBottom?.()
+  })
+}
 
 prototypeTest.describe('T016(а) — US1 regions', () => {
   prototypeTest('chat catalogue below the top row', async ({ prototype }) => {
@@ -198,6 +213,16 @@ prototypeTest.describe('T016(б) — US2+ fullscreens', () => {
 
   prototypeTest('open burger drawer', async ({ prototype }) => {
     onlyProject(TABLET)
+    // Feed determinism (T068): the prototype's selectChat scrolls the feed
+    // to its newest messages at boot, but its scrollBottom runs in the
+    // font-swap race — the layout grows a few px once the data-URI faces
+    // settle, leaving the boot scroll short of the true bottom by exactly
+    // that growth. Replaying the prototype's own scrollBottom() gesture
+    // AFTER document.fonts.ready (the harness settle point) seats the
+    // capture at the canonical «newest messages, clamped to bottom»
+    // state, immune to the race. The same gesture is replayed on the app
+    // side of the T068 comparison.
+    await replayScrollBottom(prototype.page)
     await prototype.page.locator('#burger').click()
     await expect(prototype.page.locator('.sidebar.open')).toBeVisible()
     await expect(prototype.page.locator('#backdrop.show')).toBeVisible()
@@ -207,6 +232,11 @@ prototypeTest.describe('T016(б) — US2+ fullscreens', () => {
   prototypeTest('chat window on a narrow screen', async ({ prototype }) => {
     onlyProject(PHONE)
     await expect(prototype.page.locator('.chat-name')).toHaveText('Alex Carter')
+    // Feed determinism (T068): see the burger-drawer capture above — the
+    // same post-fonts scrollBottom replay; at 480×800 the demo history
+    // no longer fits the window, so the boot scroll position is visible
+    // in the capture and must not depend on the font-swap race.
+    await replayScrollBottom(prototype.page)
     await expect(prototype.page).toHaveScreenshot('us5-chat-window.png', SHOT)
   })
 })
