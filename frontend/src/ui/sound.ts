@@ -93,9 +93,7 @@ const bellTone = (
 /** Сыграть «динь-динь» — чистый WebAudio-синтез; все ошибки молчаливы (FR-028). */
 export const playBellTone = (): void => {
   try {
-    if (audioCtx === null) {
-      audioCtx = createAudioContext()
-    }
+    audioCtx ??= createAudioContext()
     if (audioCtx === null) return
     if (audioCtx.state === 'suspended') {
       void audioCtx.resume().catch(() => undefined)

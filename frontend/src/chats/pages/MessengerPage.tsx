@@ -667,6 +667,8 @@ function MessengerMachine() {
    */
   const narrowViewport = useNarrowViewport()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  /** Подложка drawer: нативный click-слушатель закрытия (как ModalShell). */
+  const backdropRef = useRef<HTMLDivElement>(null)
 
   // US5 клавиатура (T066; FR-029, research §H): --vvh/--vvo на body для
   // высоты машины (machine.css) — композер над клавиатурой, лента сжимается.
@@ -704,6 +706,23 @@ function MessengerMachine() {
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [drawerOpen, modalForm, pendingAction])
+
+  // Клик по затемнению закрывает drawer (T065): нативный слушатель на
+  // самой подложке — JSX-хендлер на статичном div это S6848/S1082
+  // (паттерн ModalShell); с клавиатуры drawer гасит Esc-эффект выше.
+  useEffect(() => {
+    const back = backdropRef.current
+    if (back === null) {
+      return
+    }
+    const onClick = (): void => {
+      setDrawerOpen(false)
+    }
+    back.addEventListener('click', onClick)
+    return () => {
+      back.removeEventListener('click', onClick)
+    }
+  }, [])
 
   /** №20 refetch of the gear's address-book basis (T054). */
   const reloadContacts = useCallback(() => {
@@ -1519,14 +1538,12 @@ function MessengerMachine() {
       </div>
 
       {/* Затемнение drawer (T065): клик закрывает (closeSidebar
-          прототипа); подложка живёт в DOM всегда — паттерн ModalShell,
-          показ классом .show. */}
+          прототипа; слушатель — нативный, в эффекте выше); подложка
+          живёт в DOM всегда — паттерн ModalShell, показ классом .show. */}
       <div
+        ref={backdropRef}
         className={drawerOpen ? 'backdrop show' : 'backdrop'}
         aria-hidden={drawerOpen ? undefined : true}
-        onClick={() => {
-          setDrawerOpen(false)
-        }}
       />
 
       {/* Единая модальная оболочка (T034, data-model 1.6/3.3): все формы
