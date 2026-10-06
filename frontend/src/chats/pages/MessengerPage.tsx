@@ -182,6 +182,16 @@
  * сбрасывает drawer (backdrop не ограничен media-блоком — открытое
  * состояние не должно заливать широкий экран, где сайдбар снова
  * статичен в каркасе). Тесты — MessengerPage.drawer.test.tsx (T062).
+ *
+ * US5 адаптация к visual viewport (T066; FR-029, research §H): экранная
+ * клавиатура сжимает visual viewport, но не layout-viewport — `100dvh`
+ * её не видит. Слушатель useVisualViewport (ниже) пишет на body
+ * `--vvh`/`--vvo` (высота/offsetTop), machine.css сводит по ним дно
+ * машины к видимому дну и гасит прокрутку страницы на ≥901px
+ * (`html,body{overflow:hidden}` скоупом body:has(.machine)) — композер
+ * остаётся над клавиатурой, лента сжимается, прокрутки страницы нет
+ * (quickstart E1–E2, SC-005). Тесты — MessengerPage.viewport.test.tsx;
+ * мобильные снимки — T068.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getCurrentUser } from '../../api/auth'
@@ -395,6 +405,45 @@ function useNarrowViewport(): boolean {
     }
   }, [])
   return narrow
+}
+
+/**
+ * US5 адаптация к visual viewport (T066; FR-029, research §H,
+ * design-tokens §9 «Клавиатура», ui-behavior §7): экранная клавиатура
+ * сжимает visual viewport, но НЕ layout-viewport (iOS Safari) —
+ * `100dvh` её не видит, дно корпуса-машины ушло бы под клавиатуру.
+ * Слушатель `resize`/`scroll` пишет на body пару CSS-переменных:
+ * `--vvh` = высота visual viewport, `--vvo` = offsetTop (панорамирование
+ * при Autoraise-скролле iOS) — machine.css считает высоту машины по их
+ * сумме: дно корпуса сходится к видимому дну, композер остаётся над
+ * клавиатурой, лента сжимается, прокрутки страницы не появляется.
+ * Поверхностям больше ничего не нужно — переменные наследуются с body.
+ * jsdom/движки без visualViewport: hook тихо бездействует (переменные
+ * не пишутся, CSS живёт на фолбэке `var(--vvh, 100dvh)`), StrictMode-
+ * ремаунт идемпотентен (report чистая, подписки/свойства снимаются
+ * cleanup'ом). Тесты — MessengerPage.viewport.test.tsx; CSS-половина
+ * (высота/overflow) — T068 и quickstart E1–E2 (SC-005).
+ */
+function useVisualViewport(): void {
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) {
+      return
+    }
+    const report = () => {
+      document.body.style.setProperty('--vvh', `${viewport.height}px`)
+      document.body.style.setProperty('--vvo', `${viewport.offsetTop}px`)
+    }
+    report()
+    viewport.addEventListener('resize', report)
+    viewport.addEventListener('scroll', report)
+    return () => {
+      viewport.removeEventListener('resize', report)
+      viewport.removeEventListener('scroll', report)
+      document.body.style.removeProperty('--vvh')
+      document.body.style.removeProperty('--vvo')
+    }
+  }, [])
 }
 
 /**
@@ -618,6 +667,10 @@ function MessengerMachine() {
    */
   const narrowViewport = useNarrowViewport()
   const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // US5 клавиатура (T066; FR-029, research §H): --vvh/--vvo на body для
+  // высоты машины (machine.css) — композер над клавиатурой, лента сжимается.
+  useVisualViewport()
 
   // Возврат на широкий экран сбрасывает drawer: .backdrop не ограничен
   // media-блоком — открытое состояние не должно заливать широкий экран,

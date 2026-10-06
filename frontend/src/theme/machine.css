@@ -1,12 +1,14 @@
 /* Корпус-«машина» Aethergram — статический каркас чата (FR-004).
    Дословная проекция разделов «1. БАЗА», «2. КОРПУС МАШИНЫ», «3. ПАНЕЛИ И ВИНТЫ»
    и завершающего prefers-reduced-motion прототипа
-   specs/008-chat-window-styling/design/chats.html; при расхождениях побеждает
-   прототип (FR-001). Константы — theme/tokens.css (FR-002); подключение файла —
-   theme/index.css (T007); burger, затемнение и адаптив ≤900px (drawer) — T065;
-   ≤480px — T067 (design-tokens §9). Файл в сборке ПОЗЖЕ компонентных CSS
-   (main.tsx импортирует App раньше index.css) — media-блок §6 перекрывает
-   базовые строки .sidebar/.machine поверх messenger.css по порядку источника. */
+    specs/008-chat-window-styling/design/chats.html; при расхождениях побеждает
+    прототип (FR-001). Константы — theme/tokens.css (FR-002); подключение файла —
+    theme/index.css (T007); burger, затемнение и адаптив ≤900px (drawer) — T065;
+    ≥901px (машина в окне без прокрутки) и адаптация к visual viewport
+    (--vvh/--vvo) — T066; ≤480px — T067 (design-tokens §9). Файл в сборке ПОЗЖЕ
+    компонентных CSS (main.tsx импортирует App раньше index.css) — media-блок
+    §6 перекрывает базовые строки .sidebar/.machine поверх messenger.css
+    по порядку источника. */
 
 /* ============ 1. БАЗА ============ */
 html,
@@ -69,6 +71,16 @@ body::after {
   margin: 18px auto;
   height: calc(100vh - 36px);
   height: calc(100dvh - 36px);
+  /* Адаптация к visual viewport (T066; FR-029, research §H,
+     design-tokens §9 «Клавиатура»): экранная клавиатура сжимает visual
+     viewport, но не layout-viewport (iOS Safari) — 100dvh её не видит,
+     дно корпуса ушло бы под клавиатуру. Слушатель MessengerPage пишет
+     на body --vvh/--vvo (высота/offsetTop); дно машины сходится к
+     видимому дну (vvh+vvo ≤ 100dvh) — композер над клавиатурой, лента
+     сжимается. Без слушателя (jsdom/движки без visualViewport) фолбэк
+     100dvh; без клавиатуры visualViewport ≡ viewport — то же вычисленное
+     значение, снимки T016+ стабильны. */
+  height: calc(var(--vvh, 100dvh) + var(--vvo, 0px) - 36px);
   min-height: 540px;
   display: flex;
   flex-direction: column;
@@ -261,7 +273,26 @@ body::after {
   pointer-events: auto;
 }
 
-/* ============ 6. АДАПТИВ ≤900px: DRAWER САЙДБАРА (US5/T065, design-tokens §9) ============ */
+/* ============ 6. АДАПТИВ: ШИРОКИЙ ЭКРАН ≥901px И DRAWER ≤900px (T065/T066) ============ */
+/* Обычное (несжатое) окно ≥901px (T066; design-tokens §9, FR-029): машина
+   целиком вписана в экран, прокрутки страницы нет — дословно §8 прототипа
+   («html,body{overflow:hidden}» + «.machine{min-height:0}»), но скоуп
+   body:has(.machine): html/body этого файла глобальны для всех маршрутов
+   (auth/настройки делят index.css), запрет прокрутки нужен только
+   странице-машине (паттерн messenger.css body:has). Проверка — quickstart
+   E1 (SC-005) и снимки T068; при открытой клавиатуре высоту держит
+   var-строка §2 (--vvh/--vvo: сенсорные ≥901px-устройства существуют). */
+@media (min-width: 901px) {
+  html:has(.machine),
+  body:has(.machine) {
+    overflow: hidden;
+  }
+
+  .machine {
+    min-height: 0;
+  }
+}
+
 @media (max-width: 900px) {
   body {
     padding: 0 10px;
@@ -274,6 +305,17 @@ body::after {
   .machine {
     margin: 60px auto 12px;
     height: calc(100dvh - 72px);
+    /* Клавиатура (T066; research §H): 100dvh не видит сжатый visual
+       viewport — считаем по --vvh/--vvo слушателя MessengerPage; дно
+       машины (60px-burger + высота + 12px) сходится к видимому дну. */
+    height: calc(var(--vvh, 100dvh) + var(--vvo, 0px) - 72px);
+    /* Прототип держит базовый min-height:540px и в узком режиме, но его
+       статическое демо не знает клавиатуры: чтобы композер оставался над
+       клавиатурой, минимум уступает visual viewport, когда тот ниже
+       540px+72px запаса (FR-029 «лента сжимается»); на контрольных
+       точках съёмки T068 (900×700 / 480×800) запаса > 540 и минимум
+       не вступает — снимки прототипа стабильны. */
+    min-height: min(540px, calc(var(--vvh, 100dvh) + var(--vvo, 0px) - 72px));
     /* Stacking-факс прототипа (T065): каркасный z-index:2 (§2) запирает
        z-40 фиксированного сайдбара в stacking-контексте машины — в самом
        прототипе открытым drawer целиком уходит ПОД затемнение z-35
