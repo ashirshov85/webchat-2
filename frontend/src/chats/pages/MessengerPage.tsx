@@ -183,6 +183,15 @@
  * состояние не должно заливать широкий экран, где сайдбар снова
  * статичен в каркасе). Тесты — MessengerPage.drawer.test.tsx (T062).
  *
+ * Клавиатура drawer (T070; FR-035, SC-008, ui-behavior §1 — норматив
+ * spec.md, сам прототип фокуса не ведает): открытый drawer — клетка
+ * Tab-ловушки (словарь FOCUSABLE_SELECTOR ModalShell, Tab/Shift+Tab по
+ * кругу; модаль выше — владеет Tab сама, 3.1), закрытие возвращает
+ * фокус на burger-инициатор, закрытый off-canvas сайдбар исключён из
+ * табуляции (inert — transform-скрытие оставляло бы кнопки достижимыми
+ * невидимками, что ломало бы «логичный порядок табуляции»). Тесты —
+ * MessengerPage.keyboard.test.tsx.
+ *
  * US5 адаптация к visual viewport (T066; FR-029, research §H): экранная
  * клавиатура сжимает visual viewport, но не layout-viewport — `100dvh`
  * её не видит. Слушатель useVisualViewport (ниже) пишет на body
@@ -234,7 +243,7 @@ import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
 import { ConfirmDialog } from '../../ui/ConfirmDialog'
 import type { ConfirmVariant } from '../../ui/ConfirmDialog'
-import { ModalShell } from '../../ui/ModalShell'
+import { FOCUSABLE_SELECTOR, ModalShell } from '../../ui/ModalShell'
 import type { ModalFormId } from '../../ui/ModalShell'
 import { ToastProvider, useToast } from '../../ui/Toast'
 import { chimeOnRealtimeIncoming, chimeOnSyncBatch } from '../../ui/sound'
@@ -669,6 +678,12 @@ function MessengerMachine() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   /** Подложка drawer: нативный click-слушатель закрытия (как ModalShell). */
   const backdropRef = useRef<HTMLDivElement>(null)
+  /**
+   * Корень ловушки drawer (T070; FR-035): сам сайдбар — Tab не покидает
+   * его, пока drawer — верхний слой; сюда же смотрит inert закрытого
+   * off-canvas состояния.
+   */
+  const sidebarRef = useRef<HTMLElement>(null)
 
   // US5 клавиатура (T066; FR-029, research §H): --vvh/--vvo на body для
   // высоты машины (machine.css) — композер над клавиатурой, лента сжимается.
@@ -700,6 +715,68 @@ function MessengerMachine() {
         return
       }
       setDrawerOpen(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [drawerOpen, modalForm, pendingAction])
+
+  // Инициатор drawer (T070; FR-035, SC-008, ui-behavior §1): захват при
+  // открытии (burger — единственный вход), возврат фокуса при закрытии.
+  // Паттерн ModalShell/ContextMenu: перебиваем фокус ТОЛЬКО если он ещё
+  // внутри drawer или ни на чём — клик мимо уже увёл фокус на свою цель.
+  // Ключ только [drawerOpen]: formId-переключения выше не должны
+  // «закрывать» drawer и возвращать фокус (модаль живёт над ним).
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    const initiator = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const sidebar = sidebarRef.current
+    return () => {
+      const active = document.activeElement
+      const inside = sidebar !== null && active instanceof Node && sidebar.contains(active)
+      if (inside || active === null || active === document.body) {
+        initiator?.focus()
+      }
+    }
+  }, [drawerOpen])
+
+  // Tab-ловушка drawer (T070; FR-035, SC-008): пока drawer — верхний
+  // слой, Tab/Shift+Tab крутятся по фокусируемым сайдбара (словарь
+  // FOCUSABLE_SELECTOR — тот же, что у ModalShell). Модаль выше — её
+  // ловушка владеет Tab (data-model 3.1): здесь тихо отступаем.
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    if (modalForm !== null || pendingAction !== null) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Tab') {
+        return
+      }
+      const root = sidebarRef.current
+      if (root === null) {
+        return
+      }
+      const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      const [first] = focusables
+      const last = focusables.at(-1)
+      if (first === undefined || last === undefined) {
+        return
+      }
+      const active = document.activeElement
+      const inside = root.contains(active)
+      if (event.shiftKey && (active === first || !inside)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (active === last || !inside)) {
+        event.preventDefault()
+        first.focus()
+      }
     }
     document.addEventListener('keydown', onKeyDown)
     return () => {
@@ -1448,8 +1525,10 @@ function MessengerMachine() {
       <div className="machine">
         <div className="frame-body">
           <aside
+            ref={sidebarRef}
             className={drawerOpen ? 'sidebar panel open' : 'sidebar panel'}
             aria-label="Чаты и контакты"
+            inert={narrowViewport && !drawerOpen}
           >
             <QueueOverflowBanner userId={currentUserId} />
             <SyncIndicator syncing={syncing} />
