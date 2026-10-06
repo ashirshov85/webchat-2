@@ -13,7 +13,8 @@
     "lint": "eslint . && prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:visual": "playwright test -c tests/visual/playwright.config.ts",
+    "test:visual": "playwright test -c tests/visual/playwright.config.ts --grep-invert @perf",
+    "test:perf": "playwright test -c tests/visual/playwright.config.ts --grep @perf --workers=1",
     "format": "prettier --write .",
     "sonar": "sonar-scanner-npm",
     "generate:api": "openapi-typescript ../contracts/openapi.yaml -o src/api/schema.d.ts"
