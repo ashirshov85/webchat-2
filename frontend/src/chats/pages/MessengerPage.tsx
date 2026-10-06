@@ -166,6 +166,22 @@
  * сигналом не сопровождаются вовсе (Clarification: отправка — только
  * визуально), собственные сообщения молчат (в т.ч. с другого
  * устройства). Настроек и персистентности нет — «всегда включено».
+ *
+ * US5 burger-drawer (T065; FR-029, design-tokens §9, ui-behavior §7,
+ * data-model 3.1): на ≤900px сайдбар — выдвижной drawer поверх контента
+ * с затемнением. Плавающая кнопка каталога `.burger` (fixed 42px,
+ * скрыта ≥901px CSS прототипа) открывает состояние openSidebar
+ * прототипа дословно: `.sidebar.open` + `.backdrop.show` + морф
+ * `.burger.open` (+ aria-expanded). Закрытие: повторный burger, клик
+ * по затемнению, выбор чата (closeSidebar едет вместе с selectChat) и
+ * Esc — СТРОГО верхний слой: слушатель document-bubble гасит drawer
+ * только когда модальной оболочки выше нет (ModalShell слушает Esc на
+ * document без stopPropagation — охрана «нет слоёв выше» на стороне
+ * drawer, 3.1); ctx-menu/members-tip выше гасят Esc capture-фазой
+ * (T013/T043) и сюда не доходят вовсе. Возврат на широкий экран
+ * сбрасывает drawer (backdrop не ограничен media-блоком — открытое
+ * состояние не должно заливать широкий экран, где сайдбар снова
+ * статичен в каркасе). Тесты — MessengerPage.drawer.test.tsx (T062).
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getCurrentUser } from '../../api/auth'
@@ -349,6 +365,36 @@ function shellTitleOf(confirmation: ConfirmUi | null, formId: ModalFormId | null
     return confirmation.title
   }
   return formId !== null ? MODAL_TITLES[formId] : ''
+}
+
+/**
+ * Контрольная точка ≤900px (US5/T065; design-tokens §9, FR-029): оба
+ * стиля запроса прототипа (max-width:900px / min-width:901px) сводятся
+ * к одному ответу этой формы. jsdom без matchMedia (юнит-среда без
+ * стаба T062) отвечает «широкий экран» — burger остаётся скрытым CSS,
+ * поведение страницы не меняется; скрытие burger на ≥901px — CSS-паттерн
+ * прототипа, его проверяют T068/quickstart E.
+ */
+function useNarrowViewport(): boolean {
+  const [narrow, setNarrow] = useState(
+    () =>
+      typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches,
+  )
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      return
+    }
+    const query = window.matchMedia('(max-width: 900px)')
+    const report = () => {
+      setNarrow(query.matches)
+    }
+    report()
+    query.addEventListener('change', report)
+    return () => {
+      query.removeEventListener('change', report)
+    }
+  }, [])
+  return narrow
 }
 
 /**
@@ -564,6 +610,47 @@ function MessengerMachine() {
    * stack a second backdrop.
    */
   const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
+  /**
+   * US5 burger-drawer (T065; FR-029): на ≤900px сайдбар — выдвижной
+   * drawer поверх контента; `.open`-словарь прототипа (openSidebar/
+   * closeSidebar) ведёт это состояние, DOM-проекция — ниже (burger /
+   * sidebar / backdrop).
+   */
+  const narrowViewport = useNarrowViewport()
+  const [drawerOpen, setDrawerOpen] = useState(false)
+
+  // Возврат на широкий экран сбрасывает drawer: .backdrop не ограничен
+  // media-блоком — открытое состояние не должно заливать широкий экран,
+  // где сайдбар снова статичен в каркасе (T065).
+  useEffect(() => {
+    if (!narrowViewport) {
+      setDrawerOpen(false)
+    }
+  }, [narrowViewport])
+
+  // Esc закрывает drawer ТОЛЬКО как верхний слой (T065, data-model
+  // 3.1): модальная оболочка слушает Esc на document без
+  // stopPropagation, поэтому охрана «модалей выше нет» — на стороне
+  // drawer; ctx-menu/members-tip гасят Esc capture-фазой (T013/T043) и
+  // сюда не доходят вовсе.
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      if (modalForm !== null || pendingAction !== null) {
+        return
+      }
+      setDrawerOpen(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [drawerOpen, modalForm, pendingAction])
 
   /** №20 refetch of the gear's address-book basis (T054). */
   const reloadContacts = useCallback(() => {
@@ -890,6 +977,10 @@ function MessengerMachine() {
 
   const handleSelectChat = useCallback(
     (chatId: string) => {
+      // Строка кликнута из drawer — closeSidebar едет вместе с
+      // selectChat (прототип §События): затемнение уходит, окно
+      // открывается (T065).
+      setDrawerOpen(false)
       const item = chats.find((entry) => entry.chatId === chatId)
       if (item?.type === 'group') {
         // The unified list (T028): a group row opens the GROUP window —
@@ -1265,9 +1356,29 @@ function MessengerMachine() {
 
   return (
     <>
+      {/* US5 кнопка каталога (T065; FR-029, design-tokens §9): плавающий
+          burger открывает drawer сайдбара на ≤900px (≥901px скрыт CSS
+          прототипа); title «Directory» прототипа — русская строка,
+          доступное имя — паттерн menu-btn «Меню» (T030). */}
+      <button
+        type="button"
+        className={drawerOpen ? 'burger open' : 'burger'}
+        title="Каталог чатов"
+        aria-expanded={drawerOpen}
+        onClick={() => {
+          setDrawerOpen((open) => !open)
+        }}
+      >
+        <span />
+        <span />
+        <span />
+      </button>
       <div className="machine">
         <div className="frame-body">
-          <aside className="sidebar panel" aria-label="Чаты и контакты">
+          <aside
+            className={drawerOpen ? 'sidebar panel open' : 'sidebar panel'}
+            aria-label="Чаты и контакты"
+          >
             <QueueOverflowBanner userId={currentUserId} />
             <SyncIndicator syncing={syncing} />
             <ChatListPanel
@@ -1353,6 +1464,17 @@ function MessengerMachine() {
           </section>
         </div>
       </div>
+
+      {/* Затемнение drawer (T065): клик закрывает (closeSidebar
+          прототипа); подложка живёт в DOM всегда — паттерн ModalShell,
+          показ классом .show. */}
+      <div
+        className={drawerOpen ? 'backdrop show' : 'backdrop'}
+        aria-hidden={drawerOpen ? undefined : true}
+        onClick={() => {
+          setDrawerOpen(false)
+        }}
+      />
 
       {/* Единая модальная оболочка (T034, data-model 1.6/3.3): все формы
           приложения — жители ОДНОГО .modal-back; переключение formId —

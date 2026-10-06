@@ -48,6 +48,16 @@ export const visualTest = base.extend<VisualFixtures>({
       page,
       chatItems,
       openChat: async (rowText) => {
+        // US5 drawer (008 T065, FR-029): on ≤900px the catalogue rides
+        // the off-canvas sidebar drawer — the floating burger opens it
+        // before the row click; the click itself closes the drawer back
+        // (selectChat rides the prototype's closeSidebar). On ≥901px the
+        // burger is display:none, so the visible check skips the step
+        // and the desktop flow is unchanged.
+        const burger = page.getByRole('button', { name: 'Каталог чатов' })
+        if (await burger.isVisible()) {
+          await burger.click()
+        }
         await chatItems.filter({ hasText: rowText }).first().click()
       },
     })
