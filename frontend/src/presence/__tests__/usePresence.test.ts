@@ -5,20 +5,24 @@ import type { PresenceStatusItem } from '../presenceStore'
 import { usePresenceStatus, usePresenceSurfaces } from '../usePresence'
 
 /**
- * Surface snapshot wiring (feature 007, T012 → T020; contracts/
- * presence-api.md §1, presence-events.md §2/§4):
+ * Surface snapshot wiring (feature 007, T012 → T020; 008 T075 variant б;
+ * contracts/presence-api.md §1, presence-events.md §2/§4):
  *
  * - every MOUNTED indicator is a displayed surface («Чаты» rows,
- *   the «Контакты» list, the open 1:1 dialog); a surface appearing
- *   without a status in the store triggers №36 only for the MISSING
- *   userIds — known peers are never re-requested (FR-003);
+ *   the «Контакты» list, the open 1:1 dialog); a surface APPEARING
+ *   refetches №36 for ALL displayed surfaces — known peers included
+ *   (008 T075, bug 1 «асимметрия»): the at-most-once channel may lose
+ *   the only `presence.updated` frame about a peer the observer
+ *   already knows, and №36 is the backend's designated heal (FR-003);
+ *   the strictly-greater-rev merge keeps repeated snapshots idempotent
+ *   (constitution III);
  * - the 005 (re)connect cycle refetches the snapshot of all displayed
  *   surfaces, so a presence.updated frame lost by the at-most-once
  *   channel converges via a strictly greater snapshot rev
  *   (constitution III);
  * - presence.updated frames merge into the store live; duplicates and
  *   stale frames are no-ops (FR-003);
- * - >200 missing userIds are chunked into batches of ≤200.
+ * - >200 displayed userIds are chunked into batches of ≤200.
  */
 
 const api = vi.hoisted(() => ({ fetchPresenceSnapshot: vi.fn() }))
@@ -117,27 +121,32 @@ describe('usePresence surfaces (T012/T020)', () => {
     expect(result.current).toBe('offline')
   })
 
-  it('a new surface (chat row / contact / opened dialog) backfills only the missing userIds — no reconnect needed', async () => {
+  it('a new surface (chat row / contact / opened dialog) refetches №36 for ALL displayed surfaces — the T075 lost-frame heal', async () => {
     api.fetchPresenceSnapshot.mockResolvedValue([item(ALICE, 'online', 5)])
     const first = renderHook(() => usePresenceStatus(ALICE))
     await flush()
     expect(first.result.current).toBe('online')
 
     api.fetchPresenceSnapshot.mockClear()
-    api.fetchPresenceSnapshot.mockResolvedValue([item(BOB, 'offline', 3)])
+    api.fetchPresenceSnapshot.mockResolvedValue([item(ALICE, 'online', 5), item(BOB, 'offline', 3)])
 
     // The «Контакты» surface now also shows BOB while ALICE is already
-    // known: №36 fires for BOB only.
+    // known: №36 covers BOTH — a surface appearance heals every
+    // displayed peer, stale entries included (008 T075 variant б).
     renderHook(() => usePresenceSurfaces([ALICE, BOB]))
     await flush()
 
     expect(api.fetchPresenceSnapshot).toHaveBeenCalledTimes(1)
-    expect(api.fetchPresenceSnapshot).toHaveBeenCalledWith([BOB])
+    expect(api.fetchPresenceSnapshot).toHaveBeenCalledWith([ALICE, BOB])
 
     const bob = renderHook(() => usePresenceStatus(BOB))
     await flush()
     expect(bob.result.current).toBe('offline')
-    expect(api.fetchPresenceSnapshot).toHaveBeenCalledTimes(1)
+    // The status row itself is another appearance: the heal repeats —
+    // idempotent by rev, the store state does not churn.
+    expect(api.fetchPresenceSnapshot).toHaveBeenCalledTimes(2)
+    expect(api.fetchPresenceSnapshot).toHaveBeenLastCalledWith([ALICE, BOB])
+    expect(presenceStore.getEntry(BOB)).toEqual({ status: 'offline', rev: 3 })
   })
 
   it('chunks >200 missing surface userIds into №36 batches of ≤200', async () => {
