@@ -69,6 +69,7 @@ const { mockGetCurrentUser, mockChats, mockGroups, mockSse, mockPresence } = vi.
   mockPresence: {
     fetchPresenceSettings: vi.fn(),
     updatePresenceSettings: vi.fn(),
+    createPresenceHeartbeat: vi.fn(() => ({ updateConnectionId: vi.fn(), stop: vi.fn() })),
   },
 }))
 
@@ -240,6 +241,14 @@ async function runHeaderAction(
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
+})
+
+describe('MessengerPage №37 heartbeat wiring (008 T076 — живое соединение не экспайрится)', () => {
+  it('страница монтирует heartbeat-планировщик присутствия на общем №18-стриме', async () => {
+    await renderPage()
+
+    expect(mockPresence.createPresenceHeartbeat).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('MessengerPage тосты «шестерёнки» прямого чата (T045 → T054, FR-025, US3-AS4)', () => {

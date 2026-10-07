@@ -241,6 +241,7 @@ import { useGroup } from '../../groups/hooks/useGroup'
 import type { GroupStatus } from '../../groups/hooks/useGroup'
 import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
+import { usePresenceHeartbeat } from '../../presence/usePresence'
 import { ConfirmDialog } from '../../ui/ConfirmDialog'
 import type { ConfirmVariant } from '../../ui/ConfirmDialog'
 import { FOCUSABLE_SELECTOR, ModalShell } from '../../ui/ModalShell'
@@ -903,6 +904,13 @@ function MessengerMachine() {
   // its `syncing` drives the SyncIndicator below.
   const { syncing, onChatUpdate } = useSync(currentUserId)
   const realtime = useRealtime()
+
+  // №37 presence heartbeat (007 research.md §E2; 008 T076): keep THIS
+  // connection's registration alive on the shared №18 stream — every
+  // `connected` frame restarts the 30 s beats against the 90 s TTL,
+  // and 404 reconnects the channel immediately. Without it a live
+  // connection expired and the observers saw «офлайн».
+  usePresenceHeartbeat(realtime)
 
   // №28 reconnect convergence of the open group window (T046a,
   // realtime-group-events.md §5.4): the at-most-once channel may have

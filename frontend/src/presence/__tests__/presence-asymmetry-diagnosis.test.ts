@@ -45,7 +45,10 @@ import { usePresenceStatus, usePresenceSurfaces } from '../usePresence'
  * WHOLE displayed set, known peers included; scenes A–E below now
  * assert the convergence contract end to end.
  */
-const api = vi.hoisted(() => ({ fetchPresenceSnapshot: vi.fn() }))
+const api = vi.hoisted(() => ({
+  fetchPresenceSnapshot: vi.fn(),
+  createPresenceHeartbeat: vi.fn(() => ({ updateConnectionId: vi.fn(), stop: vi.fn() })),
+}))
 
 vi.mock('../presenceApi', () => api)
 

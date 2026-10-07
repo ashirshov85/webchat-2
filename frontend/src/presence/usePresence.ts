@@ -27,12 +27,16 @@
  * per process on the shared №18 stream singleton from useRealtime —
  * the same one-connection-per-device feed every other feature uses.
  * Heartbeat №37 scheduling (connectionId from the `connected` frame)
- * lives in presenceApi (T019) and is wired by the page integration.
+ * lives in presenceApi (T019) and is wired by [usePresenceHeartbeat]
+ * — the page integration mounts it once on the shared stream
+ * (008 T076: the scheduler existed but was never wired, so every
+ * registration lapsed by its 90 s TTL and a live connection flipped
+ * «офлайн» for the observers).
  */
 import { useEffect, useSyncExternalStore } from 'react'
 import { useRealtime } from '../chats/hooks/useRealtime'
 import type { RealtimeStream } from '../chats/hooks/useRealtime'
-import { fetchPresenceSnapshot } from './presenceApi'
+import { createPresenceHeartbeat, fetchPresenceSnapshot } from './presenceApi'
 import { presenceStore } from './presenceStore'
 import type { PresenceStatus } from './presenceStore'
 
@@ -197,4 +201,34 @@ export function usePresenceSurfaces(userIds: readonly string[]): void {
       unregisterSurfaces(ids)
     }
   }, [surfaceKey])
+}
+
+/**
+ * The №37 heartbeat wiring (008 T076 «статус сбрасывается со
+ * временем»): the page integration mounts this ONCE on the shared №18
+ * stream — without it the scheduler of presenceApi (007 T019) never
+ * started, the registration lapsed by its 90 s TTL and the watch
+ * poller reaped a LIVE connection into «офлайн» for every observer.
+ * Every `connected` frame hands the scheduler the fresh connectionId
+ * (a late mount replays the current one); 404
+ * `presence_connection_not_found` reconnects the SSE channel
+ * IMMEDIATELY (presence-api.md §2), and the new `connected` frame
+ * restarts the 30 s beats with the new id — 429/network errors retry
+ * in the next interval inside the scheduler (the 3× TTL margin).
+ */
+export function usePresenceHeartbeat(stream: RealtimeStream): void {
+  useEffect(() => {
+    const heartbeat = createPresenceHeartbeat({
+      onReconnectRequired: () => {
+        stream.reconnect()
+      },
+    })
+    const unsubscribe = stream.onConnected((connectionId) => {
+      heartbeat.updateConnectionId(connectionId)
+    })
+    return () => {
+      unsubscribe()
+      heartbeat.stop()
+    }
+  }, [stream])
 }

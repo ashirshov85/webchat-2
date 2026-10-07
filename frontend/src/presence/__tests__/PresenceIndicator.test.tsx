@@ -14,7 +14,10 @@ import { presenceStore, resetPresenceStore } from '../presenceStore'
  * NEUTRAL — a false «офлайн» before data is forbidden.
  */
 
-const api = vi.hoisted(() => ({ fetchPresenceSnapshot: vi.fn() }))
+const api = vi.hoisted(() => ({
+  fetchPresenceSnapshot: vi.fn(),
+  createPresenceHeartbeat: vi.fn(() => ({ updateConnectionId: vi.fn(), stop: vi.fn() })),
+}))
 
 vi.mock('../presenceApi', () => api)
 
