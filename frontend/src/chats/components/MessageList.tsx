@@ -572,7 +572,7 @@ export function MessageList({
     if (list === null || !seatArmedRef.current || messages.length === 0 || unreadFromSeq === null) {
       return
     }
-    const seat = list.querySelector('[data-seat-anchor]')
+    const seat = list.querySelector<HTMLElement>('[data-seat-anchor]')
     if (seat === null) {
       // The window STARTS with the unread incoming run — the chat's
       // true first unread incoming may sit ABOVE the loaded window
@@ -611,7 +611,7 @@ export function MessageList({
       // lands the feed's very last row at the bottom edge
       // (block:'end', bug 13). jsdom ships no scrollIntoView — the
       // guard keeps every non-visual suite at the current behaviour.
-      const block = (seat.getAttribute('data-seat-anchor') as ScrollLogicalPosition | null) ?? 'end'
+      const block = (seat.dataset.seatAnchor as ScrollLogicalPosition | undefined) ?? 'end'
       seat.scrollIntoView({ block })
       // content-visibility warm-up (research §G; bug 8а, T086): the
       // offscreen rows render lazily behind 64px placeholders, so the
