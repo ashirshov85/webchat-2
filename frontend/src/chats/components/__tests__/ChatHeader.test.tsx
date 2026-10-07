@@ -1,4 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { GroupMember } from '../../../api/groups'
 import { ChatHeader } from '../ChatHeader'
@@ -218,6 +220,46 @@ describe('ChatHeader direct status: the prototype lamp (T043, FR-016, data-model
 
     expect(container.querySelector('.status-row .lamp')).toBeNull()
     expect(screen.queryByText('неизвестно')).toBeNull()
+  })
+})
+
+describe('ChatHeader offline lamp: no flicker (bug 5 / T083, parity with .av-dot.off)', () => {
+  /**
+   * The offline header lamp must be a «выключенная лампочка» — dim and
+   * STATIC, exactly like `.av-dot.off` (avatar.css, prototype line 197:
+   * `animation: none`). The base `.chat-head .lamp` rule carries
+   * `animation: flick 4s infinite` and the `.off` override used to
+   * re-colour the lamp without silencing the animation — the offline
+   * lamp kept blinking (bug 5). The ONLINE lamp keeps flickering, and
+   * reduced-motion stays the global FR-004 silencer of machine.css.
+   *
+   * Vitest resolves component CSS imports as no-ops and jsdom does not
+   * cascade real stylesheets, so the contract is pinned statically at
+   * its source of truth — the stylesheet text, the same way FR-001
+   * treats design/chats.html as normative.
+   */
+  const headerCss = readFileSync(join(import.meta.dirname, '../chat-header.css'), 'utf8')
+  const avatarCss = readFileSync(join(import.meta.dirname, '../../../ui/avatar.css'), 'utf8')
+
+  /** Extracts the declarations block of an exact selector from css text. */
+  function ruleBody(css: string, selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const match = css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))
+    if (!match) throw new Error(`rule not found: ${selector}`)
+    return match[1] ?? ''
+  }
+
+  it('.lamp.off is dim AND static — animation: none (the bug 5 fix)', () => {
+    const off = ruleBody(headerCss, '.chat-head .lamp.off')
+
+    expect(off).toContain('animation: none')
+    expect(off).toContain('background:')
+    expect(off).toContain('box-shadow:')
+  })
+
+  it('the online .lamp keeps flickering; .av-dot.off parity holds in avatar.css', () => {
+    expect(ruleBody(headerCss, '.chat-head .lamp')).toContain('animation: flick 4s infinite')
+    expect(ruleBody(avatarCss, '.av-dot.off')).toContain('animation: none')
   })
 })
 
