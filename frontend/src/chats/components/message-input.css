@@ -21,7 +21,10 @@
   flex-direction: row; /* перекрытие form{} auth-наследия */
   flex-wrap: wrap; /* строка локальной ошибки — над полем, отдельной линией */
   gap: 10px;
-  align-items: center;
+  /* Bug 6 (T084): кнопка «ОТПРАВИТЬ» прижата к ВЕРХНЕЙ границе строки
+     композера — многострочный черновик растит раму, кнопка не растёт
+     (фиксированный размер, горизонтальная посадка прежняя) */
+  align-items: flex-start;
   padding: var(--pad-composer);
   border-top: 2px solid rgba(138, 106, 44, 0.55);
   background: linear-gradient(#14110c, #1d1812);
@@ -39,11 +42,16 @@
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
 }
 
-/* Поле — тёмная моноширинная плашка внутри рамы (прототип: #msgInput);
-   однострочная высота, перенос строки черновика прокручивается внутри */
+/* Поле — тёмная моноширинная плашка внутри рамы (прототип: #msgInput).
+   Авторост Bug 6 (T084): MessageInput.tsx сажает высоту по содержимому
+   (scrollHeight + 2px рамок, border-box) — пока высота укладывается в
+   max-height, внутренней прокрутки нет; свыше максимума поле
+   прокручивается само (overflow-y: auto появляется только у потолка) */
 .message-input .msg-input {
   display: block;
   width: 100%;
+  max-height: 160px; /* разумный потолок ≈ 8 строк моноширинного набора */
+  overflow-y: auto;
   padding: 10px 14px;
   border-radius: var(--r-field);
   outline: none;

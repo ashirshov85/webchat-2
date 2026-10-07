@@ -1,4 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ToastProvider } from '../../../ui/Toast'
 import { MessageInput } from '../MessageInput'
@@ -407,5 +409,118 @@ describe("MessageInput steam puffs (design-tokens §5: 3 puff's above the compos
 
     const steam = document.querySelector('.chat-input .steam') as HTMLElement
     expect(steam.querySelectorAll('.puff')).toHaveLength(0)
+  })
+})
+
+describe('MessageInput auto-growing field (Bug 6, T084)', () => {
+  /**
+   * Многострочный черновик (Shift+Enter, 004) растит золотую раму:
+   * высота поля = содержимому — авторост читает scrollHeight (+ 2px
+   * рамок: box-sizing: border-box, у поля border 1px сверху/снизу) и
+   * сажает высоту без внутренней прокрутки, пока max-height из
+   * message-input.css не остановит рост — свыше максимума поле
+   * прокручивается само. Отправка сжимает поле обратно к однострочной
+   * высоте ВМЕСТЕ с черновиком; кнопка «ОТПРАВИТЬ» не растёт и прижата
+   * к верхней границе строки композера (align-items: flex-start).
+   *
+   * jsdom не лейаутит (scrollHeight всегда 0), поэтому поведение пинится
+   * моком scrollHeight, а пределы роста и посадка кнопки — статическим
+   * пином стилей у их источника (паттерн T083/ChatHeader, FR-001:
+   * stylesheet — норматив).
+   */
+
+  /** Рамки поля из message-input.css: border 1px × 2 (border-box). */
+  const FIELD_BORDERS_PX = 2
+
+  /** Мок scrollHeight поля; возвращает сеттер следующих значений. */
+  function mockScrollHeight(field: HTMLTextAreaElement, initial: number) {
+    let current = initial
+    Object.defineProperty(field, 'scrollHeight', {
+      configurable: true,
+      get: () => current,
+    })
+    return (next: number) => {
+      current = next
+    }
+  }
+
+  it('grows with a multiline draft — the height tracks scrollHeight of the content', () => {
+    const { field } = renderInput()
+    const setScrollHeight = mockScrollHeight(field, 40)
+
+    // Пересадка (resize-путь) — однострочная высота поля.
+    fireEvent(window, new Event('resize'))
+    expect(field.style.height).toBe(`${40 + FIELD_BORDERS_PX}px`)
+
+    // Многострочный черновик (Shift+Enter) поднимает высоту поля.
+    setScrollHeight(130)
+    fireEvent.change(field, { target: { value: 'строка один\nстрока два\nстрока три' } })
+    expect(field.style.height).toBe(`${130 + FIELD_BORDERS_PX}px`)
+  })
+
+  it('shrinks back to the single-line height together with the cleared draft after send', () => {
+    const { onSend, field } = renderInput()
+    const setScrollHeight = mockScrollHeight(field, 130)
+    fireEvent.change(field, { target: { value: 'строка один\nстрока два' } })
+    expect(field.style.height).toBe(`${130 + FIELD_BORDERS_PX}px`)
+
+    setScrollHeight(40)
+    fireEvent.keyDown(field, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('строка один\nстрока два')
+    expect(field.value).toBe('')
+    expect(field.style.height).toBe(`${40 + FIELD_BORDERS_PX}px`)
+  })
+
+  it('keeps the grown height on a rejected draft — the draft stays in the field', () => {
+    const { field } = renderInput()
+    mockScrollHeight(field, 130)
+    fireEvent.change(field, { target: { value: '   ' } })
+    expect(field.style.height).toBe(`${130 + FIELD_BORDERS_PX}px`)
+
+    fireEvent.keyDown(field, { key: 'Enter' })
+
+    // Пустой черновик отклонён инлайн-ошибкой, поле не чищено — высота
+    // не схлопывается: отклонение валидации рост поля не трогает.
+    expect(field.value).toBe('   ')
+    expect(field.style.height).toBe(`${130 + FIELD_BORDERS_PX}px`)
+  })
+
+  it('refits on window resize — the wraps change with the composer width', () => {
+    const { field } = renderInput()
+    const setScrollHeight = mockScrollHeight(field, 40)
+    fireEvent.change(field, { target: { value: 'длинный черновик' } })
+    expect(field.style.height).toBe(`${40 + FIELD_BORDERS_PX}px`)
+
+    // Окно сузилось — те же строки переносятся шире, высота пересажена.
+    setScrollHeight(96)
+    fireEvent(window, new Event('resize'))
+    expect(field.style.height).toBe(`${96 + FIELD_BORDERS_PX}px`)
+  })
+
+  it('CSS owns the growth limits and the button pinning (static pin)', () => {
+    const css = readFileSync(join(import.meta.dirname, '../message-input.css'), 'utf8')
+    // Комментарии правила содержат фигурные скобки (form{} auth-наследия)
+    // и обрывают простой [^}]* — разбираем тело правил без комментариев.
+    const bareCss = css.replace(/\/\*[\s\S]*?\*\//g, '')
+
+    /** Extracts the declarations block of an exact selector from css text. */
+    function ruleBody(selector: string): string {
+      const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const match = bareCss.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))
+      if (!match) {
+        throw new Error(`rule not found: ${selector}`)
+      }
+      return match[1] ?? ''
+    }
+
+    // Потолок роста + внутренняя прокрутка сверх максимума.
+    const fieldRule = ruleBody('.message-input .msg-input')
+    expect(fieldRule).toContain('max-height:')
+    expect(fieldRule).toContain('overflow-y: auto')
+
+    // Кнопка прижата к верхней границе строки композера и не растёт.
+    expect(ruleBody('.message-input.chat-input')).toContain('align-items: flex-start')
+    expect(ruleBody('.message-input .send-btn')).toContain('flex: none')
   })
 })
