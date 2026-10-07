@@ -207,6 +207,37 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 
 ---
 
+## Phase 9: Bugfixes (пост-приёмочная регрессия)
+
+**Purpose**: Два дефекта, найденных при ручной проверке собранной фичи: (1) асимметрия и устаревание presence-статусов, (2) отсутствие прокрутки ленты к непрочитанному/концу. Ничего не меняют в контрактах (SC-003): presence-баг может лечь и в backend 007, и в frontend-слой слияния №36/№18.
+
+### Bug 1: presence — асимметрия видимости и устаревание статуса
+
+Симптом: A заходит в чат, B заходит в чат — A видит B онлайн, B НЕ видит A онлайн; после рефреша окна B статус A появляется. Со временем актуальный статус сбрасывается/залипает.
+
+- [ ] T074 Диагностировать асимметрию: воспроизвести сценарий A/B в двух браузерах; трассировать публикацию online-перехода субъектом на backend (`backend/src/main/kotlin/webchat/backend/presence/domain/PresenceService.kt`, `realtime/PresenceConnectionLifecycle.kt`, `presence/repository/RedisPresenceStore.kt`, `presence/scheduler/PresenceTransitionScheduler.kt`) и приём на стороне наблюдателя на frontend (`frontend/src/presence/usePresence.ts`, `presenceStore.ts`, `chats/hooks/useRealtime.ts` — кадры №18 `presence.updated` + снимки №36). Проверить гипотезу: backfill №36 выполняется ТОЛЬКО для userId без записи в сторе (`usePresence.ts` registerSurfaces — известные пиры никогда не рефетчатся), т.е. наблюдатель с устаревшей записью (offline, старый rev) не получает свежий статус ни снапшотом, ни потерянным кадром at-most-once канала — до реконнекта/рефреша субъекта — зафиксировать вывод (backend vs frontend) в этой задаче
+- [ ] T075 Исправить асимметрию видимости online-статуса по результату T074: вариант (а) backend — fanout `presence.updated` при первом connect субъекта аудитории видимости; вариант (б) frontend — рефетч №36 для ВСЕХ отображаемых поверхностей при появлении новой поверхности/открытии чата (rev-merge в `presenceStore` гарантирует идемпотентность, contracts/presence-events.md §4); вариант (в) комбинация. Контракты №36/№37/№18 не меняются (SC-003)
+- [ ] T076 Исправить устаревание/сброс актуального статуса со временем: проверить цикл heartbeat №37 (`frontend/src/presence/presenceApi.ts` — TTL 90 с, интервал 30 с, 404 → reconnect SSE, 429 → повтор в следующем интервале), продление регистрации `RedisPresenceStore` и pending-offline гистерезис `PresenceTransitionScheduler` — живое соединение не должно экспайриться (статус не «залипает» online после ухода и не падает в offline при живом соединении)
+- [ ] T077 Регрессионные тесты bug 1: backend-тесты lifecycle presence (connect → fanout online, heartbeat-продление, expiry → fanout offline) в `backend/src/test/`; frontend-тесты `frontend/src/presence/__tests__/` на сценарий «в сторе наблюдателя уже есть entry — свежий статус сходится» (потерянный кадр №18 + рефетч №36 с большим rev); e2e-сценарий двух пользователей (A открывает → B видит online без рефреша; A уходит → B видит offline) — прогон `pnpm test` в frontend/ и gradle-тестов backend зелёный
+
+### Bug 2: прокрутка ленты — к последнему непрочитанному и в конец при отправке
+
+Симптом: при открытии чата лента не прокручивается к последнему непрочитанному сообщению; при отправке сообщения чат не прокручивается в конец.
+
+- [ ] T078 Прокрутка к последнему непрочитанному при открытии чата: в `frontend/src/chats/components/MessageList.tsx` (проводка — `chats/pages/MessengerPage.tsx` + `chats/hooks/useChatMessages.ts`) при первом рендере открытого чата с непрочитанными (серверный `unreadCount` №12 / водяной знак чтения) проскроллить к первому непрочитанному входящему (не в самый низ — старые непрочитанные остаются доступны прокруткой вверх); пустой чат/без непрочитанных — текущее поведение; якорная логика пагинации при подгрузке старых (`MessageList.tsx` anchorHeightRef-эффект) не ломается
+- [ ] T079 Прокрутка в конец при отправке и новых входящих: автоскролл вниз при появлении optimistic/pending-строки и при её подтверждении сервером (append внизу), а также при новом входящем `message.created` ТОЛЬКО если пользователь у нижней границы ленты (не дёргать скролл, если пользователь читает историю); prepend старых страниц скролл не трогает (существующий якорь T053 сохранён)
+- [ ] T080 Тесты и регрессия bug 2: unit-тесты прокрутки в `frontend/src/chats/components/__tests__/MessageList*.test.tsx` (открытие с unread → позиция у первого непрочитанного; отправка → низ; входящее при чтении истории → скролл не меняется); e2e/visual-проверка при необходимости; полный прогон `pnpm lint` + `pnpm typecheck` + `pnpm test` + `pnpm build` + `pnpm test:visual` в frontend/ зелёный (снимки стабильны — прокрутка не меняет DOM)
+
+### Bug 3: главное меню расширяет chat-panel (сайдбар) на широком экране
+
+Симптом: при нажатии `.menu-btn` на широком экране (>901px) открытое меню увеличивает ширину chat-panel — панель растягивается, меню видно только прокруткой скроллбара вправо.
+
+- [ ] T081 Исправить переполнение сайдбара открытием главного меню: `.ctx-menu` (`frontend/src/ui/ContextMenu.tsx`) позиционируется `fixed`, но рендерится внутри DOM-поддерева сайдбара — `.panel` с `backdrop-filter` (machine.css) создаёт containing block для fixed-потомков, координаты viewport ложатся на панель и переполняют её. Исправление по прецеденту members-tip (`frontend/src/chats/components/ChatHeader.tsx` — `createPortal` в `document.body`): рендерить открытый ContextMenu через портал в body (сам примитив — портал для всех потребителей: главное меню `MainMenuButton.tsx`, «⋯» ContactsModal, «шестерёнка» ChatHeader), якорь/clamp-формулы и закрытие клик-вне/Esc не меняются; проверить, что все меню (в т.ч. в модалях/drawer ≤900px) остаются на местах; юнит-тест `frontend/src/ui/__tests__/ContextMenu.test.tsx` + e2e/visual-проверка при необходимости; панель больше не расширяется и горизонтального скролла нет. Полный прогон lint/typecheck/test/build/test:visual зелёный
+
+**Checkpoint**: Все дефекты (bug 1–3) воспроизводимо закрыты; полная регрессия зелёная
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
