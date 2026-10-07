@@ -5,13 +5,15 @@
    (FR-002); каркас .chat/.panel — chats/pages/messenger.css (T018).
    Подключается компонентом chats/components/ChatHeader.tsx.
 
-   Аватар — 46px заголовка с инициалами 13px (design-tokens §4, проекция
-   .head-av .avatar прототипа); строка статуса .status-row: direct —
-    лампа .lamp (+ .off только для настоящего offline из store 007) и
-    подпись .status-txt «В сети»/«офлайн»/«неизвестно» (US3/T043),
-    group — «N участников», чей hover/focus открывает подсказку состава
-    .members-tip (портал в body, стили ниже). Правая кнопка — одна:
-    «шестерёнка» ChatGearMenu (US4/T054), словарь .ch-btn прототипа.
+    Аватар — 46px заголовка с инициалами 13px (design-tokens §4, проекция
+    .head-av .avatar прототипа); строка статуса .status-row: direct —
+     лампа .lamp (+ .off только для настоящего offline из store 007) и
+     подпись .status-txt «В сети»/«офлайн» (US3/T043; bug 12/T090:
+     «неизвестно» не выводится — пустая строка держит высоту, см.
+     min-height правила .status-row), group — «N участников», чей
+     hover/focus открывает подсказку состава .members-tip (портал в
+     body, стили ниже). Правая кнопка — одна: «шестерёнка» ChatGearMenu
+     (US4/T054), словарь .ch-btn прототипа.
 
    Селекторы скоупятся под .chat-head: глобальные element-стили index.css
    (auth-наследие: синие кнопки, отступ h2) не должны просвечивать сквозь
@@ -57,21 +59,27 @@
   white-space: nowrap;
 }
 
+/* min-height — высота строки с лампочкой и подписью (12px Old Standard
+    TT italic → line box 15px, промер прототипа §7): bug 12/T090 — при
+    `unknown` direct-строка рендерится ПУСТОЙ (ни лампы, ни текста), но
+    держит высоту, чтобы заголовок не прыгал при сходимости №36. */
 .chat-head .status-row {
   display: flex;
   align-items: center;
   gap: 7px;
   margin-top: 3px;
   min-width: 0;
+  min-height: 15px;
 }
 
 /* Лампа присутствия direct (US3, T043; прототип §7 .lamp): online —
-    зелёная со свечением и мерцанием flick 4s (keyframes — ui/avatar.css,
-    reduced-motion глушит глобально), offline — тусклая .off БЕЗ анимации
-    (bug 5/T083: паритет с .av-dot.off «выключенная лампочка»; в прототипе
-    .lamp.off flick не глушит — дефект эталона, побеждает контракт
-    задачи); нейтральной лампе (.unknown нет — семантика 007) класс .off
-    ЗАПРЕЩЁН. */
+     зелёная со свечением и мерцанием flick 4s (keyframes — ui/avatar.css,
+     reduced-motion глушит глобально), offline — тусклая .off БЕЗ анимации
+     (bug 5/T083: паритет с .av-dot.off «выключенная лампочка»; в прототипе
+     .lamp.off flick не глушит — дефект эталона, побеждает контракт
+     задачи); unknown лампы НЕ рендерит вовсе (bug 12/T090 — скрытие не
+     выдаёт статуса, семантика 007), класс .off — только настоящий
+     offline из store. */
 .chat-head .lamp {
   width: 8px;
   height: 8px;

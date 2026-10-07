@@ -10,29 +10,32 @@ import { ContactsModal } from '../ContactsModal'
 
 /**
  * Presence-отображение US3 (feature 008, T040; US3-AS2, FR-024, FR-016,
- * data-model 1.2/2.1/2.3/2.5, семантика 007): точка online/offline/
- * unknown на АВАТАРАХ поверхностей-007 (строки личных чатов списка,
- * строки «Контактов») и статус ЗАГОЛОВКА личного чата — «В сети» либо
- * нейтральное «неизвестно», без ложного «офлайна».
+ * data-model 1.2/2.1/2.3/2.5, семантика 007): точка online/offline на
+ * АВАТАРАХ поверхностей-007 (строки личных чатов списка, строки
+ * «Контактов») и статус ЗАГОЛОВКА личного чата — «В сети»/«офлайн»,
+ * без ложного «офлайна».
  *
- * Тесты написаны ДО реализации (конституция VI): красные до T042
- * (presence-точки в ChatListItem/ContactsModal) и T043 (лампа+текст
- * статуса ChatHeader). Контракт фиксирован здесь:
+ * Bug 12 (T090): статус `unknown` НЕ отображается в UI вовсе — ни
+ * нейтральной точки `.av-dot.unknown`, ни лампы с текстом «неизвестно»
+ * в заголовке. Скрытие не выдаёт статуса: до сходимости №36 (свежая
+ * поверхность / «нет доступа») поверхность просто без индикатора, а
+ * пустая `.status-row` заголовка держит высоту (min-height в
+ * chat-header.css), чтобы заголовок не прыгал при сходимости. Контракт:
  *
  * - источник статуса — ТОЛЬКО presenceStore 007 через
  *   usePresenceStatus(userId): строка/контакт/заголовок не ведут своих
  *   запросов; per-peer ключ — peer.id / contact.user.id / chat.peerId;
- * - СООТВЕТСТВИЕ СОСТОЯНИЮ: online → зелёная мерцающая (базовый
+ * - СООТВЕТСТВИЕ СОСТОЯНИЮ (T090): online → зелёная мерцающая (базовый
  *   `.av-dot`, лампа без `.off`), offline → тусклая (`.av-dot.off`,
- *   `.lamp.off`), unknown → нейтральная (`.av-dot.unknown`, лампа БЕЗ
- *   `.off`) — design-tokens §4;
- * - «неизвестно» ≠ «офлайн» (edge case 007): отсутствие/задержка
- *   снимка №36 — нейтральная точка и текст «неизвестно», ложный
- *   «офлайн» (класс .off / текст) недопустим до получения данных;
- *   настоящий offline из store — «офлайн» отображается (не «ложный»);
+ *   `.lamp.off`), unknown → ИНДИКАТОРА НЕТ (ни точки, ни лампы, ни
+ *   текста) — design-tokens §4 + bug 12;
+ * - «неизвестно» ≠ «офлайн» (edge case 007, bug 12): отсутствие/задержка
+ *   снимка №36 — индикатор не выводится, ложный «офлайн» (класс .off /
+ *   текст) недопустим до получения данных; настоящий offline из store —
+ *   «офлайн» отображается (не «ложный»);
  * - текст статуса заголовка (прототип §7 statusRow): «В сети» /
- *   «офлайн» / «неизвестно» в `.status-txt` рядом с лампой — видимый
- *   лейбл 007 (a11y-clarify: точка + подпись);
+ *   «офлайн» в `.status-txt` рядом с лампой — видимый лейбл 007
+ *   (a11y-clarify: точка + подпись);
  * - группы присутствия не несут (006/007): presence-точки на аватаре
  *   групповой строки нет.
  *
@@ -182,22 +185,21 @@ describe('ChatListItem presence dot (T040 → T042, US3-AS2, FR-024, data-model 
     expect(within(row).getByRole('img', { name: 'офлайн' })).toBe(dot)
   })
 
-  it('direct row unknown: нейтральная .av-dot.unknown — БЕЗ ложного «офлайн» (.off)', () => {
+  it('direct row unknown: presence-точки НЕТ — скрытие не выдаёт статуса (bug 12/T090)', () => {
     presence.statuses.set(ALICE, 'unknown')
     const { container } = renderRows([directItem()])
 
     const row = chatRowOf(container, 'alice')
-    const dot = dotOf(row)
-    expect(dot.className).toBe('av-dot unknown')
+    expect(row.querySelector('.avatar .av-dot')).toBeNull()
     expect(row.querySelector('.av-dot.off')).toBeNull()
-    expect(within(row).getByRole('img', { name: 'неизвестно' })).toBe(dot)
+    expect(within(row).queryByRole('img', { name: 'неизвестно' })).toBeNull()
   })
 
-  it('строка без записи в store (до первого №36): нейтральная точка, не .off — семантика 007', () => {
+  it('строка без записи в store (до первого №36): индикатора нет — семантика 007 (T090)', () => {
     const { container } = renderRows([directItem()])
 
     const row = chatRowOf(container, 'alice')
-    expect(dotOf(row).className).toBe('av-dot unknown')
+    expect(row.querySelector('.avatar .av-dot')).toBeNull()
     expect(row.querySelector('.av-dot.off')).toBeNull()
   })
 
@@ -249,7 +251,7 @@ describe('ContactsModal presence dots (T040 → T042, US3-AS2, FR-024, data-mode
     return view.container
   }
 
-  it('точки per-contact: online/offline/unknown соответствуют статусам contact.user.id', async () => {
+  it('точки per-contact: online/offline по статусам; unknown — точки НЕТ (T090)', async () => {
     presence.statuses.set(ALICE, 'online')
     presence.statuses.set(BOB, 'offline')
     presence.statuses.set(CAROL, 'unknown')
@@ -263,17 +265,18 @@ describe('ContactsModal presence dots (T040 → T042, US3-AS2, FR-024, data-mode
     expect(within(aliceRow).getByRole('img', { name: 'онлайн' })).toBeVisible()
     expect(dotOf(bobRow).className).toBe('av-dot off')
     expect(within(bobRow).getByRole('img', { name: 'офлайн' })).toBeVisible()
-    expect(dotOf(carolRow).className).toBe('av-dot unknown')
-    expect(within(carolRow).getByRole('img', { name: 'неизвестно' })).toBeVisible()
+    expect(carolRow.querySelector('.avatar .av-dot')).toBeNull()
+    expect(within(carolRow).queryByRole('img', { name: 'неизвестно' })).toBeNull()
   })
 
-  it('список до первого №36: ВСЕ точки нейтральные — ни одной ложной .off (семантика 007)', async () => {
+  it('список до первого №36: индикаторов НЕТ — ни одной точки, ни одной ложной .off (T090)', async () => {
     const container = await renderContacts()
 
     for (const row of Array.from(container.querySelectorAll<HTMLElement>('.ctc-row'))) {
-      expect(dotOf(row).className).toBe('av-dot unknown')
+      expect(row.querySelector('.avatar .av-dot')).toBeNull()
       expect(row.querySelector('.av-dot.off')).toBeNull()
     }
+    expect(container.querySelectorAll('.ctc-row .avatar .av-dot')).toHaveLength(0)
   })
 })
 
@@ -320,14 +323,16 @@ describe('ChatHeader direct status (T040 → T043, US3-AS2, FR-016, data-model 2
     )
   })
 
-  it('unknown: нейтральная лампа БЕЗ .off + «неизвестно» — ложного «офлайна» нет', () => {
+  it('unknown: НИ лампы, НИ текста «неизвестно» — пустая .status-row держит высоту (bug 12/T090)', () => {
     // Нет записи в store: вход/переподключение до первого №36 (edge case 007).
     const { container } = renderDirectHeader()
 
-    expect(lampOf(container).classList.contains('off')).toBe(false)
-    expect(container.querySelector('.chat-head .status-row .status-txt')?.textContent).toBe(
-      'неизвестно',
-    )
+    expect(container.querySelector('.chat-head .status-row .lamp')).toBeNull()
+    expect(container.querySelector('.chat-head .status-row .status-txt')).toBeNull()
+    expect(screen.queryByText('неизвестно')).toBeNull()
     expect(screen.queryByText('офлайн')).toBeNull()
+    // Пустая строка статуса остаётся в DOM — якорь высоты заголовка
+    // (min-height в chat-header.css): при сходимости №36 заголовок не прыгает.
+    expect(container.querySelector('.chat-head .status-row')).not.toBeNull()
   })
 })

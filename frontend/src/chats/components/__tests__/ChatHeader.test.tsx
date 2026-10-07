@@ -18,8 +18,11 @@ import { ModalShell } from '../../../ui/ModalShell'
  * US3 (T043) delivered the FULL status row: direct — the prototype
  * `.lamp` (+ `.off` ONLY for a true store offline — never a false one
  * for «unknown», семантика 007) with the `.status-txt` label
- * «В сети»/«офлайн»/«неизвестно» from `usePresenceStatus(peerId)`
- * (T040 contract); group — «N участников» (pluralRu) whose hover/focus
+ * «В сети»/«офлайн» from `usePresenceStatus(peerId)` (T040 contract);
+ * bug 12 (T090): the neutral «unknown» renders NOTHING — no lamp, no
+ * text — while the EMPTY `.status-row` keeps the header height
+ * (min-height of chat-header.css) until №36 converges; group —
+ * «N участников» (pluralRu) whose hover/focus
  * opens the `.members-tip` roster: «Вы» first (mark «администратор»
  * when owning), then the №28 members minus me with the mark for
  * owner/admin roles (FR-017). The tip closes on mouseleave/blur and
@@ -167,14 +170,16 @@ describe('ChatHeader prototype block (T021, FR-016 base, data-model 2.3)', () =>
 })
 
 describe('ChatHeader direct status: the prototype lamp (T043, FR-016, data-model 2.3)', () => {
-  it('shows the neutral «неизвестно» status — lamp WITHOUT .off, never a false «офлайн»', () => {
+  it('unknown: НИ лампы, НИ текста — пустая .status-row держит высоту (bug 12/T090)', () => {
     const { container } = renderHeader(directChat())
 
-    expect(screen.getByText('неизвестно')).toBeVisible()
+    expect(screen.queryByText('неизвестно')).toBeNull()
     expect(screen.queryByText('офлайн')).toBeNull()
-    const lamp = container.querySelector('.chat-head .status-row .lamp')
-    expect(lamp).not.toBeNull()
-    expect(lamp?.classList.contains('off')).toBe(false)
+    expect(container.querySelector('.chat-head .status-row .lamp')).toBeNull()
+    expect(container.querySelector('.chat-head .status-row .status-txt')).toBeNull()
+    // Строка остаётся — якорь высоты (min-height в chat-header.css):
+    // заголовок не прыгает, когда №36 сойдётся к online/offline.
+    expect(container.querySelector('.chat-head .status-row')).not.toBeNull()
   })
 
   it('online: lamp without .off + «В сети»; offline: .lamp.off + «офлайн» (store truth)', () => {

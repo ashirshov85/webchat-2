@@ -735,22 +735,25 @@ describe('MessageList date dividers at pagination junctions (US3-AS3, T041, data
   })
 })
 
-describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)', () => {
+describe('MessageList open seat: the row before the first unread incoming (bug 2/7/13, T078/T085/T091)', () => {
   /**
-   * T085 (уточнение T078): the first render of an open chat seats the
-   * feed so the BOTTOM edge of the LAST READ message (`seq ≤
-   * myReadUpToSeq` of the №13 answer latched at open —
-   * `unreadFromSeq`) lands at the BOTTOM edge of the viewport: the
-   * unread run starts right below the fold, the read history stays a
-   * scroll-up away. A fully read window degenerates to the feed's
-   * very last row — the open seats at the end. When the last read
-   * row sits ABOVE the loaded window, the seat drives №14
-   * `loadOlder` pages until it enters the window; a failed page
-   * never retries on its own. A wholly unread window (watermark 0)
-   * has no fold row — the feed keeps its natural top position. The
-   * seat fires ONCE per open (re-armed by the empty window of a chat
-   * switch), waits for the №13 watermark, and the pagination anchor
-   * of `loadOlder` prepends (anchorHeightRef, T053) stays intact.
+   * T091 (bug 13, уточнение T085/T078): the first render of an open
+   * chat seats the feed so the BOTTOM edge of the FOLD row lands at
+   * the BOTTOM edge of the viewport. The fold row is the row
+   * immediately BEFORE the first unread INCOMING message (`senderId
+   * ≠ me && seq > myReadUpToSeq` of the №13 answer latched at open —
+   * `unreadFromSeq`): own outgoing rows are read by the author the
+   * moment they leave, so a chat whose tail is own sends carries NO
+   * unread incoming — the seat degenerates to the feed's very last
+   * row (the open seats in the end and the own tail is in view —
+   * the bug 13 fix). When the window STARTS with the unread run,
+   * the fold row sits above it — the seat drives №14 `loadOlder`
+   * pages until it enters the window; a failed page never retries
+   * on its own. A wholly unread window (watermark 0) has no fold
+   * row — the feed keeps its natural top position. The seat fires
+   * ONCE per open (re-armed by the empty window of a chat switch),
+   * waits for the №13 watermark, and the pagination anchor of
+   * `loadOlder` prepends (anchorHeightRef, T053) stays intact.
    *
    * jsdom ships no layout and no `scrollIntoView` — the mock records
    * the calls so the tests pin WHICH row the browser would scroll to
@@ -779,9 +782,11 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
 
   /**
    * seq 1–3 are read (watermark 3), seq 4 is an unread OUTGOING row,
-   * seq 5–6 are the unread incoming ones: the fold row is seq 3 —
-   * the LAST READ message, not the first unread (T085) and not the
-   * very bottom row.
+   * seq 5–6 are the unread incoming ones: the fold row is seq 4 —
+   * the row immediately BEFORE the first unread incoming (u-in-5),
+   * an OWN row (T091: own sends are read by the author; the anchor
+   * must not stop at the last READ row r-in-3, which used to leave
+   * u-out-4 below the fold) and not the very bottom row either.
    */
   const UNREAD_WINDOW: Message[] = [
     dialogMessage('r-in-1', 1, PEER, 'прочитанное 1'),
@@ -792,17 +797,19 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
     dialogMessage('u-in-6', 6, PEER, 'второе непрочитанное'),
   ]
 
-  it('seats the open chat at the bottom edge of the last read row, not at the very bottom', () => {
+  it('seats the open chat at the own row above the first unread incoming, not at the last read row', () => {
     const { container } = render(
       <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
     )
 
     // The fold row is marked for the scroll and stays in the DOM —
     // the unread run below it starts right under the fold, the read
-    // history above stays reachable by scrolling up (bug 7).
+    // history above stays reachable by scrolling up (bug 7). T091:
+    // u-out-4 counts as read by the author, so IT — not r-in-3 — is
+    // the row the unread incoming run u-in-5… starts below.
     const anchor = container.querySelector('[data-seat-anchor]')
     expect(anchor).not.toBeNull()
-    expect(anchor?.textContent).toContain('прочитанное 3')
+    expect(anchor?.textContent).toContain('непрочитанный исходящий')
     expect(container.querySelectorAll('[data-seat-anchor]')).toHaveLength(1)
 
     expect(scrolled).toHaveLength(1)
@@ -810,15 +817,62 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
     expect(scrolled[0]?.block).toBe('end')
   })
 
-  it('seats a fully read window at the end of the feed', () => {
+  it('seats a window with no unread incoming at the end of the feed', () => {
     const { container } = render(
       <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={6} />,
     )
 
-    // Everything is read — the fold degenerates to the feed's very
-    // last row: the open seats in the end (T085).
+    // No unread incoming exists (own sends are read by the author,
+    // the incoming ones sit at/below the watermark) — the fold
+    // degenerates to the feed's very last row: the open seats in the
+    // end (T091).
     const anchor = container.querySelector('[data-seat-anchor]')
     expect(anchor?.textContent).toContain('второе непрочитанное')
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element).toBe(anchor)
+    expect(scrolled[0]?.block).toBe('end')
+  })
+
+  it('seats a chat whose tail is own sends at the very end of the feed (bug 13)', () => {
+    // Watermark 1: the peer's seq 1 row is read, seq 2–3 are OWN
+    // sends — read by the author the moment they left (T091). No
+    // unread incoming exists, so the fold degenerates to the feed's
+    // very last row: the open seats IN THE END and the own tail is
+    // in view — the T085 anchor (the last READ row, seq 1) used to
+    // leave the whole own tail below the fold (the bug 13 symptom).
+    const OWN_TAIL: Message[] = [
+      dialogMessage('t-in-1', 1, PEER, 'входящее прочитанное'),
+      dialogMessage('t-out-2', 2, ME, 'своё первое'),
+      dialogMessage('t-out-3', 3, ME, 'своё второе'),
+    ]
+    const { container } = render(
+      <MessageList messages={OWN_TAIL} currentUserId={ME} unreadFromSeq={1} />,
+    )
+
+    const anchor = container.querySelector('[data-seat-anchor]')
+    expect(anchor?.textContent).toContain('своё второе')
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element).toBe(anchor)
+    expect(scrolled[0]?.block).toBe('end')
+  })
+
+  it('seats an own send standing right above the first unread incoming (interleave)', () => {
+    // Watermark 2: seq 1–2 are read (the seq 2 row is an OWN send),
+    // seq 3 is the first unread incoming — the fold row is the OWN
+    // seq 2 row directly above it, whatever the watermark says about
+    // it (T091 interleave: the anchor is the row before the unread
+    // incoming run, not the last read incoming one).
+    const INTERLEAVE: Message[] = [
+      dialogMessage('i-in-1', 1, PEER, 'прочитанное входящее'),
+      dialogMessage('i-out-2', 2, ME, 'своё над непрочитанным'),
+      dialogMessage('i-in-3', 3, PEER, 'непрочитанное входящее'),
+    ]
+    const { container } = render(
+      <MessageList messages={INTERLEAVE} currentUserId={ME} unreadFromSeq={2} />,
+    )
+
+    const anchor = container.querySelector('[data-seat-anchor]')
+    expect(anchor?.textContent).toContain('своё над непрочитанным')
     expect(scrolled).toHaveLength(1)
     expect(scrolled[0]?.element).toBe(anchor)
     expect(scrolled[0]?.block).toBe('end')
@@ -844,7 +898,7 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
     // The №13 answer lands with the open-time watermark — the seat fires.
     rerender(props(3))
     expect(scrolled).toHaveLength(1)
-    expect(scrolled[0]?.element.textContent).toContain('прочитанное 3')
+    expect(scrolled[0]?.element.textContent).toContain('непрочитанный исходящий')
   })
 
   it('scrolls once per open: realtime appends after the open never re-scroll', () => {
@@ -885,17 +939,21 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
   })
 
   /**
-   * The №14 catch-up of the seat (T085): the read row sits above the
+   * The №14 catch-up of the seat (T085): the fold row sits above the
    * loaded window — pages load until it enters, THEN the seat fires.
+   * T091 parity: every catch-up window STARTS with an unread
+   * INCOMING row (index 0 → PEER) — with an own-row start the new
+   * anchor (the row before the first unread incoming) would sit
+   * INSIDE the window and the seat would fire without any №14 page.
    */
   const HIGH_WINDOW: Message[] = Array.from({ length: 20 }, (_, index) =>
-    dialogMessage(`w-${index + 41}`, index + 41, index % 2 === 0 ? ME : PEER, `окно ${index + 41}`),
+    dialogMessage(`w-${index + 41}`, index + 41, index % 2 === 0 ? PEER : ME, `окно ${index + 41}`),
   )
   const OLDER_PAGE: Message[] = Array.from({ length: 20 }, (_, index) =>
     dialogMessage(
       `o-${index + 21}`,
       index + 21,
-      index % 2 === 0 ? ME : PEER,
+      index % 2 === 0 ? PEER : ME,
       `старая ${index + 21}`,
     ),
   )
@@ -913,8 +971,9 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
       />
     )
 
-    // Watermark 40 sits below the window (41–60): the whole window is
-    // unread — the seat asks for the older page instead of firing.
+    // The window (41–60) STARTS with the unread incoming run (seq
+    // 41, PEER) — the fold row right above it is outside the window,
+    // the seat asks for the older page instead of firing.
     const { container, rerender } = render(props(HIGH_WINDOW, false))
     expect(onLoadOlder).toHaveBeenCalledTimes(1)
     expect(scrolled).toHaveLength(0)
@@ -924,8 +983,9 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
     rerender(props(HIGH_WINDOW, true))
     expect(onLoadOlder).toHaveBeenCalledTimes(1)
 
-    // The page (21–40) prepends — the read row (seq 40) is in the
-    // window now, the seat fires at its bottom edge.
+    // The page (21–40) prepends — the fold row (seq 40, the row
+    // right above the unread run start seq 41) is in the window now,
+    // the seat fires at its bottom edge.
     rerender(props([...OLDER_PAGE, ...HIGH_WINDOW], false))
     expect(onLoadOlder).toHaveBeenCalledTimes(1)
     expect(scrolled).toHaveLength(1)
@@ -1052,17 +1112,20 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
     await waitFor(() => {
       expect(scrolled).toHaveLength(1)
     })
-    expect(scrolled[0]?.element.textContent).toContain('прочитанное 3')
+    expect(scrolled[0]?.element.textContent).toContain('непрочитанный исходящий')
     expect(scrolled[0]?.block).toBe('end')
   })
 
   it('drives the №14 catch-up through the live wiring until the read row arrives', async () => {
     installStream()
+    // T091 parity: highestPage/middlePage START with an unread
+    // INCOMING row (index 0 → PEER) — the fold row above the unread
+    // run start stays outside the window until the read page lands.
     const highestPage = Array.from({ length: 10 }, (_, index) =>
       dialogMessage(
         `h-${index + 51}`,
         index + 51,
-        index % 2 === 0 ? ME : PEER,
+        index % 2 === 0 ? PEER : ME,
         `верх ${index + 51}`,
       ),
     )
@@ -1070,7 +1133,7 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
       dialogMessage(
         `m-${index + 41}`,
         index + 41,
-        index % 2 === 0 ? ME : PEER,
+        index % 2 === 0 ? PEER : ME,
         `средняя ${index + 41}`,
       ),
     )
@@ -1078,7 +1141,7 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
       dialogMessage(
         `r-${index + 31}`,
         index + 31,
-        index % 2 === 0 ? ME : PEER,
+        index % 2 === 0 ? PEER : ME,
         `нижняя ${index + 31}`,
       ),
     )
@@ -1090,8 +1153,10 @@ describe('MessageList open seat: last read row at the fold (bug 2/7, T078/T085)'
 
     const { container } = render(<DialogWindow chatId="chat-1" currentUserId={ME} />)
 
-    // The №16 window is 51–60 — the watermark 40 row is two №14 pages
-    // above; the seat paginates down to it and fires at its bottom.
+    // The №16 window is 51–60 and starts with the unread incoming
+    // run (seq 51) — the fold row (right above the run, which itself
+    // reaches down to seq 41) is two №14 pages above; the seat
+    // paginates down to it and fires at its bottom.
     await waitFor(() => {
       expect(scrolled).toHaveLength(1)
     })

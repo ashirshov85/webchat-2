@@ -9,11 +9,13 @@
  *
  * The status row is the FULL US3 projection (T043):
  *  * direct — the prototype presence-лампа `.lamp` + `.status-txt`
- *    label «В сети»/«офлайн»/«неизвестно» driven by the 007
- *    presenceStore through `usePresenceStatus(peerId)` (the T040
- *    contract: `.off` ONLY for a true store offline — a missing №36
- *    snapshot and №36 `unknown` stay neutral, never a false
- *    «офлайн»); the blocker-side «заблокирован» mark follows (FR-020);
+ *    label «В сети»/«офлайн» driven by the 007 presenceStore through
+ *    `usePresenceStatus(peerId)` (the T040 contract: `.off` ONLY for a
+ *    true store offline — a missing №36 snapshot and №36 `unknown`
+ *    never yield a false «офлайн»); bug 12 (T090): `unknown` renders
+ *    NO indicator at all — the empty `.status-row` keeps the height
+ *    (chat-header.css min-height) until №36 converges; the blocker-side
+ *    «заблокирован» mark follows (FR-020);
  *  * group — «N участников» with the prototype pluralRu; hover/focus
  *    of the status row opens the `.members-tip` roster (FR-017):
  *    «Вы» first (mark «администратор» when `myRole` is owner), then
@@ -131,11 +133,11 @@ function membersStatus(count: number): string {
   return `${count} ${pluralRu(count, 'участник', 'участника', 'участников')}`
 }
 
-/** `.status-txt` of the direct row (T040: «В сети»/«офлайн»/«неизвестно»). */
-const DIRECT_STATUS_TEXT: Readonly<Record<'online' | 'offline' | 'unknown', string>> = {
+/** `.status-txt` of the direct row (T040 «В сети»/«офлайн»; bug 12/T090:
+ *  «неизвестно» не выводится — unknown рендерит пустую строку статуса). */
+const DIRECT_STATUS_TEXT: Readonly<Record<'online' | 'offline', string>> = {
   online: 'В сети',
   offline: 'офлайн',
-  unknown: 'неизвестно',
 }
 
 /** The tip rows (FR-017): the live №28 members minus me ([] until №28 is live). */
@@ -153,8 +155,22 @@ interface DirectStatusRowProps {
   readonly blockedByMe: boolean
 }
 
-/** The direct `.status-row` — the prototype presence lamp + label (US3 T043). */
+/**
+ * The direct `.status-row` — the prototype presence lamp + label (US3
+ * T043). Bug 12 (T090): the neutral «unknown» is NOT displayed — no
+ * lamp, no `.status-txt` — only the empty row stays (its min-height in
+ * chat-header.css holds the header height) so the header does not jump
+ * when №36 converges; the «заблокирован» mark (FR-020) is not a
+ * presence indicator and stays.
+ */
 function DirectStatusRow({ presence, blockedByMe }: DirectStatusRowProps) {
+  if (presence === 'unknown') {
+    return (
+      <div className="status-row">
+        {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
+      </div>
+    )
+  }
   return (
     <div className="status-row">
       <span className={presence === 'offline' ? 'lamp off' : 'lamp'} aria-hidden="true" />

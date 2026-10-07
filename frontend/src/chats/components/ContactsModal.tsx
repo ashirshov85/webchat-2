@@ -64,9 +64,9 @@
  * design-tokens §4, контракт T040): статус — ТОЛЬКО из presenceStore
  * 007 через `usePresenceStatus(contact.user.id)` (per-row регистрация
  * поверхности + №36-бэкфилл с микротаск-батчингом — один запрос на
- * монтирование списка): online — зелёная мерцающая, offline — тусклая,
- * unknown — нейтральная; до первого №36 ВСЕ точки нейтральные — ложный
- * «офлайн» запрещён (семантика 007).
+ * монтирование списка): online — зелёная мерцающая, offline — тусклая;
+ * bug 12 (T090): unknown точки НЕ выводит — до первого №36 строка без
+ * индикатора, ложный «офлайн» запрещён (семантика 007).
  */
 import {
   useCallback,
@@ -203,11 +203,19 @@ export type ModalForm = 'list' | 'add'
  * Аватар контакта с presence-точкой (T042): отдельный компонент — хук
  * статуса нужен СТРОКЕ (контракт T040: per-peer ключ contact.user.id),
  * а строки выводятся циклом. Регистрация поверхности и №36-бэкфилл —
- * внутри `usePresenceStatus` (007).
+ * внутри `usePresenceStatus` (007). Bug 12 (T090): `unknown` точку НЕ
+ * выводит — скрытие не выдаёт статуса (ложного «офлайна» нет), точка
+ * появляется, когда №36 сойдётся к online/offline.
  */
 function ContactAvatar({ contact }: { readonly contact: ContactView }) {
   const status = usePresenceStatus(contact.user.id)
-  return <Avatar source={contact.user.username} size={32} presenceDot={status} />
+  return (
+    <Avatar
+      source={contact.user.username}
+      size={32}
+      presenceDot={status === 'unknown' ? null : status}
+    />
+  )
 }
 
 export function ContactsModal({

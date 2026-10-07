@@ -58,9 +58,10 @@
  * контракт T040): DIRECT rows only — the status comes from
  * presenceStore 007 via `usePresenceStatus(peer.id)` (per-row surface
  * registration + №36 backfill, семантика 007) and rides the Avatar's
- * `presenceDot`: online — зелёная мерцающая, offline — тусклая,
- * unknown — нейтральная (БЕЗ ложного «офлайн» до первого №36);
- * a GROUP row carries no presence UI (006/007) — `null`.
+ * `presenceDot`: online — зелёная мерцающая, offline — тусклая;
+ * bug 12 (T090): `unknown` renders NO dot at all — до сходимости №36
+ * строка без индикатора (скрытие не выдаёт статуса, ложного «офлайна»
+ * нет); a GROUP row carries no presence UI (006/007) — `null`.
  * React.memo + the row's `content-visibility`
  * (chat-list-panel.css) keep a 200+ list at 60 fps (SC-011, §G).
  */
@@ -105,7 +106,8 @@ export const ChatListItem = memo(function ChatListItem({
   const title = isGroup ? item.title : item.peer?.username
   const peerId = !isGroup && item.peer !== null ? item.peer.id : null
   // Состояние — ТОЛЬКО из presenceStore 007 (T040): null-ключ (группа/
-  // защитный direct без peer) ничего не региструет и точку не даёт.
+  // защитный direct без peer) ничего не региструет и точку не даёт;
+  // unknown точку тоже не даёт — bug 12/T090: скрытие не выдаёт статуса.
   const presence = usePresenceStatus(peerId)
   const outgoing = last !== null && last.senderId === currentUserId
   const unreadLabel = item.unreadCount > UNREAD_CAP ? `${UNREAD_CAP}+` : String(item.unreadCount)
@@ -123,7 +125,7 @@ export const ChatListItem = memo(function ChatListItem({
         <Avatar
           source={title ?? ''}
           shape={isGroup ? 'octagon' : 'circle'}
-          presenceDot={peerId !== null ? presence : null}
+          presenceDot={peerId !== null && presence !== 'unknown' ? presence : null}
         />
         <span className="c-main">
           <span className="c-top">
