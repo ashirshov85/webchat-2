@@ -305,6 +305,14 @@ const DIRECT_PENDING_ACTIONS: ReadonlySet<PendingAction> = new Set([
 /** The group-kind entries — №33/№30 from the gear menu (T054). */
 const GROUP_PENDING_ACTIONS: ReadonlySet<PendingAction> = new Set(['leave-group', 'delete-group'])
 
+/**
+ * Bounded size of the own-ack tracking set (T086в, bug 8): the set
+ * only matters for the single commit where the confirmed message
+ * lands, so a small FIFO cap covers the race window without growing
+ * with the session.
+ */
+const OWN_ACK_TRACK_CAP = 16
+
 function confirmUiOf(action: PendingAction, peerName: string): ConfirmUi {
   if (action === 'delete-chat') {
     return {
@@ -926,9 +934,29 @@ function MessengerMachine() {
     })
   }, [activeGroupChatId, realtime, reloadActiveGroup])
 
+  // T086в (bug 8): ids the outbox engine confirmed via 201/200.
+  // When the ack races the first render of the optimistic row (a
+  // batched flush skips the intermediate state entirely), MessageList's
+  // own `localIdsRef` never held the id and the append would lose the
+  // own-branch of the T079 autoscroll. This set vouches for such acks
+  // regardless of the render interleaving — bounded to the most
+  // recent OWN_ACK_TRACK_CAP ids (Set keeps the insertion order), far
+  // beyond the one commit the race window spans.
+  const [ownAckIds, setOwnAckIds] = useState<ReadonlySet<string>>(() => new Set())
   const handleConfirmed = useCallback(
     (message: Message) => {
       confirmMessage(message)
+      setOwnAckIds((previous) => {
+        const next = new Set(previous)
+        next.add(message.id)
+        for (const id of next) {
+          if (next.size <= OWN_ACK_TRACK_CAP) {
+            break
+          }
+          next.delete(id)
+        }
+        return next
+      })
     },
     [confirmMessage],
   )
@@ -1611,6 +1639,7 @@ function MessengerMachine() {
                   members={activeGroupMembers}
                   othersReadUpToSeq={othersReadUpToSeq}
                   unreadFromSeq={unreadFromSeq}
+                  ownAckIds={ownAckIds}
                 />
                 <MessageInput
                   onSend={handleSend}

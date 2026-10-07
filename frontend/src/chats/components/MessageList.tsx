@@ -103,20 +103,34 @@
  * fold row carries `data-seat-anchor`; the pagination anchor of
  * prepended older pages (anchorHeightRef, T053) is untouched — the
  * two scrolls live in separate effects and never act in the same
- * commit.
+ * commit. Bug 8а (T086): the first `scrollIntoView` runs against a
+ * COLD layout (content-visibility placeholders), so a post-paint
+ * rAF loop re-checks the deviation in BOTH directions (|gap| > 2 —
+ * an undershoot AND a complete no-op with the anchor below the
+ * fold) and corrects until the seat converges at the fold — a
+ * fully read window ends with its last row there, i.e. the bottom
+ * of the feed; bounded to SCROLL_SETTLE_FRAMES frames.
  *
  * Bottom autoscroll (bug 2, T079): a send always seats the feed at
  * the bottom — the optimistic outbox row and the server ack that
  * replaces it scroll even while the user reads history (the ack is
- * recognized through the T023 `localIdsRef` pre-commit set). Any
- * other append — a new incoming `message.created`, an own message
- * from another device — scrolls ONLY while the user rides the bottom
- * edge (≤ BOTTOM_STICKY_THRESHOLD, latched by real scroll events);
+ * recognized through the T023 `localIdsRef` pre-commit set, or —
+ * when the 201 races the optimistic row's first render so the set
+ * never held the id — through the wiring-level `ownAckIds` vouch,
+ * bug 8в/T086). Any other append — a new incoming
+ * `message.created`, an own message from another device — scrolls
+ * ONLY while the user rides the bottom edge (≤
+ * BOTTOM_STICKY_THRESHOLD, latched by real scroll events);
  * reading history is never yanked. Older-page prepends keep the T053
  * viewport anchor: the bottom row keys do not change, so the sticky
  * effect stays quiet. A fresh open (mount or the empty window of a
  * chat switch) only arms the tracking — the open seat (T085) owns
  * the open scroll and the first paint of history never jumps.
+ * Bug 8б (T086): the `scrollTop = scrollHeight` write itself lands
+ * against the cold layout (placeholders keep the scrollHeight low),
+ * so a post-paint rAF loop re-drives it until the distance to the
+ * real bottom converges — the same bounded SCROLL_SETTLE_FRAMES
+ * budget as the seat.
  *
  * Delivery-stamp animation (US1, T023, FR-018 edge case): the
  * engraved tick plays the prototype `tickStamp` (.32s,
@@ -162,6 +176,38 @@ const TOP_LOAD_THRESHOLD = 48
  * outside it the user is reading history and the scroll stays put.
  */
 const BOTTOM_STICKY_THRESHOLD = 32
+
+/**
+ * Post-paint scroll tolerance (bug 8, T086): a seat/autoscroll is
+ * «converged» when the geometry sits within this many pixels of the
+ * target. The raw deviation never reaches 0 for the LAST-row seat:
+ * the feed's trailing row margin + bottom padding (~15px) always
+ * separates the seat bottom from the fold, and the browser clamps
+ * the alignment scroll to the maximum — so the tolerance must stay
+ * trailing-aware while still catching every real undershoot (the
+ * reproduced defects measured hundreds of pixels).
+ */
+const SCROLL_SETTLE_TOLERANCE_PX = 24
+
+/**
+ * Consecutive stable frames that end a post-paint correction loop
+ * (bug 8, T086): content-visibility renders ripple for a few paints
+ * after the last correction, so a single quiet frame is not
+ * convergence — three in a row are.
+ */
+const SCROLL_SETTLE_STABLE_FRAMES = 3
+
+/**
+ * Post-paint correction budget in animation frames (bug 8, T086):
+ * `content-visibility: auto` keeps 64px placeholders until the first
+ * paint, so the opening seat and the send autoscroll both write
+ * against a COLD layout that underestimates the feed. Each correction
+ * reveals more real rows and the layout keeps drifting, so the loops
+ * re-check after every paint — bounded to this many frames and ended
+ * early by sustained convergence. jsdom's zero layout converges on
+ * the first stable run.
+ */
+const SCROLL_SETTLE_FRAMES = 90
 
 /** Feed avatar size — design-tokens §4 (лента 34px). */
 const FEED_AVATAR_SIZE = 34
@@ -246,6 +292,16 @@ export interface MessageListProps {
    * never arrives (a failed №13 keeps the current behaviour).
    */
   readonly unreadFromSeq?: number | null
+  /**
+   * Ids the outbox engine confirmed via 201/200 that may have never
+   * rendered as optimistic rows (bug 8в, T086): when the ack races
+   * the first render of the outbox row (a batched flush skips the
+   * intermediate state entirely), `localIdsRef` never held the id and
+   * the append used to lose the own-branch. The wiring (MessengerPage
+   * feeds this from useOutbox's `onConfirmed`) vouches for such ids:
+   * the server copy scrolls as own, unconditionally.
+   */
+  readonly ownAckIds?: ReadonlySet<string>
 }
 
 /**
@@ -415,6 +471,7 @@ export function MessageList({
   members,
   othersReadUpToSeq = 0,
   unreadFromSeq = null,
+  ownAckIds,
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
@@ -533,28 +590,46 @@ export function MessageList({
       // ships no scrollIntoView — the guard keeps every non-visual
       // suite at the current behaviour.
       seat.scrollIntoView({ block: 'end' })
-      // content-visibility warm-up (research §G): the offscreen rows
-      // render lazily behind 64px placeholders, so the first attempt
-      // may run against a COLD layout that underestimates the feed
-      // and finds the seat «already in view» (a silent no-op while
-      // the real heights overflow). Re-check after the paint and
-      // correct the seat once the layout is warm — bounded to two
-      // frames, still one-shot (the latch stays spent). jsdom layout
-      // is all zeros: the re-check sees a perfect seat and rests.
+      // content-visibility warm-up (research §G; bug 8а, T086): the
+      // offscreen rows render lazily behind 64px placeholders, so the
+      // first attempt runs against a COLD layout that underestimates
+      // the feed. The deviation goes BOTH ways: the layout may
+      // undervalue the content above the seat (scrollIntoView
+      // undershoots — the seat bottom ends up ABOVE the fold, gap >
+      // 0) or consider everything already in view (a complete no-op —
+      // after the warm-up the seat bottom hangs BELOW the fold, gap <
+      // 0). Re-check after every paint and correct while |gap| exceeds
+      // the trailing-aware tolerance — a fully read window converges
+      // with its last row at the fold and the scroll clamped to the
+      // maximum, i.e. `scrollHeight − scrollTop − clientHeight ≈ 0`.
+      // Late paints keep rippling after the last correction (each
+      // scroll renders newly relevant rows), so the loop ends only on
+      // SUSTAINED convergence — SCROLL_SETTLE_STABLE_FRAMES quiet
+      // frames in a row — or the SCROLL_SETTLE_FRAMES budget; the
+      // latch stays spent either way. jsdom layout is all zeros — the
+      // re-check sees a perfect seat and rests.
       if (typeof requestAnimationFrame === 'function') {
-        const reseat = (attempt: number) => {
-          const gap = list.getBoundingClientRect().bottom - seat.getBoundingClientRect().bottom
-          if (gap > 2 && typeof seat.scrollIntoView === 'function') {
-            seat.scrollIntoView({ block: 'end' })
+        const reseat = (framesLeft: number, stable: number) => {
+          if (listRef.current !== list || !seat.isConnected) {
+            return
           }
-          if (attempt > 0) {
+          const gap = list.getBoundingClientRect().bottom - seat.getBoundingClientRect().bottom
+          if (Math.abs(gap) <= SCROLL_SETTLE_TOLERANCE_PX) {
+            stable += 1
+          } else {
+            stable = 0
+            if (framesLeft > 0 && typeof seat.scrollIntoView === 'function') {
+              seat.scrollIntoView({ block: 'end' })
+            }
+          }
+          if (stable < SCROLL_SETTLE_STABLE_FRAMES && framesLeft > 0) {
             requestAnimationFrame(() => {
-              reseat(attempt - 1)
+              reseat(framesLeft - 1, stable)
             })
           }
         }
         requestAnimationFrame(() => {
-          reseat(1)
+          reseat(SCROLL_SETTLE_FRAMES, 0)
         })
       }
     }
@@ -595,7 +670,9 @@ export function MessageList({
    * T079 bottom autoscroll: an own send always lands in view — the
    * optimistic outbox row AND the server ack that replaces it (the
    * id was displayed locally one commit ago — `localIdsRef` still
-   * holds the pre-commit set when this effect runs first). Any OTHER
+   * holds the pre-commit set when this effect runs first; an ack that
+   * RACED the optimistic row's first render is vouched for by the
+   * wiring-level `ownAckIds` set instead — bug 8в, T086). Any OTHER
    * append (a new incoming `message.created`, an own message from
    * another device) scrolls only while the user rides the bottom
    * edge — reading history is never yanked. A fresh open (mount, or
@@ -623,11 +700,45 @@ export function MessageList({
     }
     const ownAppend =
       localAppended ||
-      (serverAppended && lastServerId !== undefined && localIdsRef.current.has(lastServerId))
+      (serverAppended &&
+        lastServerId !== undefined &&
+        (localIdsRef.current.has(lastServerId) || (ownAckIds?.has(lastServerId) ?? false)))
     if (!ownAppend && !bottomRef.current) {
       return
     }
     list.scrollTop = list.scrollHeight
+    // Cold-layout correction (bug 8б, T086): the write above lands
+    // against placeholders — `content-visibility: auto` keeps 64px
+    // stubs until the first paint, the scrollHeight is underestimated
+    // and the clamped write stops ABOVE the real bottom. Re-check
+    // after every paint and re-drive the scroll until the distance to
+    // the real bottom stays within the trailing-aware tolerance for
+    // SUSTAINED frames (late renders keep rippling after the last
+    // correction) — bounded to the SCROLL_SETTLE_FRAMES budget.
+    // jsdom's zero layout (and any settled bottom) rests quickly.
+    if (typeof requestAnimationFrame === 'function') {
+      const settle = (framesLeft: number, stable: number) => {
+        if (listRef.current !== list) {
+          return
+        }
+        if (list.scrollHeight - list.scrollTop - list.clientHeight <= SCROLL_SETTLE_TOLERANCE_PX) {
+          stable += 1
+        } else {
+          stable = 0
+          if (framesLeft > 0) {
+            list.scrollTop = list.scrollHeight
+          }
+        }
+        if (stable < SCROLL_SETTLE_STABLE_FRAMES && framesLeft > 0) {
+          requestAnimationFrame(() => {
+            settle(framesLeft - 1, stable)
+          })
+        }
+      }
+      requestAnimationFrame(() => {
+        settle(SCROLL_SETTLE_FRAMES, 0)
+      })
+    }
   })
 
   useEffect(() => {
