@@ -506,13 +506,13 @@ export function MessageList({
   // bottom-most LOCAL row of the window. An older-page prepend keeps
   // both keys (the newest content does not move), an append changes
   // exactly one of them.
-  const lastServerId = messages[messages.length - 1]?.id
-  const lastLocalKey =
-    activePending.length > 0
-      ? `pending:${activePending[activePending.length - 1]?.clientMessageId}`
-      : activeOutbox.length > 0
-        ? `outbox:${activeOutbox[activeOutbox.length - 1]?.clientMessageId}`
-        : undefined
+  const lastServerId = messages.at(-1)?.id
+  let lastLocalKey: string | undefined
+  if (activePending.length > 0) {
+    lastLocalKey = `pending:${activePending.at(-1)?.clientMessageId}`
+  } else if (activeOutbox.length > 0) {
+    lastLocalKey = `outbox:${activeOutbox.at(-1)?.clientMessageId}`
+  }
 
   /**
    * T023 ack tracking: ids rendered as LOCAL rows in the previous
