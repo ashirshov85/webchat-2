@@ -18,11 +18,6 @@
  *  * IMPLEMENTED states — where the static prototype carries no
  *    comparable pixels, the baseline is fixed by the implemented
  *    snapshot in the design tokens (T060's explicit exception):
- *     - the edit modal: ui-behavior §3 mandates the «Описание» field
- *       (validation 006, ≤256) that #grpEditForm of the prototype simply
- *       lacks — the inserted block shifts every row below it (~3% pixels,
- *       structural, not stylistic), so the app keeps its own regression
- *       baseline over the phoenix owner state (see the test docblock);
  *     - the outbox delivery states (T050/T051: «отправляется»,
  *       «не отправлено» + Повторить/Удалить, the composer flood line
  *       «Повтор через N с») and the catch-up sync indicator (T052).
@@ -31,6 +26,17 @@
  *       rows below the fold — the capture parks the feed at the very
  *       bottom (see the test body) so both states stay in frame and
  *       the shot is warm-up-race-free.
+ *
+ *    The edit modal USED to ride this exception (T056/T060): the
+ *    contract-mandated «Описание» field (ui-behavior §3, validation
+ *    006) was absent from the static #grpEditForm, and its inserted
+ *    block shifted every row below (~3% pixels, structural) — the app
+ *    kept its own `us4-group-edit-modal-impl` baseline. T094 (bug 16)
+ *    closed the gap from the reference side: the prototype was
+ *    amended to carry the field (the ui-behavior §3 decision), the
+ *    T016(б) baseline re-captured, and the app form compares against
+ *    it below like every other prototype-derived surface; the
+ *    implemented snapshot is retired.
  *
  * Determinism of the implemented states: the outbox records are seeded
  * straight into `webchat.chats.outbox.<userId>` localStorage by an init
@@ -115,26 +121,27 @@ visualTest.describe('T060 — US4 surfaces', () => {
   })
 
   /**
-   * The grpEdit comparison lands at ~3% pixels — above the SC-001 budget —
-   * for a contract-mandated reason: ui-behavior §3 (and the 006 validation
-   * it carries) requires the «Описание» field between «Название» and
-   * «Участники», and #grpEditForm of the static prototype simply has no
-   * description input (grep: zero matches in chats.html). The inserted
-   * block shifts every row below it, so the fullscreen diff is structural,
-   * not stylistic — the surfaces that ARE normative (modal shell, title,
-   * labels, draft rows «✕», offer rows «+», .modal input lexicon) compare
-   * green through the members modal above and the US2 modal fullscreens.
-   * The baseline is therefore fixed by the implemented phoenix-owner
-   * snapshot — the exception T060 sanctions for prototype-absent content.
+   * T094 (bug 16) closed the historic ~3% gap from the reference side:
+   * the prototype's #grpEditForm was amended to carry the
+   * contract-mandated «Описание» field (ui-behavior §3 decision —
+   * label + input with the «Описание группового чата» placeholder,
+   * the .modal input lexicon, between «Название» and «Участники»),
+   * and the T016(б) baseline was re-captured over the amended
+   * prototype. The app form — same DOM shape, same lexica, the
+   * phoenix owner state with a null description (the placeholder
+   * shows) — compares against that reference within the SC-001
+   * budget, exactly like the members modal above; the interim
+   * `us4-group-edit-modal-impl` implemented snapshot is retired.
    */
-  visualTest('group edit modal (implemented baseline)', async ({ messenger }) => {
+  visualTest('group edit modal against the T016(б) baseline', async ({ messenger }) => {
     onlyProject(DESKTOP)
     await openPhoenix(messenger)
     await openGear(messenger.page)
     await chooseGearItem(messenger.page, 'Редактировать чат')
     await expect(messenger.page.locator('.grp-edit-members .pick-row')).toHaveCount(3)
     await expect(messenger.page.locator('.grp-edit-add .pick-row')).toHaveCount(7)
-    await expect(messenger.page).toHaveScreenshot('us4-group-edit-modal-impl.png', SHOT)
+    await expect(messenger.page.locator('.grp-edit-description')).toBeVisible()
+    await expect(messenger.page).toHaveScreenshot('us4-group-edit-modal.png', SHOT)
   })
 
   visualTest('outbox delivery states (implemented baseline)', async ({ messenger }) => {

@@ -378,7 +378,9 @@ export function GroupEditModal({
                 <div className="c-top">
                   <span className="c-name">{contact.user.username}</span>
                 </div>
-                <div className="c-prev">{contact.user.username}</div>
+                <div className="c-prev">
+                  {contact.user.username} · {contact.user.email}
+                </div>
               </div>
               <button
                 type="button"
