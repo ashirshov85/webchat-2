@@ -304,3 +304,32 @@ describe('ContextMenu — клавиатура (FR-035, ui-behavior §1)', () =>
     expect(onModalClose).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('ContextMenu — портал в body (T081: containing block .panel с backdrop-filter)', () => {
+  // Прецедент members-tip (ChatHeader, createPortal в document.body):
+  // .panel с backdrop-filter (machine.css) создаёт containing block для
+  // fixed-потомков — координаты вьюпорта ложатся на панель и переполняют
+  // её (сайдбар растягивается, горизонтальный скролл). Меню должно жить
+  // вне DOM-поддерева потребителя — прямым ребёнком body, где fixed
+  // считается от вьюпорта (как #ctxMenu прототипа — ребёнок body).
+
+  it('открытое меню — прямой ребёнок body, вне DOM-поддерева потребителя', () => {
+    const { container } = render(<MenuHarness initialOpen />)
+    const el = menu()
+    expect(el.parentElement).toBe(document.body)
+    expect(container.contains(el)).toBe(false)
+  })
+
+  it('закрытое меню не оставляет узлов в body (портал размонтируется)', () => {
+    render(<MenuHarness />)
+    expect(document.body.querySelector('.ctx-menu')).toBeNull()
+    expect(document.body.querySelector('.ctx-item')).toBeNull()
+  })
+
+  it('после закрытия узел уходит из body', () => {
+    render(<MenuHarness initialOpen />)
+    expect(menu().parentElement).toBe(document.body)
+    fireEvent.click(document.body)
+    expect(document.body.querySelector('.ctx-menu')).toBeNull()
+  })
+})

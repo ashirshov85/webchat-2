@@ -5,7 +5,12 @@
  * дословно из прототипа specs/008-chat-window-styling/design/chats.html:
  * `.ctx-menu.show` (fixed, z-55) с кнопками `.ctx-item[.danger]` и
  * разделителями `.ctx-sep`; стили — ctx-menu.css на токенах --z-ctx-menu /
- * --r-menu / --font-body (FR-002). Позиционирование — формулы прототипа
+ * --r-menu / --font-body (FR-002). Открытое меню рендерится ПОРТАЛОМ в
+ * document.body (T081, прецедент members-tip ChatHeader): .panel с
+ * backdrop-filter (machine.css) создаёт containing block для fixed-потомков
+ * — внутри сайдбара координаты вьюпорта ложатся на панель и переполняют
+ * её (сайдбар растягивался, горизонтальный скролл); как #ctxMenu
+ * прототипа — ребёнок body, fixed считается от вьюпорта. Позиционирование — формулы прототипа
  * (openCtxMenu/openMainMenu/openChatMenu): у якоря (низ + 6) и clamp в
  * пределы экрана с полями 8px; align 'start' — у левого края якоря, 'end' —
  * прижато к правому краю (меню «шестерёнки»). Закрытие: клик-вне, Esc,
@@ -21,6 +26,7 @@ import {
   useRef,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
+import { createPortal } from 'react-dom'
 import './ctx-menu.css'
 
 /** Пункт меню (data-model 1.5): действие якорного меню. */
@@ -187,7 +193,10 @@ export function ContextMenu({ open, anchor, items, align = 'start', onClose }: C
     return null
   }
 
-  return (
+  // Портал в body (T081): fixed-координаты считаются от вьюпорта, а не от
+  // .panel--containing block потребителя; слой z-55 выше modal-back (47) —
+  // меню из открытой модали остаётся над подложкой (порядок слоёв §7).
+  return createPortal(
     <div
       className="ctx-menu show"
       role="menu"
@@ -211,6 +220,7 @@ export function ContextMenu({ open, anchor, items, align = 'start', onClose }: C
           </button>
         </Fragment>
       ))}
-    </div>
+    </div>,
+    document.body,
   )
 }
