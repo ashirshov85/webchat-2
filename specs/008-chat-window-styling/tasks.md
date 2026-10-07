@@ -300,7 +300,13 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 
 - [ ] T092 Переставить якорь посадки в `frontend/src/chats/components/MessageList.tsx`: якорь (`data-seat-anchor`) = первое непрочитанное ВХОДЯЩЕЕ (`senderId ≠ me && seq > unreadFromSeq`), посадка `scrollIntoView({block:'start'})` — верхняя граница строки якоря у верхней границы вьюпорта, прочитанная история — прокруткой вверх; непрочитанных входящих нет → самая последняя строка ленты, `block:'end'` (в конец); механика T091/T086 сохраняется: однострельность/перезарядка переключением чата, ожидание водяного знака №13, пост-paint сходимость, догрузка №14 когда якорь вне окна (guard watermark 0 без №14), якорь пагинации T053 не затронут; обновить блок «open seat» в `MessageList.test.tsx` под новый якорь (block:'start' на первом непрочитанном входящем; кейсы «хвост из своих отправок → самый конец», «своя отправка над непрочитанным входящим — якорь остаётся входящим») и докблоки; полный прогон lint/typecheck/test/build/test:visual зелёный
 
-**Checkpoint**: Все дефекты (bug 1–14) воспроизводимо закрыты; полная регрессия зелёная
+### Bug 15: пустое сообщение и отказ композера — инлайн вместо тоста
+
+Аудит инлайн-сообщений (не тостов) нашёл ровно ДВА одноразовых уведомления о действии, отображаемых инлайн: (1) «Сообщение не может быть пустым» — `message-input-error` в `MessageInput.tsx` (T082 перевёл в тост только «слишком длинное»); (2) `messenger-composer-error` в `MessengerPage.tsx` — текст ошибки `outbox.enqueue` (отказ постановки в очередь). Остальные инлайн — легитимны по контракту: `.modal-err`+«Повторить» модалей (T028–T035/T049, сбой при живом черновике), ErrorBanner персистентных ошибок загрузки, статусы `.message-input-retry`/QueueOverflowBanner/SyncIndicator, `settings-error`/auth-формы вне ToastProvider.
+
+- [ ] T093 Перевести оба уведомления композера в тосты (лексика T082/T045/FR-025): (а) пустой черновик — `MessageInput.send()` при `validateOutgoingMessage`-отказе «Сообщение не может быть пустым» → `showToast(...)` вместо инлайн `message-input-error` (стиль — как «слишком длинное» в T082; если после этого инлайн-ветка `error` в MessageInput пустеет — убрать состояние/разметку и CSS); (б) `messenger-composer-error` — отказ `outbox.enqueue` в `handleSend` → тост вместо инлайн-абзаца (состояние/разметка/CSS убрать; queue_overflow-состояние продолжает нести персистентный QueueOverflowBanner T052 — тост только о факте отклонения отправки); (в) обновить тесты `MessageInput.test.tsx`/`MessengerPage.toast.test.tsx`/`MessengerPage.composer` под тост-слот; контракты и валидация не меняются (SC-003); полный прогон lint/typecheck/test/build/test:visual зелёный
+
+**Checkpoint**: Все дефекты (bug 1–15) воспроизводимо закрыты; полная регрессия зелёная
 
 ---
 
