@@ -897,6 +897,7 @@ function MessengerMachine() {
     loadOlder,
     peerReadUpToSeq,
     othersReadUpToSeq,
+    unreadFromSeq,
     applySyncPage: applyDialogSync,
   } = useChatMessages(activeChatId, currentUserId, activeGroupMembers)
 
@@ -1609,6 +1610,7 @@ function MessengerMachine() {
                   peerReadUpToSeq={peerReadUpToSeq}
                   members={activeGroupMembers}
                   othersReadUpToSeq={othersReadUpToSeq}
+                  unreadFromSeq={unreadFromSeq}
                 />
                 <MessageInput
                   onSend={handleSend}

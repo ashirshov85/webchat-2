@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
@@ -138,14 +138,15 @@ function emitIncoming(stream: MockStream, id: string, seq: number): void {
   })
 }
 
-/** Wires MessageList to the real hook exactly like MessengerPage (T044). */
+/** Wires MessageList to the real hook exactly like MessengerPage (T044, T078). */
 function DialogWindow({ chatId, currentUserId }: { chatId: string; currentUserId: string }) {
-  const { messages, peerReadUpToSeq } = useChatMessages(chatId)
+  const { messages, peerReadUpToSeq, unreadFromSeq } = useChatMessages(chatId)
   return (
     <MessageList
       messages={messages}
       currentUserId={currentUserId}
       peerReadUpToSeq={peerReadUpToSeq}
+      unreadFromSeq={unreadFromSeq}
     />
   )
 }
@@ -726,5 +727,219 @@ describe('MessageList date dividers at pagination junctions (US3-AS3, T041, data
     )
     expect(localOnly.container.querySelectorAll('.message')).toHaveLength(1)
     expect(localOnly.container.querySelector('.date-divider')).toBeNull()
+  })
+})
+
+describe('MessageList scroll to the first unread incoming on open (bug 2, T078)', () => {
+  /**
+   * T078: opening a chat with unread messages seats the feed at the
+   * FIRST unread INCOMING message (`seq > myReadUpToSeq` of the №13
+   * answer, latched at open — `unreadFromSeq`), NOT at the very
+   * bottom: everything above the anchor stays reachable by scrolling
+   * up. A fully read window and an empty chat keep the current
+   * behaviour (no scroll), the anchor fires ONCE per open, and the
+   * pagination anchor of `loadOlder` prepends (anchorHeightRef) is
+   * untouched.
+   *
+   * jsdom ships no layout and no `scrollIntoView` — the mock records
+   * the calls so the tests pin WHICH row the browser would scroll to.
+   */
+
+  let scrolled: Array<{ element: Element; block?: string }>
+
+  beforeEach(() => {
+    scrolled = []
+    Element.prototype.scrollIntoView = function (
+      this: Element,
+      options?: boolean | ScrollIntoViewOptions,
+    ): void {
+      scrolled.push({
+        element: this,
+        block: typeof options === 'object' && options !== null ? options.block : undefined,
+      })
+    }
+  })
+
+  afterEach(() => {
+    // jsdom declares no own scrollIntoView — the mock is all there ever was.
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
+  /**
+   * seq 1–3 are read (watermark 3), seq 4 is an unread OUTGOING row
+   * (not an anchor — only incoming counts), seq 5–6 are the unread
+   * incoming ones: the anchor is seq 5, one above the very bottom.
+   */
+  const UNREAD_WINDOW: Message[] = [
+    dialogMessage('r-in-1', 1, PEER, 'прочитанное 1'),
+    dialogMessage('r-out-2', 2, ME, 'прочитанное 2'),
+    dialogMessage('r-in-3', 3, PEER, 'прочитанное 3'),
+    dialogMessage('u-out-4', 4, ME, 'непрочитанный исходящий'),
+    dialogMessage('u-in-5', 5, PEER, 'первое непрочитанное'),
+    dialogMessage('u-in-6', 6, PEER, 'второе непрочитанное'),
+  ]
+
+  it('seats the open chat at the first unread incoming row, not at the very bottom', () => {
+    const { container } = render(
+      <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
+    )
+
+    // The anchor row is marked for the scroll and stays in the DOM —
+    // the rows above it remain reachable by scrolling up (bug 2).
+    const anchor = container.querySelector('[data-first-unread]')
+    expect(anchor).not.toBeNull()
+    expect(anchor?.textContent).toContain('первое непрочитанное')
+    expect(container.querySelectorAll('[data-first-unread]')).toHaveLength(1)
+
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element).toBe(anchor)
+    expect(scrolled[0]?.block).toBe('start')
+  })
+
+  it('keeps the current behaviour for a fully read window: no anchor, no scroll', () => {
+    const { container } = render(
+      <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={6} />,
+    )
+
+    expect(container.querySelector('[data-first-unread]')).toBeNull()
+    expect(scrolled).toHaveLength(0)
+  })
+
+  it('does not scroll an empty chat', () => {
+    render(<MessageList messages={[]} currentUserId={ME} unreadFromSeq={0} />)
+
+    expect(screen.getByText('Сообщений пока нет')).toBeVisible()
+    expect(scrolled).toHaveLength(0)
+  })
+
+  it('waits for the open-time watermark: no scroll while №13 is still in flight', () => {
+    const props = (unreadFromSeq?: number) => (
+      <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={unreadFromSeq} />
+    )
+    const { rerender, container } = render(props())
+
+    // The №16 page is on screen but the watermark is unknown — no scroll.
+    expect(container.querySelectorAll('.message')).toHaveLength(6)
+    expect(scrolled).toHaveLength(0)
+
+    // The №13 answer lands with the open-time watermark — the anchor fires.
+    rerender(props(3))
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.textContent).toContain('первое непрочитанное')
+  })
+
+  it('scrolls once per open: realtime appends after the open never re-scroll', () => {
+    const props = (messages: readonly Message[]) => (
+      <MessageList messages={messages} currentUserId={ME} unreadFromSeq={3} />
+    )
+    const { rerender } = render(props(UNREAD_WINDOW))
+    expect(scrolled).toHaveLength(1)
+
+    rerender(props([...UNREAD_WINDOW, dialogMessage('new-in-7', 7, PEER, 'новое входящее')]))
+    expect(scrolled).toHaveLength(1)
+  })
+
+  it('re-arms on the chat switch: the next open scrolls to ITS first unread', () => {
+    const props = (messages: readonly Message[], unreadFromSeq: number) => (
+      <MessageList messages={messages} currentUserId={ME} unreadFromSeq={unreadFromSeq} />
+    )
+    const { rerender } = render(props(UNREAD_WINDOW, 3))
+    expect(scrolled).toHaveLength(1)
+
+    // Chat switch: the hook resets the window to [] — the cycle re-arms.
+    rerender(props([], 0))
+    expect(scrolled).toHaveLength(1)
+
+    // The next chat opens fully unread — its first incoming is the anchor.
+    rerender(
+      props(
+        [
+          dialogMessage('n-in-1', 1, PEER, 'новый чат первое'),
+          dialogMessage('n-in-2', 2, ME, 'новый чат второе'),
+        ],
+        0,
+      ),
+    )
+    expect(scrolled).toHaveLength(2)
+    expect(scrolled[1]?.element.textContent).toContain('новый чат первое')
+  })
+
+  it('keeps the loadOlder viewport anchor intact after the unread scroll', () => {
+    const onLoadOlder = vi.fn()
+    // seq 41–60 (even indexes of the alternating fixture are ME) with
+    // watermark 40: everything incoming is unread, the anchor is the
+    // first incoming row (seq 42).
+    const window1 = Array.from({ length: 20 }, (_, index) =>
+      dialogMessage(
+        `w-${index + 41}`,
+        index + 41,
+        index % 2 === 0 ? ME : PEER,
+        `окно ${index + 41}`,
+      ),
+    )
+    const props = (messages: readonly Message[]) => (
+      <MessageList
+        messages={messages}
+        currentUserId={ME}
+        unreadFromSeq={40}
+        hasOlder
+        loadingOlder={false}
+        onLoadOlder={onLoadOlder}
+      />
+    )
+    const { container, rerender } = render(props(window1))
+    expect(scrolled).toHaveLength(1)
+
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { scrollTop: 0, scrollHeight: 600 }
+    Object.defineProperty(list, 'scrollTop', {
+      configurable: true,
+      get: () => metrics.scrollTop,
+      set: (value: number) => {
+        metrics.scrollTop = value
+      },
+    })
+    Object.defineProperty(list, 'scrollHeight', {
+      configurable: true,
+      get: () => metrics.scrollHeight,
+    })
+
+    // The unread seat lands near the top — the standard scroll handler
+    // asks for the older page (the rows above the anchor load in).
+    fireEvent.scroll(list)
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+
+    // The older page (seq 21–40) prepends and grows the content above
+    // by 400px — the viewport stays pinned to the same rows (T053
+    // anchor), and the unread one-shot does not fire again.
+    metrics.scrollHeight = 1000
+    const olderPage = Array.from({ length: 20 }, (_, index) =>
+      dialogMessage(
+        `o-${index + 21}`,
+        index + 21,
+        index % 2 === 0 ? ME : PEER,
+        `старая ${index + 21}`,
+      ),
+    )
+    rerender(props([...olderPage, ...window1]))
+
+    expect(metrics.scrollTop).toBe(400)
+    expect(scrolled).toHaveLength(1)
+  })
+
+  it('drives the anchor from the №13 watermark through the hook (MessengerPage wiring)', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValueOnce(dialogPage(UNREAD_WINDOW))
+    mockedGetChat.mockResolvedValueOnce(chatView({ myReadUpToSeq: 3 }))
+
+    const { container } = render(<DialogWindow chatId="chat-1" currentUserId={ME} />)
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('.message')).toHaveLength(6)
+    })
+    await waitFor(() => {
+      expect(scrolled).toHaveLength(1)
+    })
+    expect(scrolled[0]?.element.textContent).toContain('первое непрочитанное')
   })
 })

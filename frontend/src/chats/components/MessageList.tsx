@@ -86,6 +86,19 @@
  * T016(а) feed baselines carry both, so SC-001 at the US1
  * checkpoint needs them; the US3/T044 polish builds on top.
  *
+ * Unread seat (bug 2, T078): the first render of an open chat with
+ * unread messages scrolls the feed to the FIRST unread INCOMING row
+ * (`seq > unreadFromSeq` — the open-time №13 `myReadUpToSeq` latched
+ * by useChatMessages), NOT to the very bottom: everything above the
+ * anchor stays reachable by scrolling up (and `loadOlder` keeps
+ * feeding it). The seat is one-shot per open (re-armed by the empty
+ * window of a chat switch), waits for the watermark while №13 is in
+ * flight, and never fires for a fully read window or an empty chat —
+ * those keep the current behaviour. The marked row carries
+ * `data-first-unread`; the pagination anchor of prepended older
+ * pages (anchorHeightRef, T053) is untouched — the two scrolls live
+ * in separate effects and never act in the same commit.
+ *
  * Delivery-stamp animation (US1, T023, FR-018 edge case): the
  * engraved tick plays the prototype `tickStamp` (.32s,
  * design-tokens §5) ONLY when the stamp of an ALREADY DISPLAYED row
@@ -192,6 +205,18 @@ export interface MessageListProps {
    * rendered ✓✓ never rolls back.
    */
   readonly othersReadUpToSeq?: number
+  /**
+   * Open-time read watermark of the caller (bug 2, T078): the
+   * `myReadUpToSeq` latched from the first №13 ChatView answer of the
+   * current open (useChatMessages). Incoming messages with
+   * `seq > unreadFromSeq` are the unread ones — the FIRST of them is
+   * the row the feed seats at on the first render of the open (not
+   * the very bottom; everything above stays reachable by scrolling
+   * up). `null`/omitted — the watermark is not known yet (№13 in
+   * flight): the seat waits and never fires if it never arrives (a
+   * failed №13 keeps the current behaviour).
+   */
+  readonly unreadFromSeq?: number | null
 }
 
 /**
@@ -254,6 +279,8 @@ interface FeedRowProps {
   readonly avatarSource: string
   /** The ack transition animates the fresh ✓ (T023, FR-018). */
   readonly stampAnim: boolean
+  /** The first unread incoming row — the T078 scroll anchor. */
+  readonly unreadAnchor: boolean
 }
 
 const FeedRow = memo(function FeedRow({
@@ -263,9 +290,13 @@ const FeedRow = memo(function FeedRow({
   sender,
   avatarSource,
   stampAnim,
+  unreadAnchor,
 }: FeedRowProps) {
   return (
-    <li className={outgoing ? 'message outgoing msg me' : 'message incoming msg them'}>
+    <li
+      className={outgoing ? 'message outgoing msg me' : 'message incoming msg them'}
+      data-first-unread={unreadAnchor ? '' : undefined}
+    >
       <Avatar source={avatarSource} size={FEED_AVATAR_SIZE} />
       <div className="bubble">
         {sender !== undefined && <div className="sender message-sender">{sender}</div>}
@@ -354,6 +385,7 @@ export function MessageList({
   peerReadUpToSeq = 0,
   members,
   othersReadUpToSeq = 0,
+  unreadFromSeq = null,
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
@@ -388,6 +420,42 @@ export function MessageList({
     }
   }
 
+  /**
+   * T078 unread seat — the one-shot latch. Armed on mount and re-armed
+   * by every EMPTY window (the chat-switch reset of useChatMessages
+   * rides through `messages: []`), spent exactly once per open: the
+   * first commit that has BOTH the initial page and the open-time
+   * watermark seats the feed, everything after (appends, prepends,
+   * watermark advances) leaves the scroll to the user.
+   */
+  const unreadSeatArmedRef = useRef(true)
+  useEffect(() => {
+    if (messages.length === 0) {
+      unreadSeatArmedRef.current = true
+    }
+  }, [messages])
+
+  useEffect(() => {
+    const list = listRef.current
+    if (
+      list === null ||
+      !unreadSeatArmedRef.current ||
+      messages.length === 0 ||
+      unreadFromSeq === null
+    ) {
+      return
+    }
+    unreadSeatArmedRef.current = false
+    const anchor = list.querySelector('[data-first-unread]')
+    if (anchor !== null && typeof anchor.scrollIntoView === 'function') {
+      // block:'start' seats the first unread at the viewport top —
+      // the rest of the unread run reads below it, the read history
+      // stays a scroll-up away. jsdom ships no scrollIntoView — the
+      // guard keeps every non-visual suite at the current behaviour.
+      anchor.scrollIntoView({ block: 'start' })
+    }
+  }, [messages, unreadFromSeq])
+
   const confirmedIds = new Set(messages.map((message) => message.id))
   const activePending = pending.filter((entry) => !confirmedIds.has(entry.clientMessageId))
   const activeOutbox = outbox.filter((entry) => !confirmedIds.has(entry.clientMessageId))
@@ -421,6 +489,16 @@ export function MessageList({
   const meAvatarSource = meUsername ?? currentUserId
   const incomingAvatarSource = (senderId: string): string =>
     senderNames?.get(senderId) ?? peerUsername ?? senderId
+
+  // T078: the seat anchor — the FIRST unread incoming row of the
+  // open-time watermark (unread outgoing rows never anchor the seat:
+  // only incoming messages carry unread semantics, №12/№13).
+  let firstUnreadId: string | undefined
+  if (unreadFromSeq !== null) {
+    firstUnreadId = messages.find(
+      (message) => message.senderId !== currentUserId && message.seq > unreadFromSeq,
+    )?.id
+  }
 
   if (messages.length === 0 && activePending.length === 0 && activeOutbox.length === 0) {
     return <p className="messenger-empty">Сообщений пока нет</p>
@@ -462,6 +540,7 @@ export function MessageList({
               sender={sender}
               avatarSource={outgoing ? meAvatarSource : incomingAvatarSource(message.senderId)}
               stampAnim={localIdsRef.current.has(message.id)}
+              unreadAnchor={message.id === firstUnreadId}
             />
           </Fragment>
         )

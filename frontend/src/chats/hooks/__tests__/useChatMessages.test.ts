@@ -458,6 +458,90 @@ describe('useChatMessages chat switching', () => {
   })
 })
 
+describe('useChatMessages open-time unread watermark (008 T078, bug 2)', () => {
+  /**
+   * T078: the open chat seats its feed at the FIRST unread incoming
+   * message — `unreadFromSeq` is the caller's `myReadUpToSeq` latched
+   * from the FIRST №13 ChatView answer of THIS open. The latch never
+   * overwrites itself on reconnect refetches (by then №17 may have
+   * already advanced the server watermark with the read mark of the
+   * very messages the user is looking at), resets on chat switch, and
+   * stays null when №13 fails (no anchor — MessageList keeps the
+   * current behaviour).
+   */
+
+  it('latches myReadUpToSeq of the first №13 answer as unreadFromSeq', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValue(page([makeMessage('chat-1', 'a-1', 5)]))
+    mockedGetChat.mockResolvedValueOnce(chatView({ myReadUpToSeq: 3 }))
+
+    const rendered = mountChatMessages('chat-1')
+
+    await waitFor(() => {
+      expect(rendered.result.current.unreadFromSeq).toBe(3)
+    })
+  })
+
+  it('never overwrites the latch on №13 reconnect refetches', async () => {
+    const stream = installStream()
+    mockedListMessages.mockResolvedValue(page([makeMessage('chat-1', 'a-1', 5)]))
+    mockedGetChat
+      .mockResolvedValueOnce(chatView({ myReadUpToSeq: 3 }))
+      .mockResolvedValue(chatView({ myReadUpToSeq: 5 }))
+
+    const rendered = mountChatMessages('chat-1')
+    await waitFor(() => {
+      expect(rendered.result.current.unreadFromSeq).toBe(3)
+    })
+
+    // A reconnect refetch answers 5 — by now №17 has already reported
+    // the displayed messages read; the open-time anchor stays 3.
+    act(() => {
+      stream.onOpen?.()
+    })
+    await waitFor(() => {
+      expect(mockedGetChat).toHaveBeenCalledTimes(2)
+    })
+
+    expect(rendered.result.current.unreadFromSeq).toBe(3)
+  })
+
+  it('resets the latch on chat switch and latches the new chat own watermark', async () => {
+    installStream()
+    mockedListMessages
+      .mockResolvedValueOnce(page([makeMessage('chat-1', 'a-1', 5)]))
+      .mockResolvedValueOnce(page([makeMessage('chat-2', 'b-3', 30)]))
+    mockedGetChat
+      .mockResolvedValueOnce(chatView({ myReadUpToSeq: 3 }))
+      .mockResolvedValueOnce(chatView({ chatId: 'chat-2', myReadUpToSeq: 27 }))
+
+    const rendered = mountChatMessages('chat-1')
+    await waitFor(() => {
+      expect(rendered.result.current.unreadFromSeq).toBe(3)
+    })
+
+    rendered.rerender('chat-2')
+    expect(rendered.result.current.unreadFromSeq).toBeNull()
+
+    await waitFor(() => {
+      expect(rendered.result.current.unreadFromSeq).toBe(27)
+    })
+  })
+
+  it('keeps unreadFromSeq null when №13 fails — no anchor, the list stays as opened', async () => {
+    installStream()
+    mockedListMessages.mockResolvedValue(page([makeMessage('chat-1', 'a-1', 5)]))
+    mockedGetChat.mockRejectedValueOnce(new Error('offline'))
+
+    const rendered = mountChatMessages('chat-1')
+
+    await waitFor(() => {
+      expect(rendered.result.current.status).toBe('ready')
+    })
+    expect(rendered.result.current.unreadFromSeq).toBeNull()
+  })
+})
+
 describe('useChatMessages ✓✓ watermark from sync deltas (feature 005, T036, US3-8)', () => {
   function own(id: string, seq: number): Message {
     return { ...makeMessage('chat-1', id, seq), senderId: 'me-1' }
