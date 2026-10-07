@@ -266,7 +266,7 @@ description: "Task list for feature 008-chat-window-styling (Aethergram reskin)"
 
 Симптом: при превышении max-height поле композера прокручивается (T084, `message-input.css` — `overflow-y: auto` у потолка 160px), но скроллбар остаётся системным — не в лексике золотых скроллбаров машины (`.chat-scroll`/`.sidebar`, machine.css §4).
 
-- [ ] T087 Оформить скроллбар поля композера как у `.chat-scroll`: расширить селекторы §4 «золотые скроллбары» в `frontend/src/theme/machine.css` элементом прокрутки композера (textarea с `overflow-y: auto` из `frontend/src/chats/components/message-input.css`) — те же width 10px, track `#100d09`, thumb-градиент `--gold-dark → #4f3f1c` с бордером `#2e2410` (паритет `.chat-scroll`/`.sidebar`; прецедент копии в скоупе — `.pick-list` contacts-modal.css); в статическом прототипе прокрутки композера нет (авторост — производная T084) — производная лексика машины, при необходимости snapshot по реализованному состоянию; полный прогон lint/typecheck/test/build/test:visual зелёный
+- [x] T087 Оформить скроллбар поля композера как у `.chat-scroll`: расширить селекторы §4 «золотые скроллбары» в `frontend/src/theme/machine.css` элементом прокрутки композера (textarea с `overflow-y: auto` из `frontend/src/chats/components/message-input.css`) — те же width 10px, track `#100d09`, thumb-градиент `--gold-dark → #4f3f1c` с бордером `#2e2410` (паритет `.chat-scroll`/`.sidebar`; прецедент копии в скоупе — `.pick-list` contacts-modal.css); в статическом прототипе прокрутки композера нет (авторост — производная T084) — производная лексика машины, при необходимости snapshot по реализованному состоянию; полный прогон lint/typecheck/test/build/test:visual зелёный
 
 ### Bug 10: композер пустого чата не прижат к низу панели
 

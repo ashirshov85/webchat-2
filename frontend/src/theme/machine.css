@@ -177,18 +177,25 @@ body::after {
 }
 
 /* ============ 4. ЗОЛОТЫЕ СКРОЛЛБАРЫ (webkit-стили прототипа) ============ */
+/* T087: к панелям добавлено поле композера .msg-input — textarea с
+   overflow-y:auto (message-input.css, авторост T084) прокручивается
+   свыше max-height; в статическом прототипе прокрутки композера нет —
+   производная лексика машины, паритет .chat-scroll/.sidebar. */
 .chat-scroll::-webkit-scrollbar,
-.sidebar::-webkit-scrollbar {
+.sidebar::-webkit-scrollbar,
+.msg-input::-webkit-scrollbar {
   width: 10px;
 }
 
 .chat-scroll::-webkit-scrollbar-track,
-.sidebar::-webkit-scrollbar-track {
+.sidebar::-webkit-scrollbar-track,
+.msg-input::-webkit-scrollbar-track {
   background: #100d09;
 }
 
 .chat-scroll::-webkit-scrollbar-thumb,
-.sidebar::-webkit-scrollbar-thumb {
+.sidebar::-webkit-scrollbar-thumb,
+.msg-input::-webkit-scrollbar-thumb {
   background: linear-gradient(var(--gold-dark), #4f3f1c);
   border-radius: 5px;
   border: 1px solid #2e2410;
