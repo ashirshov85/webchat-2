@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ToastProvider } from '../../../ui/Toast'
 import { MessageInput } from '../MessageInput'
 import { MESSAGE_MAX_LENGTH } from '../../validation'
 
@@ -9,9 +10,16 @@ import { MESSAGE_MAX_LENGTH } from '../../validation'
  * design/chats.html §7 — the golden `.input-frame` around the field
  * (`.msg-input`, Anonymous Pro over `--input-bg`) + the «ОТПРАВИТЬ»
  * plate (`.send-btn`, `--gold-gradient`). The 004 hooks stay: the
- * form keeps `message-input`, the field — id `message-composer`, the
- * local validation error — `message-input-error` role=alert
+ * form keeps `message-input`, the field — id `message-composer`
  * (research §C, FR-034).
+ *
+ * The overflow hint rides the TOAST slot (Bug 4, T082; FR-025,
+ * ui-behavior §5): a draft over MESSAGE_MAX_LENGTH shows «Сообщение
+ * слишком длинное: …» via useToast/ToastProvider (z-99, ~3 s, single
+ * notification) — NOT an inline role=alert; the other local composer
+ * error (the blank draft «Сообщение не может быть пустым») stays the
+ * inline `message-input-error` role=alert, and the flood line/block
+ * hint surfaces are untouched.
  *
  * Behavior (US1-AS4, FR-021): Enter sends the trimmed text; the send
  * button never steals the field focus (mousedown preventDefault —
@@ -30,17 +38,28 @@ import { MESSAGE_MAX_LENGTH } from '../../validation'
  * the normal «Сообщение…» placeholder.
  */
 
+/** Слот тоста ToastProvider — единственный .toast узел документа. */
+function toastSlot(): HTMLElement {
+  const slot = document.querySelector<HTMLElement>('.toast')
+  if (slot === null) {
+    throw new Error('тост-слот ToastProvider не смонтирован')
+  }
+  return slot
+}
+
 function renderInput(
   overrides: Partial<{ disabled: boolean; blocked: boolean; floodRetryAt: number | null }> = {},
 ) {
   const onSend = vi.fn()
   const view = render(
-    <MessageInput
-      onSend={onSend}
-      disabled={overrides.disabled ?? false}
-      blocked={overrides.blocked ?? false}
-      floodRetryAt={overrides.floodRetryAt}
-    />,
+    <ToastProvider>
+      <MessageInput
+        onSend={onSend}
+        disabled={overrides.disabled ?? false}
+        blocked={overrides.blocked ?? false}
+        floodRetryAt={overrides.floodRetryAt}
+      />
+    </ToastProvider>,
   )
   const field = view.container.querySelector('#message-composer') as HTMLTextAreaElement
   return { ...view, onSend, field }
@@ -124,7 +143,7 @@ describe('MessageInput sending (FR-021, US1-AS4)', () => {
 })
 
 describe('MessageInput 004 pre-validation kept (FR-021, FR-034, SC-002)', () => {
-  it('rejects a whitespace-only draft with the local error — onSend never fires', () => {
+  it('rejects a blank draft with the local INLINE error — onSend never fires', () => {
     const { onSend, field } = renderInput()
 
     fireEvent.change(field, { target: { value: '   ' } })
@@ -136,14 +155,30 @@ describe('MessageInput 004 pre-validation kept (FR-021, FR-034, SC-002)', () => 
     expect(field.value).toBe('   ')
   })
 
-  it(`rejects a draft over ${MESSAGE_MAX_LENGTH} characters (004 length rule)`, () => {
+  it(`rejects a draft over ${MESSAGE_MAX_LENGTH} characters with the TOAST — no inline alert (T082, Bug 4)`, () => {
+    vi.useFakeTimers()
     const { onSend, field } = renderInput()
 
     fireEvent.change(field, { target: { value: 'а'.repeat(MESSAGE_MAX_LENGTH + 1) } })
     fireEvent.click(screen.getByRole('button', { name: 'ОТПРАВИТЬ' }))
 
     expect(onSend).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert').textContent).toContain('слишком длинное')
+    // Подсказка переполнения — тост (FR-025): слот z-99 ToastProvider,
+    // НЕ инлайн role=alert у композера.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(toastSlot()).toHaveClass('show')
+    expect(toastSlot()).toHaveTextContent(
+      `Сообщение слишком длинное: ${MESSAGE_MAX_LENGTH + 1} из ${MESSAGE_MAX_LENGTH} допустимых символов`,
+    )
+    // Одиночный слот (data-model 1.4) и нетронутый черновик.
+    expect(document.querySelectorAll('.toast')).toHaveLength(1)
+    expect(field.value).toBe('а'.repeat(MESSAGE_MAX_LENGTH + 1))
+
+    // Лексика T045/FR-025: авто-скрытие ~3 с.
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(toastSlot()).not.toHaveClass('show')
   })
 
   it(`sends a draft of exactly ${MESSAGE_MAX_LENGTH} characters`, () => {
@@ -202,11 +237,19 @@ describe('MessageInput blocked-contact state (T036, FR-022, US2-AS5)', () => {
 
   it('unblocking restores the activity and the normal placeholder (US2-AS5)', () => {
     const onSend = vi.fn()
-    const view = render(<MessageInput onSend={onSend} blocked />)
+    const view = render(
+      <ToastProvider>
+        <MessageInput onSend={onSend} blocked />
+      </ToastProvider>,
+    )
     const field = view.container.querySelector('#message-composer') as HTMLTextAreaElement
     expect(field).toBeDisabled()
 
-    view.rerender(<MessageInput onSend={onSend} blocked={false} />)
+    view.rerender(
+      <ToastProvider>
+        <MessageInput onSend={onSend} blocked={false} />
+      </ToastProvider>,
+    )
 
     expect(field).toBeEnabled()
     expect(screen.getByRole('button', { name: 'ОТПРАВИТЬ' })).toBeEnabled()
@@ -303,7 +346,11 @@ describe('MessageInput flood-limit retry line (T051, FR-030, Clarification)', ()
   it('re-targets on a new deferral and hides when the head record is gone', () => {
     vi.useFakeTimers()
     const onSend = vi.fn()
-    const view = render(<MessageInput onSend={onSend} floodRetryAt={Date.now() + 5000} />)
+    const view = render(
+      <ToastProvider>
+        <MessageInput onSend={onSend} floodRetryAt={Date.now() + 5000} />
+      </ToastProvider>,
+    )
     expect(view.container.querySelector('.message-input-retry')?.textContent).toBe(
       'Повтор через 5 с',
     )
@@ -316,13 +363,21 @@ describe('MessageInput flood-limit retry line (T051, FR-030, Clarification)', ()
     )
 
     // Новая отсрочка (ещё один 429) — головная запись уехала дальше.
-    view.rerender(<MessageInput onSend={onSend} floodRetryAt={Date.now() + 8000} />)
+    view.rerender(
+      <ToastProvider>
+        <MessageInput onSend={onSend} floodRetryAt={Date.now() + 8000} />
+      </ToastProvider>,
+    )
     expect(view.container.querySelector('.message-input-retry')?.textContent).toBe(
       'Повтор через 8 с',
     )
 
     // Сервер подтвердил головную запись — головы больше нет.
-    view.rerender(<MessageInput onSend={onSend} floodRetryAt={null} />)
+    view.rerender(
+      <ToastProvider>
+        <MessageInput onSend={onSend} floodRetryAt={null} />
+      </ToastProvider>,
+    )
     expect(view.container.querySelector('.message-input-retry')).toBeNull()
   })
 })

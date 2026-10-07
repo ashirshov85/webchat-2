@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
 import type { ChatListItem, ContactView } from '../../../api/chats'
+import { MESSAGE_MAX_LENGTH } from '../../../chats/validation'
 import { MessengerPage } from '../MessengerPage'
 
 /**
@@ -28,6 +29,12 @@ import { MessengerPage } from '../MessengerPage'
  * вида «Уже в контактах»). Авто-скрытие ~3 с — слот ToastProvider
  * страницы (T011, Toast.test.tsx); здесь проверяется РОВНО ОДНА выдача:
  * вторая заменила бы текст слота (одиночный слот, data-model 1.4).
+ *
+ * Bug 4 (T082) расширяет лексику тостов подсказкой переполнения:
+ * черновик свыше 4096 символов подаётся тостом «Сообщение слишком
+ * длинное: …» (слот z-99 поверх окна), а НЕ инлайн role=alert у
+ * композера; остальные инлайн-ошибки композера (пустой черновик,
+ * строка флуд-ретрая) и валидация validation.ts не меняются.
  */
 
 type ChatView = components['schemas']['ChatView']
@@ -248,6 +255,28 @@ describe('MessengerPage №37 heartbeat wiring (008 T076 — живое соед
     await renderPage()
 
     expect(mockPresence.createPresenceHeartbeat).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('MessengerPage подсказка переполнения композера — тост (T082, Bug 4, FR-025)', () => {
+  it(`черновик свыше ${MESSAGE_MAX_LENGTH} символов: ровно один тост «Сообщение слишком длинное…», инлайн-ошибки нет, №15 не зван`, async () => {
+    await renderPage()
+    await openDirect()
+
+    const field = screen.getByLabelText('Текст сообщения')
+    fireEvent.change(field, { target: { value: 'а'.repeat(MESSAGE_MAX_LENGTH + 1) } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+
+    // Тост-слот страницы (z-99) несёт подсказку дословно (validation.ts
+    // не меняется); инлайн role=alert у композера НЕТ.
+    await expectSingleToast(
+      `Сообщение слишком длинное: ${MESSAGE_MAX_LENGTH + 1} из ${MESSAGE_MAX_LENGTH} допустимых символов`,
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    // Черновик не потерян; недобравший валидацию текст не ушёл на сервер.
+    expect(field).toHaveValue('а'.repeat(MESSAGE_MAX_LENGTH + 1))
+    expect(mockChats.sendMessage).not.toHaveBeenCalled()
   })
 })
 

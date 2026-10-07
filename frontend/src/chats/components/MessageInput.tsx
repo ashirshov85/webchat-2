@@ -11,10 +11,16 @@
  *
  * Client-side pre-validation of the 004 rule (see chats/validation.ts)
  * is unchanged: `onSend` fires only with the normalized valid text, so
- * an invalid draft cannot reach the chat or the outbox; instead the
- * local understandable error shows above the field (US1-4). The
- * server-side 400 (text_blank / text_too_long) remains the
- * authoritative protection.
+ * an invalid draft cannot reach the chat or the outbox. The overflow
+ * hint rides the page TOAST slot (Bug 4, T082; FR-025, ui-behavior
+ * §5): a draft over MESSAGE_MAX_LENGTH raises «Сообщение слишком
+ * длинное: …» via useToast/ToastProvider (z-99, ~3 s, the single
+ * notification replacing any previous one) — every other notification
+ * of the feature already toasts this way. The blank-draft error
+ * «Сообщение не может быть пустым» keeps its inline place above the
+ * field (`message-input-error` role=alert, US1-4). The server-side
+ * 400 (text_blank / text_too_long) remains the authoritative
+ * protection.
  *
  * Sending (FR-021, US1-AS4): Enter submits the trimmed text (IME
  * composition never submits); Shift+Enter keeps the newline of the
@@ -57,7 +63,8 @@ import type {
   MouseEvent as ReactMouseEvent,
   SubmitEvent,
 } from 'react'
-import { validateMessageText } from '../validation'
+import { useToast } from '../../ui/Toast'
+import { MESSAGE_MAX_LENGTH, validateMessageText } from '../validation'
 import './message-input.css'
 
 /** Steam spawn count — design-tokens §5 (3 puff's). */
@@ -113,6 +120,7 @@ export function MessageInput({
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [floodSecondsLeft, setFloodSecondsLeft] = useState<number | null>(null)
+  const showToast = useToast()
   const fieldRef = useRef<HTMLTextAreaElement>(null)
   const steamRef = useRef<HTMLDivElement>(null)
   const puffTimersRef = useRef<number[]>([])
@@ -152,7 +160,14 @@ export function MessageInput({
   function send() {
     const validation = validateMessageText(value)
     if (!validation.ok) {
-      setError(validation.error)
+      // Bug 4 (T082): подсказка переполнения — тост (FR-025, слот
+      // z-99, ~3 с, одно уведомление); остальные локальные ошибки
+      // композера (пустой черновик) остаются инлайн role=alert.
+      if (value.trim().length > MESSAGE_MAX_LENGTH) {
+        showToast(validation.error)
+      } else {
+        setError(validation.error)
+      }
       return
     }
     setError(null)
