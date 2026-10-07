@@ -11,10 +11,16 @@
  *
  * Client-side pre-validation of the 004 rule (see chats/validation.ts)
  * is unchanged: `onSend` fires only with the normalized valid text, so
- * an invalid draft cannot reach the chat or the outbox; instead the
- * local understandable error shows above the field (US1-4). The
- * server-side 400 (text_blank / text_too_long) remains the
- * authoritative protection.
+ * an invalid draft cannot reach the chat or the outbox. The overflow
+ * hint rides the page TOAST slot (Bug 4, T082; FR-025, ui-behavior
+ * §5): a draft over MESSAGE_MAX_LENGTH raises «Сообщение слишком
+ * длинное: …» via useToast/ToastProvider (z-99, ~3 s, the single
+ * notification replacing any previous one) — every other notification
+ * of the feature already toasts this way. The blank-draft error
+ * «Сообщение не может быть пустым» keeps its inline place above the
+ * field (`message-input-error` role=alert, US1-4). The server-side
+ * 400 (text_blank / text_too_long) remains the authoritative
+ * protection.
  *
  * Sending (FR-021, US1-AS4): Enter submits the trimmed text (IME
  * composition never submits); Shift+Enter keeps the newline of the
@@ -50,14 +56,28 @@
  * message transparently enqueues as another optimistic
  * «отправляется» row. The waiting bubble itself never carries a
  * countdown (Clarification).
+ *
+ * The field grows with its content (Bug 6, T084): a multiline
+ * (Shift+Enter) draft lifts the golden frame row by row — the
+ * auto-resize fits the textarea to its scrollHeight (+ the 2px of
+ * its borders under box-sizing: border-box) on every draft change,
+ * so no inner scrollbar shows while the field grows;
+ * message-input.css caps the growth at a sane max-height, beyond
+ * which the field flips to its own inner scroll. A successful send
+ * collapses the field back to the single-line height together with
+ * the cleared draft. The «ОТПРАВИТЬ» plate never grows: fixed size,
+ * pinned to the TOP border of the composer row (align-items:
+ * flex-start) with its horizontal place unchanged. Window resizes
+ * refit the height — the wraps change with the composer width.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   SubmitEvent,
 } from 'react'
-import { validateMessageText } from '../validation'
+import { useToast } from '../../ui/Toast'
+import { MESSAGE_MAX_LENGTH, validateMessageText } from '../validation'
 import './message-input.css'
 
 /** Steam spawn count — design-tokens §5 (3 puff's). */
@@ -68,6 +88,25 @@ const PUFF_LIFETIME_MS = 1400
 
 /** Block hint of a blocked-contact chat — prototype §7 updateInputState(). */
 const BLOCKED_PLACEHOLDER = 'Контакт заблокирован — разблокируйте, чтобы писать сообщения'
+
+/**
+ * Border width of the field (message-input.css `border: 1px`) per
+ * side: scrollHeight (content + padding) excludes the borders, while
+ * the border-box height includes them — the fit adds both sides back
+ * for an exact landing without a stray scrollbar.
+ */
+const MSG_INPUT_BORDER_PX = 1
+
+/**
+ * Авторост поля (Bug 6, T084): высота = содержимому — scrollHeight
+ * (после сброса в auto) + рамки, border-box. Пока результат укладывается
+ * в max-height CSS, внутренней прокрутки нет; свыше максимума поле
+ * прокручивается само (overflow-y: auto в message-input.css).
+ */
+function fitFieldHeight(field: HTMLTextAreaElement) {
+  field.style.height = 'auto'
+  field.style.height = `${field.scrollHeight + MSG_INPUT_BORDER_PX * 2}px`
+}
 
 /**
  * Cryptographically strong uniform random in [min, max) — the flight
@@ -113,6 +152,7 @@ export function MessageInput({
   const [value, setValue] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [floodSecondsLeft, setFloodSecondsLeft] = useState<number | null>(null)
+  const showToast = useToast()
   const fieldRef = useRef<HTMLTextAreaElement>(null)
   const steamRef = useRef<HTMLDivElement>(null)
   const puffTimersRef = useRef<number[]>([])
@@ -128,6 +168,31 @@ export function MessageInput({
     },
     [],
   )
+
+  // Авторост (Bug 6, T084): каждый черновик — и очистка после отправки —
+  // пересобирает высоту тем же коммитом, до отрисовки (паттерн
+  // ContextMenu: layoutEffect без прыжка).
+  useLayoutEffect(() => {
+    const field = fieldRef.current
+    if (field !== null) {
+      fitFieldHeight(field)
+    }
+  }, [value])
+
+  // Переносы строк меняются с шириной окна — высота пересажена и на
+  // resize (содержимое черновика то же).
+  useEffect(() => {
+    const fit = () => {
+      const field = fieldRef.current
+      if (field !== null) {
+        fitFieldHeight(field)
+      }
+    }
+    window.addEventListener('resize', fit)
+    return () => {
+      window.removeEventListener('resize', fit)
+    }
+  }, [])
 
   // Отсчёт флуд-лимита (FR-030): ОДИН интервал тикает ОДИН элемент —
   // строку «Повтор через N с» из головной retryAt-записи (ui-behavior
@@ -152,7 +217,14 @@ export function MessageInput({
   function send() {
     const validation = validateMessageText(value)
     if (!validation.ok) {
-      setError(validation.error)
+      // Bug 4 (T082): подсказка переполнения — тост (FR-025, слот
+      // z-99, ~3 с, одно уведомление); остальные локальные ошибки
+      // композера (пустой черновик) остаются инлайн role=alert.
+      if (value.trim().length > MESSAGE_MAX_LENGTH) {
+        showToast(validation.error)
+      } else {
+        setError(validation.error)
+      }
       return
     }
     setError(null)

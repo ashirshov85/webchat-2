@@ -26,6 +26,11 @@
  *     - the outbox delivery states (T050/T051: «отправляется»,
  *       «не отправлено» + Повторить/Удалить, the composer flood line
  *       «Повтор через N с») and the catch-up sync indicator (T052).
+ *       Since T085 (bug 7) the open seat of the fully-read «alex»
+ *       dialog folds at the last read row, leaving the seeded outbox
+ *       rows below the fold — the capture parks the feed at the very
+ *       bottom (see the test body) so both states stay in frame and
+ *       the shot is warm-up-race-free.
  *
  * Determinism of the implemented states: the outbox records are seeded
  * straight into `webchat.chats.outbox.<userId>` localStorage by an init
@@ -169,6 +174,20 @@ visualTest.describe('T060 — US4 surfaces', () => {
     await expect(page.locator('.message-list').getByText('не отправлено')).toBeVisible()
     await expect(page.locator('.message-input-retry')).toHaveText('Повтор через 45 с')
     expect(await page.evaluate(() => Date.now())).toBe(FROZEN_MS)
+    // T085 (bug 7): the open seat folds «alex» at its last read row —
+    // the seeded outbox rows land right below the fold, out of frame.
+    // The capture's subject is the outbox states, so the feed parks
+    // at the very bottom (the same bottom seat T079 gives an
+    // own-send) and the rows are proven on screen before the shot;
+    // parking at scrollTop max also kills the content-visibility
+    // warm-up race (research §G) that made the ride non-deterministic.
+    await page.evaluate(() => {
+      const list = document.querySelector('.message-list')
+      if (list !== null) {
+        list.scrollTop = list.scrollHeight
+      }
+    })
+    await expect(page.locator('.message-list').getByText('не отправлено')).toBeInViewport()
     await expect(page).toHaveScreenshot('us4-outbox-states.png', SHOT)
   })
 

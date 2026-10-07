@@ -66,9 +66,12 @@
 }
 
 /* Лампа присутствия direct (US3, T043; прототип §7 .lamp): online —
-   зелёная со свечением и мерцанием flick 4s (keyframes — ui/avatar.css,
-   reduced-motion глушит глобально), offline — тусклая .off; нейтральной
-   лампе (.unknown нет — семантика 007) класс .off ЗАПРЕЩЁН. */
+    зелёная со свечением и мерцанием flick 4s (keyframes — ui/avatar.css,
+    reduced-motion глушит глобально), offline — тусклая .off БЕЗ анимации
+    (bug 5/T083: паритет с .av-dot.off «выключенная лампочка»; в прототипе
+    .lamp.off flick не глушит — дефект эталона, побеждает контракт
+    задачи); нейтральной лампе (.unknown нет — семантика 007) класс .off
+    ЗАПРЕЩЁН. */
 .chat-head .lamp {
   width: 8px;
   height: 8px;
@@ -84,6 +87,7 @@
 .chat-head .lamp.off {
   background: #b6a26a;
   box-shadow: 0 0 5px rgba(182, 162, 106, 0.5);
+  animation: none;
 }
 
 .chat-head .status-txt {
