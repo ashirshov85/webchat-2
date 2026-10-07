@@ -33,6 +33,12 @@ import './ctx-menu.css'
 export interface MenuItem {
   readonly label: string
   readonly onSelect: () => void
+  /**
+   * Доступное имя пункта поверх видимой подписи (T095, SC-002): меню
+   * ростер-действий «Участников» держит подписи короткими («Исключить»),
+   * а aria-label несёт цель действия («Исключить {username}»).
+   */
+  readonly ariaLabel?: string
   /** Опасное действие — визуально выделено цветом --err (прототип .danger). */
   readonly danger?: boolean
   /** Разделитель .ctx-sep перед пунктом (группы действий). */
@@ -211,6 +217,7 @@ export function ContextMenu({ open, anchor, items, align = 'start', onClose }: C
             type="button"
             role="menuitem"
             className={item.danger === true ? 'ctx-item danger' : 'ctx-item'}
+            aria-label={item.ariaLabel}
             onClick={() => {
               onClose()
               item.onSelect()

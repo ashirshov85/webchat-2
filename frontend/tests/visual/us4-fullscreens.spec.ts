@@ -12,8 +12,14 @@
  *       variant ui-behavior §4 renders verbatim from #chatMenu, anchor
  *       formulas included (`align: 'end'`, r.bottom + 6, 8px clamp);
  *     - the members modal (`us4-group-members-modal.png`): the 006 role
- *       labels + owner roster actions ride the prototype's pick-row
- *       lexicon and stay inside the ~2% budget on the phoenix roster.
+ *       labels ride the prototype's pick-row lexicon. T095 (bug 17)
+ *       moved the roster actions into the per-row «⋯» ContextMenu —
+ *       the derived ctc-row lexicon (always-visible kebab, no text
+ *       buttons, no .add-ctc-btn) brought the surface CLOSER to the
+ *       reference: the kebab glyphs stay inside the ~2% budget on the
+ *       phoenix roster, so the implemented-snapshot exception the task
+ *       sanctioned (`us4-group-members-modal-impl`) is NOT needed —
+ *       the prototype comparison remains the stronger guarantee.
  *
  *  * IMPLEMENTED states — where the static prototype carries no
  *    comparable pixels, the baseline is fixed by the implemented

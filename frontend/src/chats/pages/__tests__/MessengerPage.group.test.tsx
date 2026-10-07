@@ -331,13 +331,22 @@ describe('MessengerPage group window from the unified list (US1)', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Участники' }))
     const members = await screen.findByRole('dialog', { name: 'Участники' })
     // Ростер №28 минус собственная строка; ростер-действия владельца
-    // достижимы из оболочки (контракт T049/T055).
+    // достижимы из оболочки через «⋯»-меню строки (контракт T049/T055,
+    // вход T095/Bug 17 — меню порталится в body, поверх оболочки).
     expect(within(members).getByText('alice')).toBeInTheDocument()
     expect(within(members).queryByText(/me \(вы\)/)).toBeNull()
-    expect(within(members).getByRole('button', { name: 'Исключить alice' })).toBeInTheDocument()
+    const aliceRow = within(members).getByText('alice').closest('.pick-row') as HTMLElement
+    fireEvent.click(within(aliceRow).getByRole('button', { name: 'Действия с участником' }))
+    expect(screen.getByRole('menuitem', { name: 'Исключить alice' })).toBeInTheDocument()
     // Одна подложка на приложение (data-model 1.6).
     expect(document.querySelectorAll('.modal-back')).toHaveLength(1)
 
+    // Esc слоист (data-model 3.1): первый гасит «⋯»-меню (верхний слой,
+    // T095), второй — саму оболочку «Участники».
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.queryByRole('menuitem', { name: 'Исключить alice' })).toBeNull()
+    })
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Участники' })).toBeNull()

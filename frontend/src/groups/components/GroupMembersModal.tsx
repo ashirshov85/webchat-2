@@ -1,27 +1,40 @@
 /**
- * Модальная форма «Участники» группового чата (feature 008, US4, T055;
- * FR-023, ui-behavior §3, research §D): житель ЕДИНОЙ оболочки ModalShell
- * (MessengerPage, formId 'group-members'), проекция #membersForm
- * нормативного прототипа specs/008-chat-window-styling/design/chats.html
- * (renderMembersList): ростер №28 минус собственная строка — «Вы» живёт
- * только в members-tip заголовка, старая пометка «{username} (вы)» ушла
- * вместе с own-строкой (контракт T049).
+ * Модальная форма «Участники» группового чата (feature 008, US4, T055 →
+ * T095/Bug 17; FR-023, ui-behavior §3, research §D): житель ЕДИНОЙ
+ * оболочки ModalShell (MessengerPage, formId 'group-members'),
+ * проекция #membersForm нормативного прототипа
+ * specs/008-chat-window-styling/design/chats.html (renderMembersList):
+ * ростер №28 минус собственная строка — «Вы» живёт только в members-tip
+ * заголовка, старая пометка «{username} (вы)» ушла вместе с own-строкой
+ * (контракт T049).
  *
- * Метки ролей 006 («Владелец»/«Админ»/«Участник») и ростер-действия
- * №32/№34/№35 — дословно из MemberList (миграция T049, FR-034/SC-002):
- * строго по иерархии myRole (owner — всем кроме себя; admin — kick только
- * member-строк, №34/№35 owner-only; member — без действий), aria-label'ы
- * «Исключить/Назначить админом/Снять админа/Передать владение {username}».
- * `pendingUserId` — отображение мьютекса useGroupMembers (строка в полёте
- * disabled), `rosterError` — последняя проблема ростер-действия (ErrorBanner).
+ * Метки ролей 006 («Владелец»/«Админ»/«Участник») — дословно из
+ * MemberList (миграция T049, FR-034/SC-002), строка — визуальный
+ * паритет «Контактов» (.pick-row лексика ctc-row: аватар,
+ * .c-main/.c-top/.c-name, метка роли в .c-prev).
  *
- * «Добавить в контакты» (.add-ctc-btn прототипа) — только на строках вне
- * адресной книги вызывающего (№20): модаль сообщает userId наверх
- * (onAddContact), №21 и его тост принадлежат странице (T045).
+ * T095 (Bug 17): ростер-действия №32/№34/№35 и «Добавить в контакты»
+ * живут в ContextMenu кнопки-кебаба «⋯» строки (title «Действия с
+ * участником», паттерн .c-menu ContactsModal) — строго по иерархии
+ * myRole (owner — всем кроме себя; admin — kick только member-строк,
+ * №34/№35 owner-only; member — кебаба нет вовсе), пункты несут
+ * aria-label'ы «Исключить/Назначить админом/Снять админа/Передать
+ * владение {username}» (SC-002), «Исключить» — danger-пункт. В
+ * прототипе «⋯»-меню участников нет (renderMembersList) — производная
+ * лексика ContextMenu + ctc-row, baseline T060 по реализованному
+ * снимку (класс исключения T060).
+ *
+ * `pendingUserId` — отображение мьютекса useGroupMembers (кебаб строки
+ * в полёте disabled), `rosterError` — последняя проблема ростер-действия
+ * (ErrorBanner). «Добавить в контакты» — пункт вне-книжных строк (№20):
+ * модаль сообщает userId наверх (onAddContact), №21 и его тост
+ * принадлежат странице (T045).
  */
+import { useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import type { GroupMember } from '../../api/groups'
 import { ErrorBanner } from '../../chats/components/ErrorBanner'
 import { Avatar } from '../../ui/Avatar'
+import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
 import './group-members-modal.css'
 
 export interface GroupMembersModalProps {
@@ -91,6 +104,11 @@ function actionsFor(myRole: GroupMember['role'], target: GroupMember): RowAction
   return NO_ACTIONS
 }
 
+/** Есть ли у строки пункты ростер-действий (для разделителя «Добавить в контакты»). */
+function hasRosterActions(actions: RowActions): boolean {
+  return actions.kick || actions.grantAdmin || actions.revokeAdmin || actions.transferOwnership
+}
+
 export function GroupMembersModal({
   members,
   myRole,
@@ -106,6 +124,85 @@ export function GroupMembersModal({
   // renderMembersList прототипа: собственная строка не выводится вовсе.
   const rows = members.filter((member) => member.user.id !== currentUserId)
 
+  const [menuMember, setMenuMember] = useState<GroupMember | null>(null)
+  const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null)
+
+  /** Кебаб «⋯»: якорь — rect кнопки (паттерн ContactsModal); клик не
+   * проваливается в строку (menuBtn-early-return прототипа). */
+  const handleMenuButtonClick = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    member: GroupMember,
+  ) => {
+    event.stopPropagation()
+    setMenuAnchor(event.currentTarget.getBoundingClientRect())
+    setMenuMember(member)
+  }
+
+  /** Пункты «⋯»-меню строки (T049/T055 дословно): порядок матрицы
+   * myRole + «Добавить в контакты» вне-книжных строк (после
+   * разделителя — ростер-действия и адресная книга — разные группы
+   * действий, паттерн «Удалить контакт» ContactsModal). */
+  const menuItems = useMemo<readonly MenuItem[]>(() => {
+    if (menuMember === null) {
+      return []
+    }
+    const username = menuMember.user.username
+    const actions = actionsFor(myRole, menuMember)
+    const offerContact =
+      contactUserIds !== undefined && onAddContact !== undefined
+        ? !contactUserIds.has(menuMember.user.id)
+        : false
+    const items: readonly (MenuItem | null)[] = [
+      actions.kick
+        ? {
+            label: 'Исключить',
+            ariaLabel: `Исключить ${username}`,
+            danger: true,
+            onSelect: () => {
+              onKick(menuMember.user.id)
+            },
+          }
+        : null,
+      actions.grantAdmin
+        ? {
+            label: 'Назначить админом',
+            ariaLabel: `Назначить админом ${username}`,
+            onSelect: () => {
+              onSetRole(menuMember.user.id, 'admin')
+            },
+          }
+        : null,
+      actions.revokeAdmin
+        ? {
+            label: 'Снять админа',
+            ariaLabel: `Снять админа ${username}`,
+            onSelect: () => {
+              onSetRole(menuMember.user.id, 'member')
+            },
+          }
+        : null,
+      actions.transferOwnership
+        ? {
+            label: 'Передать владение',
+            ariaLabel: `Передать владение ${username}`,
+            onSelect: () => {
+              onTransferOwnership(menuMember.user.id)
+            },
+          }
+        : null,
+      offerContact
+        ? {
+            label: 'Добавить в контакты',
+            sepBefore: hasRosterActions(actions),
+            onSelect: () => {
+              onAddContact?.(menuMember.user.id)
+            },
+          }
+        : null,
+    ]
+    return items.filter((item): item is MenuItem => item !== null)
+  }, [menuMember, myRole, contactUserIds, onKick, onSetRole, onTransferOwnership, onAddContact])
+
   return (
     <div className="members-form">
       {rosterError !== null && <ErrorBanner error={rosterError} />}
@@ -117,14 +214,16 @@ export function GroupMembersModal({
             const actions = actionsFor(myRole, member)
             const pending = pendingUserId === member.user.id
             const username = member.user.username
-            const hasActions =
-              actions.kick || actions.grantAdmin || actions.revokeAdmin || actions.transferOwnership
+            // Кебаб несёт меню — рендерим только когда пункты есть:
+            // ростер-действия по матрице myRole ИЛИ «Добавить в контакты»
+            // (member-зритель кебаба не видит вовсе — T095).
             // №20: предложение — только строкам вне адресной книги
             // вызывающего (собственная строка уже отфильтрована).
             const offerContact =
               contactUserIds !== undefined && onAddContact !== undefined
                 ? !contactUserIds.has(member.user.id)
                 : false
+            const showMenu = hasRosterActions(actions) || offerContact
             return (
               <div className="pick-row member-row" key={member.user.id}>
                 <Avatar source={username} size={32} />
@@ -134,73 +233,23 @@ export function GroupMembersModal({
                   </div>
                   <div className="c-prev">{ROLE_LABELS[member.role]}</div>
                 </div>
-                {hasActions && (
-                  <div className="member-actions">
-                    {actions.kick && (
-                      <button
-                        type="button"
-                        className="member-action danger"
-                        aria-label={`Исключить ${username}`}
-                        disabled={pending}
-                        onClick={() => {
-                          onKick(member.user.id)
-                        }}
-                      >
-                        Исключить
-                      </button>
-                    )}
-                    {actions.grantAdmin && (
-                      <button
-                        type="button"
-                        className="member-action"
-                        aria-label={`Назначить админом ${username}`}
-                        disabled={pending}
-                        onClick={() => {
-                          onSetRole(member.user.id, 'admin')
-                        }}
-                      >
-                        Назначить админом
-                      </button>
-                    )}
-                    {actions.revokeAdmin && (
-                      <button
-                        type="button"
-                        className="member-action"
-                        aria-label={`Снять админа ${username}`}
-                        disabled={pending}
-                        onClick={() => {
-                          onSetRole(member.user.id, 'member')
-                        }}
-                      >
-                        Снять админа
-                      </button>
-                    )}
-                    {actions.transferOwnership && (
-                      <button
-                        type="button"
-                        className="member-action"
-                        aria-label={`Передать владение ${username}`}
-                        disabled={pending}
-                        onClick={() => {
-                          onTransferOwnership(member.user.id)
-                        }}
-                      >
-                        Передать владение
-                      </button>
-                    )}
-                  </div>
-                )}
-                {offerContact && (
+                {showMenu && (
                   <button
                     type="button"
-                    className="add-ctc-btn"
-                    title="Добавить участника в контакты"
+                    className="c-menu"
+                    title="Действия с участником"
+                    aria-haspopup="menu"
+                    aria-expanded={menuMember?.user.id === member.user.id}
                     disabled={pending}
-                    onClick={() => {
-                      onAddContact?.(member.user.id)
+                    onClick={(event) => {
+                      handleMenuButtonClick(event, member)
                     }}
                   >
-                    Добавить в контакты
+                    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                      <circle cx="12" cy="5" r="1.8" />
+                      <circle cx="12" cy="12" r="1.8" />
+                      <circle cx="12" cy="19" r="1.8" />
+                    </svg>
                   </button>
                 )}
               </div>
@@ -208,6 +257,14 @@ export function GroupMembersModal({
           })
         )}
       </div>
+      <ContextMenu
+        open={menuMember !== null}
+        anchor={menuMember !== null ? menuAnchor : null}
+        items={menuItems}
+        onClose={() => {
+          setMenuMember(null)
+        }}
+      />
     </div>
   )
 }
