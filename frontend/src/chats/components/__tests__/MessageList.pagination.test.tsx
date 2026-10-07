@@ -1,4 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../../../api/chats'
 import { MessageList } from '../MessageList'
@@ -260,5 +262,74 @@ describe('MessageList empty chat state', () => {
     expect(container.querySelector('.message')).toBeNull()
     expect(screen.queryByText('Загрузка истории…')).toBeNull()
     expect(onLoadOlder).not.toHaveBeenCalled()
+  })
+})
+
+describe('MessageList empty chat state pins the composer to the bottom (bug 10 / T088)', () => {
+  /**
+   * The feed variant of `.messenger-empty` («Сообщений пока нет» from
+   * MessageList, «Чат не выбран» from MessengerPage) is a DIRECT child
+   * of the `.chat` flex column (messenger.css), so it must GROW
+   * (`flex: 1`) and carry the exact feed surface of
+   * `.message-list.chat-scroll` (message-list.css: #140f08, the brass
+   * radial light from the top, the darkening overlay, the --pat-msg
+   * ornament at 240px) — then the composer (`flex: none`) stays
+   * pinned to the panel bottom instead of hugging the placeholder
+   * (bug 10). The placeholder itself is NOT vertically centered: it
+   * keeps the FR-032 typography/paddings at the TOP of the grown
+   * element; the sidebar instances (`.chat-panel .messenger-empty`,
+   * hint padding 10px) are out of the scope and stay untouched.
+   *
+   * jsdom does not cascade stylesheets, so the contract is pinned
+   * statically at its source of truth — the stylesheet text (the
+   * T083 pattern).
+   */
+  const statesCss = readFileSync(join(import.meta.dirname, '../states.css'), 'utf8')
+  const feedCss = readFileSync(join(import.meta.dirname, '../message-list.css'), 'utf8')
+
+  /** Extracts the declarations block of a rule whose selector starts a line. */
+  function ruleBody(css: string, selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const match = css.match(new RegExp(`(^|\\n)${escaped}\\s*\\{([^}]*)\\}`))
+    if (!match) throw new Error(`rule not found: ${selector}`)
+    return match[2] ?? ''
+  }
+
+  /** Extracts a single declaration value, whitespace-normalised. */
+  function declaration(body: string, property: string): string {
+    const match = body.match(new RegExp(`${property}:\\s*([^;]+);`))
+    if (!match) throw new Error(`declaration not found: ${property}`)
+    return (match[1] ?? '').replace(/\s+/g, ' ').trim()
+  }
+
+  it('the feed variant grows and carries the exact feed surface of .message-list.chat-scroll', () => {
+    const emptyFeed = ruleBody(statesCss, '.chat > .messenger-empty')
+
+    expect(emptyFeed).toContain('flex: 1')
+    expect(emptyFeed).toContain('min-height: 0')
+
+    const feed = ruleBody(feedCss, '.message-list.chat-scroll')
+    expect(declaration(emptyFeed, 'background-color')).toBe(declaration(feed, 'background-color'))
+    expect(declaration(emptyFeed, 'background-image')).toBe(declaration(feed, 'background-image'))
+    expect(declaration(emptyFeed, 'background-size')).toBe(declaration(feed, 'background-size'))
+    expect(declaration(emptyFeed, 'background-image')).toContain('var(--pat-msg)')
+    expect(declaration(emptyFeed, 'background-size')).toContain('240px 240px')
+  })
+
+  it('the placeholder stays top-pinned (no vertical centering); sidebar instances keep their hint scale', () => {
+    const emptyFeed = ruleBody(statesCss, '.chat > .messenger-empty')
+
+    expect(emptyFeed).not.toMatch(/display:\s*flex/)
+    expect(emptyFeed).not.toContain('align-items')
+    expect(emptyFeed).not.toContain('justify-content')
+
+    const base = ruleBody(statesCss, '.messenger-empty')
+    expect(base).toContain('padding: 24px 12px')
+    expect(base).toContain('font: italic 12.5px var(--font-body)')
+
+    const sidebar = ruleBody(statesCss, '.chat-panel .messenger-empty')
+    expect(sidebar).toContain('padding: 10px')
+    expect(sidebar).not.toContain('flex')
+    expect(sidebar).not.toContain('background')
   })
 })
