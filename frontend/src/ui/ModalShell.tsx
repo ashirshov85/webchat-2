@@ -37,8 +37,12 @@ export interface ModalShellProps {
   readonly children: ReactNode
 }
 
-/** Фокусируемые элементы ловушки (порядок документа = порядок Tab). */
-const FOCUSABLE_SELECTOR = [
+/**
+ * Фокусируемые элементы ловушки (порядок документа = порядок Tab).
+ * Экспортирован для ловушки drawer (T070, FR-035) — единый словарь
+ * фокусируемости обоих слоёв-«клеток» машины.
+ */
+export const FOCUSABLE_SELECTOR = [
   'a[href]',
   'button:not([disabled])',
   'input:not([disabled])',

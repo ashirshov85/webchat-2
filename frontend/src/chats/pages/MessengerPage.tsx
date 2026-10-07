@@ -154,8 +154,55 @@
  * (deleteChat/askBlock/askUnblock/askLeaveGroup/addContact); сбои
  * тостом НЕ отмечаются — только инлайн-ошибки поверхностей (контракт
  * форм T028–T035); тост — результат операции, завершившейся на сервере.
+ *
+ * US5 звук приёма (T064; FR-028, research §F, ui-behavior §6): страница
+ * подключает ровно ДВА триггера «латунного звоночка» ui/sound (T061/
+ * T063 — синтез и молчаливый пропуск запрета автозвука живут там):
+ * реальное время — onMessageCreated(null, …) одного сигнала на
+ * входящее событие ЛЮБОГО чата, включая фоновые; массовая доставка —
+ * счётчик входящих применённых страниц цикла catch-up (onChatUpdate)
+ * сбрасывается одним chimeOnSyncBatch(итог) на завершении цикла
+ * (фронт syncing true→false). История №16, пагинация №15 и отправка
+ * сигналом не сопровождаются вовсе (Clarification: отправка — только
+ * визуально), собственные сообщения молчат (в т.ч. с другого
+ * устройства). Настроек и персистентности нет — «всегда включено».
+ *
+ * US5 burger-drawer (T065; FR-029, design-tokens §9, ui-behavior §7,
+ * data-model 3.1): на ≤900px сайдбар — выдвижной drawer поверх контента
+ * с затемнением. Плавающая кнопка каталога `.burger` (fixed 42px,
+ * скрыта ≥901px CSS прототипа) открывает состояние openSidebar
+ * прототипа дословно: `.sidebar.open` + `.backdrop.show` + морф
+ * `.burger.open` (+ aria-expanded). Закрытие: повторный burger, клик
+ * по затемнению, выбор чата (closeSidebar едет вместе с selectChat) и
+ * Esc — СТРОГО верхний слой: слушатель document-bubble гасит drawer
+ * только когда модальной оболочки выше нет (ModalShell слушает Esc на
+ * document без stopPropagation — охрана «нет слоёв выше» на стороне
+ * drawer, 3.1); ctx-menu/members-tip выше гасят Esc capture-фазой
+ * (T013/T043) и сюда не доходят вовсе. Возврат на широкий экран
+ * сбрасывает drawer (backdrop не ограничен media-блоком — открытое
+ * состояние не должно заливать широкий экран, где сайдбар снова
+ * статичен в каркасе). Тесты — MessengerPage.drawer.test.tsx (T062).
+ *
+ * Клавиатура drawer (T070; FR-035, SC-008, ui-behavior §1 — норматив
+ * spec.md, сам прототип фокуса не ведает): открытый drawer — клетка
+ * Tab-ловушки (словарь FOCUSABLE_SELECTOR ModalShell, Tab/Shift+Tab по
+ * кругу; модаль выше — владеет Tab сама, 3.1), закрытие возвращает
+ * фокус на burger-инициатор, закрытый off-canvas сайдбар исключён из
+ * табуляции (inert — transform-скрытие оставляло бы кнопки достижимыми
+ * невидимками, что ломало бы «логичный порядок табуляции»). Тесты —
+ * MessengerPage.keyboard.test.tsx.
+ *
+ * US5 адаптация к visual viewport (T066; FR-029, research §H): экранная
+ * клавиатура сжимает visual viewport, но не layout-viewport — `100dvh`
+ * её не видит. Слушатель useVisualViewport (ниже) пишет на body
+ * `--vvh`/`--vvo` (высота/offsetTop), machine.css сводит по ним дно
+ * машины к видимому дну и гасит прокрутку страницы на ≥901px
+ * (`html,body{overflow:hidden}` скоупом body:has(.machine)) — композер
+ * остаётся над клавиатурой, лента сжимается, прокрутки страницы нет
+ * (quickstart E1–E2, SC-005). Тесты — MessengerPage.viewport.test.tsx;
+ * мобильные снимки — T068.
  */
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
 import type { GroupMember, GroupView } from '../../api/groups'
@@ -196,9 +243,10 @@ import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
 import { ConfirmDialog } from '../../ui/ConfirmDialog'
 import type { ConfirmVariant } from '../../ui/ConfirmDialog'
-import { ModalShell } from '../../ui/ModalShell'
+import { FOCUSABLE_SELECTOR, ModalShell } from '../../ui/ModalShell'
 import type { ModalFormId } from '../../ui/ModalShell'
 import { ToastProvider, useToast } from '../../ui/Toast'
+import { chimeOnRealtimeIncoming, chimeOnSyncBatch } from '../../ui/sound'
 import '../components/states.css'
 import './messenger.css'
 
@@ -336,6 +384,75 @@ function shellTitleOf(confirmation: ConfirmUi | null, formId: ModalFormId | null
     return confirmation.title
   }
   return formId !== null ? MODAL_TITLES[formId] : ''
+}
+
+/**
+ * Контрольная точка ≤900px (US5/T065; design-tokens §9, FR-029): оба
+ * стиля запроса прототипа (max-width:900px / min-width:901px) сводятся
+ * к одному ответу этой формы. jsdom без matchMedia (юнит-среда без
+ * стаба T062) отвечает «широкий экран» — burger остаётся скрытым CSS,
+ * поведение страницы не меняется; скрытие burger на ≥901px — CSS-паттерн
+ * прототипа, его проверяют T068/quickstart E.
+ */
+function useNarrowViewport(): boolean {
+  const [narrow, setNarrow] = useState(
+    () =>
+      typeof window.matchMedia === 'function' && window.matchMedia('(max-width: 900px)').matches,
+  )
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') {
+      return
+    }
+    const query = window.matchMedia('(max-width: 900px)')
+    const report = () => {
+      setNarrow(query.matches)
+    }
+    report()
+    query.addEventListener('change', report)
+    return () => {
+      query.removeEventListener('change', report)
+    }
+  }, [])
+  return narrow
+}
+
+/**
+ * US5 адаптация к visual viewport (T066; FR-029, research §H,
+ * design-tokens §9 «Клавиатура», ui-behavior §7): экранная клавиатура
+ * сжимает visual viewport, но НЕ layout-viewport (iOS Safari) —
+ * `100dvh` её не видит, дно корпуса-машины ушло бы под клавиатуру.
+ * Слушатель `resize`/`scroll` пишет на body пару CSS-переменных:
+ * `--vvh` = высота visual viewport, `--vvo` = offsetTop (панорамирование
+ * при Autoraise-скролле iOS) — machine.css считает высоту машины по их
+ * сумме: дно корпуса сходится к видимому дну, композер остаётся над
+ * клавиатурой, лента сжимается, прокрутки страницы не появляется.
+ * Поверхностям больше ничего не нужно — переменные наследуются с body.
+ * jsdom/движки без visualViewport: hook тихо бездействует (переменные
+ * не пишутся, CSS живёт на фолбэке `var(--vvh, 100dvh)`), StrictMode-
+ * ремаунт идемпотентен (report чистая, подписки/свойства снимаются
+ * cleanup'ом). Тесты — MessengerPage.viewport.test.tsx; CSS-половина
+ * (высота/overflow) — T068 и quickstart E1–E2 (SC-005).
+ */
+function useVisualViewport(): void {
+  useEffect(() => {
+    const viewport = window.visualViewport
+    if (!viewport) {
+      return
+    }
+    const report = () => {
+      document.body.style.setProperty('--vvh', `${viewport.height}px`)
+      document.body.style.setProperty('--vvo', `${viewport.offsetTop}px`)
+    }
+    report()
+    viewport.addEventListener('resize', report)
+    viewport.addEventListener('scroll', report)
+    return () => {
+      viewport.removeEventListener('resize', report)
+      viewport.removeEventListener('scroll', report)
+      document.body.style.removeProperty('--vvh')
+      document.body.style.removeProperty('--vvo')
+    }
+  }, [])
 }
 
 /**
@@ -551,6 +668,138 @@ function MessengerMachine() {
    * stack a second backdrop.
    */
   const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
+  /**
+   * US5 burger-drawer (T065; FR-029): на ≤900px сайдбар — выдвижной
+   * drawer поверх контента; `.open`-словарь прототипа (openSidebar/
+   * closeSidebar) ведёт это состояние, DOM-проекция — ниже (burger /
+   * sidebar / backdrop).
+   */
+  const narrowViewport = useNarrowViewport()
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  /** Подложка drawer: нативный click-слушатель закрытия (как ModalShell). */
+  const backdropRef = useRef<HTMLDivElement>(null)
+  /**
+   * Корень ловушки drawer (T070; FR-035): сам сайдбар — Tab не покидает
+   * его, пока drawer — верхний слой; сюда же смотрит inert закрытого
+   * off-canvas состояния.
+   */
+  const sidebarRef = useRef<HTMLElement>(null)
+
+  // US5 клавиатура (T066; FR-029, research §H): --vvh/--vvo на body для
+  // высоты машины (machine.css) — композер над клавиатурой, лента сжимается.
+  useVisualViewport()
+
+  // Возврат на широкий экран сбрасывает drawer: .backdrop не ограничен
+  // media-блоком — открытое состояние не должно заливать широкий экран,
+  // где сайдбар снова статичен в каркасе (T065).
+  useEffect(() => {
+    if (!narrowViewport) {
+      setDrawerOpen(false)
+    }
+  }, [narrowViewport])
+
+  // Esc закрывает drawer ТОЛЬКО как верхний слой (T065, data-model
+  // 3.1): модальная оболочка слушает Esc на document без
+  // stopPropagation, поэтому охрана «модалей выше нет» — на стороне
+  // drawer; ctx-menu/members-tip гасят Esc capture-фазой (T013/T043) и
+  // сюда не доходят вовсе.
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      if (modalForm !== null || pendingAction !== null) {
+        return
+      }
+      setDrawerOpen(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [drawerOpen, modalForm, pendingAction])
+
+  // Инициатор drawer (T070; FR-035, SC-008, ui-behavior §1): захват при
+  // открытии (burger — единственный вход), возврат фокуса при закрытии.
+  // Паттерн ModalShell/ContextMenu: перебиваем фокус ТОЛЬКО если он ещё
+  // внутри drawer или ни на чём — клик мимо уже увёл фокус на свою цель.
+  // Ключ только [drawerOpen]: formId-переключения выше не должны
+  // «закрывать» drawer и возвращать фокус (модаль живёт над ним).
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    const initiator = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const sidebar = sidebarRef.current
+    return () => {
+      const active = document.activeElement
+      const inside = sidebar !== null && active instanceof Node && sidebar.contains(active)
+      if (inside || active === null || active === document.body) {
+        initiator?.focus()
+      }
+    }
+  }, [drawerOpen])
+
+  // Tab-ловушка drawer (T070; FR-035, SC-008): пока drawer — верхний
+  // слой, Tab/Shift+Tab крутятся по фокусируемым сайдбара (словарь
+  // FOCUSABLE_SELECTOR — тот же, что у ModalShell). Модаль выше — её
+  // ловушка владеет Tab (data-model 3.1): здесь тихо отступаем.
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    if (modalForm !== null || pendingAction !== null) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Tab') {
+        return
+      }
+      const root = sidebarRef.current
+      if (root === null) {
+        return
+      }
+      const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      const [first] = focusables
+      const last = focusables.at(-1)
+      if (first === undefined || last === undefined) {
+        return
+      }
+      const active = document.activeElement
+      const inside = root.contains(active)
+      if (event.shiftKey && (active === first || !inside)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (active === last || !inside)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [drawerOpen, modalForm, pendingAction])
+
+  // Клик по затемнению закрывает drawer (T065): нативный слушатель на
+  // самой подложке — JSX-хендлер на статичном div это S6848/S1082
+  // (паттерн ModalShell); с клавиатуры drawer гасит Esc-эффект выше.
+  useEffect(() => {
+    const back = backdropRef.current
+    if (back === null) {
+      return
+    }
+    const onClick = (): void => {
+      setDrawerOpen(false)
+    }
+    back.addEventListener('click', onClick)
+    return () => {
+      back.removeEventListener('click', onClick)
+    }
+  }, [])
 
   /** №20 refetch of the gear's address-book basis (T054). */
   const reloadContacts = useCallback(() => {
@@ -700,6 +949,41 @@ function MessengerMachine() {
     })
   }, [onChatUpdate, applyChatListSync, applyDialogSync])
 
+  // US5 приём-звоночек, массовая доставка (T064; FR-028, research §F):
+  // РОВНО один сигнал на пакет пропущенного после разрыва — счётчик
+  // входящих (senderId ≠ me) копится по применённым страницам цикла
+  // catch-up (дельты №26 и №15-хвосты hasMore одного цикла складываются)
+  // и сбрасывается одним chimeOnSyncBatch(итог цикла) на завершении
+  // цикла — фронт true→false флага syncing (setSyncing(false) в finally
+  //useSync — после всех emit), поэтому вызов всегда один на цикл;
+  // тишина нуля — контракт самого sound (T061). История №16 и пагинация
+  // композера страницы этим путём не идут вовсе, отправка звука не
+  // имеет (Clarification); sync-цикл не тронут — только слушатель
+  // страницы (research «Сводка без изменений»).
+  const syncIncomingRef = useRef(0)
+  const syncCycleRanRef = useRef(false)
+  useEffect(() => {
+    return onChatUpdate((update) => {
+      for (const message of update.messages) {
+        if (message.senderId !== currentUserId) {
+          syncIncomingRef.current += 1
+        }
+      }
+    })
+  }, [onChatUpdate, currentUserId])
+  useEffect(() => {
+    if (syncing) {
+      syncCycleRanRef.current = true
+      return
+    }
+    if (!syncCycleRanRef.current) {
+      return
+    }
+    syncCycleRanRef.current = false
+    chimeOnSyncBatch(syncIncomingRef.current)
+    syncIncomingRef.current = 0
+  }, [syncing])
+
   // Applied realtime frames confirm through the same shared №25
   // batcher as the catch-up pages (sync-protocol.md §2): the frame's
   // `seq` acks its chat and the local cursor echoes it — realtime and
@@ -712,6 +996,23 @@ function MessengerMachine() {
     return realtime.onMessageCreated(null, (event) => {
       batcher.ack(event.chatId, event.message.seq)
       advanceCursor(currentUserId, event.chatId, event.message.seq)
+    })
+  }, [currentUserId, realtime])
+
+  // US5 приём-звоночек, реальное время (T064; FR-028, research §F,
+  // ui-behavior §6): один сигнал на каждое входящее событие ЛЮБОГО
+  // чата, включая фоновые — null-подписка демультиплексора useRealtime
+  // получает события всех диалогов. Фильтр senderId ≠ me (собственные
+  // сообщения молчат, в том числе с другого устройства — отправка
+  // подтверждается только визуально) и сам синтез живут в ui/sound
+  // (T061/T063); сюда приходит каждое событие №18 потока, «двойного»
+  // сигнала на событие нет — слушатель один.
+  useEffect(() => {
+    if (currentUserId === null) {
+      return
+    }
+    return realtime.onMessageCreated(null, (event) => {
+      chimeOnRealtimeIncoming(event, currentUserId)
     })
   }, [currentUserId, realtime])
 
@@ -825,6 +1126,10 @@ function MessengerMachine() {
 
   const handleSelectChat = useCallback(
     (chatId: string) => {
+      // Строка кликнута из drawer — closeSidebar едет вместе с
+      // selectChat (прототип §События): затемнение уходит, окно
+      // открывается (T065).
+      setDrawerOpen(false)
       const item = chats.find((entry) => entry.chatId === chatId)
       if (item?.type === 'group') {
         // The unified list (T028): a group row opens the GROUP window —
@@ -1200,9 +1505,31 @@ function MessengerMachine() {
 
   return (
     <>
+      {/* US5 кнопка каталога (T065; FR-029, design-tokens §9): плавающий
+          burger открывает drawer сайдбара на ≤900px (≥901px скрыт CSS
+          прототипа); title «Directory» прототипа — русская строка,
+          доступное имя — паттерн menu-btn «Меню» (T030). */}
+      <button
+        type="button"
+        className={drawerOpen ? 'burger open' : 'burger'}
+        title="Каталог чатов"
+        aria-expanded={drawerOpen}
+        onClick={() => {
+          setDrawerOpen((open) => !open)
+        }}
+      >
+        <span />
+        <span />
+        <span />
+      </button>
       <div className="machine">
         <div className="frame-body">
-          <aside className="sidebar panel" aria-label="Чаты и контакты">
+          <aside
+            ref={sidebarRef}
+            className={drawerOpen ? 'sidebar panel open' : 'sidebar panel'}
+            aria-label="Чаты и контакты"
+            inert={narrowViewport && !drawerOpen}
+          >
             <QueueOverflowBanner userId={currentUserId} />
             <SyncIndicator syncing={syncing} />
             <ChatListPanel
@@ -1288,6 +1615,15 @@ function MessengerMachine() {
           </section>
         </div>
       </div>
+
+      {/* Затемнение drawer (T065): клик закрывает (closeSidebar
+          прототипа; слушатель — нативный, в эффекте выше); подложка
+          живёт в DOM всегда — паттерн ModalShell, показ классом .show. */}
+      <div
+        ref={backdropRef}
+        className={drawerOpen ? 'backdrop show' : 'backdrop'}
+        aria-hidden={drawerOpen ? undefined : true}
+      />
 
       {/* Единая модальная оболочка (T034, data-model 1.6/3.3): все формы
           приложения — жители ОДНОГО .modal-back; переключение formId —
