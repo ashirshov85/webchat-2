@@ -86,6 +86,32 @@
  * T016(а) feed baselines carry both, so SC-001 at the US1
  * checkpoint needs them; the US3/T044 polish builds on top.
  *
+ * Unread seat (bug 2, T078): the first render of an open chat with
+ * unread messages scrolls the feed to the FIRST unread INCOMING row
+ * (`seq > unreadFromSeq` — the open-time №13 `myReadUpToSeq` latched
+ * by useChatMessages), NOT to the very bottom: everything above the
+ * anchor stays reachable by scrolling up (and `loadOlder` keeps
+ * feeding it). The seat is one-shot per open (re-armed by the empty
+ * window of a chat switch), waits for the watermark while №13 is in
+ * flight, and never fires for a fully read window or an empty chat —
+ * those keep the current behaviour. The marked row carries
+ * `data-first-unread`; the pagination anchor of prepended older
+ * pages (anchorHeightRef, T053) is untouched — the two scrolls live
+ * in separate effects and never act in the same commit.
+ *
+ * Bottom autoscroll (bug 2, T079): a send always seats the feed at
+ * the bottom — the optimistic outbox row and the server ack that
+ * replaces it scroll even while the user reads history (the ack is
+ * recognized through the T023 `localIdsRef` pre-commit set). Any
+ * other append — a new incoming `message.created`, an own message
+ * from another device — scrolls ONLY while the user rides the bottom
+ * edge (≤ BOTTOM_STICKY_THRESHOLD, latched by real scroll events);
+ * reading history is never yanked. Older-page prepends keep the T053
+ * viewport anchor: the bottom row keys do not change, so the sticky
+ * effect stays quiet. A fresh open (mount or the empty window of a
+ * chat switch) only arms the tracking — the T078 seat owns the open
+ * scroll and the first paint of history never jumps.
+ *
  * Delivery-stamp animation (US1, T023, FR-018 edge case): the
  * engraved tick plays the prototype `tickStamp` (.32s,
  * design-tokens §5) ONLY when the stamp of an ALREADY DISPLAYED row
@@ -122,6 +148,14 @@ import './states.css'
 
 /** Distance from the top (px) that triggers an older-page request. */
 const TOP_LOAD_THRESHOLD = 48
+
+/**
+ * Distance from the bottom edge (px) that still counts as «the user
+ * rides the bottom» — the sticky-autoscroll gate of new incoming
+ * messages (T079): inside the band the feed follows the append,
+ * outside it the user is reading history and the scroll stays put.
+ */
+const BOTTOM_STICKY_THRESHOLD = 32
 
 /** Feed avatar size — design-tokens §4 (лента 34px). */
 const FEED_AVATAR_SIZE = 34
@@ -192,6 +226,18 @@ export interface MessageListProps {
    * rendered ✓✓ never rolls back.
    */
   readonly othersReadUpToSeq?: number
+  /**
+   * Open-time read watermark of the caller (bug 2, T078): the
+   * `myReadUpToSeq` latched from the first №13 ChatView answer of the
+   * current open (useChatMessages). Incoming messages with
+   * `seq > unreadFromSeq` are the unread ones — the FIRST of them is
+   * the row the feed seats at on the first render of the open (not
+   * the very bottom; everything above stays reachable by scrolling
+   * up). `null`/omitted — the watermark is not known yet (№13 in
+   * flight): the seat waits and never fires if it never arrives (a
+   * failed №13 keeps the current behaviour).
+   */
+  readonly unreadFromSeq?: number | null
 }
 
 /**
@@ -254,6 +300,8 @@ interface FeedRowProps {
   readonly avatarSource: string
   /** The ack transition animates the fresh ✓ (T023, FR-018). */
   readonly stampAnim: boolean
+  /** The first unread incoming row — the T078 scroll anchor. */
+  readonly unreadAnchor: boolean
 }
 
 const FeedRow = memo(function FeedRow({
@@ -263,9 +311,13 @@ const FeedRow = memo(function FeedRow({
   sender,
   avatarSource,
   stampAnim,
+  unreadAnchor,
 }: FeedRowProps) {
   return (
-    <li className={outgoing ? 'message outgoing msg me' : 'message incoming msg them'}>
+    <li
+      className={outgoing ? 'message outgoing msg me' : 'message incoming msg them'}
+      data-first-unread={unreadAnchor ? '' : undefined}
+    >
       <Avatar source={avatarSource} size={FEED_AVATAR_SIZE} />
       <div className="bubble">
         {sender !== undefined && <div className="sender message-sender">{sender}</div>}
@@ -354,11 +406,25 @@ export function MessageList({
   peerReadUpToSeq = 0,
   members,
   othersReadUpToSeq = 0,
+  unreadFromSeq = null,
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
   const anchorHeightRef = useRef<number | null>(null)
   const firstMessageIdRef = useRef<string | undefined>(messages[0]?.id)
+  /**
+   * Whether the viewport rides the bottom edge (T079) — latched by
+   * real scroll events only: a fresh open is NOT «at the bottom»
+   * (the №16 window renders from the top, the T078 seat owns the
+   * open scroll), and once the user scrolls, every event refreshes
+   * the latch (including the programmatic shifts of the effects —
+   * an autoscroll to the bottom re-arms the stickiness).
+   */
+  const bottomRef = useRef(false)
+  /** Bottom-most server row of the previous commit (T079). */
+  const lastServerIdRef = useRef<string | undefined>(undefined)
+  /** Bottom-most local row of the previous commit (T079). */
+  const lastLocalKeyRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     const list = listRef.current
@@ -379,7 +445,15 @@ export function MessageList({
 
   const handleScroll = () => {
     const list = listRef.current
-    if (list === null || loadingOlder || !hasOlder || onLoadOlder === undefined) {
+    if (list === null) {
+      return
+    }
+    // T079: refresh the bottom-edge latch on EVERY scroll — the
+    // append effect reads «was the user at the bottom BEFORE the new
+    // row landed», and this handler is the only witness of that.
+    bottomRef.current =
+      list.scrollHeight - list.scrollTop - list.clientHeight <= BOTTOM_STICKY_THRESHOLD
+    if (loadingOlder || !hasOlder || onLoadOlder === undefined) {
       return
     }
     if (list.scrollTop <= TOP_LOAD_THRESHOLD) {
@@ -388,19 +462,112 @@ export function MessageList({
     }
   }
 
+  /**
+   * T078 unread seat — the one-shot latch. Armed on mount and re-armed
+   * by every EMPTY window (the chat-switch reset of useChatMessages
+   * rides through `messages: []`), spent exactly once per open: the
+   * first commit that has BOTH the initial page and the open-time
+   * watermark seats the feed, everything after (appends, prepends,
+   * watermark advances) leaves the scroll to the user.
+   */
+  const unreadSeatArmedRef = useRef(true)
+  useEffect(() => {
+    if (messages.length === 0) {
+      unreadSeatArmedRef.current = true
+    }
+  }, [messages])
+
+  useEffect(() => {
+    const list = listRef.current
+    if (
+      list === null ||
+      !unreadSeatArmedRef.current ||
+      messages.length === 0 ||
+      unreadFromSeq === null
+    ) {
+      return
+    }
+    unreadSeatArmedRef.current = false
+    const anchor = list.querySelector('[data-first-unread]')
+    if (anchor !== null && typeof anchor.scrollIntoView === 'function') {
+      // block:'start' seats the first unread at the viewport top —
+      // the rest of the unread run reads below it, the read history
+      // stays a scroll-up away. jsdom ships no scrollIntoView — the
+      // guard keeps every non-visual suite at the current behaviour.
+      anchor.scrollIntoView({ block: 'start' })
+    }
+  }, [messages, unreadFromSeq])
+
   const confirmedIds = new Set(messages.map((message) => message.id))
   const activePending = pending.filter((entry) => !confirmedIds.has(entry.clientMessageId))
   const activeOutbox = outbox.filter((entry) => !confirmedIds.has(entry.clientMessageId))
 
-  // T023 ack tracking: ids rendered as LOCAL rows in the previous
-  // committed render. A server message with such an id has just
-  // replaced the optimistic «отправляется»/«не отправлено» row the
-  // user saw — its fresh ✓ stamp mounts WITH the tickStamp
-  // (prototype sendMessage ack). Written only in a post-commit
-  // effect (never during render): a chat switch back, a pagination
-  // prepend or a refetch stays quiet because their ids were never
-  // locally displayed here.
+  // T079 append detection: the bottom-most SERVER row and the
+  // bottom-most LOCAL row of the window. An older-page prepend keeps
+  // both keys (the newest content does not move), an append changes
+  // exactly one of them.
+  const lastServerId = messages.at(-1)?.id
+  let lastLocalKey: string | undefined
+  if (activePending.length > 0) {
+    lastLocalKey = `pending:${activePending.at(-1)?.clientMessageId}`
+  } else if (activeOutbox.length > 0) {
+    lastLocalKey = `outbox:${activeOutbox.at(-1)?.clientMessageId}`
+  }
+
+  /**
+   * T023 ack tracking: ids rendered as LOCAL rows in the previous
+   * committed render. A server message with such an id has just
+   * replaced the optimistic «отправляется»/«не отправлено» row the
+   * user saw — its fresh ✓ stamp mounts WITH the tickStamp
+   * (prototype sendMessage ack). Written only in a post-commit
+   * effect (never during render): a chat switch back, a pagination
+   * prepend or a refetch stays quiet because their ids were never
+   * locally displayed here. The ref itself is declared before the
+   * T079 autoscroll effect below, which reads the pre-commit set on
+   * the ack commit — the UPDATING effect stays after it, so the
+   * rewrite always lands once the reader is done.
+   */
   const localIdsRef = useRef<ReadonlySet<string>>(new Set())
+
+  /**
+   * T079 bottom autoscroll: an own send always lands in view — the
+   * optimistic outbox row AND the server ack that replaces it (the
+   * id was displayed locally one commit ago — `localIdsRef` still
+   * holds the pre-commit set when this effect runs first). Any OTHER
+   * append (a new incoming `message.created`, an own message from
+   * another device) scrolls only while the user rides the bottom
+   * edge — reading history is never yanked. A fresh open (mount, or
+   * the empty window of a chat switch resetting both keys) only ARMS
+   * the tracking: the T078 unread seat owns the open scroll.
+   * Prepends never reach here (both keys unchanged), which keeps the
+   * T053 anchor the only writer of prepend scrolls.
+   */
+  useEffect(() => {
+    const previousServerId = lastServerIdRef.current
+    const previousLocalKey = lastLocalKeyRef.current
+    lastServerIdRef.current = lastServerId
+    lastLocalKeyRef.current = lastLocalKey
+    const list = listRef.current
+    if (list === null) {
+      return
+    }
+    const serverAppended =
+      lastServerId !== undefined &&
+      previousServerId !== undefined &&
+      lastServerId !== previousServerId
+    const localAppended = lastLocalKey !== undefined && lastLocalKey !== previousLocalKey
+    if (!serverAppended && !localAppended) {
+      return
+    }
+    const ownAppend =
+      localAppended ||
+      (serverAppended && lastServerId !== undefined && localIdsRef.current.has(lastServerId))
+    if (!ownAppend && !bottomRef.current) {
+      return
+    }
+    list.scrollTop = list.scrollHeight
+  })
+
   useEffect(() => {
     localIdsRef.current = new Set(
       [...activePending, ...activeOutbox].map((entry) => entry.clientMessageId),
@@ -421,6 +588,16 @@ export function MessageList({
   const meAvatarSource = meUsername ?? currentUserId
   const incomingAvatarSource = (senderId: string): string =>
     senderNames?.get(senderId) ?? peerUsername ?? senderId
+
+  // T078: the seat anchor — the FIRST unread incoming row of the
+  // open-time watermark (unread outgoing rows never anchor the seat:
+  // only incoming messages carry unread semantics, №12/№13).
+  let firstUnreadId: string | undefined
+  if (unreadFromSeq !== null) {
+    firstUnreadId = messages.find(
+      (message) => message.senderId !== currentUserId && message.seq > unreadFromSeq,
+    )?.id
+  }
 
   if (messages.length === 0 && activePending.length === 0 && activeOutbox.length === 0) {
     return <p className="messenger-empty">Сообщений пока нет</p>
@@ -462,6 +639,7 @@ export function MessageList({
               sender={sender}
               avatarSource={outgoing ? meAvatarSource : incomingAvatarSource(message.senderId)}
               stampAnim={localIdsRef.current.has(message.id)}
+              unreadAnchor={message.id === firstUnreadId}
             />
           </Fragment>
         )

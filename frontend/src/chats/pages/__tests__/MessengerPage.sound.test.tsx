@@ -66,6 +66,7 @@ const { mockGetCurrentUser, mockChats, mockGroups, mockSse, mockPresence, mockSo
     mockPresence: {
       fetchPresenceSettings: vi.fn(),
       updatePresenceSettings: vi.fn(),
+      createPresenceHeartbeat: vi.fn(() => ({ updateConnectionId: vi.fn(), stop: vi.fn() })),
     },
     mockSound: {
       chimeOnRealtimeIncoming: vi.fn(),

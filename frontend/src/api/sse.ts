@@ -89,6 +89,15 @@ export type SseEventListener = (data: string) => void
 
 export interface SseConnection {
   subscribe(eventType: string, listener: SseEventListener): () => void
+  /**
+   * The №37 404 recovery (007 contracts/presence-api.md §2; 008 T076):
+   * abort the current transport and re-open IMMEDIATELY — the presence
+   * registration of this stream's connectionId is dead, so waiting for
+   * a `:ka` timeout or the backoff would only prolong the dead-id
+   * window. Subscriptions survive; the fresh connection re-delivers
+   * the `retry:`/`connected` opening frames per the №18 contract.
+   */
+  reconnect(): void
   close(): void
 }
 
@@ -98,7 +107,7 @@ export interface StreamUserEventsOptions {
 
 export function streamUserEvents(options?: StreamUserEventsOptions): SseConnection {
   const listeners = new Map<string, Set<SseEventListener>>()
-  const controller = new AbortController()
+  let controller = new AbortController()
 
   const dispatch = (event: ParsedSseEvent): void => {
     const current = listeners.get(event.type)
@@ -110,6 +119,11 @@ export function streamUserEvents(options?: StreamUserEventsOptions): SseConnecti
     }
   }
 
+  function start(): void {
+    controller = new AbortController()
+    void runStream(controller.signal, options?.onOpen, dispatch)
+  }
+
   const connection: SseConnection = {
     subscribe(eventType: string, listener: SseEventListener): () => void {
       const existing = listeners.get(eventType) ?? new Set<SseEventListener>()
@@ -119,12 +133,16 @@ export function streamUserEvents(options?: StreamUserEventsOptions): SseConnecti
         existing.delete(listener)
       }
     },
+    reconnect(): void {
+      controller.abort()
+      start()
+    },
     close(): void {
       controller.abort()
     },
   }
 
-  void runStream(controller.signal, options?.onOpen, dispatch)
+  start()
   return connection
 }
 

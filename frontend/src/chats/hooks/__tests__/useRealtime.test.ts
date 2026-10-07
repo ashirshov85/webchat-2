@@ -12,6 +12,7 @@ vi.mock('../../../api/sse', () => sse)
 interface MockStream {
   onOpen: (() => void) | undefined
   close: Mock
+  reconnect: Mock
   emit(eventType: string, data: string): void
 }
 
@@ -20,6 +21,7 @@ function installStream(): MockStream {
   const mock: MockStream = {
     onOpen: undefined,
     close: vi.fn(),
+    reconnect: vi.fn(),
     emit(eventType, data) {
       listeners.get(eventType)?.(data)
     },
@@ -34,6 +36,7 @@ function installStream(): MockStream {
         }
       },
       close: mock.close,
+      reconnect: mock.reconnect,
     }
   })
   return mock
@@ -247,5 +250,124 @@ describe('useRealtime onOpen notifications', () => {
     })
 
     expect(listener).not.toHaveBeenCalled()
+  })
+})
+
+describe('useRealtime connected frames (007 №18 opening frame; 008 T076)', () => {
+  const CONNECTION_ID = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+
+  function emitConnected(stream: MockStream, connectionId: string): void {
+    act(() => {
+      stream.emit('connected', JSON.stringify({ connectionId }))
+    })
+  }
+
+  it('delivers the connectionId of every connected frame to onConnected listeners', () => {
+    const stream = installStream()
+    const listener = vi.fn()
+    const { current } = mountRealtime()
+
+    act(() => {
+      current.onConnected(listener)
+    })
+
+    emitConnected(stream, CONNECTION_ID)
+    emitConnected(stream, '99999999-9999-4999-8999-999999999999')
+
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(listener).toHaveBeenNthCalledWith(1, CONNECTION_ID)
+    expect(listener).toHaveBeenNthCalledWith(2, '99999999-9999-4999-8999-999999999999')
+  })
+
+  it('replays the CURRENT connectionId to a late subscriber (the wiring may mount after the stream connected)', () => {
+    const stream = installStream()
+    const { current } = mountRealtime()
+
+    emitConnected(stream, CONNECTION_ID)
+
+    const late = vi.fn()
+    act(() => {
+      current.onConnected(late)
+    })
+
+    expect(late).toHaveBeenCalledTimes(1)
+    expect(late).toHaveBeenCalledWith(CONNECTION_ID)
+  })
+
+  it('ignores malformed connected frames without throwing or latching garbage', () => {
+    const stream = installStream()
+    const listener = vi.fn()
+    const { current } = mountRealtime()
+
+    act(() => {
+      current.onConnected(listener)
+    })
+
+    act(() => {
+      stream.emit('connected', 'not json at all')
+      stream.emit('connected', JSON.stringify({}))
+      stream.emit('connected', JSON.stringify({ connectionId: 42 }))
+    })
+    emitConnected(stream, CONNECTION_ID)
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(listener).toHaveBeenCalledWith(CONNECTION_ID)
+  })
+
+  it('stops connected notifications after the returned unsubscribe is called', () => {
+    const stream = installStream()
+    const listener = vi.fn()
+    const { current } = mountRealtime()
+
+    let unsubscribe: Unsubscribe | undefined
+    act(() => {
+      unsubscribe = current.onConnected(listener)
+    })
+    act(() => {
+      unsubscribe?.()
+    })
+
+    emitConnected(stream, CONNECTION_ID)
+
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('forgets the latched connectionId once the last consumer releases the stream', () => {
+    const stream = installStream()
+    const { current } = mountRealtime()
+
+    emitConnected(stream, CONNECTION_ID)
+    mounted[0]!.unmount()
+
+    const second = installStream()
+    const { current: remounted } = mountRealtime()
+    const late = vi.fn()
+    act(() => {
+      remounted.onConnected(late)
+    })
+
+    expect(late).not.toHaveBeenCalled()
+    emitConnected(second, '99999999-9999-4999-8999-999999999999')
+    expect(late).toHaveBeenCalledWith('99999999-9999-4999-8999-999999999999')
+    expect(current).toBeDefined()
+  })
+})
+
+describe('useRealtime reconnect passthrough (007 presence-api.md §2; 008 T076)', () => {
+  it('reconnect() delegates to the live SSE connection, not a null one', () => {
+    installStream()
+    const { current } = mountRealtime()
+    const stream = installStream()
+
+    // No connection is open after every consumer unmounts.
+    mounted[0]!.unmount()
+    expect(() => {
+      current.reconnect()
+    }).not.toThrow()
+
+    const { current: second } = mountRealtime()
+    second.reconnect()
+
+    expect(stream.reconnect).toHaveBeenCalledTimes(1)
   })
 })

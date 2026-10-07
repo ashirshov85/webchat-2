@@ -389,6 +389,37 @@ describe('streamUserEvents connection', () => {
     expect(onOpen).toHaveBeenCalledTimes(1)
   })
 
+  it('reconnect() re-opens the stream IMMEDIATELY — the №37 404 recovery skips the backoff', async () => {
+    const first = sseStream()
+    const second = sseStream()
+    fetchMock
+      .mockReturnValueOnce(Promise.resolve(first.response))
+      .mockReturnValueOnce(Promise.resolve(second.response))
+    const onOpen = vi.fn()
+
+    connection = streamUserEvents({ onOpen })
+    await flush()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(onOpen).toHaveBeenCalledTimes(1)
+
+    connection.reconnect()
+    await flush()
+
+    // No 500 ms backoff: the registration of the old connectionId is
+    // dead, a fresh `connected` frame must arrive as soon as possible.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(bearerOf(fetchMock.mock.calls[1]!)).toBe('Bearer access-1')
+    await flush()
+    expect(onOpen).toHaveBeenCalledTimes(2)
+
+    // The aborted loop must never fetch again: dropping the old body
+    // later (the mock transport does not reject on abort by itself)
+    // must not resurrect a second connection attempt.
+    first.drop()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('cancels pending reconnection attempts after close()', async () => {
     const stream = sseStream()
     fetchMock.mockReturnValueOnce(Promise.resolve(stream.response))

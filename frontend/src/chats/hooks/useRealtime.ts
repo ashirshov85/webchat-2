@@ -40,7 +40,10 @@
  * `presence.updated` frames; they are handed to the presence
  * listeners (`onPresenceUpdated`, consumed by presence/usePresence)
  * untouched — the strictly-greater-rev merge rule lives in the
- * presence store, not here (FR-003).
+ * presence store, not here (FR-003). The №18 `connected` opening
+ * frames (presence-events.md §1) follow the same discipline through
+ * `onConnected` (the current connectionId is replayed to late
+ * subscribers, 008 T076); `reconnect` is the №37 404 recovery seam.
  */
 import { useEffect, useRef } from 'react'
 import type { ChatReadEvent, MessageCreatedEvent } from '../../api/chats'
@@ -61,10 +64,21 @@ export type GroupEventListener = (event: GroupRealtimeEvent) => void
 
 export type PresenceUpdatedListener = (event: PresenceUpdatedEvent) => void
 
+export type ConnectedListener = (connectionId: string) => void
+
 export interface RealtimeStream {
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe
   onChatRead(chatId: string | null, listener: ChatReadListener): Unsubscribe
   onOpen(listener: RealtimeOpenListener): Unsubscribe
+  /**
+   * Subscribes to every №18 `connected` opening frame (feature 007):
+   * each (re)connection mints a FRESH connectionId — the id the №37
+   * presence heartbeat renews. The frame is opening-only, and a
+   * consumer may mount AFTER the stream connected, so a late
+   * subscriber immediately receives the CURRENT id; malformed frames
+   * never reach the listener (008 T076).
+   */
+  onConnected(listener: ConnectedListener): Unsubscribe
   /**
    * Subscribes to every №18 group frame of the user's stream
    * (feature 006): the listener applies the described STATE
@@ -79,6 +93,13 @@ export interface RealtimeStream {
    * duplicates and stale frames are consumer-side no-ops.
    */
   onPresenceUpdated(listener: PresenceUpdatedListener): Unsubscribe
+  /**
+   * The №37 404 recovery (presence-api.md §2; 008 T076): the presence
+   * registration of the current connectionId is dead — re-open the
+   * transport immediately; the new `connected` frame restarts the
+   * heartbeat loop with the new id.
+   */
+  reconnect(): void
 }
 
 class UserEventStream implements RealtimeStream {
@@ -87,8 +108,10 @@ class UserEventStream implements RealtimeStream {
   private readonly messageListeners = new Map<string | null, Set<MessageCreatedListener>>()
   private readonly chatReadListeners = new Map<string | null, Set<ChatReadListener>>()
   private readonly openListeners = new Set<RealtimeOpenListener>()
+  private readonly connectedListeners = new Set<ConnectedListener>()
   private readonly groupListeners = new Set<GroupEventListener>()
   private readonly presenceListeners = new Set<PresenceUpdatedListener>()
+  private lastConnectionId: string | null = null
 
   retain(): void {
     this.refCount += 1
@@ -117,6 +140,9 @@ class UserEventStream implements RealtimeStream {
     connection.subscribe('presence.updated', (data) => {
       this.handlePresenceUpdated(data)
     })
+    connection.subscribe('connected', (data) => {
+      this.handleConnected(data)
+    })
   }
 
   release(): void {
@@ -127,9 +153,11 @@ class UserEventStream implements RealtimeStream {
     this.connection?.close()
     this.connection = null
     this.refCount = 0
+    this.lastConnectionId = null
     this.messageListeners.clear()
     this.chatReadListeners.clear()
     this.openListeners.clear()
+    this.connectedListeners.clear()
     this.groupListeners.clear()
     this.presenceListeners.clear()
   }
@@ -147,6 +175,23 @@ class UserEventStream implements RealtimeStream {
     return () => {
       this.openListeners.delete(listener)
     }
+  }
+
+  onConnected(listener: ConnectedListener): Unsubscribe {
+    // The frame is opening-only: a consumer mounting after the stream
+    // connected would otherwise never learn the id until the NEXT
+    // reconnect — replay the CURRENT one (008 T076).
+    if (this.lastConnectionId !== null) {
+      listener(this.lastConnectionId)
+    }
+    this.connectedListeners.add(listener)
+    return () => {
+      this.connectedListeners.delete(listener)
+    }
+  }
+
+  reconnect(): void {
+    this.connection?.reconnect()
   }
 
   onGroupEvent(listener: GroupEventListener): Unsubscribe {
@@ -218,6 +263,17 @@ class UserEventStream implements RealtimeStream {
     }
     for (const listener of this.presenceListeners) {
       listener(event)
+    }
+  }
+
+  private handleConnected(data: string): void {
+    const connectionId = parseConnectionId(data)
+    if (connectionId === null) {
+      return
+    }
+    this.lastConnectionId = connectionId
+    for (const listener of this.connectedListeners) {
+      listener(connectionId)
     }
   }
 
@@ -330,6 +386,23 @@ function isPresenceUpdatedEvent(value: unknown): value is PresenceUpdatedEvent {
     (candidate.status === 'online' || candidate.status === 'offline') &&
     typeof candidate.rev === 'number'
   )
+}
+
+/** №18 `connected` opening-frame payload guard (feature 007, presence-events.md §1). */
+function parseConnectionId(data: string): string | null {
+  let payload: unknown
+  try {
+    payload = JSON.parse(data)
+  } catch {
+    return null
+  }
+  if (typeof payload !== 'object' || payload === null) {
+    return null
+  }
+  const candidate = payload as { connectionId?: unknown }
+  return typeof candidate.connectionId === 'string' && candidate.connectionId.length > 0
+    ? candidate.connectionId
+    : null
 }
 
 function isGroupEventPayload(eventType: GroupEventType, value: unknown): boolean {
