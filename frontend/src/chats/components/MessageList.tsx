@@ -99,6 +99,19 @@
  * pages (anchorHeightRef, T053) is untouched — the two scrolls live
  * in separate effects and never act in the same commit.
  *
+ * Bottom autoscroll (bug 2, T079): a send always seats the feed at
+ * the bottom — the optimistic outbox row and the server ack that
+ * replaces it scroll even while the user reads history (the ack is
+ * recognized through the T023 `localIdsRef` pre-commit set). Any
+ * other append — a new incoming `message.created`, an own message
+ * from another device — scrolls ONLY while the user rides the bottom
+ * edge (≤ BOTTOM_STICKY_THRESHOLD, latched by real scroll events);
+ * reading history is never yanked. Older-page prepends keep the T053
+ * viewport anchor: the bottom row keys do not change, so the sticky
+ * effect stays quiet. A fresh open (mount or the empty window of a
+ * chat switch) only arms the tracking — the T078 seat owns the open
+ * scroll and the first paint of history never jumps.
+ *
  * Delivery-stamp animation (US1, T023, FR-018 edge case): the
  * engraved tick plays the prototype `tickStamp` (.32s,
  * design-tokens §5) ONLY when the stamp of an ALREADY DISPLAYED row
@@ -135,6 +148,14 @@ import './states.css'
 
 /** Distance from the top (px) that triggers an older-page request. */
 const TOP_LOAD_THRESHOLD = 48
+
+/**
+ * Distance from the bottom edge (px) that still counts as «the user
+ * rides the bottom» — the sticky-autoscroll gate of new incoming
+ * messages (T079): inside the band the feed follows the append,
+ * outside it the user is reading history and the scroll stays put.
+ */
+const BOTTOM_STICKY_THRESHOLD = 32
 
 /** Feed avatar size — design-tokens §4 (лента 34px). */
 const FEED_AVATAR_SIZE = 34
@@ -391,6 +412,19 @@ export function MessageList({
   /** scrollHeight captured when an older page is requested — the anchor. */
   const anchorHeightRef = useRef<number | null>(null)
   const firstMessageIdRef = useRef<string | undefined>(messages[0]?.id)
+  /**
+   * Whether the viewport rides the bottom edge (T079) — latched by
+   * real scroll events only: a fresh open is NOT «at the bottom»
+   * (the №16 window renders from the top, the T078 seat owns the
+   * open scroll), and once the user scrolls, every event refreshes
+   * the latch (including the programmatic shifts of the effects —
+   * an autoscroll to the bottom re-arms the stickiness).
+   */
+  const bottomRef = useRef(false)
+  /** Bottom-most server row of the previous commit (T079). */
+  const lastServerIdRef = useRef<string | undefined>(undefined)
+  /** Bottom-most local row of the previous commit (T079). */
+  const lastLocalKeyRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     const list = listRef.current
@@ -411,7 +445,15 @@ export function MessageList({
 
   const handleScroll = () => {
     const list = listRef.current
-    if (list === null || loadingOlder || !hasOlder || onLoadOlder === undefined) {
+    if (list === null) {
+      return
+    }
+    // T079: refresh the bottom-edge latch on EVERY scroll — the
+    // append effect reads «was the user at the bottom BEFORE the new
+    // row landed», and this handler is the only witness of that.
+    bottomRef.current =
+      list.scrollHeight - list.scrollTop - list.clientHeight <= BOTTOM_STICKY_THRESHOLD
+    if (loadingOlder || !hasOlder || onLoadOlder === undefined) {
       return
     }
     if (list.scrollTop <= TOP_LOAD_THRESHOLD) {
@@ -460,15 +502,72 @@ export function MessageList({
   const activePending = pending.filter((entry) => !confirmedIds.has(entry.clientMessageId))
   const activeOutbox = outbox.filter((entry) => !confirmedIds.has(entry.clientMessageId))
 
-  // T023 ack tracking: ids rendered as LOCAL rows in the previous
-  // committed render. A server message with such an id has just
-  // replaced the optimistic «отправляется»/«не отправлено» row the
-  // user saw — its fresh ✓ stamp mounts WITH the tickStamp
-  // (prototype sendMessage ack). Written only in a post-commit
-  // effect (never during render): a chat switch back, a pagination
-  // prepend or a refetch stays quiet because their ids were never
-  // locally displayed here.
+  // T079 append detection: the bottom-most SERVER row and the
+  // bottom-most LOCAL row of the window. An older-page prepend keeps
+  // both keys (the newest content does not move), an append changes
+  // exactly one of them.
+  const lastServerId = messages[messages.length - 1]?.id
+  const lastLocalKey =
+    activePending.length > 0
+      ? `pending:${activePending[activePending.length - 1]?.clientMessageId}`
+      : activeOutbox.length > 0
+        ? `outbox:${activeOutbox[activeOutbox.length - 1]?.clientMessageId}`
+        : undefined
+
+  /**
+   * T023 ack tracking: ids rendered as LOCAL rows in the previous
+   * committed render. A server message with such an id has just
+   * replaced the optimistic «отправляется»/«не отправлено» row the
+   * user saw — its fresh ✓ stamp mounts WITH the tickStamp
+   * (prototype sendMessage ack). Written only in a post-commit
+   * effect (never during render): a chat switch back, a pagination
+   * prepend or a refetch stays quiet because their ids were never
+   * locally displayed here. The ref itself is declared before the
+   * T079 autoscroll effect below, which reads the pre-commit set on
+   * the ack commit — the UPDATING effect stays after it, so the
+   * rewrite always lands once the reader is done.
+   */
   const localIdsRef = useRef<ReadonlySet<string>>(new Set())
+
+  /**
+   * T079 bottom autoscroll: an own send always lands in view — the
+   * optimistic outbox row AND the server ack that replaces it (the
+   * id was displayed locally one commit ago — `localIdsRef` still
+   * holds the pre-commit set when this effect runs first). Any OTHER
+   * append (a new incoming `message.created`, an own message from
+   * another device) scrolls only while the user rides the bottom
+   * edge — reading history is never yanked. A fresh open (mount, or
+   * the empty window of a chat switch resetting both keys) only ARMS
+   * the tracking: the T078 unread seat owns the open scroll.
+   * Prepends never reach here (both keys unchanged), which keeps the
+   * T053 anchor the only writer of prepend scrolls.
+   */
+  useEffect(() => {
+    const previousServerId = lastServerIdRef.current
+    const previousLocalKey = lastLocalKeyRef.current
+    lastServerIdRef.current = lastServerId
+    lastLocalKeyRef.current = lastLocalKey
+    const list = listRef.current
+    if (list === null) {
+      return
+    }
+    const serverAppended =
+      lastServerId !== undefined &&
+      previousServerId !== undefined &&
+      lastServerId !== previousServerId
+    const localAppended = lastLocalKey !== undefined && lastLocalKey !== previousLocalKey
+    if (!serverAppended && !localAppended) {
+      return
+    }
+    const ownAppend =
+      localAppended ||
+      (serverAppended && lastServerId !== undefined && localIdsRef.current.has(lastServerId))
+    if (!ownAppend && !bottomRef.current) {
+      return
+    }
+    list.scrollTop = list.scrollHeight
+  })
+
   useEffect(() => {
     localIdsRef.current = new Set(
       [...activePending, ...activeOutbox].map((entry) => entry.clientMessageId),

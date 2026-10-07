@@ -6,6 +6,7 @@ import type { ChatView, Message, MessagePage } from '../../../api/chats'
 import { formatDate, formatTime } from '../../../ui/time'
 import { useChatMessages } from '../../hooks/useChatMessages'
 import type { SyncPageUpdate } from '../../hooks/useChatMessages'
+import type { OutboxRecord } from '../../outbox'
 import { MessageList } from '../MessageList'
 
 const sse = vi.hoisted(() => ({ streamUserEvents: vi.fn() }))
@@ -941,5 +942,249 @@ describe('MessageList scroll to the first unread incoming on open (bug 2, T078)'
       expect(scrolled).toHaveLength(1)
     })
     expect(scrolled[0]?.element.textContent).toContain('первое непрочитанное')
+  })
+})
+
+describe('MessageList scroll to the bottom on send and new incoming (bug 2, T079)', () => {
+  /**
+   * T079: a send always seats the feed at the bottom — the optimistic
+   * outbox row AND the server ack that replaces it scroll even while
+   * the user reads history. A new incoming `message.created` scrolls
+   * ONLY when the user rides the bottom edge — reading history is
+   * never yanked. Older-page prepends keep the T053 viewport anchor
+   * untouched (the bottom row identity does not change). A fresh open
+   * (mount or the empty window of a chat switch) only ARMS the
+   * tracking: the T078 unread seat owns the open scroll, the first
+   * paint of history never jumps.
+   *
+   * jsdom ships no layout: per-test metrics drive the scroll
+   * container (`clientHeight` included — the bottom-edge latch needs
+   * it), `fireEvent.scroll` plays the user's scroll, and the asserts
+   * pin WHICH offset the effect writes. In real browsers the append
+   * lands first and `scrollTop = scrollHeight` reaches the true
+   * bottom; here the mocked `scrollHeight` stands in for it.
+   */
+
+  interface ScrollMetrics {
+    scrollTop: number
+    scrollHeight: number
+    clientHeight: number
+  }
+
+  function installScrollMetrics(element: HTMLElement, metrics: ScrollMetrics): void {
+    Object.defineProperty(element, 'scrollTop', {
+      configurable: true,
+      get: () => metrics.scrollTop,
+      set: (value: number) => {
+        metrics.scrollTop = value
+      },
+    })
+    Object.defineProperty(element, 'scrollHeight', {
+      configurable: true,
+      get: () => metrics.scrollHeight,
+    })
+    Object.defineProperty(element, 'clientHeight', {
+      configurable: true,
+      get: () => metrics.clientHeight,
+    })
+  }
+
+  const WINDOW: Message[] = [
+    dialogMessage('w-in-1', 1, PEER, 'история 1'),
+    dialogMessage('w-out-2', 2, ME, 'история 2'),
+    dialogMessage('w-in-3', 3, PEER, 'история 3'),
+  ]
+
+  const SENDING: OutboxRecord = {
+    clientMessageId: 'cm-send-1',
+    chatId: 'chat-1',
+    text: 'исходящее',
+    state: 'sending',
+  }
+
+  /** 600-100-400 = 100px from the bottom — the user reads history. */
+  const READING_HISTORY: ScrollMetrics = { scrollTop: 100, scrollHeight: 600, clientHeight: 400 }
+
+  it('seats the feed at the bottom when the optimistic row appears, even while reading history', () => {
+    const { container, rerender } = render(<MessageList messages={WINDOW} currentUserId={ME} />)
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(<MessageList messages={WINDOW} currentUserId={ME} outbox={[SENDING]} />)
+
+    // Own send is unconditional — the fresh row must land in view.
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('seats the feed at the bottom again when the server ack replaces the local row', () => {
+    const props = (messages: readonly Message[], outbox?: readonly OutboxRecord[]) => (
+      <MessageList messages={messages} currentUserId={ME} outbox={outbox} />
+    )
+    const { container, rerender } = render(props(WINDOW))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+
+    // The send scrolls (unconditional), then the user scrolls BACK UP
+    // to read history before the acknowledgement lands.
+    rerender(props(WINDOW, [SENDING]))
+    expect(metrics.scrollTop).toBe(600)
+    metrics.scrollTop = 100
+    fireEvent.scroll(list)
+
+    // The ack arrives: the local row is replaced by the server copy
+    // (id = clientMessageId) — the confirmation stays in view.
+    rerender(props([...WINDOW, dialogMessage('cm-send-1', 4, ME, 'исходящее')], []))
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('follows a new incoming message while the user rides the bottom edge', () => {
+    const { container, rerender } = render(<MessageList messages={WINDOW} currentUserId={ME} />)
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    // 600-560-400 < 0 — at the bottom edge.
+    const metrics: ScrollMetrics = { scrollTop: 560, scrollHeight: 600, clientHeight: 400 }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(
+      <MessageList
+        messages={[...WINDOW, dialogMessage('w-in-4', 4, PEER, 'новое входящее')]}
+        currentUserId={ME}
+      />,
+    )
+
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('keeps the scroll untouched for a new incoming while the user reads history', () => {
+    const { container, rerender } = render(<MessageList messages={WINDOW} currentUserId={ME} />)
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(
+      <MessageList
+        messages={[...WINDOW, dialogMessage('w-in-4', 4, PEER, 'новое входящее')]}
+        currentUserId={ME}
+      />,
+    )
+
+    // The user is 100px-equivalent deep in history — no yank.
+    expect(metrics.scrollTop).toBe(100)
+  })
+
+  it('never scrolls on open: the first window only arms the tracking', () => {
+    const { container } = render(<MessageList messages={WINDOW} currentUserId={ME} />)
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+
+    expect(container.querySelectorAll('.message')).toHaveLength(3)
+    expect(metrics.scrollTop).toBe(100)
+  })
+
+  it('re-arms on the chat switch: the next open does not jump to the bottom', () => {
+    const props = (messages: readonly Message[]) => (
+      <MessageList messages={messages} currentUserId={ME} />
+    )
+    const { container, rerender } = render(props(WINDOW))
+    const firstList = container.querySelector('.message-list') as HTMLOListElement
+    const metrics: ScrollMetrics = { scrollTop: 560, scrollHeight: 600, clientHeight: 400 }
+    installScrollMetrics(firstList, metrics)
+    fireEvent.scroll(firstList)
+
+    // Chat switch: the hook resets the window to [] (empty state, no
+    // list element), then the next chat's first page renders a FRESH
+    // <ol> — the shared metrics object keeps standing in for it.
+    rerender(props([]))
+    rerender(
+      props([dialogMessage('n-in-1', 1, PEER, 'новый чат'), dialogMessage('n-in-2', 2, ME, 'ок')]),
+    )
+    const secondList = container.querySelector('.message-list') as HTMLOListElement
+    metrics.scrollHeight = 800
+    installScrollMetrics(secondList, metrics)
+
+    expect(secondList).not.toBe(firstList)
+    expect(metrics.scrollTop).toBe(560)
+  })
+
+  it('keeps the loadOlder viewport anchor when an older page prepends: no bottom jump', () => {
+    const onLoadOlder = vi.fn()
+    const props = (messages: readonly Message[]) => (
+      <MessageList
+        messages={messages}
+        currentUserId={ME}
+        hasOlder
+        loadingOlder={false}
+        onLoadOlder={onLoadOlder}
+      />
+    )
+    const { container, rerender } = render(props(WINDOW))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics: ScrollMetrics = { scrollTop: 0, scrollHeight: 600, clientHeight: 400 }
+    installScrollMetrics(list, metrics)
+
+    // Scroll to the top: the older page is requested with the anchor
+    // captured (T053) — the user is far from the bottom here.
+    fireEvent.scroll(list)
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+
+    // The older page prepends and grows the content above by 400px:
+    // the viewport stays pinned (anchor shift 0→400), and the sticky
+    // effect must NOT dump the user at the bottom (1000).
+    metrics.scrollHeight = 1000
+    rerender(
+      props([
+        dialogMessage('o-in--1', -1, PEER, 'старая 1'),
+        dialogMessage('o-in-0', 0, ME, 'старая 2'),
+        ...WINDOW,
+      ]),
+    )
+
+    expect(metrics.scrollTop).toBe(400)
+  })
+
+  it('follows a new incoming while an optimistic row is still pending (the server branch stays live)', () => {
+    const props = (messages: readonly Message[], outbox?: readonly OutboxRecord[]) => (
+      <MessageList messages={messages} currentUserId={ME} outbox={outbox} />
+    )
+    const { container, rerender } = render(props(WINDOW))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics: ScrollMetrics = { scrollTop: 560, scrollHeight: 600, clientHeight: 400 }
+    installScrollMetrics(list, metrics)
+
+    // Own send lands (unconditional scroll), the user stays at the
+    // bottom edge, the ack is still in flight.
+    rerender(props(WINDOW, [SENDING]))
+    metrics.scrollTop = 590
+    fireEvent.scroll(list)
+
+    // A peer's message arrives BEFORE the ack — it renders above the
+    // optimistic row, the feed follows it down.
+    rerender(props([...WINDOW, dialogMessage('w-in-4', 4, PEER, 'ответ собеседника')], [SENDING]))
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('scrolls a realtime message.created to the bottom through the live wiring (MessengerPage path)', async () => {
+    const stream = installStream()
+    mockedListMessages.mockResolvedValueOnce(dialogPage(WINDOW))
+
+    const { container } = render(<DialogWindow chatId="chat-1" currentUserId={ME} />)
+    await waitFor(() => {
+      expect(container.querySelectorAll('.message')).toHaveLength(3)
+    })
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics: ScrollMetrics = { scrollTop: 560, scrollHeight: 600, clientHeight: 400 }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    emitIncoming(stream, 'w-in-4', 4)
+    await waitFor(() => {
+      expect(container.querySelectorAll('.message')).toHaveLength(4)
+    })
+    expect(metrics.scrollTop).toBe(600)
   })
 })
