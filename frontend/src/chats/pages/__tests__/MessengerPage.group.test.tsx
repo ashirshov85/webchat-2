@@ -305,11 +305,16 @@ describe('MessengerPage group window from the unified list (US1)', () => {
 
     expect(screen.getByRole('heading', { level: 2, name: 'alice' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Настройки чата' })).toBeInTheDocument()
-    // Presence (007, T022): the 1:1 header is the ONLY surface with a
-    // VISIBLE text label — neutral «неизвестно» before the first №36
-    // snapshot (never a false «офлайн»).
+    // Presence (007, T022 → bug 12/T090): the 1:1 header is the ONLY
+    // surface with a presence indicator — but the neutral «unknown»
+    // (before the first №36 snapshot) renders NOTHING: no lamp, no
+    // text (never a false «офлайн»); only the empty .status-row keeps
+    // the header height until №36 converges.
     const directDialog = screen.getByRole('region', { name: 'Окно диалога' })
-    expect(within(directDialog).getByText('неизвестно')).toBeVisible()
+    expect(within(directDialog).queryByText('неизвестно')).toBeNull()
+    expect(within(directDialog).queryByText('офлайн')).toBeNull()
+    expect(directDialog.querySelector('.chat-head .lamp')).toBeNull()
+    expect(directDialog.querySelector('.chat-head .status-row')).not.toBeNull()
   })
 
   it('gear «Участники»/«Редактировать чат» open the members/edit forms of the single shell (T055/T056/T057)', async () => {
