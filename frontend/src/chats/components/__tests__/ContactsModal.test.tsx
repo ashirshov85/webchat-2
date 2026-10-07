@@ -118,19 +118,40 @@ function chatViewOf(item: ChatListItem): ChatView {
 function renderModal(chats: readonly ChatListItem[] = [ALICE_CHAT, CAROL_CHAT]) {
   const onOpenChat = vi.fn()
   const onChatDeleted = vi.fn()
+  const onContactBlockToggled = vi.fn()
+  const onContactRemoved = vi.fn()
   const view = render(
     <ToastProvider>
-      <ContactsModal chats={chats} onOpenChat={onOpenChat} onChatDeleted={onChatDeleted} />
+      <ContactsModal
+        chats={chats}
+        onOpenChat={onOpenChat}
+        onChatDeleted={onChatDeleted}
+        onContactBlockToggled={onContactBlockToggled}
+        onContactRemoved={onContactRemoved}
+      />
     </ToastProvider>,
   )
   const rerenderChats = (next: readonly ChatListItem[]) => {
     view.rerender(
       <ToastProvider>
-        <ContactsModal chats={next} onOpenChat={onOpenChat} onChatDeleted={onChatDeleted} />
+        <ContactsModal
+          chats={next}
+          onOpenChat={onOpenChat}
+          onChatDeleted={onChatDeleted}
+          onContactBlockToggled={onContactBlockToggled}
+          onContactRemoved={onContactRemoved}
+        />
       </ToastProvider>,
     )
   }
-  return { onOpenChat, onChatDeleted, rerenderChats, ...view }
+  return {
+    onOpenChat,
+    onChatDeleted,
+    onContactBlockToggled,
+    onContactRemoved,
+    rerenderChats,
+    ...view,
+  }
 }
 
 /** Строка контакта по имени (прототипный хук .ctc-row, имя — в .c-name). */
@@ -453,6 +474,90 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
 
     expect(await screen.findByText('Internal Server Error')).toBeVisible()
     expect(rowOf(container, 'анна')).toBeVisible()
+  })
+})
+
+describe('ContactsModal синхронизация владельца после «⋯»-действий (T089, Bug 11)', () => {
+  /**
+   * Bug 11 (008 T089): успех №23/№24/№22 из «⋯»-меню сообщает владельцу
+   * оболочки (паттерн onChatDeleted T037) — страница рефетчит №12/№20, и
+   * пометка строки/композер/шестерёнка меняются живьём, без перезагрузки.
+   * Колбэки — только на УСПЕХ: сбой и отмена владельцу не докладывают.
+   */
+
+  it('успех №23 — onContactBlockToggled(userId, true) ровно один раз', async () => {
+    const { container, onContactBlockToggled } = renderModal()
+    await screen.findByText('alice')
+
+    openContactMenu(container, 'alice')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Заблокировать' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Заблокировать' }))
+
+    await waitFor(() => {
+      expect(mockedBlockUser).toHaveBeenCalledWith(ALICE)
+    })
+    await waitFor(() => {
+      expect(onContactBlockToggled).toHaveBeenCalledTimes(1)
+    })
+    expect(onContactBlockToggled).toHaveBeenLastCalledWith(ALICE, true)
+  })
+
+  it('успех №24 — onContactBlockToggled(userId, false)', async () => {
+    const { container, onContactBlockToggled } = renderModal()
+    await screen.findByText('анна')
+
+    openContactMenu(container, 'анна')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Разблокировать' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Разблокировать' }))
+
+    await waitFor(() => {
+      expect(mockedUnblockUser).toHaveBeenCalledWith(CAROL)
+    })
+    await waitFor(() => {
+      expect(onContactBlockToggled).toHaveBeenCalledTimes(1)
+    })
+    expect(onContactBlockToggled).toHaveBeenLastCalledWith(CAROL, false)
+  })
+
+  it('успех №22 — onContactRemoved(userId) ровно один раз', async () => {
+    // vi.clearAllMocks() не сбрасывает persistent mockRejectedValue
+    // сбой-теста выше — успех задаём явно.
+    mockedRemoveContact.mockResolvedValue(undefined)
+    const { container, onContactRemoved } = renderModal()
+    await screen.findByText('анна')
+
+    openContactMenu(container, 'анна')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить контакт' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }))
+
+    await waitFor(() => {
+      expect(mockedRemoveContact).toHaveBeenCalledWith(CAROL)
+    })
+    await waitFor(() => {
+      expect(onContactRemoved).toHaveBeenCalledTimes(1)
+    })
+    expect(onContactRemoved).toHaveBeenLastCalledWith(CAROL)
+  })
+
+  it('сбой №23/№22 — колбэки не вызываются (доклад только об успехе)', async () => {
+    mockedBlockUser.mockRejectedValue({ status: 500, title: 'Internal Server Error' })
+    const first = renderModal()
+    await screen.findByText('alice')
+    openContactMenu(first.container, 'alice')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Заблокировать' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Заблокировать' }))
+    expect(await screen.findByText('Internal Server Error')).toBeVisible()
+
+    mockedRemoveContact.mockRejectedValue({ status: 500, title: 'Internal Server Error' })
+    const second = renderModal()
+    await screen.findByText('анна')
+    openContactMenu(second.container, 'анна')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить контакт' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }))
+    expect(await screen.findByText('Internal Server Error')).toBeVisible()
+
+    expect(first.onContactBlockToggled).not.toHaveBeenCalled()
+    expect(second.onContactRemoved).not.toHaveBeenCalled()
   })
 })
 

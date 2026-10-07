@@ -45,6 +45,30 @@
   color: var(--muted-3);
 }
 
+/* FEED-ВАРИАНТ (bug 10 / T088): «Сообщений пока нет» (MessageList) и
+   «Чат не выбран» (MessengerPage) — прямые дети flex-колонки .chat
+   (messenger.css), растут на всё свободное место панели, чтобы композер
+   (flex:none) всегда стоял у её нижней границы, а не вплотную к
+   заглушке. Фон — дословный паритет ленты с сообщениями
+   .message-list.chat-scroll (message-list.css, прототип §7 .chat-scroll:
+   #140f08 + латунный radial-свет сверху + затемняющий overlay +
+   орнамент --pat-msg 240px). Сама загушка НЕ центрируется
+   вертикально — типографика/паддинги FR-032 выше остаются прижатыми
+   к ВЕРХНЕЙ части выросшего элемента. Скоуп `.chat >` не задевает
+   сайдбарные экземпляры (правило ниже). */
+.chat > .messenger-empty {
+  flex: 1;
+  min-height: 0;
+  background-color: #140f08;
+  background-image:
+    radial-gradient(130% 90% at 50% 0%, rgba(138, 106, 44, 0.12), transparent 55%),
+    linear-gradient(rgba(8, 6, 3, 0.28), rgba(8, 6, 3, 0.28)), var(--pat-msg);
+  background-size:
+    auto,
+    auto,
+    240px 240px;
+}
+
 /* Сайдбар: масштаб подсказки .sr-hint прототипа §5 (padding 10px) —
    «Загрузка чатов…», «Диалогов пока нет», «Ничего не найдено». */
 .chat-panel .messenger-empty {

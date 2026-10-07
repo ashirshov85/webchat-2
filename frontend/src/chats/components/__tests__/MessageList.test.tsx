@@ -1346,3 +1346,344 @@ describe('MessageList scroll to the bottom on send and new incoming (bug 2, T079
     expect(metrics.scrollTop).toBe(600)
   })
 })
+
+describe('MessageList seat convergence after the cold layout (bug 8а, T086)', () => {
+  /**
+   * T086(а): the open seat's `scrollIntoView({block:'end'})` runs
+   * against a COLD layout — `content-visibility: auto` keeps 64px
+   * placeholders until the first paint, so the browser may undershoot
+   * (the seat bottom above the fold — positive gap) or no-op entirely
+   * (the cold layout thinks everything fits; after the warm-up the
+   * seat bottom hangs BELOW the fold — negative gap). The post-paint
+   * correction must re-scroll in BOTH directions until the seat sits
+   * at the fold (|gap| ≤ 2), within a bounded frame budget.
+   *
+   * jsdom ships no layout and no `scrollIntoView`: the mock records
+   * the calls, the seat/list rects are per-test instance mocks, and
+   * the rAF correction frames are flushed by hand through a stubbed
+   * `requestAnimationFrame`.
+   */
+  let scrolled: Array<{ element: Element; block?: string }>
+  let rafQueue: Array<() => void>
+
+  /** Runs one hand-driven animation frame (the pending rAF callbacks). */
+  const flushRaf = (): void => {
+    const frame = rafQueue
+    rafQueue = []
+    for (const callback of frame) {
+      callback()
+    }
+  }
+
+  beforeEach(() => {
+    scrolled = []
+    rafQueue = []
+    Element.prototype.scrollIntoView = function (
+      this: Element,
+      options?: boolean | ScrollIntoViewOptions,
+    ): void {
+      scrolled.push({
+        element: this,
+        block: typeof options === 'object' && options !== null ? options.block : undefined,
+      })
+    }
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void): number => {
+      rafQueue.push(callback)
+      return rafQueue.length
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    // jsdom declares no own scrollIntoView — the mock is all there ever was.
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
+  const READ_WINDOW: Message[] = [
+    dialogMessage('c-in-1', 1, PEER, 'прочитанное 1'),
+    dialogMessage('c-out-2', 2, ME, 'прочитанное 2'),
+    dialogMessage('c-in-3', 3, PEER, 'прочитанное 3'),
+  ]
+
+  /** Instance-level rect mock: only the `bottom` edge drives the gap. */
+  function mockBottom(element: Element, bottom: () => number): void {
+    element.getBoundingClientRect = () => ({ bottom: bottom() }) as DOMRect
+  }
+
+  it('re-scrolls a seat that undershot the fold after the paint (positive gap)', () => {
+    const { container } = render(
+      <MessageList messages={READ_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
+    )
+    const anchor = container.querySelector('[data-seat-anchor]') as Element
+    let seatBottom = 380
+    mockBottom(container.querySelector('.message-list') as Element, () => 500)
+    mockBottom(anchor, () => seatBottom)
+
+    flushRaf()
+    // The warmed layout left the seat 120px ABOVE the fold — the
+    // correction fires (the T085 re-check saw only this direction).
+    expect(scrolled).toHaveLength(2)
+    expect(scrolled[1]?.block).toBe('end')
+
+    // The corrective scroll aligned the seat with the fold — the loop
+    // rests, no further scrollIntoView calls.
+    seatBottom = 500
+    flushRaf()
+    flushRaf()
+    expect(scrolled).toHaveLength(2)
+  })
+
+  it('re-scrolls a fully no-op seat: the anchor below the fold (negative gap)', () => {
+    const { container } = render(
+      <MessageList messages={READ_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
+    )
+    const anchor = container.querySelector('[data-seat-anchor]') as Element
+    let seatBottom = 720
+    mockBottom(container.querySelector('.message-list') as Element, () => 500)
+    mockBottom(anchor, () => seatBottom)
+
+    flushRaf()
+    // The cold layout fit everything (scrollIntoView no-op'd); after
+    // the warm-up the seat hangs 220px BELOW the fold — the old
+    // `gap > 2` check never fired here, the new |gap| one must.
+    expect(scrolled).toHaveLength(2)
+    expect(scrolled[1]?.block).toBe('end')
+
+    seatBottom = 500
+    flushRaf()
+    expect(scrolled).toHaveLength(2)
+  })
+
+  it('stops correcting after the bounded frame budget even without convergence', () => {
+    const { container } = render(
+      <MessageList messages={READ_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
+    )
+    const anchor = container.querySelector('[data-seat-anchor]') as Element
+    // The layout keeps drifting (never converges) — the loop must die
+    // within its frame budget (well under the 120 frames flushed
+    // here) instead of spinning.
+    mockBottom(container.querySelector('.message-list') as Element, () => 500)
+    mockBottom(anchor, () => 380)
+
+    for (let frame = 0; frame < 120; frame += 1) {
+      flushRaf()
+    }
+    const settled = scrolled.length
+    expect(settled).toBeGreaterThan(1)
+    expect(settled).toBeLessThan(120)
+    // And it stays dead — no zombie frames resurrect the seat.
+    for (let frame = 0; frame < 5; frame += 1) {
+      flushRaf()
+    }
+    expect(scrolled).toHaveLength(settled)
+  })
+
+  it('never corrects on the zero layout of jsdom (the suite stays quiet)', () => {
+    // No rect mocks: jsdom rects are all zeros — the gap is 0 and the
+    // correction must rest on the very first frame (the T078/T085
+    // suites rely on exactly one scrollIntoView per seat).
+    render(<MessageList messages={READ_WINDOW} currentUserId={ME} unreadFromSeq={3} />)
+    flushRaf()
+    flushRaf()
+    flushRaf()
+    expect(scrolled).toHaveLength(1)
+  })
+})
+
+describe('MessageList send autoscroll convergence and ack race (bug 8б/8в, T086)', () => {
+  /**
+   * T086(б): `list.scrollTop = list.scrollHeight` writes against the
+   * COLD layout too — content-visibility placeholders keep the
+   * scrollHeight low until the first paint, so the write clamps to the
+   * cold maximum and stops ABOVE the real bottom once the rows render.
+   * A post-paint rAF loop must re-drive the scroll until
+   * `scrollHeight − scrollTop − clientHeight` converges.
+   *
+   * T086(в): when the 201 ack lands before the optimistic row's first
+   * render (a batched flush), `localIdsRef` never held the id and the
+   * append used to lose the own-branch — the wiring-level `ownAckIds`
+   * set (MessengerPage feeds it from the outbox engine's onConfirmed)
+   * must scroll the server copy as own regardless.
+   *
+   * jsdom ships no layout and no clamping: the local metrics mock
+   * CLAMPS writes the way a real scroll container does
+   * (`min(value, scrollHeight − clientHeight)`), which is what makes
+   * the cold-write undershoot reproducible, and counts every write.
+   */
+  let rafQueue: Array<() => void>
+
+  const flushRaf = (): void => {
+    const frame = rafQueue
+    rafQueue = []
+    for (const callback of frame) {
+      callback()
+    }
+  }
+
+  beforeEach(() => {
+    rafQueue = []
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void): number => {
+      rafQueue.push(callback)
+      return rafQueue.length
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  interface ClampedMetrics {
+    scrollTop: number
+    scrollHeight: number
+    clientHeight: number
+    writes: number
+  }
+
+  function installClampedScroll(element: HTMLElement, metrics: ClampedMetrics): void {
+    Object.defineProperty(element, 'scrollTop', {
+      configurable: true,
+      get: () => metrics.scrollTop,
+      set: (value: number) => {
+        metrics.writes += 1
+        metrics.scrollTop = Math.max(
+          0,
+          Math.min(value, metrics.scrollHeight - metrics.clientHeight),
+        )
+      },
+    })
+    Object.defineProperty(element, 'scrollHeight', {
+      configurable: true,
+      get: () => metrics.scrollHeight,
+    })
+    Object.defineProperty(element, 'clientHeight', {
+      configurable: true,
+      get: () => metrics.clientHeight,
+    })
+  }
+
+  const WINDOW: Message[] = [
+    dialogMessage('w-in-1', 1, PEER, 'история 1'),
+    dialogMessage('w-out-2', 2, ME, 'история 2'),
+    dialogMessage('w-in-3', 3, PEER, 'история 3'),
+  ]
+
+  const SENDING: OutboxRecord = {
+    clientMessageId: 'cm-send-1',
+    chatId: 'chat-1',
+    text: 'исходящее',
+    state: 'sending',
+  }
+
+  it('re-drives the send scroll to the true bottom when the warmed layout grows', () => {
+    const props = (outbox?: readonly OutboxRecord[]) => (
+      <MessageList messages={WINDOW} currentUserId={ME} outbox={outbox} />
+    )
+    const { container, rerender } = render(props())
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    // The user reads history (100 from the top — NOT sticky); the cold
+    // layout claims 600px of content.
+    const metrics: ClampedMetrics = {
+      scrollTop: 100,
+      scrollHeight: 600,
+      clientHeight: 400,
+      writes: 0,
+    }
+    installClampedScroll(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(props([SENDING]))
+    // The cold write scrollTop=scrollHeight(600) CLAMPS to the cold
+    // maximum 200 — the real browser's undershoot.
+    expect(metrics.scrollTop).toBe(200)
+
+    // The paint warms the layout: placeholders become real rows and
+    // the scrollHeight grows to 1000 — the post-paint loop must catch
+    // the 400px gap and re-drive the scroll to the WARM bottom.
+    metrics.scrollHeight = 1000
+    flushRaf()
+    expect(metrics.scrollTop).toBe(600)
+
+    // Converged: further frames never touch the scroll again.
+    flushRaf()
+    flushRaf()
+    expect(metrics.scrollTop).toBe(600)
+    expect(metrics.writes).toBe(2)
+  })
+
+  it('never rewrites a settled bottom (no spurious corrections)', () => {
+    const props = (outbox?: readonly OutboxRecord[]) => (
+      <MessageList messages={WINDOW} currentUserId={ME} outbox={outbox} />
+    )
+    const { container, rerender } = render(props())
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    // Already at the cold bottom (600−200−400 = 0): the write lands on
+    // the same offset and the post-paint loop must rest immediately.
+    const metrics: ClampedMetrics = {
+      scrollTop: 200,
+      scrollHeight: 600,
+      clientHeight: 400,
+      writes: 0,
+    }
+    installClampedScroll(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(props([SENDING]))
+    expect(metrics.scrollTop).toBe(200)
+    flushRaf()
+    flushRaf()
+    expect(metrics.scrollTop).toBe(200)
+    expect(metrics.writes).toBe(1)
+  })
+
+  it('scrolls the server ack as own even when the optimistic row never rendered (201 raced the first render)', () => {
+    const props = (messages: readonly Message[], ownAckIds?: ReadonlySet<string>) => (
+      <MessageList messages={messages} currentUserId={ME} ownAckIds={ownAckIds} />
+    )
+    const { container, rerender } = render(props(WINDOW))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    // The user reads history — the sticky latch is OFF; the outbox row
+    // NEVER renders (the 201 batched with the enqueue flush), so
+    // `localIdsRef` cannot recognize the ack. Only the wiring-level
+    // own-ack set can scroll it as own (T086в).
+    const metrics: ClampedMetrics = {
+      scrollTop: 100,
+      scrollHeight: 600,
+      clientHeight: 400,
+      writes: 0,
+    }
+    installClampedScroll(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(
+      props(
+        [...WINDOW, dialogMessage('cm-race', 4, ME, 'подтверждение гонки')],
+        new Set(['cm-race']),
+      ),
+    )
+    // Own send is unconditional — the ack lands in view at the bottom.
+    expect(metrics.scrollTop).toBe(200)
+  })
+
+  it('keeps an unrelated own-id append sticky-gated (ownAckIds only vouches for its own ids)', () => {
+    const props = (messages: readonly Message[], ownAckIds?: ReadonlySet<string>) => (
+      <MessageList messages={messages} currentUserId={ME} ownAckIds={ownAckIds} />
+    )
+    const { container, rerender } = render(props(WINDOW))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics: ClampedMetrics = {
+      scrollTop: 100,
+      scrollHeight: 600,
+      clientHeight: 400,
+      writes: 0,
+    }
+    installClampedScroll(list, metrics)
+    fireEvent.scroll(list)
+
+    // An own message from ANOTHER device (not in the ack set) while
+    // the user reads history — still sticky-gated, no yank.
+    rerender(
+      props([...WINDOW, dialogMessage('other-device', 4, ME, 'с другого устройства')], new Set()),
+    )
+    expect(metrics.scrollTop).toBe(100)
+  })
+})

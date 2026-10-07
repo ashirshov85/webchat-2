@@ -305,6 +305,14 @@ const DIRECT_PENDING_ACTIONS: ReadonlySet<PendingAction> = new Set([
 /** The group-kind entries — №33/№30 from the gear menu (T054). */
 const GROUP_PENDING_ACTIONS: ReadonlySet<PendingAction> = new Set(['leave-group', 'delete-group'])
 
+/**
+ * Bounded size of the own-ack tracking set (T086в, bug 8): the set
+ * only matters for the single commit where the confirmed message
+ * lands, so a small FIFO cap covers the race window without growing
+ * with the session.
+ */
+const OWN_ACK_TRACK_CAP = 16
+
 function confirmUiOf(action: PendingAction, peerName: string): ConfirmUi {
   if (action === 'delete-chat') {
     return {
@@ -926,9 +934,29 @@ function MessengerMachine() {
     })
   }, [activeGroupChatId, realtime, reloadActiveGroup])
 
+  // T086в (bug 8): ids the outbox engine confirmed via 201/200.
+  // When the ack races the first render of the optimistic row (a
+  // batched flush skips the intermediate state entirely), MessageList's
+  // own `localIdsRef` never held the id and the append would lose the
+  // own-branch of the T079 autoscroll. This set vouches for such acks
+  // regardless of the render interleaving — bounded to the most
+  // recent OWN_ACK_TRACK_CAP ids (Set keeps the insertion order), far
+  // beyond the one commit the race window spans.
+  const [ownAckIds, setOwnAckIds] = useState<ReadonlySet<string>>(() => new Set())
   const handleConfirmed = useCallback(
     (message: Message) => {
       confirmMessage(message)
+      setOwnAckIds((previous) => {
+        const next = new Set(previous)
+        next.add(message.id)
+        for (const id of next) {
+          if (next.size <= OWN_ACK_TRACK_CAP) {
+            break
+          }
+          next.delete(id)
+        }
+        return next
+      })
     },
     [confirmMessage],
   )
@@ -1352,6 +1380,31 @@ function MessengerMachine() {
     [outbox, reloadChatList],
   )
 
+  /**
+   * №23/№24 success FROM the contacts form (008 T089; Bug 11а, FR-020):
+   * the №12 refetch converges the mark of the contacts row and the
+   * sidebar row («заблокирован»), the composer lock of the open dialog
+   * and the gear label LIVE — the header effect reconciles
+   * `blockedByMe` from the fresh aggregate, without a reload, while the
+   * modal stays open (the onChatDeleted pattern of T037). Both
+   * endpoints are idempotent — a duplicate report refetches the same
+   * truth.
+   */
+  const handleContactBlockToggled = useCallback(() => {
+    reloadChatList()
+  }, [reloadChatList])
+
+  /**
+   * №22 success FROM the contacts form (008 T089; Bug 11б, FR-017): the
+   * №20 book of the page converges AT ONCE — the «Добавить в контакты»
+   * offers of the gear and the members modal return immediately, not
+   * only with the shell closure (closeShell keeps its own convergence
+   * as the safety net of every other mutation path).
+   */
+  const handleContactRemoved = useCallback(() => {
+    reloadContacts()
+  }, [reloadContacts])
+
   const handleSend = useCallback(
     (text: string) => {
       if (activeChatId === null) {
@@ -1611,6 +1664,7 @@ function MessengerMachine() {
                   members={activeGroupMembers}
                   othersReadUpToSeq={othersReadUpToSeq}
                   unreadFromSeq={unreadFromSeq}
+                  ownAckIds={ownAckIds}
                 />
                 <MessageInput
                   onSend={handleSend}
@@ -1645,6 +1699,8 @@ function MessengerMachine() {
             chats={chats}
             onOpenChat={handleOpenChatFromModal}
             onChatDeleted={handleChatDeleted}
+            onContactBlockToggled={handleContactBlockToggled}
+            onContactRemoved={handleContactRemoved}
             onFormChange={(form) => {
               setModalForm(form === 'add' ? 'add-contact' : 'contacts')
             }}
