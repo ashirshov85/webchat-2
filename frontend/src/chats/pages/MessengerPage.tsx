@@ -656,7 +656,6 @@ function MessengerMachine() {
   /** Own username — the feed avatar source of outgoing rows (008 T022). */
   const [meUsername, setMeUsername] = useState<string | null>(null)
   const [activeChat, setActiveChat] = useState<ActiveChat | null>(null)
-  const [composerError, setComposerError] = useState<string | null>(null)
   /** The pending «шестерёнка» confirmation + its in-flight guard (T054). */
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionPending, setActionPending] = useState(false)
@@ -1405,15 +1404,25 @@ function MessengerMachine() {
     reloadContacts()
   }, [reloadContacts])
 
+  /**
+   * Bug 15 (T093б; FR-025, лексика T082/T045): отказ постановки в
+   * очередь подаётся ТОСТОМ о факте отклонения отправки — инлайн-абзац
+   * `messenger-composer-error` удалён. Отказ — защитная ветка (композер
+   * disabled без пользователя, текст предвалидирован MessageInput);
+   * queue_overflow НЕ является отказом (eviction в enqueue принимает
+   * запись) и остаётся за персистентным QueueOverflowBanner T052.
+   */
   const handleSend = useCallback(
     (text: string) => {
       if (activeChatId === null) {
         return
       }
       const result = outbox.enqueue(activeChatId, text)
-      setComposerError(result.ok ? null : result.error)
+      if (!result.ok) {
+        showToast(result.error)
+      }
     },
-    [activeChatId, outbox],
+    [activeChatId, outbox, showToast],
   )
 
   const handleRetry = useCallback(
@@ -1644,11 +1653,6 @@ function MessengerMachine() {
                 )}
 
                 {status === 'error' && <ErrorBanner error={error} onDismiss={reload} />}
-                {composerError !== null && (
-                  <p className="messenger-composer-error" role="alert">
-                    {composerError}
-                  </p>
-                )}
                 <MessageList
                   messages={messages}
                   currentUserId={currentUserId ?? ''}

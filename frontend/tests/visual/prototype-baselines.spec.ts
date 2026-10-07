@@ -20,13 +20,13 @@
  * demo group (mine:true): the gear menu with the owner item set
  * («Участники»/«Редактировать чат»/«Удалить чат» — the one gear variant the
  * implementation renders verbatim, ui-behavior §4), the #membersForm roster
- * and the #grpEditForm editor. Both modals compare against their captures
- * in us4-fullscreens except grpEdit, whose app form carries the
- * contract-mandated «Описание» field (ui-behavior §3, validation 006) the
- * static prototype lacks — that baseline stays here as the prototype's own
- * reference, while the app assertion settles against its implemented
- * snapshot (the exception class T060 sanctions for prototype-absent
- * content).
+ * and the #grpEditForm editor; all three modals compare against their
+ * captures in us4-fullscreens. The grpEdit form used to lack the
+ * contract-mandated «Описание» field (ui-behavior §3, validation 006) —
+ * T094 (bug 16) amended #grpEditForm to carry it (label + input with the
+ * «Описание группового чата» placeholder) and re-captured this baseline,
+ * so the app assertion compares against the reference directly and the
+ * interim implemented snapshot is retired.
  *
  * Determinism: `animations: 'disabled'` cancels the infinite `flick` lamps to
  * their initial state and fast-forwards the finite `pop`/transitions;

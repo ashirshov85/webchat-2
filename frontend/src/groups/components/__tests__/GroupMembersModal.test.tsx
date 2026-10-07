@@ -1,13 +1,13 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
 import type { GroupMember } from '../../../api/groups'
 import { GroupMembersModal } from '../GroupMembersModal'
 
 /**
- * Модальная форма «Участники» (feature 008, US4, T049 → T055; FR-023,
- * ui-behavior §3, research §D): миграция поведенческих ожиданий 006 из
- * MemberList.test.tsx (ростер-действия и роли — БЕЗ изменений, FR-034/
+ * Модальная форма «Участники» (feature 008, US4, T049 → T055 → T095/Bug 17;
+ * FR-023, ui-behavior §3, research §D): миграция поведенческих ожиданий 006
+ * из MemberList.test.tsx (ростер-действия и роли — БЕЗ изменений, FR-034/
  * SC-002: метки «Владелец»/«Админ»/«Участник», aria-label'ы «Исключить/
  * Назначить админом/Снять админа/Передать владение {username}», матрица
  * видимости по myRole, disable строки pendingUserId из мьютекса
@@ -18,9 +18,19 @@ import { GroupMembersModal } from '../GroupMembersModal'
  * собственная строка НЕ выводится вовсе (renderMembersList прототипа
  * пропускает ME — «Вы» живёт только в members-tip заголовка; старая
  * пометка «{username} (вы)» уходит вместе с own-строкой) и строка
- * участника вне адресной книги получает «Добавить в контакты»
- * (.add-ctc-btn прототипа) — №21 и его тост принадлежат странице
- * (T045: тост выдаёт владелец операции), модаль только сообщает userId.
+ * участника вне адресной книги получает «Добавить в контакты» — №21 и
+ * его тост принадлежат странице (T045: тост выдаёт владелец операции),
+ * модаль только сообщает userId.
+ *
+ * T095 (Bug 17): строки — визуальный паритет «Контактов» (.pick-row
+ * лексика ctc-row: аватар, .c-main/.c-top/.c-name, метка роли в .c-prev),
+ * а ростер-действия переезжают из текстовых кнопок строки в ContextMenu
+ * кнопки-кебаба «⋯» (title «Действия с участником», паттерн .c-menu
+ * ContactsModal). Матрица ожиданий БЕЗ изменений (FR-034) — вход
+ * действий теперь через «⋯»-меню: aria-label'ы `…{username}` живут на
+ * пунктах меню (SC-002), «Исключить» — danger-пункт, «Добавить в
+ * контакты» — пункт вне-книжных строк (кнопка .add-ctc-btn прототипа
+ * ушла вместе с текстовыми кнопками).
  */
 
 type Problem = components['schemas']['Problem']
@@ -75,6 +85,33 @@ function renderModal(overrides: Partial<Parameters<typeof GroupMembersModal>[0]>
   return props
 }
 
+/** Строка участника по имени (хук .member-row, имя — в .c-name). */
+function rowOf(username: string): HTMLElement {
+  const row = Array.from(document.querySelectorAll<HTMLElement>('.member-row')).find(
+    (node) => node.querySelector('.c-name')?.textContent === username,
+  )
+  if (row === undefined) {
+    throw new Error(`строка участника не найдена: ${username}`)
+  }
+  return row
+}
+
+/**
+ * T095: вход ростер-действий — «⋯»-кебаб строки (title «Действия с
+ * участником», паттерн .c-menu ContactsModal); меню — портал в body.
+ */
+function openMemberMenu(username: string): HTMLElement {
+  const menuButton = within(rowOf(username)).getByRole('button', {
+    name: 'Действия с участником',
+  })
+  fireEvent.click(menuButton)
+  return screen.getByRole('menu')
+}
+
+function menuLabels(): string[] {
+  return screen.getAllByRole('menuitem').map((item) => item.textContent ?? '')
+}
+
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
@@ -107,30 +144,42 @@ describe('GroupMembersModal roster rendering (FR-003, membersForm)', () => {
   })
 })
 
-describe('GroupMembersModal action visibility by myRole (FR-004)', () => {
+describe('GroupMembersModal action visibility by myRole (FR-004, entry via «⋯» T095)', () => {
   it('owner: offers kick/grant-admin/transfer on a member row and reports the callbacks', () => {
     const props = renderModal()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Исключить carol' }))
+    // Порядок пунктов — дословно T049/T055; «Исключить» — danger-пункт.
+    openMemberMenu('carol')
+    expect(menuLabels()).toEqual(['Исключить', 'Назначить админом', 'Передать владение'])
+    expect(screen.getByRole('menuitem', { name: 'Исключить carol' }).className).toBe(
+      'ctx-item danger',
+    )
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Исключить carol' }))
     expect(props.onKick).toHaveBeenCalledWith(CAROL)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Назначить админом carol' }))
+    openMemberMenu('carol')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Назначить админом carol' }))
     expect(props.onSetRole).toHaveBeenCalledWith(CAROL, 'admin')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Передать владение carol' }))
+    openMemberMenu('carol')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Передать владение carol' }))
     expect(props.onTransferOwnership).toHaveBeenCalledWith(CAROL)
   })
 
   it('owner: offers revoke-admin on an admin row (№34 grant AND revoke)', () => {
     const props = renderModal()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Снять админа bob' }))
+    openMemberMenu('bob')
+    expect(menuLabels()).toEqual(['Исключить', 'Снять админа', 'Передать владение'])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Снять админа bob' }))
     expect(props.onSetRole).toHaveBeenCalledWith(BOB, 'member')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Исключить bob' }))
+    openMemberMenu('bob')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Исключить bob' }))
     expect(props.onKick).toHaveBeenCalledWith(BOB)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Передать владение bob' }))
+    openMemberMenu('bob')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Передать владение bob' }))
     expect(props.onTransferOwnership).toHaveBeenCalledWith(BOB)
   })
 
@@ -140,7 +189,7 @@ describe('GroupMembersModal action visibility by myRole (FR-004)', () => {
     expect(screen.queryByRole('button', { name: /alice/ })).toBeNull()
   })
 
-  it('admin: kicks only plain members — admin/owner rows carry no actions', () => {
+  it('admin: kicks only plain members — admin/owner rows carry no «⋯» at all', () => {
     renderModal({
       members: [
         member(ME, 'alice', 'owner'),
@@ -152,32 +201,39 @@ describe('GroupMembersModal action visibility by myRole (FR-004)', () => {
       currentUserId: BOB,
     })
 
-    expect(screen.getByRole('button', { name: 'Исключить carol' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Исключить dave' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Исключить alice' })).toBeNull()
-    // №34/№35 are owner-only — an admin never sees them (not_group_owner)
-    expect(screen.queryByRole('button', { name: /админом/ })).toBeNull()
-    expect(screen.queryByRole('button', { name: /Снять админа/ })).toBeNull()
-    expect(screen.queryByRole('button', { name: /Передать владение/ })).toBeNull()
+    // member-строка — единственная с действиями: в её меню только «Исключить».
+    openMemberMenu('carol')
+    expect(menuLabels()).toEqual(['Исключить'])
+    expect(screen.getByRole('menuitem', { name: 'Исключить carol' })).toBeInTheDocument()
+
+    // admin/owner-строки кебаба не несут вовсе (№34/№35 owner-only,
+    // not_group_owner) — кнопок действий у строк нет.
+    expect(within(rowOf('dave')).queryByRole('button')).toBeNull()
+    expect(within(rowOf('alice')).queryByRole('button')).toBeNull()
   })
 
   it('member: renders no roster actions at all (forbidden_role, 006 US3-3)', () => {
     renderModal({ myRole: 'member', currentUserId: CAROL })
 
-    // Адресная книга покрывает ростер — единственных кнопок строки
-    // («Добавить в контакты») нет: кнопок в модали НЕТ вообще.
+    // «⋯» не выводится вовсе (матрица myRole); адресная книга покрывает
+    // ростер — пунктов «Добавить в контакты» нет: кнопок в модали НЕТ.
     expect(screen.queryByRole('button')).toBeNull()
+    expect(screen.queryByRole('menu')).toBeNull()
   })
 })
 
 describe('GroupMembersModal pending row (useGroupMembers mutex UI)', () => {
-  it('disables the in-flight member row while the other rows stay armed', () => {
+  it('disables the in-flight member row’s «⋯» while the other rows stay armed', () => {
     renderModal({ pendingUserId: CAROL })
 
-    expect(screen.getByRole('button', { name: 'Исключить carol' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Назначить админом carol' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Исключить bob' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Снять админа bob' })).toBeEnabled()
+    const carolButton = within(rowOf('carol')).getByRole('button', {
+      name: 'Действия с участником',
+    })
+    const bobButton = within(rowOf('bob')).getByRole('button', {
+      name: 'Действия с участником',
+    })
+    expect(carolButton).toBeDisabled()
+    expect(bobButton).toBeEnabled()
   })
 })
 
@@ -195,23 +251,37 @@ describe('GroupMembersModal roster-action problem (useGroupMembers error half)',
   })
 })
 
-describe('GroupMembersModal «Добавить в контакты» (ui-behavior §3, прототип .add-ctc-btn)', () => {
-  it('offers «Добавить в контакты» only on rows outside the adder’s book and hands the userId up', () => {
+describe('GroupMembersModal «Добавить в контакты» (ui-behavior §3, пункт «⋯»-меню T095)', () => {
+  it('offers «Добавить в контакты» only in the menus of rows outside the adder’s book', () => {
     const props = renderModal({ contactUserIds: new Set([BOB]) })
 
-    // Только carol вне адресной книги — bob-строка кнопки не несёт.
-    const offer = screen.getByRole('button', { name: 'Добавить в контакты' })
-    expect(offer.closest('.pick-row')?.textContent).toContain('carol')
+    // Только carol вне адресной книги — её меню несёт пункт (после
+    // разделителя: ростер-действия и книга — разные группы действий),
+    // меню bob (в книге) пункта не имеет.
+    openMemberMenu('carol')
+    expect(menuLabels()).toEqual([
+      'Исключить',
+      'Назначить админом',
+      'Передать владение',
+      'Добавить в контакты',
+    ])
+    const menu = screen.getByRole('menu')
+    expect(menu.querySelectorAll('.ctx-sep')).toHaveLength(1)
 
-    fireEvent.click(offer)
-
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Добавить в контакты' }))
     expect(props.onAddContact).toHaveBeenCalledTimes(1)
     expect(props.onAddContact).toHaveBeenCalledWith(CAROL)
+
+    openMemberMenu('bob')
+    expect(menuLabels()).not.toContain('Добавить в контакты')
   })
 
   it('renders no offer when every member is already a contact (№20 cover)', () => {
     renderModal({ contactUserIds: ALL_MEMBERS_IN_CONTACTS() })
 
-    expect(screen.queryByRole('button', { name: 'Добавить в контакты' })).toBeNull()
+    for (const username of ['bob', 'carol']) {
+      openMemberMenu(username)
+      expect(menuLabels()).not.toContain('Добавить в контакты')
+    }
   })
 })

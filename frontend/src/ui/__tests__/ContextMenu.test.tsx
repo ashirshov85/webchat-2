@@ -154,6 +154,21 @@ describe('ContextMenu — DOM прототипа и пункты (FR-027, data-m
     render(<MenuHarness initialOpen items={[]} />)
     expect(items()).toHaveLength(0)
   })
+
+  it('ariaLabel переопределяет доступное имя пункта, не трогая видимую подпись (T095, SC-002)', () => {
+    render(
+      <MenuHarness
+        initialOpen
+        items={[
+          { label: 'Исключить', ariaLabel: 'Исключить carol', onSelect: vi.fn(), danger: true },
+        ]}
+      />,
+    )
+    const [item] = items()
+    expect(item?.textContent).toBe('Исключить')
+    expect(item).toHaveAttribute('aria-label', 'Исключить carol')
+    expect(screen.getByRole('menuitem', { name: 'Исключить carol' })).toBe(item)
+  })
 })
 
 describe('ContextMenu — позиционирование формулами прототипа (FR-027)', () => {

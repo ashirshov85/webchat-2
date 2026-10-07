@@ -95,6 +95,14 @@ function previewText(text: string): string {
   return `${Array.from(text).slice(0, PREVIEW_MAX_LENGTH).join('')}…`
 }
 
+function directPeerId(item: ChatListItemData, isGroup: boolean): string | null {
+  return !isGroup && item.peer !== null ? item.peer.id : null
+}
+
+function unreadBadge(count: number): string {
+  return count > UNREAD_CAP ? `${UNREAD_CAP}+` : String(count)
+}
+
 export const ChatListItem = memo(function ChatListItem({
   item,
   currentUserId = null,
@@ -104,13 +112,13 @@ export const ChatListItem = memo(function ChatListItem({
   const last = item.lastMessage
   const isGroup = item.type === 'group'
   const title = isGroup ? item.title : item.peer?.username
-  const peerId = !isGroup && item.peer !== null ? item.peer.id : null
+  const peerId = directPeerId(item, isGroup)
   // Состояние — ТОЛЬКО из presenceStore 007 (T040): null-ключ (группа/
   // защитный direct без peer) ничего не региструет и точку не даёт;
   // unknown точку тоже не даёт — bug 12/T090: скрытие не выдаёт статуса.
   const presence = usePresenceStatus(peerId)
   const outgoing = last !== null && last.senderId === currentUserId
-  const unreadLabel = item.unreadCount > UNREAD_CAP ? `${UNREAD_CAP}+` : String(item.unreadCount)
+  const outgoingPrefix = outgoing ? 'Вы: ' : ''
 
   return (
     <li>
@@ -138,16 +146,15 @@ export const ChatListItem = memo(function ChatListItem({
           {last === null ? (
             <span className="chat-item-preview chat-item-preview-empty c-prev">Нет сообщений</span>
           ) : (
-            <span
-              className="chat-item-preview c-prev"
-              title={`${outgoing ? 'Вы: ' : ''}${last.text}`}
-            >
-              {outgoing ? 'Вы: ' : ''}
+            <span className="chat-item-preview c-prev" title={`${outgoingPrefix}${last.text}`}>
+              {outgoingPrefix}
               {previewText(last.text)}
             </span>
           )}
         </span>
-        {item.unreadCount > 0 && <span className="chat-item-badge c-badge">{unreadLabel}</span>}
+        {item.unreadCount > 0 && (
+          <span className="chat-item-badge c-badge">{unreadBadge(item.unreadCount)}</span>
+        )}
       </button>
     </li>
   )

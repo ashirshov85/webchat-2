@@ -86,6 +86,13 @@
 
 .pick-row {
   display: flex;
+  /* Строка прототипа — ЯВНЫЙ row против auth-наследия index.css
+     `form div{display:flex;flex-direction:column;gap:4px}` (0-0-2):
+     свойство не задано базовой лексикой — div-строки пикеров внутри
+     <form>-обитателей (group-edit T056/T094) столбились leak'ом
+     (аватар/имя/кнопка вертикально, строка 103px вместо 43). Тот же
+     класс защиты, что у .c-main/.c-top ниже. */
+  flex-direction: row;
   align-items: center;
   gap: 10px;
   padding: 6px 8px;

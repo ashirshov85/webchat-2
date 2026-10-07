@@ -35,11 +35,21 @@
  * (the T039 state-assert pattern): the dot count/classes of the
  * catalogue (the №36 convergence of research §B — 3 online + 2 off),
  * the divider label and the three ЧЧ:ММ footers of the phoenix feed,
- * and the tip roster («Вы» + «администратор» first, then the №28
- * members in the prototype order). The pixel budget is the SC-001
+ * and the tip roster («Вы» first, then the №28 members in the
+ * prototype order). The pixel budget is the SC-001
  * `maxDiffPixelRatio ≈ 0.02` of the config; the derived avatar
  * colours (FR-024) and the prototype-only own-row dot of the tip
  * stay within it by design (research §E).
+ *
+ * Bug 18 (T096): the tip marks split per the 006 role model —
+ * owner → «владелец», admin → «админ», member — no mark, the «Вы»
+ * row follows myRole. The prototype demo data carries a single
+ * «администратор» mark (chats.html §1522: `chat.mine`), so the
+ * app capture departs from the letter of the T016(б) baseline and
+ * rides its own implemented snapshot `us3-members-tip-impl.png`
+ * (the T060 exception class, cf. us5-burger-drawer-impl) — the role
+ * requirement of 006 is finer than the demo prototype; the prototype
+ * truth keeps `us3-members-tip.png` (prototype-baselines.spec.ts).
  */
 import { expect } from '@playwright/test'
 import { visualTest } from './fixtures/app'
@@ -85,8 +95,9 @@ visualTest.describe('T047 — US3 details against the T016(б) baselines', () =>
     const tip = page.locator('.members-tip.show')
     await expect(tip).toBeVisible()
     await expect(tip.locator('.mt-title')).toHaveText('Участники')
-    // «Вы» first with the «администратор» mark (myRole owner), then
-    // the №28 members in the prototype order.
+    // «Вы» first with the «владелец» mark (myRole owner — T096), then
+    // the №28 members in the prototype order; the phoenix roster is
+    // all members — no other row carries a mark.
     await expect(tip.locator('.mt-row')).toHaveCount(4)
     expect(await tip.locator('.mt-name').allTextContents()).toEqual([
       'Вы',
@@ -94,8 +105,16 @@ visualTest.describe('T047 — US3 details against the T016(б) baselines', () =>
       'James Whitmore',
       'Alex Carter',
     ])
-    await expect(tip.locator('.mt-row').first().locator('.mt-me')).toHaveText('администратор')
+    await expect(tip.locator('.mt-row').first().locator('.mt-me')).toHaveText('владелец')
+    await expect(tip.locator('.mt-me')).toHaveCount(1)
 
-    await expect(page).toHaveScreenshot('us3-members-tip.png', SHOT)
+    // Bug 18 (T096): the role marks split per 006 — owner «владелец»,
+    // admin «админ» — while the prototype demo data carries the single
+    // «администратор» mark (§1522). The implemented snapshot departs
+    // from the letter of the T016(б) baseline: the role requirement of
+    // 006 is finer than the demo prototype, so the app rides its own
+    // `-impl` reference (the T060 exception class) and the prototype
+    // truth keeps `us3-members-tip.png` (prototype-baselines.spec.ts).
+    await expect(page).toHaveScreenshot('us3-members-tip-impl.png', SHOT)
   })
 })

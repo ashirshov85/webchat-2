@@ -6,21 +6,20 @@
  * `--input-bg`, design-tokens §2 mono role) + the «ОТПРАВИТЬ» plate
  * (`.send-btn`: `--gold-gradient`, Cormorant SC caps). The 004 hooks
  * stay as wrappers of the prototype classes (research §C, FR-034):
- * the form keeps `message-input`, the field — id `message-composer`,
- * the local validation error — `message-input-error` role=alert.
+ * the form keeps `message-input`, the field — id `message-composer`.
  *
  * Client-side pre-validation of the 004 rule (see chats/validation.ts)
  * is unchanged: `onSend` fires only with the normalized valid text, so
- * an invalid draft cannot reach the chat or the outbox. The overflow
- * hint rides the page TOAST slot (Bug 4, T082; FR-025, ui-behavior
- * §5): a draft over MESSAGE_MAX_LENGTH raises «Сообщение слишком
- * длинное: …» via useToast/ToastProvider (z-99, ~3 s, the single
- * notification replacing any previous one) — every other notification
- * of the feature already toasts this way. The blank-draft error
- * «Сообщение не может быть пустым» keeps its inline place above the
- * field (`message-input-error` role=alert, US1-4). The server-side
- * 400 (text_blank / text_too_long) remains the authoritative
- * protection.
+ * an invalid draft cannot reach the chat or the outbox. EVERY local
+ * validation failure rides the page TOAST slot (Bug 4/T082 +
+ * Bug 15/T093а; FR-025, ui-behavior §5): a draft over
+ * MESSAGE_MAX_LENGTH raises «Сообщение слишком длинное: …», a blank
+ * draft — «Сообщение не может быть пустым», each via
+ * useToast/ToastProvider (z-99, ~3 s, the single notification
+ * replacing any previous one) — the 004 inline `message-input-error`
+ * branch is removed (empty after T093а: state/markup/CSS gone). The
+ * server-side 400 (text_blank / text_too_long) remains the
+ * authoritative protection.
  *
  * Sending (FR-021, US1-AS4): Enter submits the trimmed text (IME
  * composition never submits); Shift+Enter keeps the newline of the
@@ -77,7 +76,7 @@ import type {
   SubmitEvent,
 } from 'react'
 import { useToast } from '../../ui/Toast'
-import { MESSAGE_MAX_LENGTH, validateMessageText } from '../validation'
+import { validateMessageText } from '../validation'
 import './message-input.css'
 
 /** Steam spawn count — design-tokens §5 (3 puff's). */
@@ -150,7 +149,6 @@ export function MessageInput({
   floodRetryAt = null,
 }: MessageInputProps) {
   const [value, setValue] = useState('')
-  const [error, setError] = useState<string | null>(null)
   const [floodSecondsLeft, setFloodSecondsLeft] = useState<number | null>(null)
   const showToast = useToast()
   const fieldRef = useRef<HTMLTextAreaElement>(null)
@@ -217,17 +215,13 @@ export function MessageInput({
   function send() {
     const validation = validateMessageText(value)
     if (!validation.ok) {
-      // Bug 4 (T082): подсказка переполнения — тост (FR-025, слот
-      // z-99, ~3 с, одно уведомление); остальные локальные ошибки
-      // композера (пустой черновик) остаются инлайн role=alert.
-      if (value.trim().length > MESSAGE_MAX_LENGTH) {
-        showToast(validation.error)
-      } else {
-        setError(validation.error)
-      }
+      // Bug 4 (T082) + Bug 15 (T093а): ЛЮБОЙ отказ предвалидации —
+      // тост (FR-025, слот z-99, ~3 с, одно уведомление); инлайн-ветки
+      // message-input-error больше нет (опустела — состояние/разметка/
+      // CSS удалены).
+      showToast(validation.error)
       return
     }
-    setError(null)
     setValue('')
     onSend(validation.text)
     puffSteam()
@@ -270,11 +264,6 @@ export function MessageInput({
 
   return (
     <form className="message-input chat-input" onSubmit={handleSubmit} noValidate>
-      {error !== null && (
-        <p className="message-input-error" role="alert">
-          {error}
-        </p>
-      )}
       {floodSecondsLeft !== null && (
         <output className="message-input-retry">Повтор через {floodSecondsLeft} с</output>
       )}
@@ -293,7 +282,6 @@ export function MessageInput({
           disabled={disabled || blocked}
           onChange={(event) => {
             setValue(event.target.value)
-            setError(null)
           }}
           onKeyDown={handleKeyDown}
         />

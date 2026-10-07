@@ -15,13 +15,14 @@ import { MESSAGE_MAX_LENGTH } from '../../validation'
  * form keeps `message-input`, the field — id `message-composer`
  * (research §C, FR-034).
  *
- * The overflow hint rides the TOAST slot (Bug 4, T082; FR-025,
- * ui-behavior §5): a draft over MESSAGE_MAX_LENGTH shows «Сообщение
- * слишком длинное: …» via useToast/ToastProvider (z-99, ~3 s, single
- * notification) — NOT an inline role=alert; the other local composer
- * error (the blank draft «Сообщение не может быть пустым») stays the
- * inline `message-input-error` role=alert, and the flood line/block
- * hint surfaces are untouched.
+ * BOTH local validation failures ride the TOAST slot (Bug 4/T082 +
+ * Bug 15/T093; FR-025, ui-behavior §5): a draft over
+ * MESSAGE_MAX_LENGTH shows «Сообщение слишком длинное: …», a blank
+ * draft — «Сообщение не может быть пустым», each via
+ * useToast/ToastProvider (z-99, ~3 s, single notification) — NOT an
+ * inline role=alert: the 004 `message-input-error` inline branch is
+ * GONE (empty after T093а — state/markup/CSS removed). The flood
+ * retry line and the block hint surfaces are untouched.
  *
  * Behavior (US1-AS4, FR-021): Enter sends the trimmed text; the send
  * button never steals the field focus (mousedown preventDefault —
@@ -145,16 +146,28 @@ describe('MessageInput sending (FR-021, US1-AS4)', () => {
 })
 
 describe('MessageInput 004 pre-validation kept (FR-021, FR-034, SC-002)', () => {
-  it('rejects a blank draft with the local INLINE error — onSend never fires', () => {
+  it('rejects a blank draft with the TOAST — onSend never fires, no inline alert (T093а, Bug 15)', () => {
+    vi.useFakeTimers()
     const { onSend, field } = renderInput()
 
     fireEvent.change(field, { target: { value: '   ' } })
     fireEvent.keyDown(field, { key: 'Enter' })
 
     expect(onSend).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveClass('message-input-error')
-    expect(screen.getByRole('alert').textContent).toContain('Сообщение не может быть пустым')
+    // Пустой черновик — тост лексики T082 (FR-025): слот z-99
+    // ToastProvider, инлайн-ветки message-input-error больше нет.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(toastSlot()).toHaveClass('show')
+    expect(toastSlot()).toHaveTextContent('Сообщение не может быть пустым')
+    // Одиночный слот (data-model 1.4) и нетронутый черновик.
+    expect(document.querySelectorAll('.toast')).toHaveLength(1)
     expect(field.value).toBe('   ')
+
+    // Лексика T045/FR-025: авто-скрытие ~3 с.
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(toastSlot()).not.toHaveClass('show')
   })
 
   it(`rejects a draft over ${MESSAGE_MAX_LENGTH} characters with the TOAST — no inline alert (T082, Bug 4)`, () => {
@@ -191,17 +204,6 @@ describe('MessageInput 004 pre-validation kept (FR-021, FR-034, SC-002)', () => 
 
     expect(onSend).toHaveBeenCalledTimes(1)
     expect(onSend).toHaveBeenCalledWith('а'.repeat(MESSAGE_MAX_LENGTH))
-  })
-
-  it('clears the error as soon as the draft changes again', () => {
-    const { field } = renderInput()
-
-    fireEvent.change(field, { target: { value: '   ' } })
-    fireEvent.keyDown(field, { key: 'Enter' })
-    expect(screen.getByRole('alert')).toBeInTheDocument()
-
-    fireEvent.change(field, { target: { value: 'Готов к отправке' } })
-    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
 
@@ -480,8 +482,8 @@ describe('MessageInput auto-growing field (Bug 6, T084)', () => {
 
     fireEvent.keyDown(field, { key: 'Enter' })
 
-    // Пустой черновик отклонён инлайн-ошибкой, поле не чищено — высота
-    // не схлопывается: отклонение валидации рост поля не трогает.
+    // Пустой черновик отклонён валидацией (тост T093а), поле не чищено —
+    // высота не схлопывается: отклонение валидации рост поля не трогает.
     expect(field.value).toBe('   ')
     expect(field.style.height).toBe(`${130 + FIELD_BORDERS_PX}px`)
   })
