@@ -1380,6 +1380,31 @@ function MessengerMachine() {
     [outbox, reloadChatList],
   )
 
+  /**
+   * №23/№24 success FROM the contacts form (008 T089; Bug 11а, FR-020):
+   * the №12 refetch converges the mark of the contacts row and the
+   * sidebar row («заблокирован»), the composer lock of the open dialog
+   * and the gear label LIVE — the header effect reconciles
+   * `blockedByMe` from the fresh aggregate, without a reload, while the
+   * modal stays open (the onChatDeleted pattern of T037). Both
+   * endpoints are idempotent — a duplicate report refetches the same
+   * truth.
+   */
+  const handleContactBlockToggled = useCallback(() => {
+    reloadChatList()
+  }, [reloadChatList])
+
+  /**
+   * №22 success FROM the contacts form (008 T089; Bug 11б, FR-017): the
+   * №20 book of the page converges AT ONCE — the «Добавить в контакты»
+   * offers of the gear and the members modal return immediately, not
+   * only with the shell closure (closeShell keeps its own convergence
+   * as the safety net of every other mutation path).
+   */
+  const handleContactRemoved = useCallback(() => {
+    reloadContacts()
+  }, [reloadContacts])
+
   const handleSend = useCallback(
     (text: string) => {
       if (activeChatId === null) {
@@ -1674,6 +1699,8 @@ function MessengerMachine() {
             chats={chats}
             onOpenChat={handleOpenChatFromModal}
             onChatDeleted={handleChatDeleted}
+            onContactBlockToggled={handleContactBlockToggled}
+            onContactRemoved={handleContactRemoved}
             onFormChange={(form) => {
               setModalForm(form === 'add' ? 'add-contact' : 'contacts')
             }}

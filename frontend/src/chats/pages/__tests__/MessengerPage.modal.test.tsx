@@ -381,3 +381,108 @@ describe('MessengerPage окно после удаления чата из «К�
     )
   })
 })
+
+describe('MessengerPage живое обновление после «⋯»-действий «Контактов» (T089, Bug 11)', () => {
+  /**
+   * Bug 11: успехи №23/№24/№22 из «⋯»-меню «Контактов» сходятся БЕЗ
+   * перезагрузки и БЕЗ закрытия оболочки — страница рефетчит №12/№20 по
+   * колбэку формы (паттерн onChatDeleted T037): пометка «заблокирован»
+   * строки (модаль ещё открыта), композер открытого чата (FR-022) и
+   * пункты «шестерёнки» (матрица blockedByMe/peerInContacts) обновляются
+   * живьём; «Добавить в контакты» шестерёнки возвращается сразу после №22.
+   */
+
+  it('№23 из «⋯»: строка несёт «заблокирован», композер заблокирован, шестерёнка — «Разблокировать контакт»', async () => {
+    // №12-агрегат — мутируемое состояние мока (паттерн T036): старт без
+    // блокировки, после №23 рефетч сходится к blockedByMe=true.
+    let blockedByMe = false
+    mockChats.listChats.mockImplementation(() => Promise.resolve([directRow(blockedByMe)]))
+    await renderPageBase()
+    const list = screen.getByRole('list', { name: 'Список чатов' })
+    fireEvent.click(within(list).getByText('alice').closest('button') as HTMLElement)
+    await screen.findByRole('heading', { level: 2, name: 'alice' })
+    blockedByMe = true
+    mockChats.blockUser.mockResolvedValue(undefined)
+
+    await openShellForm('Контакты', 'Контакты')
+    const row = await screen.findByRole('button', { name: 'Контакт alice' })
+    fireEvent.click(within(row).getByRole('button', { name: 'Действия с контактом' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Заблокировать' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Заблокировать' }))
+
+    await waitFor(() => {
+      expect(mockChats.blockUser).toHaveBeenCalledWith(ALICE)
+    })
+    expect(await screen.findByText('Контакт заблокирован — alice')).toBeVisible()
+
+    // Строка «Контактов» живьём несёт пометку (модаль ещё открыта, без F5).
+    await waitFor(() => {
+      const aliceRow = screen.getByRole('button', { name: 'Контакт alice' })
+      expect(aliceRow).toHaveClass('blocked')
+      expect(aliceRow).toHaveTextContent(/Заблокирован/i)
+    })
+    // №12 рефетчится — сайдбар-строка сходится к серверу.
+    await waitFor(() => {
+      expect(mockChats.listChats.mock.calls.length).toBeGreaterThan(1)
+    })
+    // Композер ОТКРЫТОГО чата за модалью заблокирован (FR-022).
+    await waitFor(() => {
+      expect(screen.getByLabelText('Текст сообщения')).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'ОТПРАВИТЬ' })).toBeDisabled()
+    })
+    expect(screen.getByLabelText('Текст сообщения')).toHaveAttribute(
+      'placeholder',
+      'Контакт заблокирован — разблокируйте, чтобы писать сообщения',
+    )
+    // Шестерёнка заголовка перешла на «Разблокировать контакт» — без
+    // закрытия оболочки (заголовок жив под модалью).
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toContain(
+      'Разблокировать контакт',
+    )
+  })
+
+  it('№22 из «⋯»: книга №20 страницы сходится сразу — «Добавить в контакты» в шестерёнке без F5', async () => {
+    // №20 — мутируемая книга мока (новая ссылка на каждый вызов — иначе
+    // setState с той же ссылкой не перерисует): №22 убирает alice.
+    const book = contacts()
+    await renderPage()
+    mockChats.listContacts.mockImplementation(() => Promise.resolve([...book]))
+    const list = screen.getByRole('list', { name: 'Список чатов' })
+    fireEvent.click(within(list).getByText('alice').closest('button') as HTMLElement)
+    await screen.findByRole('heading', { level: 2, name: 'alice' })
+    mockChats.removeContact.mockResolvedValue(undefined)
+
+    await openShellForm('Контакты', 'Контакты')
+    const row = await screen.findByRole('button', { name: 'Контакт alice' })
+    book.splice(
+      book.findIndex((contact) => contact.user.id === ALICE),
+      1,
+    )
+    fireEvent.click(within(row).getByRole('button', { name: 'Действия с контактом' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Удалить контакт' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить' }))
+
+    await waitFor(() => {
+      expect(mockChats.removeContact).toHaveBeenCalledWith(ALICE)
+    })
+    expect(await screen.findByText('Контакт удалён — чат сохранён')).toBeVisible()
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Контакт alice' })).toBeNull()
+    })
+
+    // №20 книги страницы рефетчится СРАЗУ (не закрытием оболочки):
+    // шестерёнка открытого чата снова предлагает «Добавить в контакты».
+    await waitFor(() => {
+      expect(
+        mockChats.listContacts.mock.calls.filter((call) => call[0] === 'login').length,
+      ).toBeGreaterThan(1)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    await waitFor(() => {
+      expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toContain(
+        'Добавить в контакты',
+      )
+    })
+  })
+})

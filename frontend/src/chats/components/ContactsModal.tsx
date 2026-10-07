@@ -39,6 +39,10 @@
  *   чат и история сохраняются — FR-017, тост «Контакт удалён — чат
  *   сохранён»). Отмена подтверждения — действие не выполняется (SC-007).
  *   Сбои действий — ошибка видна (.modal-err), список жив (ожидание 004).
+ *   T089 (Bug 11): успехи №23/№24/№22 докладывают владельцу оболочки
+ *   (onContactBlockToggled/onContactRemoved) — страница рефетчит №12/№20,
+ *   и пометки строки/композер/«шестерёнка» сходятся живьём (паттерн
+ *   onChatDeleted T037); сбой владельцу не докладывается.
  *
  * Форма «Добавить контакт» (FR-012, T032) — проекция #addForm прототипа
  * (label «Username или email — точное совпадание», поле, .modal-btns
@@ -105,6 +109,21 @@ export interface ContactsModalProps {
    * сохранён, FR-017).
    */
   readonly onChatDeleted?: (chatId: string) => void
+  /**
+   * T089 (Bug 11а): успешный №23/№24 «⋯»-меню — владелец оболочки
+   * рефетчит №12 (паттерн onChatDeleted T037), и пометка
+   * «заблокирован» строки, композер открытого чата (FR-022) и пункты
+   * «шестерёнки» сходятся живьём, без перезагрузки. Доклад — только об
+   * успехе: сбой остаётся инлайн-ошибкой модали (ожидание 004).
+   */
+  readonly onContactBlockToggled?: (userId: string, blockedByMe: boolean) => void
+  /**
+   * T089 (Bug 11б): успешный №22 «Удалить контакт» — владелец
+   * оболочки синхронизирует книгу №20 страницы (reloadContacts), и
+   * «Добавить в контакты» шестерёнки/members-модали возвращается
+   * сразу, а не после закрытия оболочки/перезагрузки.
+   */
+  readonly onContactRemoved?: (userId: string) => void
   /**
    * T034 (ModalShell): сообщает владельцу оболочки о внутреннем
    * переключении list ↔ add — page отображает это в formId
@@ -195,6 +214,8 @@ export function ContactsModal({
   chats,
   onOpenChat,
   onChatDeleted,
+  onContactBlockToggled,
+  onContactRemoved,
   onFormChange,
 }: ContactsModalProps) {
   const showToast = useToast()
@@ -368,6 +389,9 @@ export function ContactsModal({
         void Promise.resolve(blockUser(user.id))
           .then(() => {
             showToast(`Контакт заблокирован — ${user.username}`)
+            // T089 (Bug 11а): владелец рефетчит №12 — пометка строки,
+            // композер и «шестерёнка» сходятся живьём (без F5).
+            onContactBlockToggled?.(user.id, true)
           })
           .catch((error: unknown) => {
             setActionError(problemMessage(error))
@@ -377,6 +401,7 @@ export function ContactsModal({
         void Promise.resolve(unblockUser(user.id))
           .then(() => {
             showToast(`Контакт разблокирован — ${user.username}`)
+            onContactBlockToggled?.(user.id, false)
           })
           .catch((error: unknown) => {
             setActionError(problemMessage(error))
@@ -408,6 +433,10 @@ export function ContactsModal({
           .then(() => {
             setContacts((current) => current.filter((item) => item.user.id !== user.id))
             showToast('Контакт удалён — чат сохранён')
+            // T089 (Bug 11б): №20 книги страницы сходится сразу —
+            // «Добавить в контакты» шестерёнки/members-модали
+            // возвращается без закрытия оболочки/F5.
+            onContactRemoved?.(user.id)
           })
           .catch((error: unknown) => {
             setActionError(problemMessage(error))
