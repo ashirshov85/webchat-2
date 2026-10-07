@@ -45,10 +45,12 @@
  * the OLD chat's max seq against the NEW chatId (400
  * `invalid_up_to_seq` or a quiet erroneous watermark advance).
  *
- * Open-time unread watermark (008 T078/T085, bug 2/7): the FIRST №13
- * answer of an open latches `unreadFromSeq` = `myReadUpToSeq` — the
- * fold row MessageList seats the feed at (the LAST READ message,
- * T085: its bottom edge at the viewport bottom). The latch is frozen
+ * Open-time unread watermark (008 T078/T085/T091, bug 2/7/13): the
+ * FIRST №13 answer of an open latches `unreadFromSeq` =
+ * `myReadUpToSeq` — the feed seats at the fold row MessageList
+ * derives from it (the row immediately BEFORE the first unread
+ * INCOMING message, T091: own sends are read by the author, so a
+ * chat ending with own sends seats in the end). The latch is frozen
  * for the whole open: reconnect refetches answer a watermark that
  * may already include the №17 read mark of the very messages the
  * user is looking at, and the seat must stay decided by the
@@ -161,15 +163,17 @@ export interface UseChatMessagesResult {
    */
   readonly othersReadUpToSeq: number
   /**
-   * Open-time read watermark of the caller (008 T078/T085, bug 2/7):
-   * the `myReadUpToSeq` latched from the FIRST №13 ChatView answer of
-   * the current open — messages with `seq ≤ unreadFromSeq` are the
-   * read ones, and MessageList seats the feed at the LAST of them
-   * (its bottom edge at the viewport bottom, T085). Frozen for the
-   * whole open (reconnect refetches never overwrite it), reset to
-   * `null` on chat switch and when №13 fails — `null` means
-   * «watermark unknown», the list waits and keeps the current
-   * behaviour if it never arrives.
+   * Open-time read watermark of the caller (008 T078/T085/T091,
+   * bug 2/7/13): the `myReadUpToSeq` latched from the FIRST №13
+   * ChatView answer of the current open — the unread run is the
+   * INCOMING messages with `seq > unreadFromSeq` (own sends are
+   * read by the author), and MessageList seats the feed at the row
+   * immediately BEFORE its first message (no unread incoming → the
+   * feed's very last row, T091). Frozen for the whole open
+   * (reconnect refetches never overwrite it), reset to `null` on
+   * chat switch and when №13 fails — `null` means «watermark
+   * unknown», the list waits and keeps the current behaviour if it
+   * never arrives.
    */
   readonly unreadFromSeq: number | null
   /**

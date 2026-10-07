@@ -86,30 +86,33 @@
  * T016(а) feed baselines carry both, so SC-001 at the US1
  * checkpoint needs them; the US3/T044 polish builds on top.
  *
- * Open seat (bug 2 T078 → bug 7 T085): the first render of an open
- * chat seats the feed with the BOTTOM edge of the LAST READ message
- * (`seq ≤ unreadFromSeq` — the open-time №13 `myReadUpToSeq`
- * latched by useChatMessages) at the BOTTOM edge of the viewport:
- * the unread run starts right below the fold, the read history
- * stays a scroll-up away (and `loadOlder` keeps feeding it). A
- * fully read window degenerates to the feed's very last row — the
- * open seats in the end. When the last read row sits ABOVE the
- * loaded window, the seat drives №14 `loadOlder` pages until it
- * enters the window (a failed page never retries on its own); a
- * wholly unread window (watermark 0) has no fold row and keeps the
- * natural top position. The seat is one-shot per open (re-armed by
- * the empty window of a chat switch), waits for the watermark
- * while №13 is in flight, and never fires for an empty chat. The
- * fold row carries `data-seat-anchor`; the pagination anchor of
- * prepended older pages (anchorHeightRef, T053) is untouched — the
- * two scrolls live in separate effects and never act in the same
- * commit. Bug 8а (T086): the first `scrollIntoView` runs against a
- * COLD layout (content-visibility placeholders), so a post-paint
- * rAF loop re-checks the deviation in BOTH directions (|gap| > 2 —
- * an undershoot AND a complete no-op with the anchor below the
- * fold) and corrects until the seat converges at the fold — a
- * fully read window ends with its last row there, i.e. the bottom
- * of the feed; bounded to SCROLL_SETTLE_FRAMES frames.
+ * Open seat (bug 2 T078 → bug 7 T085 → bug 13 T091): the first
+ * render of an open chat seats the feed with the BOTTOM edge of the
+ * FOLD row at the BOTTOM edge of the viewport. The fold row is the
+ * row immediately BEFORE the first unread INCOMING message — the
+ * unread run is `senderId ≠ me && seq > unreadFromSeq` (the
+ * open-time №13 `myReadUpToSeq` latched by useChatMessages): own
+ * outgoing rows are read by the author the moment they leave, so a
+ * chat whose tail is own sends carries no unread incoming and the
+ * seat degenerates to the feed's very last row — the open lands in
+ * the end with the own tail in view (bug 13). When the window
+ * starts with the unread incoming run, the fold row sits above it
+ * and the seat drives №14 `loadOlder` pages until it enters the
+ * window (a failed page never retries on its own); a wholly unread
+ * window (watermark 0) has no fold row and keeps the natural top
+ * position. The seat is one-shot per open (re-armed by the empty
+ * window of a chat switch), waits for the watermark while №13 is in
+ * flight, and never fires for an empty chat. The fold row carries
+ * `data-seat-anchor`; the pagination anchor of prepended older
+ * pages (anchorHeightRef, T053) is untouched — the two scrolls live
+ * in separate effects and never act in the same commit. Bug 8а
+ * (T086): the first `scrollIntoView` runs against a COLD layout
+ * (content-visibility placeholders), so a post-paint rAF loop
+ * re-checks the deviation in BOTH directions (|gap| > 2 — an
+ * undershoot AND a complete no-op with the anchor below the fold)
+ * and corrects until the seat converges at the fold — a window
+ * without an unread run ends with its last row there, i.e. the
+ * bottom of the feed; bounded to SCROLL_SETTLE_FRAMES frames.
  *
  * Bottom autoscroll (bug 2, T079): a send always seats the feed at
  * the bottom — the optimistic outbox row and the server ack that
@@ -280,16 +283,19 @@ export interface MessageListProps {
   readonly othersReadUpToSeq?: number
   /**
    * Open-time read watermark of the caller (bug 2 T078 → bug 7
-   * T085): the `myReadUpToSeq` latched from the first №13 ChatView
-   * answer of the current open (useChatMessages). Messages with
-   * `seq ≤ unreadFromSeq` are the read ones — the LAST of them is
-   * the fold row the feed seats at on the first render of the open
-   * (its bottom edge at the viewport bottom; the unread run starts
-   * right below the fold). A watermark at/above the last row means
-   * a fully read window — the seat degenerates to the very last row
-   * (the end of the feed). `null`/omitted — the watermark is not
-   * known yet (№13 in flight): the seat waits and never fires if it
-   * never arrives (a failed №13 keeps the current behaviour).
+   * T085 → bug 13 T091): the `myReadUpToSeq` latched from the first
+   * №13 ChatView answer of the current open (useChatMessages). The
+   * unread run is the INCOMING messages with `seq > unreadFromSeq`
+   * (own outgoing rows are read by the author the moment they
+   * leave) — the row immediately BEFORE the first of them is the
+   * fold row the feed seats at on the first render of the open (its
+   * bottom edge at the viewport bottom; the unread run starts right
+   * below the fold). A window with NO unread incoming degenerates
+   * to the feed's very last row — the open seats in the end (bug
+   * 13: the own-send tail lands in view). `null`/omitted — the
+   * watermark is not known yet (№13 in flight): the seat waits and
+   * never fires if it never arrives (a failed №13 keeps the current
+   * behaviour).
    */
   readonly unreadFromSeq?: number | null
   /**
@@ -364,7 +370,7 @@ interface FeedRowProps {
   readonly avatarSource: string
   /** The ack transition animates the fresh ✓ (T023, FR-018). */
   readonly stampAnim: boolean
-  /** The last read row — the T085 fold the open seat scrolls to. */
+  /** The fold row (before the first unread incoming) — the T085/T091 seat anchor. */
   readonly seatAnchor: boolean
 }
 
@@ -559,14 +565,15 @@ export function MessageList({
     }
     const seat = list.querySelector('[data-seat-anchor]')
     if (seat === null) {
-      // No read row in the loaded window — everything rendered is
-      // unread, the fold sits ABOVE the window (or does not exist at
-      // watermark 0). While older history may still carry the read
-      // row, the seat drives №14 pages down to it (T085); the memo
-      // keeps one request per window state. A watermark of 0 means
-      // nothing read exists anywhere — pagination can never find a
-      // fold row, so the feed keeps its natural top position (the
-      // whole feed IS the unread run) and №14 is never asked.
+      // The window STARTS with the unread incoming run — the fold row
+      // (the row right above it) sits ABOVE the loaded window (or does
+      // not exist at watermark 0, where everything incoming is
+      // unread). While older history may still carry the fold row, the
+      // seat drives №14 pages down to it (T085/T091); the memo keeps
+      // one request per window state. A watermark of 0 means no read
+      // incoming exists anywhere — pagination can never find a fold
+      // row, so the feed keeps its natural top position (the whole
+      // feed IS the unread run) and №14 is never asked.
       const oldest = messages[0]
       if (
         oldest !== undefined &&
@@ -583,12 +590,12 @@ export function MessageList({
     }
     seatArmedRef.current = false
     if (typeof seat.scrollIntoView === 'function') {
-      // block:'end' seats the LAST READ row's bottom edge at the
-      // viewport bottom — the unread run starts right below the fold,
-      // the read history stays a scroll-up away; a fully read window
-      // degenerates to the feed's very last row (the end). jsdom
-      // ships no scrollIntoView — the guard keeps every non-visual
-      // suite at the current behaviour.
+      // block:'end' seats the fold row's bottom edge at the viewport
+      // bottom — the unread incoming run starts right below the fold,
+      // the read history above stays a scroll-up away; a window with
+      // no unread incoming degenerates to the feed's very last row
+      // (the end, bug 13). jsdom ships no scrollIntoView — the guard
+      // keeps every non-visual suite at the current behaviour.
       seat.scrollIntoView({ block: 'end' })
       // content-visibility warm-up (research §G; bug 8а, T086): the
       // offscreen rows render lazily behind 64px placeholders, so the
@@ -762,18 +769,29 @@ export function MessageList({
   const incomingAvatarSource = (senderId: string): string =>
     senderNames?.get(senderId) ?? peerUsername ?? senderId
 
-  // T085: the fold row — the LAST READ message of the open-time
-  // watermark (`seq ≤ unreadFromSeq`); a watermark at/above the last
-  // row degenerates to the feed's very last row (fully read — the
-  // seat lands in the end).
+  // T091 (bug 13): the fold row — the row immediately BEFORE the
+  // first unread INCOMING message (`senderId ≠ me && seq >
+  // unreadFromSeq`; own outgoing rows are read by the author the
+  // moment they leave, so they never open the unread run). The scan
+  // runs through the window in ascending seq order:
+  //  • the first unread incoming sits INSIDE the window → the row
+  //    right above it is the fold (whatever its sender — the read
+  //    history above stays a scroll-up away);
+  //  • NO unread incoming in the window → the feed's very last row
+  //    (the seat lands in the end — a chat ending with own sends
+  //    opens at its own tail, bug 13);
+  //  • the window STARTS with the unread incoming run → the fold row
+  //    sits ABOVE the window: no anchor renders here, and the seat
+  //    effect below drives №14 pages down to it.
   let seatAnchorId: string | undefined
-  if (unreadFromSeq !== null) {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const candidate = messages[index]
-      if (candidate !== undefined && candidate.seq <= unreadFromSeq) {
-        seatAnchorId = candidate.id
-        break
-      }
+  if (unreadFromSeq !== null && messages.length > 0) {
+    const firstUnreadIncoming = messages.findIndex(
+      (message) => message.senderId !== currentUserId && message.seq > unreadFromSeq,
+    )
+    if (firstUnreadIncoming > 0) {
+      seatAnchorId = messages[firstUnreadIncoming - 1]?.id
+    } else if (firstUnreadIncoming === -1) {
+      seatAnchorId = messages.at(-1)?.id
     }
   }
 
