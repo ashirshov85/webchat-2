@@ -163,17 +163,17 @@ export interface UseChatMessagesResult {
    */
   readonly othersReadUpToSeq: number
   /**
-   * Open-time read watermark of the caller (008 T078/T085/T091,
-   * bug 2/7/13): the `myReadUpToSeq` latched from the FIRST №13
+   * Open-time read watermark of the caller (008 T078/T085/T091/T092,
+   * bug 2/7/13/14): the `myReadUpToSeq` latched from the FIRST №13
    * ChatView answer of the current open — the unread run is the
    * INCOMING messages with `seq > unreadFromSeq` (own sends are
-   * read by the author), and MessageList seats the feed at the row
-   * immediately BEFORE its first message (no unread incoming → the
-   * feed's very last row, T091). Frozen for the whole open
-   * (reconnect refetches never overwrite it), reset to `null` on
-   * chat switch and when №13 fails — `null` means «watermark
-   * unknown», the list waits and keeps the current behaviour if it
-   * never arrives.
+   * read by the author), and MessageList seats the feed AT the
+   * first message of the run (its top edge at the viewport top; no
+   * unread incoming → the feed's very last row, T092). Frozen for
+   * the whole open (reconnect refetches never overwrite it), reset
+   * to `null` on chat switch and when №13 fails — `null` means
+   * «watermark unknown», the list waits and keeps the current
+   * behaviour if it never arrives.
    */
   readonly unreadFromSeq: number | null
   /**
