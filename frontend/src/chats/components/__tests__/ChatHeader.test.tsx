@@ -23,10 +23,12 @@ import { ModalShell } from '../../../ui/ModalShell'
  * text — while the EMPTY `.status-row` keeps the header height
  * (min-height of chat-header.css) until №36 converges; group —
  * «N участников» (pluralRu) whose hover/focus
- * opens the `.members-tip` roster: «Вы» first (mark «администратор»
- * when owning), then the №28 members minus me with the mark for
- * owner/admin roles (FR-017). The tip closes on mouseleave/blur and
- * Esc (the top layer of data-model 3.1).
+ * opens the `.members-tip` roster: «Вы» first, then the №28 members
+ * minus me — the split role marks of bug 18 (T096): owner → «владелец»,
+ * admin → «админ», member — no mark, the «Вы» row follows the same
+ * scheme by myRole (FR-017; the 006 role model is finer than the
+ * prototype demo data — its single «администратор» mark). The tip
+ * closes on mouseleave/blur and Esc (the top layer of data-model 3.1).
  *
  * US4 (T054): the ONLY right-side control is the «шестерёнка»
  * ChatGearMenu — the per-kind item sets live in their own suite
@@ -309,15 +311,37 @@ describe('ChatHeader members-tip (T043, FR-017, data-model 2.3, ui-behavior §4)
     ])
   })
 
-  it('marks «администратор»: «Вы» при владении, участники с ролью owner/admin', () => {
+  it('метки ролей (T096): owner → «владелец», admin → «админ», member — без метки; «Вы» — по myRole', () => {
     const { container } = renderHeader(liveOwnerGroup())
     fireEvent.mouseEnter(statusRow(container))
 
     const rows = Array.from(tip()?.querySelectorAll('.mt-row') ?? [])
-    expect(rows[0]?.querySelector('.mt-me')?.textContent).toBe('администратор')
-    // alice (member) — без пометки; bob (admin) — с пометкой.
+    // «Вы» (myRole owner) → «владелец»; alice (member) — без метки;
+    // bob (admin) → «админ» — модель ролей 006 точнее одной метки
+    // демо-прототипа (bug 18).
+    expect(rows[0]?.querySelector('.mt-me')?.textContent).toBe('владелец')
     expect(rows[1]?.querySelector('.mt-me')).toBeNull()
-    expect(rows[2]?.querySelector('.mt-me')?.textContent).toBe('администратор')
+    expect(rows[2]?.querySelector('.mt-me')?.textContent).toBe('админ')
+  })
+
+  it('зритель-админ: «Вы» несёт «админ» — та же схема меток по myRole (T096)', () => {
+    const { container } = renderHeader(
+      groupChat({
+        members: [
+          rosterMember(ME, 'me', 'admin'),
+          rosterMember(ALICE, 'alice', 'member'),
+          rosterMember(BOB, 'bob', 'owner'),
+        ],
+        myRole: 'admin',
+        meUserId: ME,
+        meUsername: 'me',
+      }),
+    )
+    fireEvent.mouseEnter(statusRow(container))
+
+    const rows = Array.from(tip()?.querySelectorAll('.mt-row') ?? [])
+    expect(rows[0]?.querySelector('.mt-me')?.textContent).toBe('админ')
+    expect(rows[2]?.querySelector('.mt-me')?.textContent).toBe('владелец')
   })
 
   it('a non-owner viewer: «Вы» carries no mark, the №28 owner row does', () => {
@@ -343,7 +367,7 @@ describe('ChatHeader members-tip (T043, FR-017, data-model 2.3, ui-behavior §4)
     ])
     expect(rows[0]?.querySelector('.mt-me')).toBeNull()
     expect(rows[1]?.querySelector('.mt-me')).toBeNull()
-    expect(rows[2]?.querySelector('.mt-me')?.textContent).toBe('администратор')
+    expect(rows[2]?.querySelector('.mt-me')?.textContent).toBe('владелец')
   })
 
   it('closes on mouseleave', () => {

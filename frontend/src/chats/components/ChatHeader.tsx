@@ -18,9 +18,12 @@
  *    «заблокирован» mark follows (FR-020);
  *  * group — «N участников» with the prototype pluralRu; hover/focus
  *    of the status row opens the `.members-tip` roster (FR-017):
- *    «Вы» first (mark «администратор» when `myRole` is owner), then
- *    the live №28 members minus me with the mark for owner/admin
- *    roles. The tip is portaled to document.body — the prototype's
+ *    «Вы» first, then the live №28 members minus me — the split role
+ *    marks of bug 18 (T096): owner rows carry «владелец», admin rows
+ *    «админ», member rows no mark; the «Вы» row follows the same
+ *    scheme by `myRole` (the 006 role model is finer than the
+ *    prototype demo data — its single «администратор» mark). The tip
+ *    is portaled to document.body — the prototype's
  *    body-level `#membersTip` (fixed, z-56, pointer-events: none) —
  *    positioned by the prototype clamp formulas against the status
  *    row rect and closed by mouseleave/blur/Esc; Esc is captured as
@@ -94,10 +97,10 @@ export interface GroupChatHeaderData {
   readonly members: readonly GroupMember[] | null
   /**
    * The viewer's role — the live №28 myRole while the view is open,
-   * the №12/№13/№27 basis until then (T054): the «администратор» mark
-   * of the «Вы» tip row (only rendered when №28 is live) AND the gear
-   * menu matrix of 006 (ui-behavior §4); null — no basis at all, the
-   * group header carries no gear.
+   * the №12/№13/№27 basis until then (T054): the «владелец»/«админ»
+   * marks of the tip rows (only rendered when №28 is live) AND the
+   * gear menu matrix of 006 (ui-behavior §4); null — no basis at all,
+   * the group header carries no gear.
    */
   readonly myRole: GroupMember['role'] | null
   /** The viewer's user id — filters the own №28 row out of the tip. */
@@ -231,32 +234,51 @@ function GroupStatusRow({
 interface MembersTipProps {
   /** The «Вы» avatar derivation source. */
   readonly meUsername: string | null
-  /** The viewer's №28 role — the «администратор» mark of the «Вы» row. */
+  /** The viewer's №28 role — the role mark of the «Вы» row (T096). */
   readonly myRole: GroupMember['role'] | null
   /** The live №28 members minus me (FR-017). */
   readonly members: readonly GroupMember[]
   readonly tipRef: RefObject<HTMLDivElement | null>
 }
 
+/**
+ * The role mark text of a tip row (bug 18/T096): owner → «владелец»,
+ * admin → «админ», member — no mark (null). The 006 role model is
+ * finer than the prototype demo data — its single «администратор»
+ * mark; the `.mt-me` lexica (chat-header.css/prototype §163) stays,
+ * only the text splits.
+ */
+function roleMarkOf(role: GroupMember['role'] | null): string | null {
+  if (role === 'owner') {
+    return 'владелец'
+  }
+  if (role === 'admin') {
+    return 'админ'
+  }
+  return null
+}
+
 /** The `.members-tip` roster body (FR-017): «Вы» first, then №28 minus me. */
 function MembersTip({ meUsername, myRole, members, tipRef }: MembersTipProps) {
+  const meMark = roleMarkOf(myRole)
   return (
     <div className="members-tip show" role="tooltip" ref={tipRef}>
       <div className="mt-title">Участники</div>
       <div className="mt-row">
         <Avatar source={meUsername ?? ''} size={TIP_AVATAR_SIZE} />
         <span className="mt-name">Вы</span>
-        {myRole === 'owner' && <span className="mt-me">администратор</span>}
+        {meMark !== null && <span className="mt-me">{meMark}</span>}
       </div>
-      {members.map((member) => (
-        <div className="mt-row" key={member.user.id}>
-          <Avatar source={member.user.username} size={TIP_AVATAR_SIZE} />
-          <span className="mt-name">{member.user.username}</span>
-          {(member.role === 'owner' || member.role === 'admin') && (
-            <span className="mt-me">администратор</span>
-          )}
-        </div>
-      ))}
+      {members.map((member) => {
+        const mark = roleMarkOf(member.role)
+        return (
+          <div className="mt-row" key={member.user.id}>
+            <Avatar source={member.user.username} size={TIP_AVATAR_SIZE} />
+            <span className="mt-name">{member.user.username}</span>
+            {mark !== null && <span className="mt-me">{mark}</span>}
+          </div>
+        )
+      })}
     </div>
   )
 }
