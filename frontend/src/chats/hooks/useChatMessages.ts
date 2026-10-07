@@ -45,15 +45,15 @@
  * the OLD chat's max seq against the NEW chatId (400
  * `invalid_up_to_seq` or a quiet erroneous watermark advance).
  *
- * Open-time unread watermark (008 T078, bug 2): the FIRST №13 answer
- * of an open latches `unreadFromSeq` = `myReadUpToSeq` — the anchor
- * MessageList seats the feed at (the first INCOMING message with
- * `seq > unreadFromSeq`). The latch is frozen for the whole open:
- * reconnect refetches answer a watermark that may already include the
- * №17 read mark of the very messages the user is looking at, and the
- * seat must stay decided by the OPEN-time position. A №13 failure
- * leaves the latch null — no anchor, the feed keeps the current
- * behaviour.
+ * Open-time unread watermark (008 T078/T085, bug 2/7): the FIRST №13
+ * answer of an open latches `unreadFromSeq` = `myReadUpToSeq` — the
+ * fold row MessageList seats the feed at (the LAST READ message,
+ * T085: its bottom edge at the viewport bottom). The latch is frozen
+ * for the whole open: reconnect refetches answer a watermark that
+ * may already include the №17 read mark of the very messages the
+ * user is looking at, and the seat must stay decided by the
+ * OPEN-time position. A №13 failure leaves the latch null — no fold
+ * row, the feed keeps the current behaviour.
  *
  * Catch-up pages (feature 005, T023): `applySyncPage` merges the
  * №26/№15 pages useSync applied — the same dedup-by-id reconcile in
@@ -161,14 +161,15 @@ export interface UseChatMessagesResult {
    */
   readonly othersReadUpToSeq: number
   /**
-   * Open-time read watermark of the caller (008 T078, bug 2): the
-   * `myReadUpToSeq` latched from the FIRST №13 ChatView answer of the
-   * current open — incoming messages with `seq > unreadFromSeq` are
-   * the unread ones, and MessageList seats the feed at the first of
-   * them. Frozen for the whole open (reconnect refetches never
-   * overwrite it), reset to `null` on chat switch and when №13 fails
-   * — `null` means «watermark unknown», the list waits and keeps the
-   * current behaviour if it never arrives.
+   * Open-time read watermark of the caller (008 T078/T085, bug 2/7):
+   * the `myReadUpToSeq` latched from the FIRST №13 ChatView answer of
+   * the current open — messages with `seq ≤ unreadFromSeq` are the
+   * read ones, and MessageList seats the feed at the LAST of them
+   * (its bottom edge at the viewport bottom, T085). Frozen for the
+   * whole open (reconnect refetches never overwrite it), reset to
+   * `null` on chat switch and when №13 fails — `null` means
+   * «watermark unknown», the list waits and keeps the current
+   * behaviour if it never arrives.
    */
   readonly unreadFromSeq: number | null
   /**
@@ -391,10 +392,10 @@ export function useChatMessages(
         if (peerReadUpToSeq !== null) {
           setPeerReadUpToSeq((previous) => Math.max(previous, peerReadUpToSeq))
         }
-        // T078: the FIRST №13 answer of this open freezes the unread
-        // anchor — later (reconnect) answers may already carry the №17
-        // read mark of the displayed messages and must not move the
-        // seat the open decided on.
+        // T078/T085: the FIRST №13 answer of this open freezes the
+        // fold row — later (reconnect) answers may already carry the
+        // №17 read mark of the displayed messages and must not move
+        // the seat the open decided on.
         setUnreadFromSeq((previous) => previous ?? Math.max(0, view.myReadUpToSeq))
         // №13 group variant (US2, T038): `othersReadUpToSeq` seeds the
         // group ✓✓ watermark the same monotonic way — a frame missed

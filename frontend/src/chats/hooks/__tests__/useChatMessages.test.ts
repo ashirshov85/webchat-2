@@ -458,15 +458,15 @@ describe('useChatMessages chat switching', () => {
   })
 })
 
-describe('useChatMessages open-time unread watermark (008 T078, bug 2)', () => {
+describe('useChatMessages open-time unread watermark (008 T078/T085, bug 2/7)', () => {
   /**
-   * T078: the open chat seats its feed at the FIRST unread incoming
-   * message — `unreadFromSeq` is the caller's `myReadUpToSeq` latched
-   * from the FIRST №13 ChatView answer of THIS open. The latch never
+   * T078/T085: the open chat seats its feed at the LAST READ message
+   * — `unreadFromSeq` is the caller's `myReadUpToSeq` latched from
+   * the FIRST №13 ChatView answer of THIS open. The latch never
    * overwrites itself on reconnect refetches (by then №17 may have
    * already advanced the server watermark with the read mark of the
    * very messages the user is looking at), resets on chat switch, and
-   * stays null when №13 fails (no anchor — MessageList keeps the
+   * stays null when №13 fails (no fold row — MessageList keeps the
    * current behaviour).
    */
 
