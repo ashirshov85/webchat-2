@@ -47,7 +47,7 @@
 
 ### B1. Источник и запись времени
 
-- **Decision**: Redis-ключ `presence:lastseen:{userId}` (string, epoch ms из Redis `TIME`), TTL **30 дней** (старше — фолбэк «давно»). Запись в существующих Lua-ногах `RedisPresenceStore`: `REGISTER_SCRIPT` (открытие соединения), `RENEW_SCRIPT` (heartbeat №37), `UNREGISTER_SCRIPT` (штатное закрытие), `CLEAR_SESSION_SCRIPT` (logout №7). Чтение — в `SNAPSHOT_SCRIPT` (пакетно). При TTL-истечении регистрации (reap) отдельной записи нет — остаётся stamp последнего heartbeat: погрешность ≤ TTL 90 c + гистерезис 45 c + poller 1 c ≈ **137 с** (допуск спеки ~2,5 мин, SC-005).
+- **Decision**: Redis-ключ `presence:lastseen:{userId}` (string, epoch ms из Redis `TIME`), TTL **30 дней** (старше — фолбэк «давно»). Запись в существующих Lua-ногах `RedisPresenceStore`: `REGISTER_SCRIPT` (открытие соединения), `RENEW_SCRIPT` (heartbeat №37), `UNREGISTER_SCRIPT` (штатное закрытие), `CLEAR_SESSION_SCRIPT` (logout №7). Чтение — в `SNAPSHOT_SCRIPT` (пакетно). При TTL-истечении регистрации (reap) отдельной записи нет — остаётся stamp последнего heartbeat: погрешность ≤ TTL 90 c + гистерезис 45 c + poller 1 c ≈ **137 с** (допуск спеки — единая оценка ≤ ~137 с, SC-005).
 - **Rationale**: «Последняя активность presence-канала» буквально = heartbeat/открытие/закрытие; запись в тех же атомарных Lua-скриптах не добавляет кругов и гонок; Redis — уже установленное внешнее хранилище presence (конституция II). Мультидевайс: ключ один на пользователя, пишется любым живым подключением (edge-кейс спеки).
 - **Alternatives**: Колонка в PG (отвергну: presence целиком в Redis с 007, писать в PG на каждый heartbeat — лишняя нагрузка); фиксация только на закрытии (хуже точность при падении инстанса).
 

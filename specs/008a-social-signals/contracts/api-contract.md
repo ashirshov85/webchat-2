@@ -14,7 +14,7 @@
 PUT /api/v1/users/me/profile
 operationId: updateMyProfile        # summary: "Обновить мой профиль (№39, Bearer)"
 body (application/json): ProfileUpdateRequest
-  displayName?: string | null   # null/отсутствие = сброс (имя не задано)
+  displayName?: string | null   # null/отсутствие = сброс (имя не задано); ""/пробельная строка = 400 (сброс — только явный null)
 responses:
   200 -> PublicUser              # обновлённое представление (с displayName, если задано)
   400 invalid_display_name       # пусто/пробельно после trim, или > 64 символов
@@ -32,7 +32,7 @@ responses:
 PUT /api/v1/contacts/{userId}/alias
 operationId: setContactAlias      # summary: "Задать/сбросить персональный alias контакта (№40, Bearer)"
 body: AliasUpdateRequest
-  alias?: string | null          # null/отсутствие = сброс → отображение по displayName/username
+  alias?: string | null          # null/отсутствие = сброс → отображение по displayName/username; ""/пробельная строка = 400 (сброс — только явный null)
 responses:
   200 -> ContactView             # user (PublicUser с displayName), alias?, createdAt, blockedByMe
   400 invalid_alias              # пусто/пробельно после trim, или > 64 символов; invalid_uuid (path)

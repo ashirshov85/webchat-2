@@ -26,7 +26,7 @@
 
 **Constraints**: строго аддитивные изменения публичного контракта (SC-007, oasdiff breaking-gate в CI); эфемерность typing (0 следов в персистентном хранилище, SC-003); приватность lastSeen — 0 утечек (SC-002/SC-005); существующие проверки 004–008 без изменения ожиданий; флуд-лимиты по дом-конвенции 429 `flood_limit` + Retry-After; блок-пары не обмениваются новыми событиями.
 
-**Scale/Scope**: бюджеты конституции II — расчёт нагрузки typing-событиями приведён в [research.md §E](./research.md) (пик ~50k typing-событий/с при 1M CCU ≈ 50% бюджетa сообщений на ~60-байтовые кадры; горизонтальное масштабирование Pub/Sub + stateless-поды). Объём: ~1 миграция, 4 новых REST-операции (№39–№42), 3 новых SSE-события, ~6 затронутых представлений, ~10 backend-классов, ~12 frontend-файлов.
+**Scale/Scope**: бюджеты конституции II — расчёт нагрузки typing-событиями приведён в [research.md §E](./research.md) (пик ~50k typing-событий/с при 1M CCU ≈ 50% бюджетa сообщений на ~60-байтовые кадры; горизонтальное масштабирование Pub/Sub + stateless-поды). Объём: ~1 миграция, 4 новых REST-операции (№39–№42), 3 новых SSE-события, ~8 затронутых представлений, ~10 backend-классов, ~12 frontend-файлов.
 
 ## Constitution Check
 
@@ -82,6 +82,7 @@ backend/src/main/kotlin/webchat/backend/
 │   └── domain/…                          # валидация (trim, 1..64), store-метод profиля
 ├── contacts/
 │   ├── api/ContactController.kt          # + PUT /{userId}/alias (№40): set/reset
+│   ├── api/UserSearchController.kt       # + displayName?/alias? в результатах поиска №19
 │   ├── api/dto/ContactDtos.kt            # ContactView + alias?; PublicUserView + displayName?
 │   ├── domain/model/Contact.kt           # + alias
 │   ├── domain/port/ContactRepository.kt  # + storeAlias, + aliasesOf(owner, ids)
@@ -108,7 +109,7 @@ backend/src/main/kotlin/webchat/backend/
 │   ├── repository/RedisPresenceStore.kt  # presence:lastseen:{userId}: stamp в REGISTER/
 │   │                                     # RENEW/UNREGISTER/CLEAR_SESSION Lua-ногах; чтение в SNAPSHOT
 │   └── …                                 # (инкогнито-пакетное чтение presence_hidden)
-└── config/…                              # chats.typing.* (окно повтора, TTL, poller), rate-limit-константы
+└── config/…                              # chats.typing.* (state-ttl, poller), rate-limit-константы
 
 backend/src/test/kotlin/webchat/backend/
 ├── chats/TypingIT.kt                     # НОВОЕ: фрейминг, эфемерность, блок-пары, флуд,
@@ -135,6 +136,7 @@ frontend/src/
 │                                         # окно повтора 3 с) / stop (отправка/очистка/молчание)
 ├── chats/pages/MessengerPage.tsx         # проводка typing/sound-событиев, per-chat подсчёт
 │                                         # входящих sync-батчей для звука, звук-состояние
+├── chats/components/ChatListItem.tsx     # peer-имя по цепочке resolveDisplayName, инициалы
 ├── chats/components/ChatHeader.tsx       # + bell-кнопка (.ch-btn, aria-pressed, .off),
 │                                         # статус «Был в сети — …»
 ├── chats/components/TypingRow.tsx        # НОВОЕ: пузырь .typing-b с .tlamp-точками по прототипу
