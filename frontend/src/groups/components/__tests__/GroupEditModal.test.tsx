@@ -85,8 +85,8 @@ function roster(): GroupMember[] {
 /** №20-книга редактирующего — dave/eve ещё не в группе. */
 function offerContacts(): ContactView[] {
   return [
-    { user: user(DAVE, 'dave'), createdAt: '2026-09-02T00:00:00.000Z' },
-    { user: user(EVE, 'eve'), createdAt: '2026-09-03T00:00:00.000Z' },
+    { user: user(DAVE, 'dave'), createdAt: '2026-09-02T00:00:00.000Z', blockedByMe: false },
+    { user: user(EVE, 'eve'), createdAt: '2026-09-03T00:00:00.000Z', blockedByMe: false },
   ]
 }
 

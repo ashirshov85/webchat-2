@@ -136,7 +136,7 @@ function createdGroupView(): GroupView {
 }
 
 function contacts(): ContactView[] {
-  return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z' }]
+  return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z', blockedByMe: false }]
 }
 
 /** The №18 stub: a silent stream — no frames, no (re)connects. */

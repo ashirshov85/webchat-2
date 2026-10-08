@@ -23,6 +23,19 @@
  *   direct-чат с `blockedByMe` → «заблокирован» (+ класс .blocked);
  *   контакта без чата → «чат удалён» (+ .nochat, подсказка title).
  *
+ *   T097 (bug 16): чат удалён → №12 теряет пару, и блокировка контакта
+ *   больше ниоткуда не проецировалась. Мерж ТРЁХ источников, приоритет
+ *   сверху вниз:
+ *   1) сессионный optimistic-override `Map<userId, boolean>` — пишется
+ *      ТОЛЬКО собственными №23/№24-успехами этой модали (сбой/отмена не
+ *      пишут): пометка «заблокирован»/.blocked строки без чата и
+ *      переключение пункта «Разблокировать» появляются сразу;
+ *   2) №12 связанного чата (живой чат — прежняя T089-семантика: рефетч
+ *      владельца после №23/№24 сходится пропом chats; №12 свежее №20,
+ *      снятого при монтировании, — при живом чате побеждает №12);
+ *   3) №20 `ContactView.blockedByMe` (контракт 0.8.0) — корневой фикс:
+ *      состояние строки без чата живёт после F5.
+ *
  * - Клик по строке (Row/Enter/Space — FR-035): контакт со связанным чатом
  *   — №11 `ensureChat({peerUserId})` → `onOpenChat(ChatView)` (поведение
  *   004 сохранено, FR-034); контакт без чата — БЕЗ действия
@@ -161,9 +174,9 @@ function boundChatOf(chats: readonly ChatListItem[], contact: ContactView): Boun
 }
 
 /** Пометки строки (renderContactsModal прототипа): «заблокирован», «чат удалён». */
-function contactFlags(bound: BoundChat | null): string[] {
+function contactFlags(bound: BoundChat | null, blocked: boolean): string[] {
   const flags: string[] = []
-  if (bound?.blockedByMe) {
+  if (blocked) {
     flags.push('заблокирован')
   }
   if (bound === null) {
@@ -239,6 +252,12 @@ export function ContactsModal({
   const [addQuery, setAddQuery] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  /**
+   * T097 (а): сессионный optimistic-override блокировки — пишется только
+   * собственными №23/№24-успехами этой модали (см. докблок компонента:
+   * приоритет мержа override → №12 → №20).
+   */
+  const [blockedOverrides, setBlockedOverrides] = useState<ReadonlyMap<string, boolean>>(new Map())
 
   /** №20 + «Повторить»: единственный путь загрузки списка. */
   const loadContacts = useCallback(() => {
@@ -285,6 +304,21 @@ export function ContactsModal({
         })
     },
     [onOpenChat],
+  )
+
+  /** T097 (bug 16): слитое состояние блокировки строки — override → №12 → №20. */
+  const blockedStateOf = useCallback(
+    (contact: ContactView, bound: BoundChat | null): boolean => {
+      const override = blockedOverrides.get(contact.user.id)
+      if (override !== undefined) {
+        return override
+      }
+      if (bound !== null) {
+        return bound.blockedByMe
+      }
+      return contact.blockedByMe
+    },
+    [blockedOverrides],
   )
 
   const handleRowActivate = (contact: ContactView) => {
@@ -350,7 +384,7 @@ export function ContactsModal({
       return []
     }
     const bound = boundChatOf(chats, menuContact)
-    const blocked = bound?.blockedByMe === true
+    const blocked = blockedStateOf(menuContact, bound)
     return [
       {
         label: blocked ? 'Разблокировать' : 'Заблокировать',
@@ -380,7 +414,7 @@ export function ContactsModal({
         },
       },
     ]
-  }, [menuContact, chats])
+  }, [menuContact, chats, blockedStateOf])
 
   /** Подтверждённое действие (submit ConfirmDialog): форма возвращается к
    * списку, операция идёт своим ходом; успех — ровно один тост (FR-025),
@@ -396,6 +430,9 @@ export function ContactsModal({
       case 'block':
         void Promise.resolve(blockUser(user.id))
           .then(() => {
+            // T097 (а): сессионная пометка строки без чата (№12 пары
+            // больше не несёт) — до/вместо №12-рефетча владельца.
+            setBlockedOverrides((current) => new Map(current).set(user.id, true))
             showToast(`Контакт заблокирован — ${user.username}`)
             // T089 (Bug 11а): владелец рефетчит №12 — пометка строки,
             // композер и «шестерёнка» сходятся живьём (без F5).
@@ -408,6 +445,7 @@ export function ContactsModal({
       case 'unblock':
         void Promise.resolve(unblockUser(user.id))
           .then(() => {
+            setBlockedOverrides((current) => new Map(current).set(user.id, false))
             showToast(`Контакт разблокирован — ${user.username}`)
             onContactBlockToggled?.(user.id, false)
           })
@@ -637,8 +675,8 @@ export function ContactsModal({
           )}
           {visibleContacts.map((contact) => {
             const bound = boundChatOf(chats, contact)
-            const blocked = bound?.blockedByMe === true
-            const flags = contactFlags(bound)
+            const blocked = blockedStateOf(contact, bound)
+            const flags = contactFlags(bound, blocked)
             return (
               <button
                 type="button"
@@ -685,7 +723,7 @@ export function ContactsModal({
       {/* #ctcAdd прототипа: .modal-btns под списком — путь к форме добавления. */}
       <div className="modal-btns">
         <button type="button" className="m-btn primary" onClick={openAddForm}>
-          Добавить контакт
+          Добавить новый контакт
         </button>
       </div>
       {actionError !== null && (

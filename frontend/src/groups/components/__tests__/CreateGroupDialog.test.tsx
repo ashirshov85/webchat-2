@@ -60,9 +60,9 @@ function peer(id: string, username: string) {
 
 function contacts(): ContactView[] {
   return [
-    { user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z' },
-    { user: peer(BOB, 'bob'), createdAt: '2026-09-03T00:00:00.000Z' },
-    { user: peer(CAROL, 'carol'), createdAt: '2026-09-04T00:00:00.000Z' },
+    { user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z', blockedByMe: false },
+    { user: peer(BOB, 'bob'), createdAt: '2026-09-03T00:00:00.000Z', blockedByMe: false },
+    { user: peer(CAROL, 'carol'), createdAt: '2026-09-04T00:00:00.000Z', blockedByMe: false },
   ]
 }
 

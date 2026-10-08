@@ -125,7 +125,7 @@ function directChatView(): ChatView {
 }
 
 function contacts(): ContactView[] {
-  return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z' }]
+  return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z', blockedByMe: false }]
 }
 
 /** Исход enqueue по умолчанию — тихий успех (T045: успех молчит). */

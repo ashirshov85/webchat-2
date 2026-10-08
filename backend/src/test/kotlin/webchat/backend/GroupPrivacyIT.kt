@@ -1027,9 +1027,9 @@ class GroupPrivacyIT(
         const val PATCH_METHOD = "PATCH"
         const val PATCH_CONNECT_TIMEOUT_SECONDS = 5L
 
-        /** openapi.yaml 0.5.0 shapes №19/№20 keep verbatim in 0.6.0 (US5-4). */
+        /** openapi.yaml shapes №19/№20 keep verbatim (US5-4); ContactView gained blockedByMe additively (T097). */
         val PUBLIC_USER_FIELDS = listOf("id", "username", "email", "status", "createdAt")
-        val CONTACT_VIEW_FIELDS = listOf("user", "createdAt")
+        val CONTACT_VIEW_FIELDS = listOf("user", "createdAt", "blockedByMe")
 
         /**
          * One exposition sample line: `name{labels} value` (the labels

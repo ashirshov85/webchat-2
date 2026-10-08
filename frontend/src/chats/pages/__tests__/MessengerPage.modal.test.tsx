@@ -112,8 +112,8 @@ function directChatView(): ChatView {
 
 function contacts(): ContactView[] {
   return [
-    { user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z' },
-    { user: peer(BOB, 'bob'), createdAt: '2026-09-03T00:00:00.000Z' },
+    { user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z', blockedByMe: false },
+    { user: peer(BOB, 'bob'), createdAt: '2026-09-03T00:00:00.000Z', blockedByMe: false },
   ]
 }
 
@@ -174,7 +174,7 @@ describe('MessengerPage единая ModalShell (T034, data-model 1.6/3.3)', () 
     await renderPage()
     await openShellForm('Контакты', 'Контакты')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Добавить контакт' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить новый контакт' }))
 
     const addDialog = await screen.findByRole('dialog', { name: 'Добавить контакт' })
     expect(

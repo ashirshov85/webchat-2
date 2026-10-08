@@ -387,6 +387,67 @@ class BlockingIT(
         }
     }
 
+    /**
+     * T097 (bug 16, №20 projection): `ContactView.blockedByMe` carries the
+     * caller's own block mark of a contact whose dialog was DELETED — №12
+     * drops the hidden chat, so until the additive №20 field the block
+     * state had NO projection left and the UI could neither mark the row
+     * nor offer «Разблокировать». The list keeps answering exactly the
+     * contract field set (`additionalProperties: false`), the mark is
+     * per-direction (the blocked side sees `false`), it survives №22/№21
+     * contact re-bookkeeping (FR-020 independence) and №24 clears it.
+     */
+    @Test
+    fun `contact list carries blockedByMe after the dialog is deleted`() {
+        val (alice, bob) = messagingPair()
+        val carol = messagingUser("t097carol")
+        assertThat(addContact(alice, bob.id).statusCode).isEqualTo(HttpStatus.CREATED)
+        assertThat(addContact(alice, carol.id).statusCode).isEqualTo(HttpStatus.CREATED)
+        val chatId = ensureChatOk(alice, bob.id)
+        assertThat(blockUser(alice, bob.id).statusCode).isEqualTo(HttpStatus.NO_CONTENT)
+
+        assertThat(deleteChat(alice, chatId).statusCode)
+            .overridingErrorMessage("№14 chat deletion must succeed (the fixture of bug 16)")
+            .isEqualTo(HttpStatus.NO_CONTENT)
+        assertThat(objectMapper.readTree(listChats(alice).body)["chats"].size())
+            .overridingErrorMessage("the deleted dialog must leave №12 — №20 is the only block projection left")
+            .isZero
+
+        val bobEntry = contactEntry(alice, bob.id)
+        assertThat(fieldNames(bobEntry))
+            .overridingErrorMessage(
+                "ContactView must carry exactly the contract fields (additionalProperties: false), got <%s>",
+                fieldNames(bobEntry),
+            ).containsExactlyInAnyOrderElementsOf(CONTACT_VIEW_FIELDS)
+        assertThat(bobEntry[BLOCKED_BY_ME_FIELD].asBoolean())
+            .overridingErrorMessage("№20 must keep the caller's own block mark after the №14 chat deletion (T097)")
+            .isTrue
+        assertThat(contactEntry(alice, carol.id)[BLOCKED_BY_ME_FIELD].asBoolean())
+            .overridingErrorMessage("an unblocked contact must project blockedByMe=false")
+            .isFalse
+
+        // The blocked side keeps his OWN book (FR-020) — his №21/№20
+        // answer must carry his own direction: false.
+        assertThat(addContact(bob, alice.id).statusCode).isEqualTo(HttpStatus.CREATED)
+        assertThat(contactEntry(bob, alice.id)[BLOCKED_BY_ME_FIELD].asBoolean())
+            .overridingErrorMessage("blockedByMe is the caller's OWN direction only — the blocked side sees false")
+            .isFalse
+
+        // FR-020 independence: contact re-bookkeeping neither lifts the
+        // block nor loses the mark — №22 + a fresh №21 answer it verbatim.
+        assertThat(deleteContact(alice, bob.id).statusCode).isEqualTo(HttpStatus.NO_CONTENT)
+        val reAdded = addContact(alice, bob.id)
+        assertThat(reAdded.statusCode).isEqualTo(HttpStatus.CREATED)
+        assertThat(objectMapper.readTree(reAdded.body)[BLOCKED_BY_ME_FIELD].asBoolean())
+            .overridingErrorMessage("№21 ContactView must answer blockedByMe=true while the block lives (T097)")
+            .isTrue
+
+        assertThat(unblockUser(alice, bob.id).statusCode).isEqualTo(HttpStatus.NO_CONTENT)
+        assertThat(contactEntry(alice, bob.id)[BLOCKED_BY_ME_FIELD].asBoolean())
+            .overridingErrorMessage("№24 must clear the №20 projection (converges with №12)")
+            .isFalse
+    }
+
     /** №23 error legs: self-block is `422 self_forbidden`, an unknown target is `404 user_not_found`. */
     @Test
     fun `block refuses self and unknown targets with the contract codes`() {
@@ -603,6 +664,17 @@ class BlockingIT(
     private fun contactIds(response: ResponseEntity<String>): List<String> =
         objectMapper.readTree(response.body)["contacts"].map { it["user"]["id"].asText() }
 
+    /** The caller's №20 `ContactView` of [userId] — the list must hold it exactly once. */
+    private fun contactEntry(
+        user: MessagingUser,
+        userId: UUID,
+    ): JsonNode {
+        val entries = objectMapper.readTree(listContacts(user).body)["contacts"]
+            .filter { it["user"]["id"].asText() == userId.toString() }
+        assertThat(entries).hasSize(1)
+        return entries[0]
+    }
+
     /** №15 history of the dialog as text list in the framed DESC order. */
     private fun historyTexts(
         user: MessagingUser,
@@ -655,5 +727,8 @@ class BlockingIT(
         /** ChatView (openapi 0.4.0): additionalProperties false, blockedByMe is the only block field. */
         val CHAT_VIEW_FIELDS: List<String> =
             listOf("chatId", "peer", BLOCKED_BY_ME_FIELD, "peerReadUpToSeq", "myReadUpToSeq")
+
+        /** ContactView (openapi 0.8.0, T097): additionalProperties false, blockedByMe added additively. */
+        val CONTACT_VIEW_FIELDS: List<String> = listOf("user", "createdAt", BLOCKED_BY_ME_FIELD)
     }
 }

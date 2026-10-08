@@ -51,6 +51,9 @@ class JdbcBlockRepository(
         blockedId: UUID,
     ): Boolean = jdbcTemplate.queryForObject(EXISTS_SQL, Boolean::class.java, blockerId, blockedId)
 
+    override fun blockedTargetsOf(blockerId: UUID): Set<UUID> =
+        jdbcTemplate.queryForList(TARGETS_SQL, UUID::class.java, blockerId).toSet()
+
     private companion object {
         val ROW_MAPPER =
             RowMapper { rs: ResultSet, _: Int ->
@@ -86,6 +89,12 @@ class JdbcBlockRepository(
             SELECT EXISTS (
                 SELECT 1 FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?
             )
+            """.trimIndent()
+
+        /** T097 №20 read model: the caller's own block targets in one set query. */
+        val TARGETS_SQL =
+            """
+            SELECT blocked_id FROM user_blocks WHERE blocker_id = ?
             """.trimIndent()
     }
 }

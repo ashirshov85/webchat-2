@@ -418,5 +418,8 @@ class ChatServiceTest {
             blockerId: UUID,
             blockedId: UUID,
         ): Boolean = blockerId to blockedId in blockedPairs
+
+        override fun blockedTargetsOf(blockerId: UUID): Set<UUID> =
+            blockedPairs.filter { it.first == blockerId }.map { it.second }.toSet()
     }
 }

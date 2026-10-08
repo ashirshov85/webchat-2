@@ -73,8 +73,17 @@ function publicUser(id: string, username: string, email: string): PublicUser {
   return { id, username, email, status: 'active', createdAt: '2026-09-01T00:00:00.000Z' }
 }
 
-function contactView(id: string, username: string, email: string): ContactView {
-  return { user: publicUser(id, username, email), createdAt: '2026-09-10T00:00:00.000Z' }
+function contactView(
+  id: string,
+  username: string,
+  email: string,
+  blockedByMe = false,
+): ContactView {
+  return {
+    user: publicUser(id, username, email),
+    createdAt: '2026-09-10T00:00:00.000Z',
+    blockedByMe,
+  }
 }
 
 const ALICE_CONTACT = contactView(ALICE, 'alice', 'alice@example.com')
@@ -561,10 +570,98 @@ describe('ContactsModal синхронизация владельца после
   })
 })
 
+describe('ContactsModal блокировка контакта с удалённым чатом (T097, bug 16)', () => {
+  /**
+   * Bug 16: чат удалён → №12 теряет blockedByMe пары, и до 0.8.0 состояние
+   * блокировки не проецировалось вовсе. (а) сессионный optimistic-override
+   * Map<userId, boolean> по собственным №23/№24-успехам; (б) №20
+   * ContactView.blockedByMe (контракт 0.8.0) — переживает F5; при живом
+   * чате источником остаётся №12 (T089): мерж override → №12 → №20.
+   */
+
+  it('(б) №20 blockedByMe=true без чата — строка помечена, пункт «Разблокировать» (переживает F5)', async () => {
+    mockedListContacts.mockResolvedValue([contactView(DAVE, 'dave', 'dave@aethergram.io', true)])
+    const { container } = renderModal()
+    await screen.findByText('dave')
+
+    const row = rowOf(container, 'dave')
+    expect(row.className).toMatch(/\bblocked\b/)
+    expect(row.querySelector('.c-prev')?.textContent ?? '').toMatch(/заблокирован/i)
+
+    openContactMenu(container, 'dave')
+    expect(menuLabels()).toEqual(['Разблокировать', 'Создать чат', 'Удалить контакт'])
+  })
+
+  it('(а) блокировка без чата: №23 → метка/.blocked сразу, пункт переключается, T089-доклад на месте', async () => {
+    // vi.clearAllMocks() не сбрасывает persistent mockRejectedValue
+    // сбой-тестов выше — успех задаём явно (паттерн T089-блока).
+    mockedBlockUser.mockResolvedValue(undefined)
+    mockedListContacts.mockResolvedValue([DAVE_CONTACT, ...CONTACTS])
+    const { container, onContactBlockToggled } = renderModal()
+    await screen.findByText('dave')
+
+    openContactMenu(container, 'dave')
+    expect(menuLabels()).toEqual(['Заблокировать', 'Создать чат', 'Удалить контакт'])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Заблокировать' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Заблокировать' }))
+
+    await waitFor(() => {
+      expect(mockedBlockUser).toHaveBeenCalledWith(DAVE)
+    })
+    expect(await screen.findByText('Контакт заблокирован — dave')).toBeVisible()
+    // Сессионный override: метка появляется БЕЗ обновления пропа chats
+    // (№12 чат не несёт — рефетч ничего бы не дал).
+    const row = rowOf(container, 'dave')
+    expect(row.className).toMatch(/\bblocked\b/)
+    expect(row.querySelector('.c-prev')?.textContent ?? '').toMatch(/заблокирован/i)
+    openContactMenu(container, 'dave')
+    expect(menuLabels()).toEqual(['Разблокировать', 'Создать чат', 'Удалить контакт'])
+    expect(onContactBlockToggled).toHaveBeenCalledWith(DAVE, true)
+  })
+
+  it('(а) разблокировка без чата: №24 → метка снята, пункт «Заблокировать»', async () => {
+    mockedUnblockUser.mockResolvedValue(undefined)
+    mockedListContacts.mockResolvedValue([contactView(DAVE, 'dave', 'dave@aethergram.io', true)])
+    const { container, onContactBlockToggled } = renderModal()
+    await screen.findByText('dave')
+
+    openContactMenu(container, 'dave')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Разблокировать' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Разблокировать' }))
+
+    await waitFor(() => {
+      expect(mockedUnblockUser).toHaveBeenCalledWith(DAVE)
+    })
+    expect(await screen.findByText('Контакт разблокирован — dave')).toBeVisible()
+    expect(rowOf(container, 'dave').className).not.toMatch(/\bblocked\b/)
+    openContactMenu(container, 'dave')
+    expect(menuLabels()).toEqual(['Заблокировать', 'Создать чат', 'Удалить контакт'])
+    expect(onContactBlockToggled).toHaveBeenCalledWith(DAVE, false)
+  })
+
+  it('живой чат — №12 важнее №20 в обе стороны (T089-семантика не меняется)', async () => {
+    // №20 при монтировании говорит true, №12 живого чата — false: №12
+    // свежее (рефетч T089), метки нет.
+    mockedListContacts.mockResolvedValue([contactView(ALICE, 'alice', 'alice@example.com', true)])
+    const { container, rerenderChats } = renderModal([ALICE_CHAT])
+    await screen.findByText('alice')
+    expect(rowOf(container, 'alice').className).not.toMatch(/\bblocked\b/)
+    openContactMenu(container, 'alice')
+    expect(menuLabels()[0]).toBe('Заблокировать')
+    closeMenu()
+
+    // №12 приехал с blockedByMe=true — метка есть поверх устаревшего №20.
+    rerenderChats([directChat(ALICE, 'alice', 'alice@example.com', { blockedByMe: true })])
+    expect(rowOf(container, 'alice').className).toMatch(/\bblocked\b/)
+    openContactMenu(container, 'alice')
+    expect(menuLabels()[0]).toBe('Разблокировать')
+  })
+})
+
 describe('ContactsModal форма «Добавить контакт» (FR-012)', () => {
   it('промах №19 — ошибка «требуется точное совпадение», №21 не вызывается; запрос триммится (004)', async () => {
     renderModal()
-    fireEvent.click(await screen.findByRole('button', { name: 'Добавить контакт' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Добавить новый контакт' }))
 
     const query = screen.getByLabelText('Username или email — точное совпадание')
     mockedSearchUsers.mockResolvedValueOnce([])
@@ -592,7 +689,7 @@ describe('ContactsModal форма «Добавить контакт» (FR-012)'
     mockedAddContact.mockResolvedValueOnce(DAVE_CONTACT)
     mockedEnsureChat.mockResolvedValue(chatViewOf(daveChat))
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Добавить контакт' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Добавить новый контакт' }))
     fireEvent.change(screen.getByLabelText('Username или email — точное совпадание'), {
       target: { value: 'dave@aethergram.io' },
     })
@@ -634,7 +731,7 @@ describe('ContactsModal форма «Добавить контакт» (FR-012)'
     mockedAddContact.mockResolvedValueOnce(BOB_CONTACT)
     mockedEnsureChat.mockResolvedValue(chatViewOf(bobChat))
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Добавить контакт' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Добавить новый контакт' }))
     fireEvent.change(screen.getByLabelText('Username или email — точное совпадание'), {
       target: { value: 'БОРИС' },
     })
@@ -664,7 +761,7 @@ describe('ContactsModal форма «Добавить контакт» (FR-012)'
     mockedSearchUsers.mockResolvedValueOnce([publicUser(DAVE, 'dave', 'dave@aethergram.io')])
     mockedAddContact.mockRejectedValueOnce({ status: 429, title: 'Too Many Requests' })
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Добавить контакт' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Добавить новый контакт' }))
     fireEvent.change(screen.getByLabelText('Username или email — точное совпадание'), {
       target: { value: 'dave@aethergram.io' },
     })
@@ -683,7 +780,7 @@ describe('ContactsModal форма «Добавить контакт» (FR-012)'
 
   it('«Отмена» формы добавления возвращает список контактов', async () => {
     renderModal()
-    fireEvent.click(await screen.findByRole('button', { name: 'Добавить контакт' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Добавить новый контакт' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
 
