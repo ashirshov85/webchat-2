@@ -60,8 +60,8 @@
 - [ ] T013 [P] [US1] Расширить контакты: поле `alias` в `backend/src/main/kotlin/webchat/backend/contacts/domain/model/Contact.kt`; методы `storeAlias(owner, contactUserId, alias|null)` и `aliasesOf(ownerId, userIds): Map<UUID, String>` (один SELECT по `user_contacts`) в `backend/src/main/kotlin/webchat/backend/contacts/domain/port/ContactRepository.kt` + реализацию в `backend/src/main/kotlin/webchat/backend/contacts/repository/JdbcContactRepository.kt`
 - [ ] T014 [US1] Реализовать №40 `PUT /api/v1/contacts/{userId}/alias` в `backend/src/main/kotlin/webchat/backend/contacts/api/ContactController.kt`: set/reset (null = сброс), 200 ContactView, 404 `contact_not_found`, 400 `invalid_alias`, флуд 30/мин, идемпотентность last-write-wins; поля `alias?` (ContactView) и `displayName?` (PublicUserView) в `backend/src/main/kotlin/webchat/backend/contacts/api/dto/ContactDtos.kt`
 - [ ] T015 [US1] Прокинуть имена в peer-проекции чатов: `displayName?`/`alias?` запросчика к peer в `backend/src/main/kotlin/webchat/backend/chats/api/dto/ChatDtos.kt` (ChatPeerView) и сборка в `backend/src/main/kotlin/webchat/backend/chats/domain/service/ChatService.kt` (directView, №11/№12/№13; join через `aliasesOf`)
-- [ ] T016 [P] [US1] Прокинуть `displayName?`/`alias?` в участников групп (№28 + members-tip) в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` (memberView: PublicUser + alias запросчика к участнику)
-- [ ] T017 [P] [US1] Прокинуть `displayName?` (+`alias?` если найденный — контакт запросчика) в результаты поиска №19 в `backend/src/main/kotlin/webchat/backend/contacts/api/UserSearchController.kt` (+ DTO); серверная семантика поиска (точное совпадение username/email) НЕ меняется (FR-005)
+- [ ] T016 [US1] Прокинуть `displayName?`/`alias?` в участников групп (№28 + members-tip) в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` (memberView: PublicUser + alias запросчика к участнику)
+- [ ] T017 [US1] Прокинуть `displayName?` (+`alias?` если найденный — контакт запросчика) в результаты поиска №19 в `backend/src/main/kotlin/webchat/backend/contacts/api/UserSearchController.kt` (+ DTO); серверная семантика поиска (точное совпадение username/email) НЕ меняется (FR-005)
 
 ### Implementation for User Story 1 (frontend)
 
@@ -96,7 +96,7 @@
 - [ ] T030 [US2] Реализовать `backend/src/main/kotlin/webchat/backend/chats/domain/service/TypingService.kt`: гейты membership (коды №16) + блок-пара DIRECT (`BlockRepository`, обе стороны, образец `publishToPeerUnlessBlocked`), start → `TypingStore.start` + публикация `typing.started` всем активным участникам кроме отправителя, stop → `typing.stopped`; метрики `webchat_typing_events_total{event}`, `webchat_typing_flood_suppressed_total` в `backend/src/main/kotlin/webchat/backend/chats/TypingMetrics.kt` (теги — словарные, конституция V)
 - [ ] T031 [US2] Реализовать №41 `POST /api/v1/chats/{chatId}/typing` в `backend/src/main/kotlin/webchat/backend/chats/api/TypingController.kt` (НОВОЕ): тело TypingRequest, 204, 400 `invalid_action`/`invalid_uuid`, флуд `rl:user:typing:` 60/мин → 429 + Retry-After (избыточные сигналы не публикуются)
 - [ ] T032 [US2] Реализовать poller `backend/src/main/kotlin/webchat/backend/chats/scheduler/TypingTransitionScheduler.kt` по образцу `PresenceTransitionScheduler`: тик 1 с, батч ≤ 1000, `ZRANGEBYSCORE typing:watch -inf..now` → ZREM + публикация `typing.stopped` + метрика `webchat_typing_state_expired_total`; gated `chats.typing.poller-enabled` (research.md A4)
-- [ ] T033 [US2] Погасить набор при отправке сообщения: в пути №16 (INSERT сообщения печатающим, включая отклонённую пустую отправку) вызвать `TypingStore.stop` + publish `typing.stopped` — в `backend/src/main/kotlin/webchat/backend/chats/domain/service/` (сервис отправки сообщений; data-model.md §2.1 переходы, edge-кейс спеки)
+- [ ] T033 [US2] Погасить набор при серверной отправке сообщения: в пути №16 (успешный INSERT сообщения печатающим) вызвать `TypingStore.stop` + publish `typing.stopped` — в `backend/src/main/kotlin/webchat/backend/chats/domain/service/` (сервис отправки сообщений; data-model.md §2.1 переходы). Отклонённая валидацией отправка (пустой текст) — погашение клиентом в useTyping (T036, stop при любом исходе; edge-кейс спеки), серверный путь не участвует
 - [ ] T034 [P] [US2] Зелёная проверка TypingIT: `./gradlew test --tests 'webchat.backend.chats.TypingIT'` — SC-001/SC-002/SC-003 подтверждены
 
 ### Implementation for User Story 2 (frontend)
@@ -206,7 +206,7 @@
 ### Parallel Opportunities
 
 - Phase 2: T007 (миграция) и T008 (конфиг) параллельны между собой и с T002–T005 (другие файлы), но до T006
-- US1: T009/T010 (разные тест-файлы) параллельны; T011/T013 (users/contacts) параллельны; T016/T017 параллельны с T012–T015; фронтенд-примитивы T018/T019 параллельны backend-задачам (разные пакеты)
+- US1: T009/T010 (разные тест-файлы) параллельны; T011/T013 (users/contacts) параллельны; T016/T017 — после T013 (используют ContactRepository.aliasesOf), дальше параллельны между собой и с T012/T014/T015; фронтенд-примитивы T018/T019 параллельны backend-задачам (разные пакеты)
 - US2: T028/T029 (порт+store vs publisher) параллельны; T035/T036/T037 (api/hook/компонент — разные файлы) параллельны; T041 (k6) параллелен фронтенду
 - US3: T046/T047 (time.ts vs presenceStore) параллельны backend T043/T044
 - US4: T052 (репозиторий/проекции) параллелен T051 (тест); T055/T056 параллельны; разные истории — параллельны разным разработчикам после US1, кроме общих файлов исторей (см. Parallel Team Strategy)
