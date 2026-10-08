@@ -72,7 +72,7 @@ scripts/validate-contracts.sh     # vacuum + generate:api drift + oasdiff breaki
 
 | SC | Проверка здесь |
 |---|---|
-| SC-001/SC-003 | TypingIT: бюджеты 2 с, самоистечение ≤ 8 с, 0 следов в PG |
+| SC-001/SC-003 | TypingIT: бюджеты 2 с, самоистечение (TTL 8 с + poller 1 с), 0 следов в PG |
 | SC-002 | TypingIT + PresenceLastSeenIT: 0 доставки посторонним/блок-парам/own, нейтральность №36 |
 | SC-004 | ProfileDisplayNameIT + ContactAliasIT + vitest/visual поверхностей |
 | SC-005 | PresenceLastSeenIT: точность ≤ TTL-модель 007; фолбэк-неотличимость |

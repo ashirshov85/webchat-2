@@ -28,7 +28,7 @@
 
 **Purpose**: Контракт 0.9.0 + миграция V16 + конфигурация — блокируют ВСЕ user stories
 
-**⚠️ CRITICAL**: Ни одна user story не начинается до завершения фазы (контракт — источник истинных типов, миграция — колонки трёх историй)
+**⚠️ CRITICAL**: Ни одна user story не начинается до завершения фазы (контракт — источник истинных типов, миграция — колонки US1/US4; US3 — только Redis)
 
 - [ ] T002 Поднять версию `contracts/openapi.yaml` 0.8.0 → 0.9.0 и дополнить `info.description` параграфом «Фича 008a…» (кумулятивный лог конвенции 001, см. specs/008a-social-signals/contracts/api-contract.md шапку)
 - [ ] T003 Добавить операции №39 `PUT /api/v1/users/me/profile` (updateMyProfile, ProfileUpdateRequest `displayName?: string | null`, 200 PublicUser, 400 `invalid_display_name`, 429 `flood_limit` + Retry-After) и №40 `PUT /api/v1/contacts/{userId}/alias` (setContactAlias, AliasUpdateRequest `alias?: string | null`, 200 ContactView, 400 `invalid_alias`, 404 `contact_not_found`) со схемами и problem-кодами в `contracts/openapi.yaml` (полные спецификации — specs/008a-social-signals/contracts/api-contract.md §1)
@@ -81,13 +81,13 @@
 
 ## Phase 4: User Story 2 — Typing-индикатор «X печатает…» с дебаунсом (Priority: P1)
 
-**Goal**: Эфемерный сигнал набора (№41) с серверным состоянием в Redis (самоистечение 8 с), доставкой `typing.started`/`typing.stopped` участникам чата кроме отправителя через канал №18, флуд 60/мин, блок-пары подавлены; клиент — дебаунс отправки (3 с/5 с) и TypingRow ≤ 2 с (FR-006–FR-009, SC-001/SC-002/SC-003)
+**Goal**: Эфемерный сигнал набора (№41) с серверным состоянием в Redis (TTL 8 с; публикация `typing.stopped` при самоистечении — не позднее TTL + poll-interval 1 с), доставкой `typing.started`/`typing.stopped` участникам чата кроме отправителя через канал №18, флуд 60/мин, блок-пары подавлены; клиент — дебаунс отправки (3 с/5 с) и TypingRow ≤ 2 с (FR-006–FR-009, SC-001/SC-002/SC-003)
 
-**Independent Test**: Два пользователя в общем чате: первый набирает — у второго ≤ 2 с «{имя} печатает…» (имя по цепочке US1, при её отсутствии — username); отправка/очистка/молчание — индикатор исчезает; наблюдатель офлайн — индикатор не восстанавливается; обрыв печатающего — самоистечение ≤ 8 с (quickstart.md US2)
+**Independent Test**: Два пользователя в общем чате: первый набирает — у второго ≤ 2 с «{имя} печатает…» (имя по цепочке US1, при её отсутствии — username); отправка/очистка/молчание — индикатор исчезает; наблюдатель офлайн — индикатор не восстанавливается; обрыв печатающего — состояние истекает по TTL 8 с, `typing.stopped` у наблюдателя ≤ ~9 с + доставка (quickstart.md US2)
 
 ### Tests for User Story 2 (писать ПЕРВЫМИ)
 
-- [ ] T027 [P] [US2] Написать `backend/src/test/kotlin/webchat/backend/chats/TypingIT.kt` (+ `TypingTestSupport` быстрые окна по образцу `PresenceTestSupport`, poller включается в тесте): SSE-фреймы через `MessagingTestSupport.openUserEvents` + `assertConformsToSchema` против живого `contracts/openapi.yaml`; сценарии — start→typing.started ≤ 2с (SC-001), stop/отправка сообщения→typing.stopped, самоистечение ≤ 8 с (SC-003, 0 следов в PG), эфемерность (подключившемуся не реплеится), self-exclusion (отправитель не получает), блок-пара DIRECT — 204 без публикации в обе стороны, флуд > 60/мин → 429 `flood_limit` без дребезга у наблюдателей, не-участник → 403/404; убедиться в FAIL
+- [ ] T027 [P] [US2] Написать `backend/src/test/kotlin/webchat/backend/chats/TypingIT.kt` (+ `TypingTestSupport` быстрые окна по образцу `PresenceTestSupport`, poller включается в тесте): SSE-фреймы через `MessagingTestSupport.openUserEvents` + `assertConformsToSchema` против живого `contracts/openapi.yaml`; сценарии — start→typing.started ≤ 2с (SC-001), stop/отправка сообщения→typing.stopped, самоистечение: состояние по TTL 8 с, событие stopped ≤ TTL + poll-interval (SC-003, 0 следов в PG), эфемерность (подключившемуся не реплеится), self-exclusion (отправитель не получает), блок-пара DIRECT — 204 без публикации в обе стороны, флуд > 60/мин → 429 `flood_limit` без дребезга у наблюдателей, не-участник → 403/404; убедиться в FAIL
 
 ### Implementation for User Story 2 (backend)
 
@@ -175,7 +175,7 @@
 **Purpose**: Сквозная верификация контракта, регрессии, нагрузки и quickstart (SC-007/SC-008)
 
 - [ ] T061 Полная регрессия: `./gradlew check` (все IT 002–008 без изменения ожиданий, SC-007), `pnpm --dir frontend lint && pnpm --dir frontend typecheck && pnpm --dir frontend test && pnpm --dir frontend test:visual` (с перезахватом затронутых базлайнов), `scripts/validate-contracts.sh` = 0 ERR
-- [ ] T062 Выполнить ручные сценарии quickstart.md (US1–US4, три пользователя + мультидевайс) и сверить SC-001–SC-008; прогнать `k6 run load/k6/social-signals.smoke.js` (Δp99 push ≤ 10%) и проверить метрики FR-017 в `/actuator/prometheus`
+- [ ] T062 Выполнить ручные сценарии quickstart.md (US1–US4, три пользователя + мультидевайс) и сверить SC-001–SC-008; прогнать `k6 run load/k6/social-signals.smoke.js` (Δp99 push ≤ 10%) и проверить метрики FR-017 в `/actuator/prometheus` — включая покрытие новых событий push-таймером `webchat_realtime_push_seconds` с тегами `event=typing.*|chat.sound.updated`, `stage=dispatch` (realtime-events.md §4)
 - [ ] T063 Финальная чистка: убрать временный/мёртвый код, проверить консистентность тегов метрик (только словарные значения), обновить статусы задач в `specs/008a-social-signals/tasks.md`
 - [ ] T064 Пройти `/speckit.checklist` (Definition of Done, конституция VI): прогнать чек-лист `specs/008a-social-signals/checklists/requirements.md` по всем закрытым задачам, устранить замечания, зафиксировать результат — фича закрыта только после прохождения
 
@@ -186,7 +186,7 @@
 ### Phase Dependencies
 
 - **Setup (Phase 1)**: без зависимостей — старт немедленно
-- **Foundational (Phase 2)**: после Phase 1 — БЛОКИРУЕТ все истории (контракт 0.9.0 = источник типов; V16 = колонки US1/US3/US4; T003–T006 строго последовательно — один файл `contracts/openapi.yaml` + генерация)
+- **Foundational (Phase 2)**: после Phase 1 — БЛОКИРУЕТ все истории (контракт 0.9.0 = источник типов; V16 = колонки US1/US4 (US3 — без миграции, только Redis); T003–T006 строго последовательно — один файл `contracts/openapi.yaml` + генерация)
 - **User Stories (Phases 3–6)**: все после Phase 2; последовательный порядок приоритетов US1 (P1) → US2 (P1) → US3 (P2) → US4 (P3) одним агентом (конституция: последовательная реализация); при команде — US3/US4 параллельны с US2 после US1, кроме общих файлов исторей (см. Parallel Team Strategy)
 - **Polish (Phase 7)**: после всех историй
 
