@@ -61,7 +61,7 @@
 
 ```text
 [нет состояния] --start(№41)--> ACTIVE(expiresAt=now+8s)
-ACTIVE --start(№41)--> ACTIVE(expiresAt=now+8s)        (продление, не публикует заново*
+ACTIVE --start(№41)--> ACTIVE(expiresAt=now+8s)        (продление состояния; publish typing.started — на каждом валидном start, см. сноску *)
 ACTIVE --stop(№41)--> [нет]           → publish typing.stopped участникам без отправителя
 ACTIVE --отправка сообщения(№16)--> [нет] → publish typing.stopped
 ACTIVE --истечение score (poller)--> [нет] → publish typing.stopped (AC6, метрика state_expired)
