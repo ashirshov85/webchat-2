@@ -10,6 +10,22 @@
 # presence context, where PresenceTestSupport re-enables them — exactly
 # ONE poller owner per test JVM (production always runs them: the
 # conditional defaults to TRUE).
+#
+# 008a T001 (baseline repair): Boot's auto-configured SimpleAsyncTaskScheduler
+# runs EVERY fixed-delay task on ONE shared single-thread ScheduledThreadPoolExecutor
+# (SimpleAsyncTaskScheduler.createFixedDelayExecutor, Spring 6.2) — the OutboxPoller
+# tick (synchronous SMTP to the compose Mailpit, 1.5–11 s per letter on a slow Docker
+# host) monopolizes that thread and starves the 200 ms presence offq/watch pollers far
+# past the SC-003 budgets (observed ~8–13 s stall in the US3 AC4 storm). No IT depends
+# on asynchronous SMTP delivery (verification tokens are read straight from
+# email_outbox; EmailOutboxResilienceIT drives dispatchPending synchronously and pins
+# this very delay for its own context) — the tick is therefore disabled JVM-wide,
+# which also removes all real SMTP traffic from the IT JVM on hosts with slow Docker
+# networking.
+auth:
+  outbox:
+    poll-fixed-delay: 1h
+
 presence:
   poller-enabled: false
   ttl: 3s

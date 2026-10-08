@@ -20,7 +20,7 @@
 
 **Purpose**: Базовая линия зелёная перед началом (конституция I — код только по задачам)
 
-- [ ] T001 Проверить базовую линию: ветка `008a-social-signals`; поднять зависимости `docker compose -f deploy/local/docker-compose.yml up -d`; `./gradlew check` (из `backend/`) зелёно; `pnpm --dir frontend lint && pnpm --dir frontend typecheck && pnpm --dir frontend test` зелёно; `scripts/validate-contracts.sh` = 0 ERR — зафиксировать базовую линию (SC-007)
+- [X] T001 Проверить базовую линию: ветка `008a-social-signals`; поднять зависимости `docker compose -f deploy/local/docker-compose.yml up -d`; `./gradlew check` (из `backend/`) зелёно; `pnpm --dir frontend lint && pnpm --dir frontend typecheck && pnpm --dir frontend test` зелёно; `scripts/validate-contracts.sh` = 0 ERR — зафиксировать базовую линию (SC-007)
 
 ---
 
