@@ -65,9 +65,10 @@ class ContactController(
         val ownerId = callerId(accessToken)
         val blockedTargets = contactService.blockedTargetsOf(ownerId)
         return ContactsResponse(
-            contacts = contactService.list(ownerId, resolvedSort).map { entry ->
-                view(entry, blockedTargets.contains(entry.user.id))
-            },
+            contacts =
+                contactService.list(ownerId, resolvedSort).map { entry ->
+                    view(entry, blockedTargets.contains(entry.user.id))
+                },
         )
     }
 

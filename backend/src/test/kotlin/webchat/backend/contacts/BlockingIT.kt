@@ -669,8 +669,10 @@ class BlockingIT(
         user: MessagingUser,
         userId: UUID,
     ): JsonNode {
-        val entries = objectMapper.readTree(listContacts(user).body)["contacts"]
-            .filter { it["user"]["id"].asText() == userId.toString() }
+        val entries =
+            objectMapper
+                .readTree(listContacts(user).body)["contacts"]
+                .filter { it["user"]["id"].asText() == userId.toString() }
         assertThat(entries).hasSize(1)
         return entries[0]
     }
