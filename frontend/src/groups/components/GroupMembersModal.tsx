@@ -29,9 +29,28 @@
  * (ErrorBanner). «Добавить в контакты» — пункт вне-книжных строк (№20):
  * модаль сообщает userId наверх (onAddContact), №21 и его тост
  * принадлежат странице (T045).
+ *
+ * T098 (Bug 20): строка участника — НАВИГАЦИЯ (требование владельца;
+ * паттерн ctc-строки «Контактов»): клик открывает переписку с
+ * участником — direct-чат есть в №12 (проп `chats`) → `onOpenChat`
+ * со связанным ChatView БЕЗ похода на сервер (№12-базис — тот же,
+ * из которого строка «Чатов» открывает direct-окно: активному окну
+ * нужны только chatId/peer/blockedByMe, водяные знаки лента живёт
+ * своим №13/№15-конвейером); чата нет → №11 `ensureChat({peerUserId})`
+ * → `onOpenChat` (создание и открытие, как «Создать чат» из «⋯»
+ * «Контактов»); сбой №11 — инлайн-ошибка `.modal-err` при живом
+ * списке (паттерн модалей). Закрытие оболочки — у владельца
+ * (`onOpenChat` = штатный проп handleOpenChatFromModal, как у
+ * «Контактов»). Навигация доступна ВСЕМ ролям — членство в группе
+ * даёт право писать (006), myRole на неё не влияет; прототип
+ * membersList строк-кликов не несёт (renderMembersList) — отступление
+ * от демо-прототипа по требованию владельца, класс исключения T060
+ * (задокументировано здесь и в CSS).
  */
 import { useMemo, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { ensureChat, type ChatListItem, type ChatView } from '../../api/chats'
 import type { GroupMember } from '../../api/groups'
+import { problemMessage } from '../../auth/problem'
 import { ErrorBanner } from '../../chats/components/ErrorBanner'
 import { Avatar } from '../../ui/Avatar'
 import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
@@ -44,6 +63,10 @@ export interface GroupMembersModalProps {
   readonly myRole: GroupMember['role']
   /** The viewer's user id — the own row is NOT rendered (ui-behavior §3). */
   readonly currentUserId: string
+  /** №12-строки (useChatList MessengerPage): базис direct-чата строки (T098). */
+  readonly chats: readonly ChatListItem[]
+  /** Открывает переписку (№11/№12 ChatView): клик по строке участника (T098). */
+  readonly onOpenChat: (chat: ChatView) => void
   /** №32 kick (owner: admins+members; admin: members only). */
   readonly onKick: (userId: string) => void
   /** №34 grant/revoke admin (owner-only). */
@@ -109,10 +132,22 @@ function hasRosterActions(actions: RowActions): boolean {
   return actions.kick || actions.grantAdmin || actions.revokeAdmin || actions.transferOwnership
 }
 
+/** Direct-чат с участником в №12 (type у direct-элементов опционален). */
+function directChatOf(chats: readonly ChatListItem[], userId: string): ChatListItem | null {
+  for (const item of chats) {
+    if ((item.type ?? 'direct') === 'direct' && item.peer?.id === userId) {
+      return item
+    }
+  }
+  return null
+}
+
 export function GroupMembersModal({
   members,
   myRole,
   currentUserId,
+  chats,
+  onOpenChat,
   onKick,
   onSetRole,
   onTransferOwnership,
@@ -126,6 +161,40 @@ export function GroupMembersModal({
 
   const [menuMember, setMenuMember] = useState<GroupMember | null>(null)
   const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null)
+  /** Сбой №11-навигации строки — инлайн-ошибка при живом списке (T098). */
+  const [navError, setNavError] = useState<string | null>(null)
+
+  /**
+   * T098: клик по строке — открыть переписку с участником. Чат есть в
+   * №12 → onOpenChat со связанным ChatView сразу (№12-базис — тот же,
+   * каким строка «Чатов» открывает direct-окно; водяные знаки ленты
+   * живут своим №13/№15-конвейером); чата нет → №11 создаёт пару и
+   * открывает (как «Создать чат» из «⋯» «Контактов»), сбой — инлайн-
+   * ошибка, список остаётся живым (паттерн модалей).
+   */
+  const handleRowActivate = (member: GroupMember) => {
+    const bound = directChatOf(chats, member.user.id)
+    if (bound !== null && bound.peer !== null) {
+      setNavError(null)
+      onOpenChat({
+        type: 'direct',
+        chatId: bound.chatId,
+        peer: bound.peer,
+        blockedByMe: bound.blockedByMe ?? false,
+        peerReadUpToSeq: null,
+        myReadUpToSeq: 0,
+      })
+      return
+    }
+    setNavError(null)
+    void Promise.resolve(ensureChat({ peerUserId: member.user.id }))
+      .then((view) => {
+        onOpenChat(view)
+      })
+      .catch((error: unknown) => {
+        setNavError(problemMessage(error))
+      })
+  }
 
   /** Кебаб «⋯»: якорь — rect кнопки (паттерн ContactsModal); клик не
    * проваливается в строку (menuBtn-early-return прототипа). */
@@ -225,7 +294,21 @@ export function GroupMembersModal({
                 : false
             const showMenu = hasRosterActions(actions) || offerContact
             return (
-              <div className="pick-row member-row" key={member.user.id}>
+              // T098: строка — навигация (паттерн ctc-строки «Контактов»):
+              // button лексики pick-row/ctc-row, доступное имя «Участник
+              // {username}», title «Открыть чат»; кебаб-клик гасится
+              // stopPropagation'ом обработчика кебаба (как .c-menu
+              // ContactsModal). Доступна всем ролям (006).
+              <button
+                type="button"
+                key={member.user.id}
+                className="pick-row ctc-row member-row"
+                aria-label={`Участник ${username}`}
+                title="Открыть чат"
+                onClick={() => {
+                  handleRowActivate(member)
+                }}
+              >
                 <Avatar source={username} size={32} />
                 <div className="c-main">
                   <div className="c-top">
@@ -252,11 +335,18 @@ export function GroupMembersModal({
                     </svg>
                   </button>
                 )}
-              </div>
+              </button>
             )
           })
         )}
       </div>
+      {/* T098: сбой №11-навигации строки — инлайн-ошибка при живом
+          списке (паттерн модалей, лексика .modal-err ContactsModal). */}
+      {navError !== null && (
+        <div className="modal-err" role="alert">
+          {navError}
+        </div>
+      )}
       <ContextMenu
         open={menuMember !== null}
         anchor={menuMember !== null ? menuAnchor : null}

@@ -1,6 +1,7 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
+import type { ChatListItem } from '../../../api/chats'
 import type { GroupMember } from '../../../api/groups'
 import { GroupMembersModal } from '../GroupMembersModal'
 
@@ -31,9 +32,28 @@ import { GroupMembersModal } from '../GroupMembersModal'
  * пунктах меню (SC-002), «Исключить» — danger-пункт, «Добавить в
  * контакты» — пункт вне-книжных строк (кнопка .add-ctc-btn прототипа
  * ушла вместе с текстовыми кнопками).
+ *
+ * T098 (Bug 20): строка участника — НАВИГАЦИЯ (паттерн ctc-строки
+ * «Контактов»): клик открывает существующий direct-чат участника из №12
+ * (onOpenChat БЕЗ №11) или создаёт его №11 ensureChat({peerUserId}) и
+ * открывает (как «Создать чат» из «⋯» «Контактов»); сбой №11 —
+ * инлайн-ошибка при живом списке; кебаб-клик не проваливается в строку
+ * (stopPropagation). Навигация доступна ВСЕМ ролям — членство в группе
+ * даёт право писать (006), myRole на неё не влияет. Прототип
+ * membersList строк-кликов не несёт (renderMembersList) — отступление
+ * от демо-прототипа легитимировано требованием владельца (класс
+ * исключения T060: требование поверх прототипа, документируется здесь
+ * и в CSS-комментарии).
  */
 
 type Problem = components['schemas']['Problem']
+type ChatView = components['schemas']['ChatView']
+
+const { mockChats } = vi.hoisted(() => ({
+  mockChats: { ensureChat: vi.fn() },
+}))
+
+vi.mock('../../../api/chats', () => mockChats)
 
 const ME = '11111111-1111-1111-1111-111111111111'
 const BOB = '22222222-2222-2222-2222-222222222222'
@@ -72,6 +92,8 @@ function renderModal(overrides: Partial<Parameters<typeof GroupMembersModal>[0]>
     members: roster(),
     myRole: 'owner' as GroupMember['role'],
     currentUserId: ME,
+    chats: [] as ChatListItem[],
+    onOpenChat: vi.fn(),
     onKick: vi.fn(),
     onSetRole: vi.fn(),
     onTransferOwnership: vi.fn(),
@@ -207,18 +229,26 @@ describe('GroupMembersModal action visibility by myRole (FR-004, entry via «⋯
     expect(screen.getByRole('menuitem', { name: 'Исключить carol' })).toBeInTheDocument()
 
     // admin/owner-строки кебаба не несут вовсе (№34/№35 owner-only,
-    // not_group_owner) — кнопок действий у строк нет.
-    expect(within(rowOf('dave')).queryByRole('button')).toBeNull()
-    expect(within(rowOf('alice')).queryByRole('button')).toBeNull()
+    // not_group_owner) — кнопок действий у строк нет (строка-навигация
+    // T098 кнопкой «⋯» не считается).
+    expect(
+      within(rowOf('dave')).queryByRole('button', { name: 'Действия с участником' }),
+    ).toBeNull()
+    expect(
+      within(rowOf('alice')).queryByRole('button', { name: 'Действия с участником' }),
+    ).toBeNull()
   })
 
   it('member: renders no roster actions at all (forbidden_role, 006 US3-3)', () => {
     renderModal({ myRole: 'member', currentUserId: CAROL })
 
     // «⋯» не выводится вовсе (матрица myRole); адресная книга покрывает
-    // ростер — пунктов «Добавить в контакты» нет: кнопок в модали НЕТ.
-    expect(screen.queryByRole('button')).toBeNull()
+    // ростер — пунктов «Добавить в контакты» нет. Строки-кнопки —
+    // навигация T098, она ролям не подчиняется (членство даёт право
+    // писать, 006): кебабов и меню в модали НЕТ.
+    expect(screen.queryByRole('button', { name: 'Действия с участником' })).toBeNull()
     expect(screen.queryByRole('menu')).toBeNull()
+    expect(screen.queryByRole('menuitem')).toBeNull()
   })
 })
 
@@ -283,5 +313,122 @@ describe('GroupMembersModal «Добавить в контакты» (ui-behavio
       openMemberMenu(username)
       expect(menuLabels()).not.toContain('Добавить в контакты')
     }
+  })
+})
+
+describe('GroupMembersModal навигация строкой (T098/Bug 20: клик → чат участника)', () => {
+  const BOB_CHAT_ID = 'chat-direct-bob'
+
+  /** №12-строка direct-чата с участником (основа «без №11»-пути). */
+  function directItem(peerId: string, chatId: string): ChatListItem {
+    return {
+      chatId,
+      peer: {
+        id: peerId,
+        username: 'peer',
+        email: 'peer@example.com',
+        status: 'active',
+        createdAt: '2026-09-01T00:00:00.000Z',
+      },
+      lastMessage: null,
+      unreadCount: 0,
+      blockedByMe: false,
+    }
+  }
+
+  /** №11-ответ для участника без чата. */
+  function ensuredView(peerId: string, chatId: string): ChatView {
+    return {
+      chatId,
+      type: 'direct',
+      peer: {
+        id: peerId,
+        username: 'peer',
+        email: 'peer@example.com',
+        status: 'active',
+        createdAt: '2026-09-01T00:00:00.000Z',
+      },
+      blockedByMe: false,
+      peerReadUpToSeq: 0,
+      myReadUpToSeq: 0,
+    }
+  }
+
+  /** Строка-кнопка участника (доступное имя «Участник {username}», T098). */
+  function rowButton(username: string): HTMLElement {
+    return screen.getByRole('button', { name: `Участник ${username}` })
+  }
+
+  it('клик по строке с direct-чатом в №12 открывает его через onOpenChat БЕЗ №11', () => {
+    const props = renderModal({ chats: [directItem(BOB, BOB_CHAT_ID)] })
+
+    expect(rowButton('bob')).toHaveAttribute('title', 'Открыть чат')
+    fireEvent.click(rowButton('bob'))
+
+    expect(props.onOpenChat).toHaveBeenCalledTimes(1)
+    expect(props.onOpenChat).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: BOB_CHAT_ID, type: 'direct' }),
+    )
+    // №12-путь: ensureChat не зовётся — пара уже существует (T098а).
+    expect(mockChats.ensureChat).not.toHaveBeenCalled()
+  })
+
+  it('клик по строке без чата: №11 ensureChat({peerUserId}) → onOpenChat (как «Создать чат»)', async () => {
+    mockChats.ensureChat.mockResolvedValueOnce(ensuredView(CAROL, 'chat-ensured-carol'))
+    const props = renderModal({ chats: [directItem(BOB, BOB_CHAT_ID)] })
+
+    fireEvent.click(rowButton('carol'))
+
+    expect(mockChats.ensureChat).toHaveBeenCalledWith({ peerUserId: CAROL })
+    await waitFor(() => {
+      expect(props.onOpenChat).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: 'chat-ensured-carol' }),
+      )
+    })
+    // Список жив — строки остаются на месте.
+    expect(rowButton('bob')).toBeInTheDocument()
+  })
+
+  it('кебаб-клик не открывает чат (stopPropagation от клика-строки, паттерн .c-menu)', () => {
+    const props = renderModal({ chats: [directItem(BOB, BOB_CHAT_ID)] })
+
+    fireEvent.click(within(rowOf('bob')).getByRole('button', { name: 'Действия с участником' }))
+
+    // Меню открылось, навигация не сработала.
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    expect(props.onOpenChat).not.toHaveBeenCalled()
+    expect(mockChats.ensureChat).not.toHaveBeenCalled()
+  })
+
+  it('сбой №11 — инлайн-ошибка при живом списке (паттерн модалей)', async () => {
+    mockChats.ensureChat.mockRejectedValueOnce({
+      title: 'Forbidden',
+      status: 403,
+      detail: 'you_are_blocked',
+    } satisfies Problem)
+    const props = renderModal()
+
+    fireEvent.click(rowButton('carol'))
+
+    // Инлайн-ошибка (role=alert), список жив — строки остаются.
+    expect(await screen.findByRole('alert')).toHaveTextContent('you_are_blocked')
+    expect(rowButton('bob')).toBeInTheDocument()
+    expect(rowButton('carol')).toBeInTheDocument()
+    expect(props.onOpenChat).not.toHaveBeenCalled()
+  })
+
+  it('навигация доступна всем ролям — myRole на неё не влияет (членство даёт право писать, 006)', async () => {
+    mockChats.ensureChat.mockResolvedValueOnce(ensuredView(BOB, BOB_CHAT_ID))
+    const props = renderModal({ myRole: 'member', currentUserId: CAROL })
+
+    // member-зритель: кебабов нет, но строка-навигация работает.
+    fireEvent.click(rowButton('bob'))
+
+    expect(mockChats.ensureChat).toHaveBeenCalledWith({ peerUserId: BOB })
+    await waitFor(() => {
+      expect(props.onOpenChat).toHaveBeenCalledWith(
+        expect.objectContaining({ chatId: BOB_CHAT_ID }),
+      )
+    })
   })
 })
