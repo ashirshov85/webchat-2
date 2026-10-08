@@ -178,7 +178,7 @@ function groupView(myRole: GroupMember['role']): GroupView {
 }
 
 function contacts(): ContactView[] {
-  return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z' }]
+  return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z', blockedByMe: false }]
 }
 
 async function renderPage(chats: ChatListItem[] = [directRow()]): Promise<void> {

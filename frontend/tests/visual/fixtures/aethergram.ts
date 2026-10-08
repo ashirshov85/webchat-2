@@ -121,7 +121,9 @@ const contacts: ContactView[] = ['01', '02', '03', '04', '05', '09', '0a', '0b',
     if (user === undefined) {
       throw new Error(`fixture: unknown contact user ${suffix}`)
     }
-    return { user, createdAt: FIXED_PAST_INSTANT }
+    // blockedByMe: false — прототип не несёт предзаблокированных контактов
+    // (c.blocked ставится только интерактивно), демо-книга не помечает строк.
+    return { user, createdAt: FIXED_PAST_INSTANT, blockedByMe: false }
   },
 )
 

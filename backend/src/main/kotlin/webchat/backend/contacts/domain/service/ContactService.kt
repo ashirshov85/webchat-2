@@ -2,6 +2,7 @@ package webchat.backend.contacts.domain.service
 
 import org.springframework.stereotype.Service
 import webchat.backend.contacts.domain.model.ContactSort
+import webchat.backend.contacts.domain.port.BlockRepository
 import webchat.backend.contacts.domain.port.ContactAddResult
 import webchat.backend.contacts.domain.port.ContactEntry
 import webchat.backend.contacts.domain.port.ContactRepository
@@ -33,8 +34,8 @@ class UserNotFoundException : RuntimeException("the requested target user does n
 /**
  * The contact book of User Story 5 (T052): the idempotent one-sided
  * add/remove and the sorted list — contacts stay fully independent of
- * dialogs and blocks (FR-017/FR-020): no method here touches `user_blocks`
- * or the V10 tables.
+ * dialogs and blocks (FR-017/FR-020): no WRITE here ever touches
+ * `user_blocks` or the V10 tables.
  *
  * Add (api-contract.md №21, FR-016): `422 self_forbidden` for oneself and
  * `404 user_not_found` for an unknown target are decided HERE, before the
@@ -51,11 +52,19 @@ class UserNotFoundException : RuntimeException("the requested target user does n
  * in the server-side case-insensitive order of [ContactSort]; the raw
  * `sort` parameter validation (`400 invalid_sort`) belongs to the api
  * layer (T053).
+ *
+ * Block READ model (T097, bug 16): the additive `ContactView.blockedByMe`
+ * projection — [blockedTargetsOf] / [blockedByMe] expose the caller's OWN
+ * `user_blocks` rows for the №20/№21 answers. Strictly read-only, the
+ * same relation №12/№13 already project: with the dialog deleted (hidden)
+ * №12 drops the item and №20 stays the ONLY place the block state is
+ * visible from; the FR-017/FR-020 write independence is untouched.
  */
 @Service
 class ContactService(
     private val userLookup: UserLookupPort,
     private val contactRepository: ContactRepository,
+    private val blockRepository: BlockRepository,
 ) {
     fun add(
         ownerId: UUID,
@@ -77,4 +86,13 @@ class ContactService(
         ownerId: UUID,
         sort: ContactSort,
     ): List<ContactEntry> = contactRepository.listByOwner(ownerId, sort)
+
+    /** T097 №20: every user [ownerId] currently blocks — one set query for the whole list. */
+    fun blockedTargetsOf(ownerId: UUID): Set<UUID> = blockRepository.blockedTargetsOf(ownerId)
+
+    /** T097 №21: the point lookup for the single-entry answers. */
+    fun blockedByMe(
+        ownerId: UUID,
+        targetId: UUID,
+    ): Boolean = blockRepository.exists(ownerId, targetId)
 }

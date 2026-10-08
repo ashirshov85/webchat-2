@@ -484,6 +484,9 @@ class ChatControllerTest {
             blockerId: UUID,
             blockedId: UUID,
         ): Boolean = blockerId to blockedId in blockedPairs
+
+        override fun blockedTargetsOf(blockerId: UUID): Set<UUID> =
+            blockedPairs.filter { it.first == blockerId }.map { it.second }.toSet()
     }
 
     /** Serves both participants with stable PublicUser fields (the auth port reused across features). */

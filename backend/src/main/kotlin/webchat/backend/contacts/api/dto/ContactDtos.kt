@@ -42,13 +42,18 @@ data class AddContactRequest(
 )
 
 /**
- * Contract №20/№21 success body — `ContactView` (openapi.yaml 0.4.0):
- * the contact user as `PublicUser` plus the `createdAt` of the stored
- * `user_contacts` row (a repeat add returns the SAME row, edge spec).
+ * Contract №20/№21 success body — `ContactView` (openapi.yaml 0.8.0):
+ * the contact user as `PublicUser`, the `createdAt` of the stored
+ * `user_contacts` row (a repeat add returns the SAME row, edge spec) and
+ * `blockedByMe` — the caller's OWN block mark of this contact (T097,
+ * bug 16): the same `user_blocks` relation №12/№13 project, kept here so
+ * the state survives a deleted (hidden) dialog; strictly one-directional
+ * — no inverse «who blocked me» field exists (FR-020).
  */
 data class ContactView(
     val user: PublicUserView,
     val createdAt: Instant,
+    val blockedByMe: Boolean,
 )
 
 /** Contract №20 success body — `ContactsResponse {contacts: [ContactView]}`; an empty list is valid. */

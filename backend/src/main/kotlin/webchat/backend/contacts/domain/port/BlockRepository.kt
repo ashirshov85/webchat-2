@@ -55,4 +55,14 @@ interface BlockRepository {
         blockerId: UUID,
         blockedId: UUID,
     ): Boolean
+
+    /**
+     * The read model of the caller's OWN blocks (T097): every target
+     * [blockerId] currently blocks — ONE set query for the whole №20
+     * contact list projection (`ContactView.blockedByMe`), so a page of
+     * contacts costs a single `user_blocks` read instead of N point
+     * lookups. Read-only: blocks stay fully independent of contacts
+     * (FR-020) — nothing here touches `user_contacts`.
+     */
+    fun blockedTargetsOf(blockerId: UUID): Set<UUID>
 }

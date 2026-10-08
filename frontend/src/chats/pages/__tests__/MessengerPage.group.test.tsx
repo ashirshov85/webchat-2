@@ -70,6 +70,7 @@ vi.mock('../../../api/sse', () => mockSse)
 
 const ME = '11111111-1111-1111-1111-111111111111'
 const ALICE = '22222222-2222-2222-2222-222222222222'
+const BOB = '33333333-3333-3333-3333-333333333333'
 const GROUP_ID = '7dc5dc5d-dc5d-4dc5-8dc5-dc5dc5dc5dc5'
 
 function peer(id: string, username: string) {
@@ -136,7 +137,7 @@ function createdGroupView(): GroupView {
 }
 
 function contacts(): ContactView[] {
-  return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z' }]
+  return [{ user: peer(ALICE, 'alice'), createdAt: '2026-09-02T00:00:00.000Z', blockedByMe: false }]
 }
 
 /** The №18 stub: a silent stream — no frames, no (re)connects. */
@@ -366,6 +367,79 @@ describe('MessengerPage group window from the unified list (US1)', () => {
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Редактировать групповой чат' })).toBeNull()
     })
+  })
+})
+
+/**
+ * T098 (Bug 20): строка участника «Участников» — НАВИГАЦИЯ (паттерн
+ * ctc-строки «Контактов», штатный onOpenChat владельца оболочки):
+ * клик открывает существующий direct-чат участника из №12 (БЕЗ №11)
+ * или создаёт его №11 ensureChat({peerUserId}) и открывает; оболочка
+ * закрывается как у «Контактов» (closeShell + окно + №12-рефетч).
+ * Прототип membersList строк-кликов не несёт — требование владельца
+ * поверх демо-прототипа (класс исключения T060).
+ */
+describe('MessengerPage открытие чата из «Участников» (T098, Bug 20)', () => {
+  /** №28-ростер с bob — участником БЕЗ direct-чата в №12 (№11-путь). */
+  function groupViewWithBob(): GroupView {
+    return {
+      ...createdGroupView(),
+      members: [
+        ...createdGroupView().members,
+        { user: peer(BOB, 'bob'), role: 'member', joinedAt: '2026-09-20T12:00:00.000Z' },
+      ],
+    }
+  }
+
+  function bobChatView(): ChatView {
+    return {
+      chatId: 'chat-direct-bob',
+      type: 'direct',
+      peer: peer(BOB, 'bob'),
+      blockedByMe: false,
+      peerReadUpToSeq: 0,
+      myReadUpToSeq: 0,
+    }
+  }
+
+  /** Группа открыта → «шестерёнка» → «Участники» (форма оболочки). */
+  async function openMembersForm(): Promise<HTMLElement> {
+    fireEvent.click(screen.getByRole('button', { name: /Проект Альфа/ }))
+    await screen.findByRole('heading', { level: 2, name: 'Проект Альфа' })
+    fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Участники' }))
+    return screen.findByRole('dialog', { name: 'Участники' })
+  }
+
+  it('клик по строке с №12-чатом открывает его без №11; без чата — №11 создаёт и открывает', async () => {
+    await renderPage([groupRow(), directRow()])
+    // После renderPage (её дефолты перезаписывают): №28 несёт bob —
+    // участника БЕЗ direct-чата в №12 (№11-путь), №11 отвечает его чатом.
+    mockGroups.getGroup.mockResolvedValue(groupViewWithBob())
+    mockChats.ensureChat.mockResolvedValue(bobChatView())
+
+    // alice имеет direct-чат в №12 — клик открывает его БЕЗ №11.
+    const members = await openMembersForm()
+    fireEvent.click(within(members).getByRole('button', { name: 'Участник alice' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Участники' })).toBeNull()
+    })
+    expect(screen.getByRole('heading', { level: 2, name: 'alice' })).toBeInTheDocument()
+    expect(mockChats.ensureChat).not.toHaveBeenCalled()
+
+    // bob без чата — №11 создаёт пару и открывает её (как «Создать чат»
+    // из «⋯» «Контактов»): оболочка закрывается, окно — у bob.
+    const membersAgain = await openMembersForm()
+    fireEvent.click(within(membersAgain).getByRole('button', { name: 'Участник bob' }))
+
+    await waitFor(() => {
+      expect(mockChats.ensureChat).toHaveBeenCalledWith({ peerUserId: BOB })
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Участники' })).toBeNull()
+    })
+    expect(screen.getByRole('heading', { level: 2, name: 'bob' })).toBeInTheDocument()
   })
 })
 

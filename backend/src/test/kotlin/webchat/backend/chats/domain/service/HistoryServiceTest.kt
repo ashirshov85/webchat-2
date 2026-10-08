@@ -382,6 +382,8 @@ class HistoryServiceTest {
             blockerId: UUID,
             blockedId: UUID,
         ): Boolean = false
+
+        override fun blockedTargetsOf(blockerId: UUID): Set<UUID> = emptySet()
     }
 
     private companion object {

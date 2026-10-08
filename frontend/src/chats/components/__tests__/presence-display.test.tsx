@@ -119,7 +119,11 @@ function publicUser(id: string, username: string): PublicUser {
 }
 
 function contactView(id: string, username: string): ContactView {
-  return { user: publicUser(id, username), createdAt: '2026-09-10T00:00:00.000Z' }
+  return {
+    user: publicUser(id, username),
+    createdAt: '2026-09-10T00:00:00.000Z',
+    blockedByMe: false,
+  }
 }
 
 const CONTACTS = [

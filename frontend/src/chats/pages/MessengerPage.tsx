@@ -215,7 +215,7 @@ import {
   listContacts,
   unblockUser,
 } from '../../api/chats'
-import type { ChatView, ContactView, Message } from '../../api/chats'
+import type { ChatListItem, ChatView, ContactView, Message } from '../../api/chats'
 import { getAckBatcher } from '../../sync/ack'
 import { advanceCursor } from '../../sync/cursors'
 import { useSync } from '../../sync/hooks/useSync'
@@ -553,6 +553,13 @@ function activeChatOfView(view: ChatView): ActiveChat | null {
  * (T056) forms. The №32/№34/№35 roster actions ride the page's
  * useGroupMembers mutex (T047) verbatim; the №21 offer of the
  * members rows belongs to the page (its toast too, T045).
+ *
+ * T098 (Bug 20): the members rows are NAVIGATION — the page hands the
+ * form its №12 basis (`chats`) and the shell owner's standard
+ * `onOpenChat` (handleOpenChatFromModal, the same prop ContactsModal
+ * gets): a member row click opens the peer dialog (№12 hit — no №11;
+ * miss — №11 creates and opens) and closes the shell exactly like a
+ * contacts row.
  */
 interface GroupShellFormProps {
   readonly formId: 'group-members' | 'group-edit'
@@ -562,6 +569,11 @@ interface GroupShellFormProps {
   readonly error: unknown
   readonly currentUserId: string | null
   readonly rosterActions: UseGroupMembersResult
+  /** №12 rows (useChatList) — the members-row direct-chat basis (T098). */
+  readonly chats: readonly ChatListItem[]
+  /** Opens the peer dialog from a members row (T098 — the shell owner's
+   * standard prop, the same one ContactsModal receives). */
+  readonly onOpenChat: (chat: ChatView) => void
   /** №20 keys of the viewer's book — hides the «Добавить в контакты» offer. */
   readonly contactUserIds: ReadonlySet<string>
   readonly onAddContact: (userId: string) => void
@@ -579,6 +591,8 @@ function GroupShellForm({
   error,
   currentUserId,
   rosterActions,
+  chats,
+  onOpenChat,
   contactUserIds,
   onAddContact,
   onReload,
@@ -604,6 +618,8 @@ function GroupShellForm({
           members={group.members}
           myRole={group.myRole}
           currentUserId={currentUserId ?? ''}
+          chats={chats}
+          onOpenChat={onOpenChat}
           onKick={(userId) => {
             void rosterActions.kick(userId)
           }}
@@ -1722,7 +1738,9 @@ function MessengerMachine() {
             мьютекса useGroupMembers и №21-предложение строки (тост — у
             страницы), «Редактировать» (T056) — конвейер №29+№31/№32;
             успех №29 закрывает оболочку (прототип grpEditForm →
-            closeModal), тост завершённого submit — у самой формы (T045). */}
+            closeModal), тост завершённого submit — у самой формы (T045).
+            T098: строки «Участников» — навигация: №12-базис + штатный
+            onOpenChat владельца оболочки (как у «Контактов»). */}
         {(shellFormId === 'group-members' || shellFormId === 'group-edit') &&
           activeChat?.kind === 'group' && (
             <GroupShellForm
@@ -1733,6 +1751,8 @@ function MessengerMachine() {
               error={activeGroupError}
               currentUserId={currentUserId}
               rosterActions={rosterActions}
+              chats={chats}
+              onOpenChat={handleOpenChatFromModal}
               contactUserIds={contactUserIds}
               onAddContact={handleMemberAddContact}
               onReload={reloadActiveGroup}

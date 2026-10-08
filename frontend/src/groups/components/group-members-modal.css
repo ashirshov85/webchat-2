@@ -1,10 +1,11 @@
-/* Модальная форма «Участники» (feature 008, US4, T055 → T095/Bug 17;
-   FR-023, ui-behavior §3) — проекция #membersForm/#membersList прототипа
-   specs/008-chat-window-styling/design/chats.html (раздел «9. МОДАЛЬНОЕ
-   ОКНО»); при расхождениях побеждает прототип (FR-001). Форма — обитатель
-   ЕДИНОЙ оболочки ModalShell (T012/T034): каркас подложки/окна/заголовка —
-   ui/modal-shell.css, пикер .pick-list/.pick-row/.pick-empty/.modal-err,
-   тело строки .c-* и кебаб-кнопка .c-menu (+ :hover/:focus-visible) —
+/* Модальная форма «Участники» (feature 008, US4, T055 → T095/Bug 17 →
+   T098/Bug 20; FR-023, ui-behavior §3) — проекция #membersForm/#membersList
+   прототипа specs/008-chat-window-styling/design/chats.html (раздел «9.
+   МОДАЛЬНОЕ ОКНО»); при расхождениях побеждает прототип (FR-001). Форма —
+   обитатель ЕДИНОЙ оболочки ModalShell (T012/T034): каркас
+   подложки/окна/заголовка — ui/modal-shell.css, пикер
+   .pick-list/.pick-row/.pick-empty/.modal-err, тело строки .c-* и
+   кебаб-кнопка .c-menu (+ :hover/:focus-visible) —
    chats/components/contacts-modal.css, каркас строки ошибки —
    chats/components/status-banners.css (ErrorBanner, T052), меню кебаба —
    ui/ctx-menu.css (ContextMenu, портал в body — T081).
@@ -15,7 +16,18 @@
    renderMembersList; производная лексика ContextMenu + ctc-row, baseline
    T060 по реализованному снимку — класс исключения T060). Текстовые
    кнопки строки (.member-action) и .add-ctc-btn прототипа ушли; здесь —
-   колонка формы, курсор строк и видимость кебаба участника.
+   колонка формы и видимость кебаба участника.
+
+   T098 (Bug 20): строка участника — НАВИГАЦИЯ (требование владельца):
+   <button> лексики pick-row/ctc-row (паттерн ContactsModal) открывает
+   переписку с участником (№12-чат — без №11, чата нет — №11 создаёт и
+   открывает). Прототип membersList строк-кликов НЕ несёт
+   (renderMembersList выводит некликабельные строки с cursor:default) —
+   отступление от демо-прототипа легитимировано требованием владельца
+   поверх прототипа, класс исключения T060: override cursor:default
+   снят — курсор строки pointer из базовой .pick-row, строка-кнопка
+   сброшена лексикой button.pick-row (contacts-modal.css), пиксельно
+   равной див-строке прототипа.
 
    Специфичность: main.tsx импортирует App РАНЬШЕ index.css →
    компонентные CSS в сборке раньше auth-элементарных
@@ -33,20 +45,15 @@
   gap: 8px;
 }
 
-/* Строки списка не кликабны (навигации по клику в контракте нет) —
-   курсор строки по умолчанию, паттерн #grpEditMembers прототипа
-   (cursor:default поверх базового .pick-row). */
-.members-form .pick-row {
-  cursor: default;
-}
-
 /* ============ КЕБАБ «⋯» УЧАСТНИКА (паттерн .c-menu ContactsModal, T095) ============ */
 
-/* Базовая .c-menu (contacts-modal.css) скрыта (opacity:0) — у ctc-строк
-   прототип открывает её явно. Кебаб участника виден всегда: строка
-   некликабельна, «⋯» — единственный вход её действий; disabled-кебаб
-   строки в полёте (мьютекс useGroupMembers) гаснет по нативному
-   :disabled. Специфичность (0-3-0) равна .ctc-row .c-menu прототипа. */
+/* Строка T098 несёт класс ctc-row — базовая .ctc-row .c-menu
+   (contacts-modal.css) открывает кебаб явно; правило Т095 (строка была
+   НЕ-кнопкой) оставлено якорем скоупа формы: кебаб участника виден
+   всегда — у member-строк это единственный вход её действий, отдельный
+   от навигации клика-строки (stopPropagation). disabled-кебаб строки в
+   полёте (мьютекс useGroupMembers) гаснет по нативному :disabled.
+   Специфичность (0-3-0) равна .ctc-row .c-menu прототипа. */
 .members-form .member-row .c-menu {
   opacity: 1;
 }

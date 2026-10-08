@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WebChat Public API
-  version: 0.7.0
+  version: 0.8.0
   description: >
     Публичный API веб-чата. Единственный источник истины публичного API;
     TypeScript-типы фронтенда генерируются из этого файла автоматически.
@@ -82,6 +82,15 @@ info:
     Bearer (/users/me/* — per-user, публичный перечень 002–003 не
     расширен). Изменение — только additive (0.6.0 → 0.7.0,
     без BREAKING.md).
+
+    Фича 008 (reskin/T097): аддитивное поле blockedByMe: boolean в
+    ContactView №20/№21 — единственный блок-снимок контакта, чей диалог
+    удалён (№12 теряет скрытый чат, и состояние блокировки больше ниоткуда
+    не проецируется — bug 16). Читается так же, как blockedByMe №12/№13
+    (метка вызывающего, поле «кто заблокировал меня» отсутствует —
+    FR-020); блокировки и контакты по-прежнему независимы (FR-017/FR-020),
+    новых путей и problem-кодов нет. Изменение — только additive
+    (0.7.0 → 0.8.0, без BREAKING.md).
 tags:
   - name: auth
     description: Регистрация, вход, сессии, восстановление пароля
@@ -1432,7 +1441,10 @@ paths:
         Контакты вызывающего с серверной алфавитной сортировкой по
         выбранному полю без учёта регистра (FR-015): sort=login — по
         lower(username) (по умолчанию), sort=email — по lower(email).
-        Пустой список — корректный ответ.
+        Пустой список — корректный ответ. Каждый ContactView несёт
+        blockedByMe — собственную блокировку контакта вызывающим (008/
+        T097): проекция живёт и без чата (диалог удалён), сходимость с
+        blockedByMe №12 при живом чате — то же отношение user_blocks.
       security:
         - bearerAuth: []
       parameters:
@@ -2999,7 +3011,7 @@ components:
     ContactView:
       type: object
       additionalProperties: false
-      required: [user, createdAt]
+      required: [user, createdAt, blockedByMe]
       properties:
         user:
           $ref: '#/components/schemas/PublicUser'
@@ -3008,6 +3020,9 @@ components:
           type: string
           format: date-time
           description: Когда пользователь добавлен в контакты вызывающего
+        blockedByMe:
+          type: boolean
+          description: 'Собственная блокировка вызывающим этого контакта (008/T097): та же проекция, что blockedByMe №12/№13, но живёт и без чата — блокировка контакта с удалённым (скрытым) диалогом остаётся видимой после F5; поле «кто заблокировал меня» отсутствует (FR-020); контакты и блокировки независимы (FR-017/FR-020) — поле не меняет ни одну операцию'
     ContactsResponse:
       type: object
       additionalProperties: false

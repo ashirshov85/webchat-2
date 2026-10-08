@@ -50,7 +50,11 @@ class ContactController(
      * case-insensitive alphabetical sorting of [ContactSort] (FR-015) —
      * default `login`; only `login`/`email` are valid, anything else is
      * the contract 400 `errors: {sort: [invalid_sort]}` before the
-     * service is touched. An empty list is a valid answer.
+     * service is touched. An empty list is a valid answer. Every
+     * `ContactView` carries `blockedByMe` — the caller's own block mark
+     * (T097, additive 0.8.0): one set read of `user_blocks` serves the
+     * whole page, and the projection stays visible after the dialog is
+     * deleted (№12 drops the hidden chat — bug 16).
      */
     @GetMapping
     fun list(
@@ -59,8 +63,12 @@ class ContactController(
     ): ContactsResponse {
         val resolvedSort = ContactSort.fromRaw(sort) ?: throw InvalidSortException()
         val ownerId = callerId(accessToken)
+        val blockedTargets = contactService.blockedTargetsOf(ownerId)
         return ContactsResponse(
-            contacts = contactService.list(ownerId, resolvedSort).map(::view),
+            contacts =
+                contactService.list(ownerId, resolvedSort).map { entry ->
+                    view(entry, blockedTargets.contains(entry.user.id))
+                },
         )
     }
 
@@ -77,8 +85,8 @@ class ContactController(
         val ownerId = callerId(accessToken)
         val result = contactService.add(ownerId, parseUserId(request.userId))
         return when (result) {
-            is ContactAddResult.Created -> ResponseEntity.status(HttpStatus.CREATED).body(view(result.contact))
-            is ContactAddResult.Existing -> ResponseEntity.ok(view(result.contact))
+            is ContactAddResult.Created -> ResponseEntity.status(HttpStatus.CREATED).body(view(result.contact, ownerId))
+            is ContactAddResult.Existing -> ResponseEntity.ok(view(result.contact, ownerId))
         }
     }
 
@@ -112,10 +120,14 @@ class ContactController(
         }
     }
 
-    private fun view(entry: ContactEntry): ContactView =
+    private fun view(
+        entry: ContactEntry,
+        blockedByMe: Boolean,
+    ): ContactView =
         ContactView(
             user = entry.user.toPublicUserView(),
             createdAt = entry.contact.createdAt,
+            blockedByMe = blockedByMe,
         )
 
     /**
@@ -123,15 +135,21 @@ class ContactController(
      * resolved via [UserLookupPort] by the stored `contactUserId` of the
      * result. The row always exists ([ContactService] verified the target
      * BEFORE the insert and the V11 FK keeps it): a miss is a broken
-     * invariant, not a client answer.
+     * invariant, not a client answer. `blockedByMe` is the same T097
+     * projection as №20 — the block and the contact book stay
+     * independent, so the answer reflects the CURRENT mark verbatim.
      */
-    private fun view(contact: Contact): ContactView {
+    private fun view(
+        contact: Contact,
+        ownerId: UUID,
+    ): ContactView {
         val user =
             userLookup.findById(contact.contactUserId)
                 ?: error("contact user ${contact.contactUserId} of owner ${contact.ownerId} does not resolve")
         return ContactView(
             user = user.toPublicUserView(),
             createdAt = contact.createdAt,
+            blockedByMe = contactService.blockedByMe(ownerId, contact.contactUserId),
         )
     }
 }
