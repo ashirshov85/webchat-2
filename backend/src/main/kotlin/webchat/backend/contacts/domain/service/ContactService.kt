@@ -114,4 +114,19 @@ class ContactService(
         ownerId: UUID,
         targetId: UUID,
     ): Boolean = blockRepository.exists(ownerId, targetId)
+
+    /**
+     * 008a (T017, FR-003/FR-005): the CALLER's personal alias point
+     * lookup for the №19 search answer — the single-user leg of
+     * [ContactRepository.aliasesOf] (one SELECT over `user_contacts`,
+     * holding only non-null values): `null` when the found user is not
+     * the caller's contact or no alias is stored (the neutral «not set»
+     * of the display chain `alias → displayName → username`). Strictly
+     * caller-scoped: the answer is the caller's own row material and
+     * must never be projected into anyone else's answer.
+     */
+    fun aliasOf(
+        ownerId: UUID,
+        contactUserId: UUID,
+    ): String? = contactRepository.aliasesOf(ownerId, listOf(contactUserId))[contactUserId]
 }

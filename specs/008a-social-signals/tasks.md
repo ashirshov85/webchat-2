@@ -61,7 +61,7 @@
 - [X] T014 [US1] Реализовать №40 `PUT /api/v1/contacts/{userId}/alias` в `backend/src/main/kotlin/webchat/backend/contacts/api/ContactController.kt`: set/reset (null = сброс), 200 ContactView, 404 `contact_not_found`, 400 `invalid_alias`, флуд 30/мин, идемпотентность last-write-wins; поля `alias?` (ContactView) и `displayName?` (PublicUserView) в `backend/src/main/kotlin/webchat/backend/contacts/api/dto/ContactDtos.kt`
 - [X] T015 [US1] Прокинуть имена в peer-проекции чатов: `displayName?`/`alias?` запросчика к peer в `backend/src/main/kotlin/webchat/backend/chats/api/dto/ChatDtos.kt` (ChatPeerView) и сборка в `backend/src/main/kotlin/webchat/backend/chats/domain/service/ChatService.kt` (directView, №11/№12/№13; join через `aliasesOf`)
 - [X] T016 [US1] Прокинуть `displayName?`/`alias?` в участников групп (№28 + members-tip) в `backend/src/main/kotlin/webchat/backend/groups/domain/service/GroupService.kt` (memberView: PublicUser + alias запросчика к участнику)
-- [ ] T017 [US1] Прокинуть `displayName?` (+`alias?` если найденный — контакт запросчика) в результаты поиска №19 в `backend/src/main/kotlin/webchat/backend/contacts/api/UserSearchController.kt` (+ DTO); серверная семантика поиска (точное совпадение username/email) НЕ меняется (FR-005)
+- [X] T017 [US1] Прокинуть `displayName?` (+`alias?` если найденный — контакт запросчика) в результаты поиска №19 в `backend/src/main/kotlin/webchat/backend/contacts/api/UserSearchController.kt` (+ DTO); серверная семантика поиска (точное совпадение username/email) НЕ меняется (FR-005)
 
 ### Implementation for User Story 1 (frontend)
 

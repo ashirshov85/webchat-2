@@ -13,8 +13,9 @@ import webchat.backend.config.ChatsProperties
 import webchat.backend.config.RateLimitConfig
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.api.dto.UsersSearchResponse
-import webchat.backend.contacts.api.dto.toPublicUserView
+import webchat.backend.contacts.api.dto.toUserWithAliasView
 import webchat.backend.contacts.domain.port.UserLookupPort
+import webchat.backend.contacts.domain.service.ContactService
 import java.util.UUID
 
 /**
@@ -23,8 +24,16 @@ import java.util.UUID
  * routed by the @-rule inside [UserLookupPort.searchExact]. A thin HTTP
  * adapter: this layer validates the `query` parameter
  * (`400 query_missing`), enforces the per-user flood gate (T053a) and
- * projects 0..1 results as `PublicUser` — an empty list is a correct
- * answer, never an error.
+ * projects 0..1 results as the `UserWithAlias` item of №19 — an empty
+ * list is a correct answer, never an error.
+ *
+ * 008a (T017, FR-005): the found user carries his optional profile
+ * `displayName` and — when he IS the caller's contact — the caller's
+ * PERSONAL `alias` toward him ([ContactService.aliasOf], strictly
+ * caller-scoped FR-003 material: the found user himself and third
+ * parties never receive the slot). The join rides the projection ONLY:
+ * the search semantics themselves (the exact username/email match,
+ * no displayName ordering) are NOT touched by the names.
  *
  * The enumeration guard (FR-016): `chats.rate-limit.searches-per-minute`
  * requests per minute per user, the `rl:user:search:{userId}` bucket of
@@ -46,6 +55,7 @@ import java.util.UUID
 @RequestMapping("/api/v1/users")
 class UserSearchController(
     private val userLookup: UserLookupPort,
+    private val contactService: ContactService,
     private val rateLimiter: UserRateLimiter,
     private val chatsProperties: ChatsProperties,
     private val meterRegistry: MeterRegistry,
@@ -55,7 +65,9 @@ class UserSearchController(
     /**
      * №19: `query` is required — absent, empty and longer than 254
      * characters are refused `400 query_missing`; the 254-character bound
-     * itself stays valid (a clean miss). No match → `200 {users: []}`.
+     * itself stays valid (a clean miss). No match → `200 {users: []}` —
+     * the alias join of the T017 projection runs ONLY for a found user
+     * (a miss costs no `user_contacts` round-trip).
      */
     @GetMapping("/search")
     fun search(
@@ -63,9 +75,15 @@ class UserSearchController(
         @AuthenticationPrincipal accessToken: Jwt,
     ): UsersSearchResponse {
         val normalized = requireQuery(query)
-        enforceSearchFloodLimit(UUID.fromString(accessToken.subject))
+        val callerId = UUID.fromString(accessToken.subject)
+        enforceSearchFloodLimit(callerId)
         val match = userLookup.searchExact(normalized)
-        return UsersSearchResponse(users = listOfNotNull(match).map { it.toPublicUserView() })
+        return UsersSearchResponse(
+            users =
+                listOfNotNull(match).map {
+                    it.toUserWithAliasView(alias = contactService.aliasOf(callerId, it.id))
+                },
+        )
     }
 
     private fun requireQuery(raw: String?): String {

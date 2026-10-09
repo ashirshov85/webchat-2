@@ -91,7 +91,52 @@ data class ContactsResponse(
     val contacts: List<ContactView>,
 )
 
-/** Contract №19 success body — `UsersSearchResponse {users: [PublicUser]}`: 0..1 element, empty is valid (edge). */
+/**
+ * The №19 search item (008a, api-contract.md §2, T017): the contract
+ * `UserWithAlias` schema — the `PublicUser` fields plus the caller's
+ * PERSONAL alias slot living INSIDE the user object (the same shape as
+ * the `GroupMember.user` fragment of №28, unlike the separate additive
+ * `peerAlias` field of №11/№12/№13).
+ *
+ * The OPTIONAL [displayName] is the found user's profile display name
+ * of FR-001 (NULL = «not set» renders the field ABSENT — 008 clients
+ * fall back to `username`, SC-007); the OPTIONAL [alias] is the
+ * CALLER's own `user_contacts` alias toward the found user (FR-003) —
+ * present ONLY when the found user is the caller's contact AND an
+ * alias is stored, strictly caller-scoped material that never reaches
+ * the found user himself or any third party. ABSENT = «not set or not
+ * a contact» → the client renders the display chain
+ * `alias → displayName → username`.
+ */
+data class UserWithAliasView(
+    val id: UUID,
+    val username: String,
+    val email: String,
+    val status: String,
+    val createdAt: Instant,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val displayName: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val alias: String? = null,
+)
+
+/**
+ * [UserProfile] as the №19 search item — the `PublicUser` projection
+ * verbatim plus the caller's [alias] slot (joined by the caller id in
+ * [UserSearchController], T017); the search semantics themselves stay
+ * the exact username/email match of [UserLookupPort.searchExact]
+ * (FR-005/FR-016 — server-side search by displayName is out of scope).
+ */
+internal fun UserProfile.toUserWithAliasView(alias: String?): UserWithAliasView =
+    UserWithAliasView(
+        id = id,
+        username = username,
+        email = email,
+        status = status,
+        createdAt = createdAt,
+        displayName = displayName?.value,
+        alias = alias,
+    )
+
+/** Contract №19 success body — `UsersSearchResponse {users: [UserWithAlias]}`: 0..1 element, empty is valid (edge). */
 data class UsersSearchResponse(
-    val users: List<PublicUserView>,
+    val users: List<UserWithAliasView>,
 )
