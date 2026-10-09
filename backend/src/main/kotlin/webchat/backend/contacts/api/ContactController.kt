@@ -1,5 +1,6 @@
 package webchat.backend.contacts.api
 
+import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -8,16 +9,22 @@ import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import webchat.backend.config.ContactsProperties
+import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.api.dto.AddContactRequest
+import webchat.backend.contacts.api.dto.AliasUpdateRequest
 import webchat.backend.contacts.api.dto.ContactView
 import webchat.backend.contacts.api.dto.ContactsResponse
 import webchat.backend.contacts.api.dto.toPublicUserView
 import webchat.backend.contacts.domain.model.Contact
+import webchat.backend.contacts.domain.model.ContactAlias
 import webchat.backend.contacts.domain.model.ContactSort
+import webchat.backend.contacts.domain.model.InvalidAliasException
 import webchat.backend.contacts.domain.port.ContactAddResult
 import webchat.backend.contacts.domain.port.ContactEntry
 import webchat.backend.contacts.domain.port.UserLookupPort
@@ -44,7 +51,11 @@ import java.util.UUID
 class ContactController(
     private val contactService: ContactService,
     private val userLookup: UserLookupPort,
+    private val rateLimiter: UserRateLimiter,
+    private val contactsProperties: ContactsProperties,
 ) {
+    private val log = LoggerFactory.getLogger(ContactController::class.java)
+
     /**
      * Contract №20: the caller's list with the server-side
      * case-insensitive alphabetical sorting of [ContactSort] (FR-015) —
@@ -104,7 +115,87 @@ class ContactController(
         return ResponseEntity.noContent().build()
     }
 
+    /**
+     * Contract №40 `PUT /contacts/{userId}/alias` (T014, FR-003) → `200
+     * ContactView` with the STORED row: the FR-003 shape gate FIRST
+     * (the server trim of [ContactAlias.normalize]; `null`/an omitted
+     * field is the RESET leg — «not set», never a validation case;
+     * `""`/whitespace-only/oversized or a non-string value is the one
+     * refusal `400 invalid_alias`), the per-user flood bucket
+     * `rl:user:alias:{userId}` (30/min,
+     * [ContactsProperties.RateLimit.aliasWritesPerMinute]) NEXT and the
+     * idempotent last-write-wins store write LAST — a repeat of the
+     * same value is a plain 200 with NO side events (there is no
+     * name-change realtime event by contract — refetch semantics,
+     * api-contract.md §1 №40). A missing `(owner, contact_user)` row is
+     * the uniform `404 contact_not_found`: an existing user never added
+     * and an unknown userId read identically, and the refusal leaves no
+     * rows behind.
+     *
+     * The answer carries the caller's stored `alias` and the aliased
+     * user as `PublicUser` with his optional `displayName` — the alias
+     * is strictly personal material and rides ONLY the caller's own
+     * surfaces (FR-003).
+     */
+    @PutMapping("/{userId}/alias")
+    fun setAlias(
+        @PathVariable userId: UUID,
+        @RequestBody(required = false) request: AliasUpdateRequest?,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ContactView {
+        val alias = normalizeOrNull(request?.alias)
+        val ownerId = callerId(accessToken)
+        enforceAliasFloodLimit(ownerId)
+        val contact =
+            contactService.setAlias(ownerId, userId, alias)
+                ?: throw ContactNotFoundException()
+        return view(contact, ownerId)
+    }
+
     private fun callerId(accessToken: Jwt): UUID = UUID.fromString(accessToken.subject)
+
+    /**
+     * The FR-003 single gate of №40: a NON-NULL value must be a JSON
+     * string that survives [ContactAlias.normalize] (server trim, 1–64
+     * chars) — everything else is the one contract refusal
+     * `400 invalid_alias` ([InvalidAliasException] is rendered by
+     * [ContactsExceptionHandler]); `null` passes as the reset leg.
+     */
+    private fun normalizeOrNull(raw: Any?): ContactAlias? =
+        when (raw) {
+            null -> null
+            !is String -> throw InvalidAliasException()
+            else -> ContactAlias.normalize(raw)
+        }
+
+    /**
+     * api-contract.md §1 №40: one token per PUT of the per-user bucket
+     * `rl:user:alias:{userId}` (capacity
+     * [ContactsProperties.RateLimit.aliasWritesPerMinute] over the 60 s
+     * window — the №38/№39 parity): a refused PUT performs NO write and
+     * the client repeats after the advertised `Retry-After` wait (the
+     * stored alias is untouched — a lost toggle is recoverable via №20).
+     * The warn log carries ids and waits only — never the submitted
+     * alias (constitution V).
+     */
+    private fun enforceAliasFloodLimit(ownerId: UUID) {
+        val verdict =
+            rateLimiter.tryAcquire(
+                keyFamily = ALIAS_KEY_FAMILY,
+                userId = ownerId,
+                permitsPerMinute = contactsProperties.rateLimit.aliasWritesPerMinute.toLong(),
+            )
+        if (verdict is UserRateLimiter.Verdict.Rejected) {
+            log.warn(
+                "alias PUT refused by the flood limit (№40, api-contract.md §1): user <{}> exhausted " +
+                    "{} writes/minute, retry after {}s",
+                ownerId,
+                contactsProperties.rateLimit.aliasWritesPerMinute,
+                verdict.retryAfterSeconds,
+            )
+            throw ContactAliasFloodException(verdict.retryAfterSeconds)
+        }
+    }
 
     /**
      * The №21 id gate: an absent or malformed `userId` becomes the
@@ -128,6 +219,7 @@ class ContactController(
             user = entry.user.toPublicUserView(),
             createdAt = entry.contact.createdAt,
             blockedByMe = blockedByMe,
+            alias = entry.contact.alias?.value,
         )
 
     /**
@@ -150,7 +242,13 @@ class ContactController(
             user = user.toPublicUserView(),
             createdAt = contact.createdAt,
             blockedByMe = contactService.blockedByMe(ownerId, contact.contactUserId),
+            alias = contact.alias?.value,
         )
+    }
+
+    private companion object {
+        /** research.md 008a C2: the Redis key family of the №40 PUT bucket. */
+        const val ALIAS_KEY_FAMILY = "rl:user:alias:"
     }
 }
 
@@ -169,3 +267,22 @@ class InvalidSortException : RuntimeException("sort must be one of: login, email
 class InvalidContactUserIdException(
     cause: IllegalArgumentException? = null,
 ) : RuntimeException("userId must be a UUID", cause)
+
+/**
+ * 404 (api-contract.md №40, T014): the path target is not a contact of
+ * the caller — no `(owner, contact_user)` row exists for the pair (an
+ * existing user never added and an unknown userId read identically) —
+ * rendered by [ContactsExceptionHandler] as
+ * `errors: {userId: [contact_not_found]}`.
+ */
+class ContactNotFoundException : RuntimeException("the requested target is not a contact of the caller")
+
+/**
+ * 429 (api-contract.md №40, T014): the per-user alias flood bucket is
+ * exhausted — [retryAfterSeconds] is the integral ceiling of the wait
+ * for the next available token, rendered as the `Retry-After` header
+ * by [ContactsExceptionHandler].
+ */
+class ContactAliasFloodException(
+    val retryAfterSeconds: Long,
+) : RuntimeException("the per-user contact-alias flood limit is exhausted")

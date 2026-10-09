@@ -1,6 +1,8 @@
 package webchat.backend.contacts.domain.service
 
 import org.springframework.stereotype.Service
+import webchat.backend.contacts.domain.model.Contact
+import webchat.backend.contacts.domain.model.ContactAlias
 import webchat.backend.contacts.domain.model.ContactSort
 import webchat.backend.contacts.domain.port.BlockRepository
 import webchat.backend.contacts.domain.port.ContactAddResult
@@ -86,6 +88,23 @@ class ContactService(
         ownerId: UUID,
         sort: ContactSort,
     ): List<ContactEntry> = contactRepository.listByOwner(ownerId, sort)
+
+    /**
+     * №40 set/reset (T014 routes here): stores the owner's [alias] —
+     * already normalized by
+     * [ContactAlias.normalize][webchat.backend.contacts.domain.model.ContactAlias]
+     * (`null` = the reset leg) — and answers the stored row for the
+     * `200 ContactView`; `null` when the `(owner, contact_user)` pair has
+     * no row, the uniform `404 contact_not_found` gate of the API layer
+     * (an existing user never added and an unknown userId read
+     * identically). Last-write-wins idempotent, no side events by
+     * contract (refetch semantics, api-contract.md §1 №40).
+     */
+    fun setAlias(
+        ownerId: UUID,
+        contactUserId: UUID,
+        alias: ContactAlias?,
+    ): Contact? = contactRepository.storeAlias(ownerId, contactUserId, alias)
 
     /** T097 №20: every user [ownerId] currently blocks — one set query for the whole list. */
     fun blockedTargetsOf(ownerId: UUID): Set<UUID> = blockRepository.blockedTargetsOf(ownerId)

@@ -1,5 +1,6 @@
 package webchat.backend.contacts.domain.model
 
+import webchat.backend.users.domain.model.DisplayName
 import java.time.Instant
 import java.util.UUID
 
@@ -13,6 +14,11 @@ import java.util.UUID
  *
  * [status] carries the lowercase `user_status` enum of 002/contract:
  * `pending_email_confirmation` / `awaiting_password` / `active`.
+ *
+ * 008a (data-model §1.1, T014): the optional [displayName] of the
+ * profile (V16 `users.display_name`, NULL = «not set») — rebuilt from
+ * the `ck_users_display_name`-guaranteed column on every read, the
+ * same discipline as [JdbcProfileStore][webchat.backend.users.repository.JdbcProfileStore].
  */
 data class UserProfile(
     val id: UUID,
@@ -20,4 +26,5 @@ data class UserProfile(
     val email: String,
     val status: String,
     val createdAt: Instant,
+    val displayName: DisplayName? = null,
 )

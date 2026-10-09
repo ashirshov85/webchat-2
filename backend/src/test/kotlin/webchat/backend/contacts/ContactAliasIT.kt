@@ -243,6 +243,9 @@ class ContactAliasIT(
         assertThat(setAlias(owner, peer.id, ALIAS).statusCode)
             .overridingErrorMessage("the fixture alias must land before the surface legs")
             .isEqualTo(HttpStatus.OK)
+        assertThat(addContact(owner, third.id).statusCode)
+            .overridingErrorMessage("the group fixture needs third among the owner's contacts (№27 not_in_contacts)")
+            .isEqualTo(HttpStatus.CREATED)
 
         val ensured = ensureChat(owner, peer.id)
         assertThat(ensured.statusCode.is2xxSuccessful)
@@ -302,6 +305,9 @@ class ContactAliasIT(
         assertThat(setAlias(owner, peer.id, ALIAS).statusCode)
             .overridingErrorMessage("the privacy fixture needs a stored alias")
             .isEqualTo(HttpStatus.OK)
+        assertThat(addContact(owner, third.id).statusCode)
+            .overridingErrorMessage("the group fixture needs third among the owner's contacts (№27 not_in_contacts)")
+            .isEqualTo(HttpStatus.CREATED)
         val groupChatId = chatIdOf(createGroupOk(owner, GROUP_TITLE, listOf(peer.id, third.id)))
 
         // The contact himself: his №13 view of the dialog — his peer is

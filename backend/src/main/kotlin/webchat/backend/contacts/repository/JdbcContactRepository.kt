@@ -11,6 +11,7 @@ import webchat.backend.contacts.domain.model.UserProfile
 import webchat.backend.contacts.domain.port.ContactAddResult
 import webchat.backend.contacts.domain.port.ContactEntry
 import webchat.backend.contacts.domain.port.ContactRepository
+import webchat.backend.users.domain.model.DisplayName
 import java.sql.ResultSet
 import java.util.UUID
 
@@ -122,6 +123,7 @@ class JdbcContactRepository(
                 email = rs.getString("email"),
                 status = rs.getString("status"),
                 createdAt = rs.getTimestamp("user_created_at").toInstant(),
+                displayName = rs.getString("user_display_name")?.let(DisplayName::normalize),
             )
 
         val INSERT_SQL =
@@ -174,7 +176,8 @@ class JdbcContactRepository(
                 }
             return """
                 SELECT c.owner_id, c.contact_user_id, c.alias, c.created_at,
-                       u.id AS user_id, u.username, u.email, u.status, u.created_at AS user_created_at
+                       u.id AS user_id, u.username, u.email, u.status,
+                       u.created_at AS user_created_at, u.display_name AS user_display_name
                 FROM user_contacts c
                 JOIN users u ON u.id = c.contact_user_id
                 WHERE c.owner_id = ?
