@@ -1,14 +1,22 @@
 /**
  * Модальная форма «Мой профиль» «Aethergram» (feature 008, US2, T033;
- * FR-015, ui-behavior §3, research §D): житель ЕДИНОЙ модальной
- * оболочки ModalShell (T034, MessengerPage) — проекция #profileForm
- * прототипа specs/008-chat-window-styling/design/chats.html БЕЗ
- * редактирования имени (008a — вне объёма фичи, FR-015): имя-поле
- * прототипа (#profileInput) не переносится.
+ * FR-015, ui-behavior §3, research §D; 008a US1, T021; ui-behavior §1.1):
+ * житель ЕДИНОЙ модальной оболочки ModalShell (T034, MessengerPage) —
+ * проекция #profileForm прототипа specs/008-chat-window-styling/design/
+ * chats.html С полем «Имя» (#profileInput прототипа, 008a FR-001).
+ *
+ * - Поле «Имя» (input над строкой инкогнито): placeholder = username,
+ *   maxlength 64; предзаполнено профильным displayName из №10
+ *   (отсутствует → пусто). Сохранение №39 `PUT /users/me/profile`
+ *   (updateProfile): полностью очищенное поле — явный `null` (сброс к
+ *   username); непустая строка только из пробелов — клиентская ошибка
+ *   валидации «Укажите имя без пробелов в начале и конце» БЕЗ запроса
+ *   (зеркалит серверную 400 invalid_display_name); иные значения сервер
+ *   сохраняет после trim (1–64), при ошибке прежнее значение сохраняется.
  *
  * - username/email — ТОЛЬКО ДЛЯ ЧТЕНИЯ: строки .modal-ro (`<span>` +
  *   `<b>`) из `GET /users/me` (getCurrentUser), email-фолбэк «—»
- *   (openProfile прототипа); редактируемых полей в форме нет вовсе.
+ *   (openProfile прототипа).
  *
  * - Переключатель «Режим инкогнито» (.tgl-row прототипа): семантика и
  *   API 007 — №38 GET /users/me/presence/settings на монтировании
@@ -16,13 +24,13 @@
  *   «Всем участникам вы отображаетесь как offline» дословно из
  *   прототипа.
  *
- * - Сохранить → №38 PUT → ровно один тост (FR-025) и закрытие
+ * - Сохранить → №39 PUT → №38 PUT → ровно один тост (FR-025) и закрытие
  *   (submit profileForm → closeModal + toast прототипа): тост
- *   «Профиль обновлён — {username}» + « · инкогнито: вы offline для
- *   всех» при включённом режиме (имя-часть прототипа вырождается в
- *   username — имени в 008 нет). Сбой PUT — ошибка .modal-err,
- *   чекбокс возвращается к серверному значению (поведение 007
- *   PresenceSettingsPage, FR-034), тоста и закрытия нет.
+ *   «Профиль обновлён — {displayName || username}» (resolveDisplayName,
+ *   ответ №39) + « · инкогнито: вы offline для всех» при включённом
+ *   режиме; собственный displayName применяется немедленно. Сбой PUT —
+ *   ошибка .modal-err, чекбокс возвращается к серверному значению
+ *   (поведение 007 PresenceSettingsPage, FR-034), тоста и закрытия нет.
  *
  * - Загрузка/сбой загрузки — единый стиль (FR-032): «Загрузка…» /
  *   .modal-err + «Повторить» с рефетчем обоих источников (паттерн
@@ -33,9 +41,11 @@
  */
 import { useCallback, useEffect, useState, type SubmitEvent } from 'react'
 import { getCurrentUser } from '../../api/auth'
+import { updateProfile } from '../../api/chats'
 import { problemMessage } from '../../auth/problem'
 import { fetchPresenceSettings, updatePresenceSettings } from '../../presence/presenceApi'
 import { useToast } from '../../ui/Toast'
+import { resolveDisplayName } from '../../ui/names'
 import './profile-modal.css'
 
 export interface ProfileModalProps {
@@ -50,6 +60,7 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
   const [status, setStatus] = useState<LoadState>('loading')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
+  const [nameInput, setNameInput] = useState('')
   const [incognito, setIncognito] = useState(false)
   /** Последнее серверное значение №38 — цель отката при сбое PUT (007). */
   const [persisted, setPersisted] = useState(false)
@@ -64,6 +75,7 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
       .then(([me, settings]) => {
         setUsername(me.username)
         setEmail(me.email)
+        setNameInput(me.displayName ?? '')
         setIncognito(settings.incognito)
         setPersisted(settings.incognito)
         setStatus('ready')
@@ -77,20 +89,28 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
     loadProfile()
   }, [loadProfile])
 
-  /** Submit #profileForm прототипа: №38 PUT → тост → закрытие; сбой — откат чекбокса. */
+  /** Submit #profileForm прототипа: №39 PUT (имя) → №38 PUT → тост → закрытие. */
   const handleSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (saving) {
       return
     }
+    // Непустая строка только из пробелов — не сброс, а ошибка валидации
+    // (зеркаль серверной 400 invalid_display_name) — запроса нет вовсе.
+    if (nameInput.length > 0 && nameInput.trim().length === 0) {
+      setError('Укажите имя без пробелов в начале и конце')
+      return
+    }
     setSaving(true)
     setError(null)
-    void updatePresenceSettings(incognito)
-      .then((settings) => {
+    // Полностью очищенное поле — явный null (сброс к username), не «как есть».
+    void updateProfile({ displayName: nameInput.trim() === '' ? null : nameInput })
+      .then((me) => updatePresenceSettings(incognito).then((settings) => ({ me, settings })))
+      .then(({ me, settings }) => {
         setPersisted(settings.incognito)
         setIncognito(settings.incognito)
         showToast(
-          `Профиль обновлён — ${username}` +
+          `Профиль обновлён — ${resolveDisplayName(undefined, me.displayName, username)}` +
             (settings.incognito ? ' · инкогнито: вы offline для всех' : ''),
         )
         onClose?.()
@@ -126,6 +146,19 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
 
   return (
     <form className="profile-form" onSubmit={handleSubmit}>
+      <label htmlFor="profile-name">Имя</label>
+      <input
+        id="profile-name"
+        className="profile-name"
+        placeholder={username}
+        maxLength={64}
+        autoComplete="off"
+        value={nameInput}
+        disabled={saving}
+        onChange={(event) => {
+          setNameInput(event.target.value)
+        }}
+      />
       <label className="tgl-row">
         <input
           type="checkbox"

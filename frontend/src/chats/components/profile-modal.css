@@ -1,11 +1,12 @@
 /* Модальная форма «Мой профиль» (feature 008, US2, T033; FR-015,
    ui-behavior §3) — проекция #profileForm прототипа
    specs/008-chat-window-styling/design/chats.html (раздел «9. МОДАЛЬНОЕ
-   ОКНО») БЕЗ имени-поля (редактирование имени — 008a); при расхождениях
-   побеждает прототип (FR-001). Форма — обитатель ЕДИНОЙ оболочки
-   ModalShell (T012/T034): каркас подложки/окна/заголовка —
+   ОКНО») С полем «Имя» (#profileInput прототипа, 008a T021); при
+   расхождениях побеждает прототип (FR-001). Форма — обитатель ЕДИНОЙ
+   оболочки ModalShell (T012/T034): каркас подложки/окна/заголовка —
    ui/modal-shell.css, кнопочная система .m-btn/.modal-btns и .modal-err —
-   ui/confirm-dialog.css / contacts-modal.css. Здесь — переключатель
+   ui/confirm-dialog.css / contacts-modal.css. Здесь — поле «Имя»
+   .profile-name (дословно .modal input прототипа), переключатель
    .tgl-row/.tgl-txt прототипа и readonly-строки .modal-ro.
 
    .modal-ro определены здесь впервые и переиспользуются задачами T035+
@@ -20,6 +21,42 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+/* ============ ПОЛЕ «ИМЯ» (#profileInput прототипа, 008a T021) ============ */
+
+/* .modal label прототипа: italic 12.5px, muted-2 (:not(.tgl-row) —
+   инкогнито-строка тоже <label>, у неё своя типографика .tgl-txt). */
+.profile-form label:not(.tgl-row) {
+  font: italic 12.5px var(--font-body);
+  color: var(--muted-2);
+}
+
+/* .profile-name — дословно .modal input прототипа (как #ctcSearch/
+   #addQuery contacts-modal.css): полная перекрыка auth-наследия
+   index.css (светлое поле, синий focus-accent). */
+.profile-form .profile-name {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--r-field);
+  outline: none;
+  border: 1px solid var(--gold-dark);
+  background: var(--input-bg);
+  color: var(--cream-bright);
+  font: 14px var(--font-mono);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.profile-form .profile-name::placeholder {
+  color: var(--muted-3);
+}
+
+.profile-form .profile-name:focus-visible {
+  border-color: var(--gold-light);
+  box-shadow: 0 0 0 2px rgba(232, 200, 119, 0.25);
+  outline: none;
 }
 
 /* ============ ПЕРЕКЛЮЧАТЕЛЬ «РЕЖИМ ИНКОГНИТО» (прототип .tgl-row) ============ */
