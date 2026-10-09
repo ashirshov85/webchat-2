@@ -73,7 +73,7 @@
 - [X] T023 [US1] Применить `resolveDisplayName` на остальных поверхностях: список «Чаты» peer (`frontend/src/chats/components/ChatListItem.tsx`), заголовок личного чата + инициалы (`frontend/src/chats/components/ChatHeader.tsx`), результаты поиска, участники групп; длинные имена — усечение с многоточием + tooltip (конвенция 008); aria-label используют отображаемое имя
 - [X] T024 [P] [US1] Написать Vitest-тесты: сортировка/фильтр/переименование ContactsModal и поле «Имя» ProfileModal в `frontend/src/chats/components/__tests__/` (мок-паттерн `MessengerPage.sound.test.tsx`) + кейс экранирования: displayName/alias с HTML-вставкой (`<img onerror=…>`) рендерится как текст (US1 AC5, 008 FR-033)
 - [X] T025 [P] [US1] Создать `frontend/tests/visual/social-signals.spec.ts` (Playwright, ru-RU, Europe/Moscow, допуск 2%): сценарии поля «Имя» профиля и формы переименования; перезахват затронутых базлайнов (us1-direct-chat-head и др.), снимки с отключёнными анимациями
-- [ ] T026 [US1] Зелёная проверка US1: `./gradlew test --tests 'webchat.backend.users.ProfileDisplayNameIT' --tests 'webchat.backend.contacts.ContactAliasIT'` + `pnpm --dir frontend test` (names/ContactsModal/ProfileModal) + `pnpm --dir frontend test:visual` — SC-004 подтверждён
+- [X] T026 [US1] Зелёная проверка US1: `./gradlew test --tests 'webchat.backend.users.ProfileDisplayNameIT' --tests 'webchat.backend.contacts.ContactAliasIT'` + `pnpm --dir frontend test` (names/ContactsModal/ProfileModal) + `pnpm --dir frontend test:visual` — SC-004 подтверждён
 
 **Checkpoint**: US1 полностью функционален и тестируем независимо (displayName/alias/инициалы на всех поверхностях)
 
