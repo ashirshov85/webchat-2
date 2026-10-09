@@ -15,6 +15,8 @@ import org.springframework.security.oauth2.jwt.Jwt
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.backpressure.NoopSendAdmissionGate
+import webchat.backend.chats.NoopContactRepository
+import webchat.backend.chats.NoopProfileStore
 import webchat.backend.chats.api.dto.ReadRequest
 import webchat.backend.chats.api.dto.SendMessageRequest
 import webchat.backend.chats.domain.model.Chat
@@ -233,6 +235,8 @@ class MessageControllerTest {
             participants,
             NoopBlockRepository,
             GroupMembershipGate(participants, GroupMetrics(SimpleMeterRegistry())),
+            NoopProfileStore,
+            NoopContactRepository,
         )
 
     /**

@@ -13,6 +13,8 @@ import org.mockito.Mockito
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.backpressure.NoopSendAdmissionGate
+import webchat.backend.chats.NoopContactRepository
+import webchat.backend.chats.NoopProfileStore
 import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.InvalidMessageTextException
@@ -415,6 +417,8 @@ class MessageServiceTest {
                     NoopParticipantRepository,
                     blocks,
                     GroupMembershipGate(NoopParticipantRepository, GroupMetrics(SimpleMeterRegistry())),
+                    NoopProfileStore,
+                    NoopContactRepository,
                 ),
             messageRepository = repository,
             realtimeEventPublisher = publisher,

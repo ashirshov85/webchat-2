@@ -12,6 +12,13 @@ import java.util.UUID
  * so the panel costs a single round trip. Since 006 it is carried only
  * by DIRECT rows — a group has no peer, its element answers `peer: null`
  * (api-contract.md 006 §3).
+ *
+ * 008a (data-model §3, T015): the optional [displayName] of the peer's
+ * profile (V16 `users.display_name`, NULL = «not set») joins the SAME
+ * aggregate query — the panel keeps its single-round-trip property; the
+ * caller's personal `peerAlias` is NOT part of the snapshot (it lives on
+ * `user_contacts` and is batch-joined by the service layer through
+ * `ContactRepository.aliasesOf`).
  */
 data class ChatPeerSnapshot(
     val id: UUID,
@@ -19,6 +26,7 @@ data class ChatPeerSnapshot(
     val email: String,
     val status: String,
     val createdAt: Instant,
+    val displayName: String? = null,
 )
 
 /**

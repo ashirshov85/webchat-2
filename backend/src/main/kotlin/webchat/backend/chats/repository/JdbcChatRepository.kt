@@ -162,6 +162,7 @@ class JdbcChatRepository(
                                 email = rs.getString("peer_email"),
                                 status = rs.getString("peer_status"),
                                 createdAt = rs.getTimestamp("peer_created_at").toInstant(),
+                                displayName = rs.getString("peer_display_name"),
                             )
                         },
                     lastMessage =
@@ -221,6 +222,7 @@ class JdbcChatRepository(
                 p.email AS peer_email,
                 p.status::text AS peer_status,
                 p.created_at AS peer_created_at,
+                p.display_name AS peer_display_name,
                 lm.id AS last_message_id,
                 lm.sender_id AS last_message_sender_id,
                 lm.text AS last_message_text,

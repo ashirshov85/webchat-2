@@ -97,13 +97,21 @@ class ChatController(
      * the active-membership filter of 006 (FR-008) are decided in the
      * read; an empty list is a valid body. The kind discrimination of
      * the items happens in [listItemView].
+     *
+     * 008a (T015, FR-003): the `peerAlias` slots of the DIRECT rows are
+     * served by ONE batched [ChatService.peerAliases] read over the
+     * peers of the page — the alias join never degrades into per-row
+     * point lookups (the same single-round-trip discipline the №12
+     * aggregate query itself keeps).
      */
     @GetMapping
     fun listChats(
         @AuthenticationPrincipal accessToken: Jwt,
     ): ChatsResponse {
         val callerId = callerId(accessToken)
-        return ChatsResponse(chats = chatService.listChats(callerId).map(::listItemView))
+        val entries = chatService.listChats(callerId)
+        val peerAliases = chatService.peerAliases(callerId, entries.mapNotNull { it.peer?.id })
+        return ChatsResponse(chats = entries.map { listItemView(it, peerAliases) })
     }
 
     private fun callerId(accessToken: Jwt): UUID = UUID.fromString(accessToken.subject)
@@ -147,6 +155,12 @@ class ChatController(
      * «заблокирован» mark only). The peer row always exists (the FK pair
      * of V10 and the №11 pre-check guarantee it) — a miss is a broken
      * invariant, not a client answer.
+     *
+     * 008a (T015, api-contract.md §2): the peer fragment carries the
+     * optional profile `displayName` and the body the caller's PERSONAL
+     * `peerAlias` — both from the one [ChatService.peerNames] join
+     * (FR-001/FR-003; NULL renders the slots ABSENT — 008 clients fall
+     * back to `username`, SC-007).
      */
     private fun directView(
         chat: Chat,
@@ -159,6 +173,7 @@ class ChatController(
             userRepository.findById(peerId)
                 ?: error("chat ${chat.id} peer $peerId does not resolve")
         val watermarks = chatService.readWatermarks(chat, callerId)
+        val names = chatService.peerNames(chat, callerId)
         return ChatView(
             chatId = chat.id,
             peer =
@@ -168,10 +183,12 @@ class ChatController(
                     email = peer.email,
                     status = peer.status.name.lowercase(),
                     createdAt = peer.createdAt,
+                    displayName = names.displayName,
                 ),
             blockedByMe = chatService.blockedByMe(chat, callerId),
             peerReadUpToSeq = watermarks.peerReadUpToSeq,
             myReadUpToSeq = watermarks.myReadUpToSeq,
+            peerAlias = names.alias,
         )
     }
 
@@ -222,8 +239,18 @@ class ChatController(
      * [memberRoleLabel] — the single lowercase mapping of the contract
      * enum. The peer `status` arrives as the lowercase `user_status`
      * label of the row, matching [ChatPeerView] of №11/№13.
+     *
+     * 008a (T015, api-contract.md §2): the peer fragment carries the
+     * optional profile `displayName` of the snapshot (it rode the ONE
+     * aggregate query) and the DIRECT row the caller's PERSONAL
+     * `peerAlias` from the batched [peerAliases][ChatService.peerAliases]
+     * map (FR-001/FR-003; NULL/ABSENT keeps the 0.8.0 shape verbatim,
+     * SC-007; a GROUP row has no peer and no alias slot).
      */
-    private fun listItemView(entry: ChatListEntry): ChatListItemView =
+    private fun listItemView(
+        entry: ChatListEntry,
+        peerAliases: Map<UUID, String>,
+    ): ChatListItemView =
         ChatListItemView(
             chatId = entry.chatId,
             type = entry.kind.label().takeIf { entry.kind == ChatKind.GROUP },
@@ -238,6 +265,7 @@ class ChatController(
                         email = peer.email,
                         status = peer.status,
                         createdAt = peer.createdAt,
+                        displayName = peer.displayName,
                     )
                 },
             lastMessage =
@@ -253,6 +281,7 @@ class ChatController(
                 },
             unreadCount = entry.unreadCount,
             blockedByMe = entry.blockedByMe,
+            peerAlias = entry.peer?.let { peer -> peerAliases[peer.id] },
         )
 }
 

@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.chats.NoopContactRepository
+import webchat.backend.chats.NoopProfileStore
 import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatListEntry
@@ -201,6 +203,8 @@ class ChatServiceTest {
             participantRepository = participants,
             blockRepository = blocks,
             groupMembershipGate = membershipGate,
+            profileStore = NoopProfileStore,
+            contactRepository = NoopContactRepository,
         )
 
     private companion object {

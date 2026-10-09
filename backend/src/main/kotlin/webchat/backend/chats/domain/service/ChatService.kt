@@ -10,8 +10,10 @@ import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.contacts.domain.port.ContactRepository
 import webchat.backend.groups.domain.model.MemberRole
 import webchat.backend.groups.domain.service.GroupMembershipGate
+import webchat.backend.users.domain.port.ProfileStore
 import java.util.UUID
 
 /**
@@ -77,6 +79,22 @@ data class GroupChatProjection(
 )
 
 /**
+ * The 008a name pair of a DIRECT dialog peer projected for the caller
+ * (T015, api-contract.md §2): the peer's optional profile
+ * [displayName] (FR-001 — the `PublicUser.displayName` slot of the
+ * №11/№13 peer fragment, NULL = «not set» → the client renders
+ * `username`) and the caller's PERSONAL [alias] toward the peer (FR-003
+ * — the separate additive `peerAlias` slot, NULL = «not set or the peer
+ * is not a contact of the caller»). Strictly caller-scoped material:
+ * the alias is the caller's own `user_contacts` row and never reaches
+ * the peer or any third party (the leakage ban of FR-003).
+ */
+data class PeerNames(
+    val displayName: String?,
+    val alias: String?,
+)
+
+/**
  * Dialog lifecycle of User Story 1 (T013): the idempotent pair resolve and
  * the membership-gated read.
  *
@@ -110,6 +128,15 @@ data class GroupChatProjection(
  * [blockedByMe] is a point lookup `exists(me, peer)` on the block pair —
  * the ONLY direction ever exposed; the inverse «who blocked me» is
  * deliberately not derivable from this service (research.md 004 §6).
+ *
+ * The 008a name pair of the DIRECT peer (T015, api-contract.md §2):
+ * [peerNames] joins the peer's optional profile displayName (the shared
+ * `PublicUser` read of [ProfileStore]) with the caller's PERSONAL alias
+ * ([ContactRepository.aliasesOf] — one SELECT) for the
+ * `peer.displayName`/`peerAlias` slots of №11/№13, while [peerAliases]
+ * serves the whole №12 panel in ONE batched read; the №12 displayName
+ * itself rides the single aggregate query of [ChatListRepository]
+ * (`ChatPeerSnapshot.displayName`).
  */
 @Service
 class ChatService(
@@ -119,6 +146,8 @@ class ChatService(
     private val participantRepository: ParticipantRepository,
     private val blockRepository: BlockRepository,
     private val groupMembershipGate: GroupMembershipGate,
+    private val profileStore: ProfileStore,
+    private val contactRepository: ContactRepository,
 ) {
     fun ensure(
         callerId: UUID,
@@ -238,6 +267,46 @@ class ChatService(
                 ?: error("chat ${chat.id} does not involve the authenticated caller")
         return blockRepository.exists(callerId, peerId)
     }
+
+    /**
+     * T015 (008a, api-contract.md §2, FR-001/FR-003): the name pair of
+     * the DIRECT dialog peer — the `peer.displayName`/`peerAlias` slots
+     * of the №11/№13 bodies. The displayName rides the SHARED
+     * `PublicUser` point read [ProfileStore.findByUserId] (the same
+     * projector that serves №10 — one source of the name, no drift); the
+     * alias is ONE [ContactRepository.aliasesOf] lookup over the caller's
+     * own `(owner, peer)` row, holding only non-null values (an absent
+     * key = «no alias» — the neutral fallback of the display chain
+     * `alias → displayName → username`). Strictly caller-scoped: the
+     * answer never leaves the caller's own surfaces (FR-003).
+     */
+    fun peerNames(
+        chat: Chat,
+        callerId: UUID,
+    ): PeerNames {
+        require(chat.kind == ChatKind.DIRECT) { "chat ${chat.id} is not a direct dialog" }
+        val peerId =
+            chat.peerOf(callerId)
+                ?: error("chat ${chat.id} does not involve the authenticated caller")
+        val displayName = profileStore.findByUserId(peerId)?.displayName?.value
+        val alias = contactRepository.aliasesOf(callerId, listOf(peerId))[peerId]
+        return PeerNames(displayName = displayName, alias = alias)
+    }
+
+    /**
+     * T015 (008a, FR-003): the caller's personal aliases toward [userIds]
+     * — the batched `peerAlias` join of the №12 panel: ONE
+     * [ContactRepository.aliasesOf] SELECT over the caller's
+     * `user_contacts` rows serves every DIRECT row of the list (an empty
+     * collection costs no database round-trip; the map holds ONLY
+     * non-null aliases — a missing key renders the slot ABSENT). The
+     * same strictly-personal scope as [peerNames]: never projected into
+     * anyone else's surfaces.
+     */
+    fun peerAliases(
+        callerId: UUID,
+        userIds: Collection<UUID>,
+    ): Map<UUID, String> = contactRepository.aliasesOf(callerId, userIds)
 
     /**
      * T024 (006, api-contract.md §3 №13): the GROUP projection of

@@ -22,6 +22,15 @@ data class EnsureChatRequest(
  * schema `PublicUser {id, username, email, status, createdAt}`; `status`
  * carries the lowercase `user_status` enum, no password material leaves
  * the service (SC-005).
+ *
+ * 008a (api-contract.md §2, T015): the OPTIONAL [displayName] — the
+ * peer's profile display name of FR-001 riding every `PublicUser`
+ * `$ref` surface (№11/№12/№13 peer, №26 sync delta peer). NULL = «not
+ * set» renders the field ABSENT (backward compatibility: 008 clients
+ * fall back to `username`, SC-007); the caller's PERSONAL alias toward
+ * the peer is NOT part of this object — it renders as the separate
+ * additive [ChatView.peerAlias]/[ChatListItemView.peerAlias] slot of
+ * the №11/№12/№13 bodies (the anyOf-additivity of openapi 0.9.0).
  */
 data class ChatPeerView(
     val id: UUID,
@@ -29,6 +38,7 @@ data class ChatPeerView(
     val email: String,
     val status: String,
     val createdAt: Instant,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val displayName: String? = null,
 )
 
 /**
@@ -58,6 +68,14 @@ data class ChatPeerView(
  * peer fields render as EXPLICIT `null`s: blocks never apply to groups
  * (Assumptions 006) and `peerReadUpToSeq` is REPLACED by
  * `othersReadUpToSeq` (openapi.yaml 0.6.0).
+ *
+ * 008a (api-contract.md §2, T015): the OPTIONAL [peerAlias] — the
+ * caller's PERSONAL alias toward the direct peer (FR-003), joined via
+ * `ContactRepository.aliasesOf` and visible to the caller ONLY (the
+ * peer and third parties never receive it). NULL/ABSENT = «not set or
+ * the peer is not a contact of the caller» → the client renders the
+ * chain `displayName`/`username`; stays ABSENT on the GROUP variant
+ * (NON_NULL — a group has no peer, the same 006 convention).
  */
 data class ChatView(
     val chatId: UUID,
@@ -71,6 +89,7 @@ data class ChatView(
     val blockedByMe: Boolean? = null,
     val peerReadUpToSeq: Long? = null,
     val myReadUpToSeq: Long = 0,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val peerAlias: String? = null,
 )
 
 /**
@@ -96,6 +115,14 @@ data class ChatView(
  * the blocked user learns about the block ONLY from the `403
  * you_are_blocked` of his own send (research.md 004 §6). For groups it
  * is `null` — blocks never apply to groups (Assumptions 006).
+ *
+ * 008a (api-contract.md §2, T015): the OPTIONAL [peerAlias] — the
+ * caller's PERSONAL alias toward the direct peer (FR-003), the №12
+ * counterpart of [ChatView.peerAlias]: ONE batched
+ * `ContactRepository.aliasesOf` read serves the whole panel. NULL/ABSENT
+ * = «not set or the peer is not a contact» → the client renders the
+ * chain `displayName`/`username`; stays ABSENT on GROUP rows (NON_NULL
+ * — a group element has no peer, the same 006 convention).
  */
 data class ChatListItemView(
     val chatId: UUID,
@@ -107,6 +134,7 @@ data class ChatListItemView(
     val lastMessage: MessageView?,
     val unreadCount: Long,
     val blockedByMe: Boolean?,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val peerAlias: String? = null,
 )
 
 /**
