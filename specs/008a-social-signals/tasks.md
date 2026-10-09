@@ -97,7 +97,7 @@
 - [X] T031 [US2] Реализовать №41 `POST /api/v1/chats/{chatId}/typing` в `backend/src/main/kotlin/webchat/backend/chats/api/TypingController.kt` (НОВОЕ): тело TypingRequest, 204, 400 `invalid_action`/`invalid_uuid`, флуд `rl:user:typing:` 60/мин → 429 + Retry-After (избыточные сигналы не публикуются)
 - [X] T032 [US2] Реализовать poller `backend/src/main/kotlin/webchat/backend/chats/scheduler/TypingTransitionScheduler.kt` по образцу `PresenceTransitionScheduler`: тик 1 с, батч ≤ 1000, `ZRANGEBYSCORE typing:watch -inf..now` → ZREM + публикация `typing.stopped` + метрика `webchat_typing_state_expired_total`; gated `chats.typing.poller-enabled` (research.md A4)
 - [X] T033 [US2] Погасить набор при серверной отправке сообщения: в пути №16 (успешный INSERT сообщения печатающим) вызвать `TypingStore.stop` + publish `typing.stopped` — в `backend/src/main/kotlin/webchat/backend/chats/domain/service/` (сервис отправки сообщений; data-model.md §2.1 переходы). Отклонённая валидацией отправка (пустой текст) — погашение клиентом в useTyping (T036, stop при любом исходе; edge-кейс спеки), серверный путь не участвует
-- [ ] T034 [US2] Зелёная проверка TypingIT: `./gradlew test --tests 'webchat.backend.chats.TypingIT'` — SC-001/SC-002/SC-003 подтверждены
+- [X] T034 [US2] Зелёная проверка TypingIT: `./gradlew test --tests 'webchat.backend.chats.TypingIT'` — SC-001/SC-002/SC-003 подтверждены
 
 ### Implementation for User Story 2 (frontend)
 
