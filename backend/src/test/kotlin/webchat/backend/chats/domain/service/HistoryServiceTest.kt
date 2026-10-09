@@ -405,8 +405,21 @@ class HistoryServiceTest {
         val TEST_PROPERTIES =
             ChatsProperties(
                 message = ChatsProperties.Message(maxLength = TEST_CAP, pageSize = PAGE_SIZE),
-                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30, searchesPerMinute = 30),
+                rateLimit =
+                    ChatsProperties.RateLimit(
+                        messagesPerMinute = 30,
+                        searchesPerMinute = 30,
+                        typingSignalsPerMinute = 60,
+                        soundWritesPerMinute = 30,
+                    ),
                 realtime = ChatsProperties.Realtime(heartbeat = Duration.ofSeconds(15)),
+                typing =
+                    ChatsProperties.Typing(
+                        stateTtl = Duration.ofSeconds(8),
+                        pollerEnabled = false,
+                        pollInterval = Duration.ofSeconds(1),
+                        pollBatch = 1000,
+                    ),
             )
     }
 }

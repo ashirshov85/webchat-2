@@ -287,9 +287,35 @@ chats:
     # 004 api-contract.md №19 (FR-016): per-user search flood limit,
     # rl:user:search:{userId} bucket — защита от перебора (T053a)
     searches-per-minute: 30
+    # 008a api-contract.md №41 (FR-006): per-user typing-signal flood
+    # limit, rl:user:typing:{userId} bucket — 60/min covers several
+    # chats and stop/start chatter (an honest client sends ≤ 20 start/min
+    # per chat at the 3 s repeat window, research.md A5); excess signals
+    # are refused with 429 flood_limit + Retry-After and never published
+    typing-signals-per-minute: 60
+    # 008a api-contract.md №42 (research.md D2): per-user sound-toggle
+    # flood limit, rl:user:chat-sound:{userId} bucket — the conservative
+    # 30/min №38 parity for a manual button
+    sound-writes-per-minute: 30
   realtime:
     # 004 realtime-channel.md: SSE `:ka` heartbeat every 15 s (T018)
     heartbeat: 15s
+  typing:
+    # 008a research.md A2 (FR-007): server-side typing state TTL — every
+    # №41 start extends expiresAt to now + 8 s (≈ 2.5× the 3 s client
+    # repeat window, survives one lost repeat); expiry is drained by the
+    # poller below into typing.stopped for the chat members (SC-003)
+    state-ttl: 8s
+    # 008a research.md A4: TypingTransitionScheduler gate — the IT
+    # profile turns it OFF for every cached context (TypingTestSupport
+    # re-enables it as the ONE poller owner of the test JVM, T027);
+    # production always runs it
+    poller-enabled: true
+    # 008a research.md A4: fixed-delay tick of the typing:watch drain
+    # (internal, not a contract value; offq-model 007 parity)
+    poll-interval: 1s
+    # 008a research.md A4: drain batch cap per tick — storm guard
+    poll-batch: 1000
 
 delivery:
   sync:
@@ -314,6 +340,20 @@ groups:
   max-members: 200
   title-max-length: 64
   description-max-length: 256
+
+users:
+  rate-limit:
+    # 008a api-contract.md §1 (№39, research.md C2): per-user profile PUT
+    # flood limit, rl:user:profile:{userId} bucket — the conservative
+    # 30/min №38 parity for a rare manual write
+    profile-writes-per-minute: 30
+
+contacts:
+  rate-limit:
+    # 008a api-contract.md §1 (№40, research.md C2): per-user contact-alias
+    # PUT flood limit, rl:user:alias:{userId} bucket — the conservative
+    # 30/min №38 parity for a rare manual write
+    alias-writes-per-minute: 30
 
 presence:
   # 007 research.md §G / contracts/presence-api.md §2 (FR-002): registration

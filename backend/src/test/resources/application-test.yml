@@ -26,6 +26,21 @@ auth:
   outbox:
     poll-fixed-delay: 1h
 
+chats:
+  typing:
+    # 008a T008: accelerated typing windows for the IT profile (the
+    # presence T003 pattern) — the SC-003 self-expiry budget (stopped ≤
+    # TTL + poll-interval) must not flake on poller slack, and scenarios
+    # must not wait out the production 8 s TTL. The poller is OFF for
+    # EVERY test context of the JVM (the T036 single-poller-owner rule
+    # against the ONE shared Redis); TypingTestSupport (T027) re-enables
+    # it — exactly ONE poller owner per test run, production always runs
+    # it. The flood capacities keep their production values: the TypingIT
+    # flood leg drains the bucket on purpose.
+    poller-enabled: false
+    state-ttl: 3s
+    poll-interval: 200ms
+
 presence:
   poller-enabled: false
   ttl: 3s
