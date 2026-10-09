@@ -38,9 +38,9 @@ export interface UseTypingOptions {
 
 export interface UseTypingResult {
   /** Called on every composer draft change (the raw field value). */
-  onDraftChange(value: string): void
+  readonly onDraftChange: (value: string) => void
   /** Called on every send attempt, whatever its outcome (including a rejected blank). */
-  onSendAttempt(): void
+  readonly onSendAttempt: () => void
 }
 
 export function useTyping({ chatId, blocked = false }: UseTypingOptions): UseTypingResult {

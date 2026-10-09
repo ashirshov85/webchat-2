@@ -203,6 +203,19 @@
  * остаётся над клавиатурой, лента сжимается, прокрутки страницы нет
  * (quickstart E1–E2, SC-005). Тесты — MessengerPage.viewport.test.tsx;
  * мобильные снимки — T068.
+ *
+ * 008a US2 typing-проводка (T038; FR-006–FR-008, ui-behavior §2.2,
+ * realtime-events §1/§3): состояние «кто печатает» ОТКРЫТОГО чата
+ * живёт в странице — кадры typing.started/stopped №18 (демультиплексор
+ * onTypingEvent хука useRealtime) (пере)заводят per-печатающий
+ * 10-секундный дедлайн наблюдателя, message.created от печатающего
+ * гасит запись сразу, смена чата и каждый (ре)коннект №18 сбрасывают
+ * карту (эфемерное состояние не реплеится); имена разрешаются
+ * цепочкой US1 (resolveDisplayName) по клиентскому кэшу участников
+ * (№11 peer / №28 ростер), неизвестные userId не рендерятся — и
+ * кормят TypingRow ленты (T037). Композер открытого чата ride'ит
+ * машину №41-сигналов useTyping (T036, §2.1): изменения черновика и
+ * каждая попытка отправки (любой исход) → best-effort start/stop.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getCurrentUser } from '../../api/auth'
@@ -232,10 +245,12 @@ import { MessageList } from '../components/MessageList'
 import { ProfileModal } from '../components/ProfileModal'
 import { QueueOverflowBanner } from '../components/QueueOverflowBanner'
 import { SyncIndicator } from '../components/SyncIndicator'
+import type { TypingParticipant } from '../components/TypingRow'
 import { useChatList } from '../hooks/useChatList'
 import { useChatMessages } from '../hooks/useChatMessages'
 import { useOutbox } from '../hooks/useOutbox'
 import { useRealtime } from '../hooks/useRealtime'
+import { useTyping } from '../hooks/useTyping'
 import { headFloodRetryAt } from '../outbox'
 import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
 import { GroupEditModal } from '../../groups/components/GroupEditModal'
@@ -251,6 +266,7 @@ import { FOCUSABLE_SELECTOR, ModalShell } from '../../ui/ModalShell'
 import type { ModalFormId } from '../../ui/ModalShell'
 import { ToastProvider, useToast } from '../../ui/Toast'
 import { chimeOnRealtimeIncoming, chimeOnSyncBatch } from '../../ui/sound'
+import { resolveDisplayName } from '../../ui/names'
 import '../components/states.css'
 import './messenger.css'
 
@@ -317,6 +333,16 @@ const GROUP_PENDING_ACTIONS: ReadonlySet<PendingAction> = new Set(['leave-group'
  * with the session.
  */
 const OWN_ACK_TRACK_CAP = 16
+
+/**
+ * 008a US2 (T038; FR-008, realtime-events.md §3): страховочный
+ * таймаут индикатора наблюдателя — 10 с без продления; каждый
+ * повторный `typing.started` (клиентское окно повтора 3 с)
+ * перезаводит окно своего печатающего, компенсируя at-most-once
+ * потери канала №18 (серверное состояние самоистекает TTL 8 с —
+ * парный stopped может не дойти).
+ */
+const TYPING_SAFETY_TIMEOUT_MS = 10_000
 
 function confirmUiOf(action: PendingAction, peerName: string): ConfirmUi {
   if (action === 'delete-chat') {
@@ -967,6 +993,168 @@ function MessengerMachine() {
       reloadActiveGroup()
     })
   }, [activeGroupChatId, realtime, reloadActiveGroup])
+
+  // 008a T038 (US2; FR-006–FR-008, ui-behavior §2.2): «кто печатает»
+  // активного чата — эфемерная карта дедлайнов наблюдателя. Каждый
+  // typing.started (пере)заводит 10-секундное окно своего печатающего
+  // (страховка at-most-once, TYPING_SAFETY_TIMEOUT_MS); typing.stopped
+  // и message.created от печатающего гасят запись; смена чата и каждый
+  // (ре)коннект №18 сбрасывают карту целиком — состояние не реплеится
+  // при (пере)подключении (realtime-events §1.1, edge спеки). События
+  // чужих диалогов сюда не приходят вовсе: подписка идёт под
+  // конкретным chatId открытого окна и пересоздаётся при переключении.
+  const [typingDeadlines, setTypingDeadlines] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  )
+
+  // Один свипер на всю карту: таймаут до САМОГО РАННЕГО дедлайна
+  // выбрасывает истёкшие записи; смена состояния перезаводит его, а
+  // продление печатающего отодвигает его дедлайн за работающий таймер —
+  // свип остаётся точным для каждого участника в отдельности.
+  useEffect(() => {
+    if (typingDeadlines.size === 0) {
+      return
+    }
+    const earliest = Math.min(...typingDeadlines.values())
+    const timer = window.setTimeout(
+      () => {
+        const now = Date.now()
+        setTypingDeadlines((previous) => {
+          let expired = false
+          const next = new Map<string, number>()
+          for (const [userId, deadline] of previous) {
+            if (deadline > now) {
+              next.set(userId, deadline)
+            } else {
+              expired = true
+            }
+          }
+          return expired ? next : previous
+        })
+      },
+      Math.max(0, earliest - Date.now()),
+    )
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [typingDeadlines])
+
+  // typing.started/stopped открытого чата (onTypingEvent демультиплексора):
+  // старт (пере)заводит окно (в т.ч. продления — «индикатор не отвисает»,
+  // §1.1), стоп гасит запись идемпотентно (отсутствующая — no-op).
+  useEffect(() => {
+    if (activeChatId === null) {
+      return
+    }
+    return realtime.onTypingEvent(activeChatId, (_chatId, userId, started) => {
+      // Демультиплексор уже отфильтровал чужие диалоги (подписка под
+      // конкретным chatId) — первый аргумент совпадает с активным по
+      // построению и не используется.
+      if (started) {
+        setTypingDeadlines((previous) =>
+          new Map(previous).set(userId, Date.now() + TYPING_SAFETY_TIMEOUT_MS),
+        )
+        return
+      }
+      setTypingDeadlines((previous) => {
+        if (!previous.has(userId)) {
+          return previous
+        }
+        const next = new Map(previous)
+        next.delete(userId)
+        return next
+      })
+    })
+  }, [activeChatId, realtime])
+
+  // message.created от печатающего (§2.2): коммит сообщения завершает
+  // набор — сервер гасит состояние при INSERT (T033), но парный
+  // typing.stopped может отставать или теряться, поэтому наблюдатель
+  // скрывает запись сразу по самому сообщению (его отправитель и есть
+  // печатающий).
+  useEffect(() => {
+    if (activeChatId === null) {
+      return
+    }
+    return realtime.onMessageCreated(activeChatId, (event) => {
+      const senderId = event.message.senderId
+      setTypingDeadlines((previous) => {
+        if (!previous.has(senderId)) {
+          return previous
+        }
+        const next = new Map(previous)
+        next.delete(senderId)
+        return next
+      })
+    })
+  }, [activeChatId, realtime])
+
+  // Смена чата скрывает строку немедленно (§2.2 — единый экземпляр
+  // индикатора, скрыт при смене чата).
+  useEffect(() => {
+    setTypingDeadlines((previous) => (previous.size === 0 ? previous : new Map()))
+  }, [activeChatId])
+
+  // (Ре)коннект №18 сбрасывает карту — эфемерное состояние не
+  // реплеится подключающимся (§1.1): onOpen стреляет на каждом
+  // (пере)подключении, начальный коннект чистит уже пустую карту.
+  useEffect(() => {
+    return realtime.onOpen(() => {
+      setTypingDeadlines((previous) => (previous.size === 0 ? previous : new Map()))
+    })
+  }, [realtime])
+
+  // TypingParticipant-проекция дедлайнов: имена разрешаются цепочкой
+  // US1 (resolveDisplayName) по КЛИЕНТСКОМУ кэшу участников — peer №11
+  // открытого личного чата (peerAlias → displayName → username) или
+  // ростер №28 открытой группы (alias → displayName → username).
+  // Неизвестный кэшу userId не даёт записи — такой печатающий не
+  // рендерится и выпадает из счёта N (§2.2, YAGNI — новых API нет).
+  const typingParticipants = useMemo<readonly TypingParticipant[]>(() => {
+    if (activeChat === null || typingDeadlines.size === 0) {
+      return []
+    }
+    const participants: TypingParticipant[] = []
+    for (const userId of typingDeadlines.keys()) {
+      if (activeChat.kind === 'direct') {
+        if (activeChat.peer.id === userId) {
+          participants.push({
+            userId,
+            name: resolveDisplayName(
+              activeChat.peerAlias,
+              activeChat.peer.displayName,
+              activeChat.peer.username,
+            ),
+            username: activeChat.peer.username,
+          })
+        }
+        continue
+      }
+      const member = activeGroupMembers?.find((entry) => entry.user.id === userId)
+      if (member !== undefined) {
+        participants.push({
+          userId,
+          name: resolveDisplayName(
+            member.user.alias,
+            member.user.displayName,
+            member.user.username,
+          ),
+          username: member.user.username,
+        })
+      }
+    }
+    return participants
+  }, [typingDeadlines, activeChat, activeGroupMembers])
+
+  // 008a T038 (US2; FR-006, ui-behavior §2.1): композер открытого чата
+  // ride'ит машину №41-сигналов (T036) — изменения черновика и каждая
+  // попытка отправки (любой исход, вкл. отклонённую пустую) переводятся
+  // в best-effort start/stop; заблокированный композер (FR-022) сигналов
+  // не шлёт вовсе.
+  const typingSignals = useTyping({
+    chatId: activeChatId,
+    blocked: activeChat?.kind === 'direct' && activeChat.blockedByMe,
+  })
 
   // T086в (bug 8): ids the outbox engine confirmed via 201/200.
   // When the ack races the first render of the optimistic row (a
@@ -1732,12 +1920,15 @@ function MessengerMachine() {
                   othersReadUpToSeq={othersReadUpToSeq}
                   unreadFromSeq={unreadFromSeq}
                   ownAckIds={ownAckIds}
+                  typing={typingParticipants}
                 />
                 <MessageInput
                   onSend={handleSend}
                   disabled={currentUserId === null}
                   blocked={activeChat.kind === 'direct' && activeChat.blockedByMe}
                   floodRetryAt={headFloodRetryAt(chatOutbox)}
+                  onDraftChange={typingSignals.onDraftChange}
+                  onSendAttempt={typingSignals.onSendAttempt}
                 />
               </>
             ) : (

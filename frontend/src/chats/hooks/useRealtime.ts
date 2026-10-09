@@ -44,6 +44,16 @@
  * frames (presence-events.md §1) follow the same discipline through
  * `onConnected` (the current connectionId is replayed to late
  * subscribers, 008 T076); `reconnect` is the №37 404 recovery seam.
+ *
+ * Feature 008a (T038, realtime-events.md §1): the stream also
+ * carries the ephemeral `typing.started`/`typing.stopped` frames of
+ * the identical `{chatId, userId}` shape; they are demultiplexed by
+ * `chatId` exactly like `message.created` and handed to the typing
+ * listeners (`onTypingEvent(chatId, userId, started)`, consumed by
+ * MessengerPage's «кто печатает» state of the open chat). The
+ * frames carry no sequence/dedup concerns — the consumer owns the
+ * per-typist 10 s observer safety window and resets the state on
+ * every (re)connect (the ephemeral state is never replayed, §1.1).
  */
 import { useEffect, useRef } from 'react'
 import type { ChatReadEvent, MessageCreatedEvent } from '../../api/chats'
@@ -65,6 +75,14 @@ export type GroupEventListener = (event: GroupRealtimeEvent) => void
 export type PresenceUpdatedListener = (event: PresenceUpdatedEvent) => void
 
 export type ConnectedListener = (connectionId: string) => void
+
+/**
+ * Typing frame listener (feature 008a, realtime-events.md §1): the
+ * two frame types share the `{chatId, userId}` payload — `started`
+ * distinguishes them (true = `typing.started`, false =
+ * `typing.stopped`).
+ */
+export type TypingEventListener = (chatId: string, userId: string, started: boolean) => void
 
 export interface RealtimeStream {
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe
@@ -94,6 +112,17 @@ export interface RealtimeStream {
    */
   onPresenceUpdated(listener: PresenceUpdatedListener): Unsubscribe
   /**
+   * Subscribes to every №18 `typing.started`/`typing.stopped` frame
+   * of the user's stream (feature 008a): a listener registered with
+   * a concrete chatId receives only that dialog's typists, a `null`
+   * chatId receives every dialog's. Malformed frames never reach
+   * the listener (the №18 guard discipline); the ephemeral frames
+   * carry no ordering guarantees — the consumer keeps its own
+   * liveness windows (the 10 s observer safety timeout) and resets
+   * on (re)connect (realtime-events.md §1.1/§3).
+   */
+  onTypingEvent(chatId: string | null, listener: TypingEventListener): Unsubscribe
+  /**
    * The №37 404 recovery (presence-api.md §2; 008 T076): the presence
    * registration of the current connectionId is dead — re-open the
    * transport immediately; the new `connected` frame restarts the
@@ -111,6 +140,7 @@ class UserEventStream implements RealtimeStream {
   private readonly connectedListeners = new Set<ConnectedListener>()
   private readonly groupListeners = new Set<GroupEventListener>()
   private readonly presenceListeners = new Set<PresenceUpdatedListener>()
+  private readonly typingListeners = new Map<string | null, Set<TypingEventListener>>()
   private lastConnectionId: string | null = null
 
   retain(): void {
@@ -140,6 +170,12 @@ class UserEventStream implements RealtimeStream {
     connection.subscribe('presence.updated', (data) => {
       this.handlePresenceUpdated(data)
     })
+    connection.subscribe('typing.started', (data) => {
+      this.handleTypingEvent(data, true)
+    })
+    connection.subscribe('typing.stopped', (data) => {
+      this.handleTypingEvent(data, false)
+    })
     connection.subscribe('connected', (data) => {
       this.handleConnected(data)
     })
@@ -160,6 +196,7 @@ class UserEventStream implements RealtimeStream {
     this.connectedListeners.clear()
     this.groupListeners.clear()
     this.presenceListeners.clear()
+    this.typingListeners.clear()
   }
 
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe {
@@ -206,6 +243,10 @@ class UserEventStream implements RealtimeStream {
     return () => {
       this.presenceListeners.delete(listener)
     }
+  }
+
+  onTypingEvent(chatId: string | null, listener: TypingEventListener): Unsubscribe {
+    return this.addListener(this.typingListeners, chatId, listener)
   }
 
   private addListener<T>(
@@ -263,6 +304,22 @@ class UserEventStream implements RealtimeStream {
     }
     for (const listener of this.presenceListeners) {
       listener(event)
+    }
+  }
+
+  private handleTypingEvent(data: string, started: boolean): void {
+    const frame = parseTypingFrame(data)
+    if (frame === null) {
+      return
+    }
+    for (const key of [frame.chatId, null]) {
+      const set = this.typingListeners.get(key)
+      if (set === undefined) {
+        continue
+      }
+      for (const listener of set) {
+        listener(frame.chatId, frame.userId, started)
+      }
     }
   }
 
@@ -386,6 +443,28 @@ function isPresenceUpdatedEvent(value: unknown): value is PresenceUpdatedEvent {
     (candidate.status === 'online' || candidate.status === 'offline') &&
     typeof candidate.rev === 'number'
   )
+}
+
+/**
+ * №18 `typing.started`/`typing.stopped` payload guard (feature 008a,
+ * realtime-events.md §1): both frame types share the identical
+ * `{chatId, userId}` shape (`TypingStartedEvent`/`TypingStoppedEvent`
+ * of the contract).
+ */
+function parseTypingFrame(data: string): { chatId: string; userId: string } | null {
+  let payload: unknown
+  try {
+    payload = JSON.parse(data)
+  } catch {
+    return null
+  }
+  if (typeof payload !== 'object' || payload === null) {
+    return null
+  }
+  const candidate = payload as { chatId?: unknown; userId?: unknown }
+  return typeof candidate.chatId === 'string' && typeof candidate.userId === 'string'
+    ? { chatId: candidate.chatId, userId: candidate.userId }
+    : null
 }
 
 /** №18 `connected` opening-frame payload guard (feature 007, presence-events.md §1). */
