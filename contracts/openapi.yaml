@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WebChat Public API
-  version: 0.8.0
+  version: 0.9.0
   description: >
     Публичный API веб-чата. Единственный источник истины публичного API;
     TypeScript-типы фронтенда генерируются из этого файла автоматически.
@@ -91,6 +91,36 @@ info:
     FR-020); блокировки и контакты по-прежнему независимы (FR-017/FR-020),
     новых путей и problem-кодов нет. Изменение — только additive
     (0.7.0 → 0.8.0, без BREAKING.md).
+
+    Фича 008a (social-signals): endpoints №39–№42 — отображаемые имена
+    и социальные сигналы: обновление профиля с профильным именем
+    displayName (№39, цепочка отображения alias → displayName → username),
+    персональный alias контакта (№40, виден только запросчику),
+    эфемерный сигнал набора текста (№41, состояние не читается —
+    подключившимся не реплеится; DIRECT-блок-пара — 204 без публикации)
+    и переключатель звуковых оповещений чата per-user-per-chat (№42,
+    значение и факт настройки другим участникам не раскрываются; событие
+    chat.sound.updated — только в собственный канал). Опциональные поля
+    существующих схем: PublicUser.displayName (все $ref-поверхности,
+    включая peer №26 sync-дельты), ContactView.alias, peer-фрагменты
+    №11/№12/№13 (displayName, alias), GroupMember.user №28 (displayName,
+    alias), результат поиска №19 (displayName, alias), ChatView/
+    ChatListItem.soundEnabled, PresenceStatusItem.lastSeenAt и
+    PresenceUpdatedEvent.lastSeenAt (только offline ∧ аудитория
+    видимости 007 ∧ не инкогнито ∧ данные есть; отсутствие поля
+    нейтрально). №18 — 3 новых event:-типа (typing.started,
+    typing.stopped, chat.sound.updated). Фиксированные константы фичи:
+    длина displayName/alias — 1–64 символа после trim; typing — окно
+    повтора клиента 3 с, окно молчания 5 с, серверный TTL состояния 8 с,
+    страховый таймаут наблюдателя 10 с, флуд 60 сигналов/мин;
+    точность lastSeen ≤ TTL-модели 007 (регистрация 90 с + гистерезис
+    45 с + poller 1 с); флуд №39/№40/№42 — 30/мин. Новые problem-коды:
+    invalid_display_name (400), invalid_alias (400), contact_not_found
+    (404), invalid_action (400); flood_limit (429) переиспользован.
+    Серверные сортировки и семантика поиска №19 не меняются. Все новые
+    пути требуют Bearer (/users/me/*, /contacts/*, /chats/* — per-user,
+    публичный перечень 002–003 не расширен). Изменение — только
+    additive (0.8.0 → 0.9.0, без BREAKING.md).
 tags:
   - name: auth
     description: Регистрация, вход, сессии, восстановление пароля
