@@ -66,6 +66,18 @@ import java.util.UUID
  * content and the post-commit `group.deleted` broadcast to every
  * former member.
  *
+ * T016 (008a, api-contract.md §2) grew the display-name legs of
+ * User Story 1 on the roster projections: every [GroupMember] of the
+ * №27/№28/№29/№31/№34/№35 answers now carries the member's optional
+ * profile `displayName` (the shared `PublicUser` read of
+ * [profilesOf]) plus the CALLER's personal `alias` toward that member
+ * (FR-001/FR-003) — ONE batched [ContactRepository.aliasesOf] SELECT
+ * per scenario ([callerAliasesOf]), strictly caller-scoped: the alias
+ * is the caller's own `user_contacts` row and never reaches the member
+ * himself or any third party (the leakage ban of FR-003). The server
+ * answer shape is the ONLY change — no roster rule, journal fact or
+ * frame of 006 is touched (SC-007).
+ *
  * Ordering discipline (pinned red-first by T018/T018a):
  *  * №27 — `400 self_forbidden` for the creator inside the roster is
  *    decided BEFORE the contact gate (the caller can never be his own
@@ -148,6 +160,7 @@ class GroupService(
         }
         val roster = participants.activeMembers(group.id)
         val profiles = profilesOf(roster)
+        val myAliases = callerAliasesOf(callerId, roster)
         val addressees = roster.map(ChatParticipant::userId)
         memberIds.forEach { addedId ->
             publishMemberAddedAfterCommit(group.id, addedId, profiles, callerId, addressees)
@@ -162,7 +175,7 @@ class GroupService(
             title = group.title.value,
             description = group.description?.value,
             myRole = memberRoleLabel(myRole),
-            members = roster.map { row -> memberView(row, profiles) },
+            members = roster.map { row -> memberView(row, profiles, myAliases) },
         )
     }
 
@@ -191,6 +204,7 @@ class GroupService(
         val group = resolveGroup(chatId)
         val roster = participants.activeMembers(group.id)
         val profiles = profilesOf(roster)
+        val myAliases = callerAliasesOf(callerId, roster)
         val myRole =
             requireNotNull(membership.role) {
                 "the gate row of an active group membership must carry a role (V14 ck_chat_participants_role)"
@@ -200,7 +214,7 @@ class GroupService(
             title = group.title.value,
             description = group.description?.value,
             myRole = memberRoleLabel(myRole),
-            members = roster.map { row -> memberView(row, profiles) },
+            members = roster.map { row -> memberView(row, profiles, myAliases) },
         )
     }
 
@@ -286,6 +300,7 @@ class GroupService(
         }
         val roster = participants.activeMembers(chatId)
         val profiles = profilesOf(roster)
+        val myAliases = callerAliasesOf(callerId, roster)
         fanoutGroupEventAfterCommit(
             chatId,
             roster.map(ChatParticipant::userId),
@@ -305,7 +320,7 @@ class GroupService(
             title = updated.title.value,
             description = updated.description?.value,
             myRole = memberRoleLabel(myRole),
-            members = roster.map { row -> memberView(row, profiles) },
+            members = roster.map { row -> memberView(row, profiles, myAliases) },
         )
     }
 
@@ -352,6 +367,7 @@ class GroupService(
         val addedIds = incoming.mapNotNull { userId -> addOrReactivate(group.id, userId, callerId) }
         val roster = participants.activeMembers(group.id)
         val profiles = profilesOf(roster)
+        val myAliases = callerAliasesOf(callerId, roster)
         if (addedIds.isNotEmpty()) {
             val addressees = roster.map(ChatParticipant::userId)
             addedIds.forEach { addedId ->
@@ -359,7 +375,7 @@ class GroupService(
             }
             metrics.recordGroupSize(roster.size)
         }
-        return roster.map { row -> memberView(row, profiles) }
+        return roster.map { row -> memberView(row, profiles, myAliases) }
     }
 
     /**
@@ -420,7 +436,10 @@ class GroupService(
             roster.map(ChatParticipant::userId),
             GroupRoleChangedEvent(group.id, targetUserId, role, callerId),
         )
-        return memberView(updated, profiles)
+        // T016: the single-member №34 answer joins the caller's alias
+        // toward the TARGET alone — the rest of the roster is not
+        // rendered by this scenario, so no wider read is spent.
+        return memberView(updated, profiles, callerAliasesOf(callerId, listOf(updated)))
     }
 
     /**
@@ -474,6 +493,7 @@ class GroupService(
         adminLog.append(GroupAdminLogEntry(group.id, callerId, targetUserId, GroupAdminAction.OWNERSHIP_TRANSFERRED))
         val roster = participants.activeMembers(group.id)
         val profiles = profilesOf(roster)
+        val myAliases = callerAliasesOf(callerId, roster)
         val addressees = roster.map(ChatParticipant::userId)
         fanoutGroupEventAfterCommit(
             group.id,
@@ -490,7 +510,7 @@ class GroupService(
             title = group.title.value,
             description = group.description?.value,
             myRole = memberRoleLabel(demoted.role!!),
-            members = roster.map { row -> memberView(row, profiles) },
+            members = roster.map { row -> memberView(row, profiles, myAliases) },
         )
     }
 
@@ -891,10 +911,21 @@ class GroupService(
     /**
      * One [GroupMember] of the roster projection: the public profile, the
      * contract role label, the FIRST-add moment (FR-002).
+     *
+     * T016 (008a, api-contract.md §2): the `GroupMember.user` fragment
+     * is the `UserWithAlias` schema — the profile rides the member's
+     * optional [UserProfile.displayName] (NULL = «not set» renders
+     * ABSENT — 008 clients fall back to `username`, SC-007), and
+     * [aliases] carries the CALLER's personal aliases toward the roster
+     * (an absent key = «no alias» — the neutral fallback of the display
+     * chain `alias → displayName → username`); the alias slot is the
+     * caller's own material and is joined per scenario, never shared
+     * across callers (FR-003).
      */
     private fun memberView(
         row: ChatParticipant,
         profiles: Map<UUID, UserProfile>,
+        aliases: Map<UUID, String>,
     ): GroupMember {
         val role =
             requireNotNull(row.role) {
@@ -909,11 +940,27 @@ class GroupService(
                     email = profile.email,
                     status = profile.status,
                     createdAt = profile.createdAt,
+                    displayName = profile.displayName?.value,
+                    alias = aliases[row.userId],
                 ),
             role = memberRoleLabel(role),
             joinedAt = row.createdAt,
         )
     }
+
+    /**
+     * T016 (008a, FR-003): the caller's personal aliases toward the
+     * roster — ONE [ContactRepository.aliasesOf] SELECT over
+     * `user_contacts` per scenario, holding ONLY non-null values (an
+     * absent key = «no alias»). Strictly caller-scoped: the answer is
+     * the caller's own row material and must never be projected into
+     * anyone else's roster view; an empty roster costs no database
+     * round-trip.
+     */
+    private fun callerAliasesOf(
+        callerId: UUID,
+        roster: List<ChatParticipant>,
+    ): Map<UUID, String> = contacts.aliasesOf(callerId, roster.map(ChatParticipant::userId))
 
     /**
      * The public profiles of the roster: the reused `PublicUser`

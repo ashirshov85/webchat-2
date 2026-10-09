@@ -139,6 +139,9 @@ data class PeerNames(
  * (`ChatPeerSnapshot.displayName`).
  */
 @Service
+// The №11/№12/№13 collaborators, one port per leg (DIP, plan.md VIII;
+// the T015 name pair grew the last two).
+@Suppress("LongParameterList")
 class ChatService(
     private val userRepository: UserRepository,
     private val chatRepository: ChatRepository,
