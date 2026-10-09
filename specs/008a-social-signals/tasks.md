@@ -107,7 +107,7 @@
 - [X] T038 [US2] Проводка realtime: обработчик `onTypingEvent(chatId, userId, started)` в `frontend/src/chats/hooks/useRealtime.ts` и состояние «кто печатает» активного чата в `frontend/src/chats/pages/MessengerPage.tsx`: появление ≤ 2 с, скрытие по `typing.stopped`/`message.created` от печатающего/страховочному таймауту 10 с, скрытие при смене чата и при реконнекте стрима №18 (сброс typing-состояния в onOpen после разрыва — состояние не реплеится), имя печатающего через `resolveDisplayName` из клиентского кэша участников (№11 peer / №28); неизвестный `userId` не рендерится (ui-behavior.md §2.2)
 - [X] T039 [P] [US2] Написать Vitest-тесты: машина состояний `useTyping` в `frontend/src/chats/hooks/__tests__/useTyping.test.ts` (первый символ/окно 3 с/stop-триггеры/блок-композер) и рендер TypingRow (тексты 1/N печатающих, подавление неизвестного `userId`) в `frontend/src/chats/components/__tests__/TypingRow.test.tsx`
 - [X] T040 [US2] Дописать сценарий typing-строки (анимации disabled) в `frontend/tests/visual/social-signals.spec.ts` + `pnpm --dir frontend test:visual`
-- [ ] T041 [P] [US2] Создать `load/k6/social-signals.smoke.js` по образцу `load/k6/presence.smoke.js`: базовый прогон (мессенджинг) vs прогон с активным набором (start каждые 3 с, stop на отправке); критерий Δp99 `webchat_realtime_push_seconds` ≤ 10% (SC-008)
+- [X] T041 [P] [US2] Создать `load/k6/social-signals.smoke.js` по образцу `load/k6/presence.smoke.js`: базовый прогон (мессенджинг) vs прогон с активным набором (start каждые 3 с, stop на отправке); критерий Δp99 `webchat_realtime_push_seconds` ≤ 10% (SC-008)
 
 **Checkpoint**: US1 и US2 работают независимо; typing эфемерен, самоистекает, приватен (SC-001–SC-003)
 
