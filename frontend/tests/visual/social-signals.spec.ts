@@ -37,7 +37,15 @@
  *    closes, the direct-chat header carrying the alias: title «Маша»,
  *    initials «М» from the chain while the avatar KEEPS the username
  *    colour (FR-004) — the `us1-direct-chat-head` surface in its alias
- *    state, pinned as `008a-direct-chat-head-alias`.
+ *    state, pinned as `008a-direct-chat-head-alias`;
+ *  * the US2 typing row (T040, ui-behavior §2.2/§5): a live №18
+ *    `typing.started` frame for the open dialog's peer drives the
+ *    feed tail — the `.typing-row.msg.them` bubble with three
+ *    `lampBlink`-cancelled `.tlamp` lamps and the italic
+ *    «Alex Carter печатает…» label, the typist's avatar carrying the
+ *    US1 initials/colour split — delivered by a parked-then-one-shot
+ *    SSE interception whose post-delivery aborts keep the T038
+ *    reconnect-reset from eating the row mid-capture.
  *
  * Determinism mirrors T026/T039: `animations: 'disabled'` cancels the
  * infinite lamps and fast-forwards the finite pop/transitions,
@@ -47,8 +55,8 @@
  * (ui/Toast) — the header capture waits it out, so no timing residue
  * enters the shot.
  *
- * T040/T050/T060 will append the US2–US4 scenarios (typing row,
- * lastSeen statuses, bell on/off) to this same file.
+ * T050/T060 will append the US3–US4 scenarios (lastSeen statuses,
+ * bell on/off) to this same file.
  */
 import { expect } from '@playwright/test'
 import type { Page, Route } from '@playwright/test'
@@ -136,6 +144,62 @@ function installAliasBackend(page: Page): void {
       body: JSON.stringify({ chats }),
     })
   })
+}
+
+/** The №18 opening frames every connect must answer (realtime-events.md §1). */
+function sseOpening(): string {
+  return 'retry: 3000\n\nevent: connected\ndata: {"connectionId":"aethergram-typing-fixture"}\n\n'
+}
+
+/** A №18 typing frame (realtime-events.md §1.1/§1.2 — the shared `{chatId, userId}` payload). */
+function typingFrame(started: boolean, chatId: string, userId: string): string {
+  const event = started ? 'typing.started' : 'typing.stopped'
+  return `event: ${event}\ndata: ${JSON.stringify({ chatId, userId })}\n\n`
+}
+
+/**
+ * The №18 typing backend of the US2 scenario (the presence-e2e
+ * recipe): the stream route PARKS the connect it takes over until
+ * the spec publishes a frame (drain poll — no abort, so the client's
+ * backoff stays cold and the delivery lands milliseconds after
+ * `publish()` instead of on a jittery backoff boundary), answers it
+ * ONCE with the opening frames + everything queued, then aborts
+ * every later attempt.
+ *
+ * The one-shot discipline is the point: a route-fulfilled SSE body
+ * always ENDS, so the client would reconnect on its backoff within
+ * ~1 s and that reconnect's `onOpen` would reset the page's typing
+ * map (T038: the ephemeral state is never replayed — the row would
+ * blink out mid-capture). Aborts never fire `onOpen`, so after the
+ * delivery the row rides its full 10 s observer window
+ * (TYPING_SAFETY_TIMEOUT_MS) — a stable capture target.
+ */
+function installTypingStream(page: Page): { publish(frame: string): void } {
+  const queued: string[] = []
+  let delivered = false
+  void page.route('**/api/v1/users/me/events', async (route: Route) => {
+    if (!delivered && queued.length === 0) {
+      const deadline = Date.now() + 25_000
+      while (queued.length === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+    }
+    if (queued.length === 0) {
+      await route.abort()
+      return
+    }
+    delivered = true
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+      body: sseOpening() + queued.splice(0).join(''),
+    })
+  })
+  return {
+    publish(frame: string): void {
+      queued.push(frame)
+    },
+  }
 }
 
 visualTest.describe('T025 — 008a US1: profile «Имя» field and the rename form', () => {
@@ -278,6 +342,55 @@ visualTest.describe('T025 — 008a US1: profile «Имя» field and the rename 
       await expect(messenger.page.locator('.toast.show')).toHaveCount(0)
       await expect(messenger.page.locator('.chat-head')).toHaveScreenshot(
         '008a-direct-chat-head-alias.png',
+        SHOT,
+      )
+    },
+  )
+})
+
+visualTest.describe('T040 — 008a US2: the typing row', () => {
+  visualTest(
+    '№18 typing.started renders «{имя} печатает…» at the feed tail',
+    async ({ messenger }) => {
+      onlyProject(DESKTOP)
+      await openAlexChat(messenger)
+
+      // The typist is the open dialog's №11 peer (Alex Carter): the
+      // typing.started fanout addresses every active participant but
+      // the sender, so ada — the observer — is its audience.
+      const alex = AETHERGRAM.userByUsername('Alex Carter')
+      const dialog = AETHERGRAM.chatList.find((item) => item.peer?.id === alex?.id)
+      if (alex === undefined || dialog === undefined) {
+        throw new Error('social-signals fixture: the Alex Carter dialog is missing')
+      }
+
+      const stream = installTypingStream(messenger.page)
+      stream.publish(typingFrame(true, dialog.chatId, alex.id))
+
+      // §2.2/§5: the row is the feed's last `.msg.them` — three
+      // aria-hidden lamps, the italic label in the peer's CHAIN name
+      // (the demo set carries no alias/displayName → username), the
+      // avatar split of T020 (initials from the name, colour from the
+      // username — FR-004).
+      const row = messenger.page.locator('.message-list .typing-row')
+      await expect(row).toBeVisible()
+      await expect(row.locator('.typing-txt')).toHaveText('Alex Carter печатает…')
+      await expect(row.locator('.tlamp')).toHaveCount(3)
+      await expect(row.locator('.av-in span')).toHaveText('AC')
+
+      // The delivering connect's `onOpen` re-runs the №12/№36/sync
+      // convergence refetches (all fixture-answered, pixel-neutral) —
+      // wait out the SyncIndicator strip before the shot.
+      await expect(messenger.page.locator('.sync-indicator')).toHaveCount(0)
+
+      // The open seat parked the feed at its last row and the row
+      // mounts BELOW it (no re-seat: the T079 autoscroll keys on
+      // message ids), so the capture scrolls the row into the fold
+      // first — the region baseline of the `us1-direct-chat-feed`
+      // convention, lamps frozen by `animations: 'disabled'`.
+      await row.scrollIntoViewIfNeeded()
+      await expect(messenger.page.locator('.message-list.chat-scroll')).toHaveScreenshot(
+        '008a-typing-row.png',
         SHOT,
       )
     },
