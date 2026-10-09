@@ -47,10 +47,8 @@ const GRAPHEME_SEGMENTER = new Intl.Segmenter('ru', { granularity: 'grapheme' })
 
 /** Первый графемный кластер слова целиком (без «тофу» из одиночных суррогатов). */
 function firstGrapheme(word: string): string {
-  for (const { segment } of GRAPHEME_SEGMENTER.segment(word)) {
-    return segment
-  }
-  return ''
+  const [first] = GRAPHEME_SEGMENTER.segment(word)
+  return first?.segment ?? ''
 }
 
 /**

@@ -225,6 +225,7 @@ import { ChatHeader } from '../components/ChatHeader'
 import type { ChatHeaderChat } from '../components/ChatHeader'
 import { ChatListPanel } from '../components/ChatListPanel'
 import { ContactsModal } from '../components/ContactsModal'
+import type { ModalForm } from '../components/ContactsModal'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { MessageInput } from '../components/MessageInput'
 import { MessageList } from '../components/MessageList'
@@ -388,6 +389,13 @@ const MODAL_TITLES: Record<ModalFormId, string> = {
   'group-members': 'Участники',
   profile: 'Мой профиль',
   confirm: 'Подтверждение',
+}
+
+/** Проекция внутренних форм «Контактов» (ModalForm) в обитателей оболочки (T034). */
+const CONTACTS_SHELL_FORMS: Record<ModalForm, ModalFormId> = {
+  list: 'contacts',
+  add: 'add-contact',
+  rename: 'rename-contact',
 }
 
 /**
@@ -1129,7 +1137,7 @@ function MessengerMachine() {
           ? {
               ...previous,
               blockedByMe,
-              peer: item.peer !== null ? item.peer : previous.peer,
+              peer: item.peer ?? previous.peer,
               peerAlias: item.peer !== null ? (item.peerAlias ?? null) : previous.peerAlias,
             }
           : previous,
@@ -1764,9 +1772,7 @@ function MessengerMachine() {
             onContactRemoved={handleContactRemoved}
             onContactRenamed={handleContactRenamed}
             onFormChange={(form) => {
-              setModalForm(
-                form === 'add' ? 'add-contact' : form === 'rename' ? 'rename-contact' : 'contacts',
-              )
+              setModalForm(CONTACTS_SHELL_FORMS[form])
             }}
           />
         )}
