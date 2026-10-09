@@ -268,4 +268,42 @@ describe('ProfileModal', () => {
     expect(mockUpdate).not.toHaveBeenCalled()
     expect(screen.queryByRole('status')?.textContent).toBe('')
   })
+
+  /**
+   * Экранирование displayName (008a T024, US1 AC5, 008 FR-033): имя —
+   * пользовательский ввод; HTML-вставка рендерится как ТЕКСТ (значение
+   * поля, тост), не как разметка — dangerouslySetInnerHTML не вводится.
+   */
+  describe('экранирование «Имени» (008 FR-033)', () => {
+    const XSS_IMG = '<img src=x onerror="alert(1)">'
+
+    it('displayName с HTML-вставкой — значение поля это literal-текст, инъекции в DOM нет', async () => {
+      mockGetCurrentUser_.mockResolvedValueOnce(meUser({ displayName: XSS_IMG }))
+      mockFetch.mockResolvedValueOnce({ incognito: false })
+      renderModal()
+
+      const nameField = await screen.findByRole<HTMLInputElement>('textbox', {
+        name: 'Имя',
+      })
+      // Значение input — plain-текст (атрибут value), не разметка
+      expect(nameField).toHaveValue(XSS_IMG)
+      expect(document.querySelector('img[onerror]')).toBeNull()
+    })
+
+    it('тост с HTML-вставкой в имени — literal-текст, инъекции нет', async () => {
+      mockGetCurrentUser_.mockResolvedValueOnce(meUser({ displayName: XSS_IMG }))
+      mockFetch.mockResolvedValueOnce({ incognito: false })
+      mockUpdateProfile_.mockResolvedValueOnce(meUser({ displayName: XSS_IMG }))
+      mockUpdate.mockResolvedValueOnce({ incognito: false })
+      renderModal()
+
+      await screen.findByRole('textbox', { name: 'Имя' })
+      fireEvent.click(screen.getByRole('button', { name: 'Сохранить' }))
+
+      await waitFor(() => expect(mockUpdateProfile).toHaveBeenCalledWith({ displayName: XSS_IMG }))
+      expect(await screen.findByText(`Профиль обновлён — ${XSS_IMG}`)).toBeVisible()
+      expect(document.querySelector('img[onerror]')).toBeNull()
+      expect(document.querySelector('.toast img')).toBeNull()
+    })
+  })
 })
