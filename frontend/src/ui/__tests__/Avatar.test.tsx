@@ -144,3 +144,40 @@ describe('Avatar — presence-точка (FR-024, design-tokens §4, семан�
     expect(avatarRoot(container).querySelector('.av-in')?.getAttribute('aria-hidden')).toBe('true')
   })
 })
+
+describe('Avatar — разделение источников (008a T020, FR-004: инициалы из имени, цвет из username)', () => {
+  it('проп initials переопределяет деривацию, цвет остаётся colorOf(source)', () => {
+    const { container } = render(<Avatar source="olkot" initials="МС" />)
+    const root = avatarRoot(container)
+    expect(root.querySelector('.av-in span')?.textContent).toBe('МС')
+    expect(root.style.getPropertyValue('--av')).toBe(colorOf('olkot'))
+  })
+
+  it('смена отображаемого имени (новые инициалы) не перекрашивает аватар — цвет от username (FR-004)', () => {
+    const { container, rerender } = render(<Avatar source="olkot" initials="МС" />)
+    const colorBefore = avatarRoot(container).style.getPropertyValue('--av')
+
+    rerender(<Avatar source="olkot" initials="АК" />)
+    const root = avatarRoot(container)
+    expect(root.querySelector('.av-in span')?.textContent).toBe('АК')
+    expect(root.style.getPropertyValue('--av')).toBe(colorBefore)
+    expect(root.style.getPropertyValue('--av')).toBe(colorOf('olkot'))
+  })
+
+  it('эмодзи-инициалы рендерятся кластером целиком (SC-006, без «тофу»)', () => {
+    const { container } = render(<Avatar source="mikhail" initials="😀М" />)
+    expect(avatarRoot(container).querySelector('.av-in span')?.textContent).toBe('😀М')
+  })
+
+  it('пустой проп initials — фолбэк к деривации initialsOf(source)', () => {
+    const { container } = render(<Avatar source="ada lovelace" initials="" />)
+    expect(avatarRoot(container).querySelector('.av-in span')?.textContent).toBe('AL')
+  })
+
+  it('без пропа ничего не меняется для существующих поверхностей (проводка — T023)', () => {
+    const { container } = render(<Avatar source="Проект Альфа" />)
+    const root = avatarRoot(container)
+    expect(root.querySelector('.av-in span')?.textContent).toBe('ПА')
+    expect(root.style.getPropertyValue('--av')).toBe(colorOf('Проект Альфа'))
+  })
+})
