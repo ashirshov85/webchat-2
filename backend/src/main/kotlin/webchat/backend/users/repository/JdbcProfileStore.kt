@@ -34,6 +34,9 @@ class JdbcProfileStore(
             .firstOrNull()
             ?: error("a display-name write must target an existing user — the №39 API gates own that check")
 
+    /** The №10 read leg: the same projection the №39 write returns, as ONE point read. */
+    override fun findByUserId(userId: UUID): Profile? = jdbcTemplate.query(SELECT_SQL, ROW_MAPPER, userId).firstOrNull()
+
     private companion object {
         val ROW_MAPPER =
             RowMapper { rs: ResultSet, _: Int ->
@@ -53,6 +56,13 @@ class JdbcProfileStore(
             SET display_name = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             RETURNING id, username, email, status, display_name, created_at
+            """.trimIndent()
+
+        val SELECT_SQL =
+            """
+            SELECT id, username, email, status, display_name, created_at
+            FROM users
+            WHERE id = ?
             """.trimIndent()
     }
 }

@@ -34,4 +34,16 @@ interface ProfileStore {
         userId: UUID,
         displayName: DisplayName?,
     ): Profile
+
+    /**
+     * The №10 read leg (T012): the public projection of one `users` row
+     * WITH its optional [Profile.displayName] — the shared `PublicUser`
+     * surface served by `GET /users/me` after 008a. The 002 aggregate is
+     * NOT touched: this is a point read of the very columns №39 writes,
+     * so a fresh №10 answer always carries the stored name. `null` when
+     * the row does not exist — the same existence gate the auth
+     * `UserRepository.findById` served before (the API layer renders its
+     * uniform boundary problem).
+     */
+    fun findByUserId(userId: UUID): Profile?
 }
