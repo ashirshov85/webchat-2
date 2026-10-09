@@ -51,7 +51,7 @@
 ### Tests for User Story 1 (писать ПЕРВЫМИ, до реализации — конституция VI)
 
 - [X] T009 [P] [US1] Написать `backend/src/test/kotlin/webchat/backend/users/ProfileDisplayNameIT.kt` (по образцу существующих IT из `AbstractIntegrationTest`): set/clear №39, серверный trim, 400 `invalid_display_name` (пусто/пробельно/>64), displayName в №10/№19/№11–№13/№28-проекциях и peer №26 sync-дельты (общий PublicUser-проектор; assert при наличии дельты в фикстуре), обратная совместимость (без имени — поле отсутствует), флуд 30/мин → 429 `flood_limit` + Retry-After; убедиться в FAIL
-- [ ] T010 [P] [US1] Написать `backend/src/test/kotlin/webchat/backend/contacts/ContactAliasIT.kt`: set/reset №40, alias виден только владельцу во всех его представлениях (сам контакт/третьи лица поле не получают), 404 `contact_not_found`, 400 `invalid_alias`, alias переживает удаление чата и удаляется вместе с контактом (№22), флуд 429; убедиться в FAIL
+- [X] T010 [P] [US1] Написать `backend/src/test/kotlin/webchat/backend/contacts/ContactAliasIT.kt`: set/reset №40, alias виден только владельцу во всех его представлениях (сам контакт/третьи лица поле не получают), 404 `contact_not_found`, 400 `invalid_alias`, alias переживает удаление чата и удаляется вместе с контактом (№22), флуд 429; убедиться в FAIL
 
 ### Implementation for User Story 1 (backend)
 
