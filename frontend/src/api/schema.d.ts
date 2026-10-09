@@ -852,6 +852,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/chats/{chatId}/typing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сигнал набора текста в чате (№41, Bearer)
+         * @description Эфемерный сигнал набора текста (FR-006–FR-009): start — начало или продление набора, stop — завершение; 204 — сигнал принят (повтор start = продление, идемпотентно). Публикация через канал №18: start → typing.started {chatId, userId} активным участникам чата кроме отправителя (own-устройства свой набор не отображают — решается адресацией); stop → typing.stopped той же аудитории только при активном состоянии (повторный stop без активного состояния — без публикации, идемпотентность). Нормативные константы (фиксация таймингов в публичном контракте): окно повтора клиента start — 3 с; окно молчания клиента до stop — 5 с; серверный TTL состояния набора — 8 с (самоистечение → typing.stopped не позднее TTL + poll-interval 1 с); страховый таймаут индикатора наблюдателя — 10 с без продления; флуд-лимит — 60 сигналов/мин на пользователя. Состояние эфемерно: операции чтения нет, в историю/sync не попадает, подключившимся не реплеится. DIRECT-блок-пара (обе стороны, 004 FR-020): сигналы принимаются 204 при валидном членстве, но не публикуются в обе стороны — наблюдатели дребезга не видят. Флуд-контроль — per-user бакет 60/мин (все чаты пользователя): 429 flood_limit + Retry-After; избыточные сигналы не публикуются.
+         */
+        post: operations["sendTypingSignal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chats/{chatId}/sound": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Переключить звуковые оповещения чата (№42, Bearer)
+         * @description Персональный (per-user-per-chat) переключатель звуковых оповещений (FR-012–FR-015). Смена значения → realtime-событие chat.sound.updated {chatId, soundEnabled} только в собственный канал №18 вызывающего (синхронизация мультидевайс ≤ 2 с); повтор того же значения — 200 без события (идемпотентность). Приватность: значение и факт настройки не раскрываются другим участникам — ни в представлениях, ни в событиях. Подключающиеся/переподключающиеся клиенты читают актуальное состояние из soundEnabled №12/№13; событие — только для живых подключений. Без сети операция не выполняется (офлайн-очереди переключений нет). Флуд-контроль — per-user бакет 30/мин: 429 flood_limit + Retry-After.
+         */
+        put: operations["setChatSound"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1526,6 +1566,24 @@ export interface components {
         AliasUpdateRequest: {
             /** @description Персональный alias вызывающего к контакту; серверный trim, допустимая длина 1–64 символа после trim, Unicode без ограничений; пусто/пробельно или длиннее 64 после trim → 400 invalid_alias; null/отсутствие = сброс; удаляется вместе с контактом (№22), переживает удаление чата */
             alias?: string | null;
+        };
+        /** @description Тело №41 POST: эфемерный сигнал набора текста; состояние не читается и не реплеится (подключившимся не восстанавливается); повтор start = продление */
+        TypingRequest: {
+            /**
+             * @description start — начало/продление набора (публикация typing.started участникам чата кроме отправителя); stop — завершение (typing.stopped только при активном состоянии — идемпотентность против двойного погашения); значение вне enum или отсутствие → 400 invalid_action
+             * @enum {string}
+             */
+            action: "start" | "stop";
+        };
+        /** @description Тело №42 PUT: персональный (per-user-per-chat) переключатель звуковых оповещений; значение и факт настройки другим участникам не раскрываются */
+        ChatSoundRequest: {
+            /** @description Новое значение звуковых оповещений чата для вызывающего; не boolean или отсутствие → 400 malformed_request; смена значения → событие chat.sound.updated только в собственный канал №18, повтор того же значения — 200 без события */
+            enabled: boolean;
+        };
+        /** @description Ответ №42: сохранённое персональное значение звуковых оповещений чата */
+        ChatSoundResponse: {
+            /** @description Сохранённое значение вызывающего для чата (умолчание для новых участий — true) */
+            soundEnabled: boolean;
         };
     };
     responses: never;
@@ -3987,6 +4045,152 @@ export interface operations {
                 };
             };
             /** @description Per-user флод-бакет 30/мин исчерпан (errors: {alias: [flood_limit]}) */
+            429: {
+                headers: {
+                    /** @description Секунды до доступного токена */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    sendTypingSignal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор чата */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TypingRequest"];
+            };
+        };
+        responses: {
+            /** @description Сигнал принят (идемпотентно: повтор start = продление) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description action не задан или вне start|stop (errors: {action: [invalid_action]}); не-UUID chatId (errors: {chatId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не участник чата (errors: {chat: [not_participant]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Чат не найден (errors: {chat: [chat_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Флуд-лимит 60 сигналов/мин на пользователя (errors: {action: [flood_limit]}; избыточные сигналы не публикуются) */
+            429: {
+                headers: {
+                    /** @description Секунды до доступного токена */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    setChatSound: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор чата */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSoundRequest"];
+            };
+        };
+        responses: {
+            /** @description Сохранённое значение: ChatSoundResponse {soundEnabled} */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSoundResponse"];
+                };
+            };
+            /** @description enabled отсутствует или не boolean (errors: {enabled: [malformed_request]}); не-UUID chatId (errors: {chatId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не участник чата (errors: {chat: [not_participant]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Чат не найден (errors: {chat: [chat_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Флуд-лимит 30 переключений/мин на пользователя (errors: {enabled: [flood_limit]}) */
             429: {
                 headers: {
                     /** @description Секунды до доступного токена */
