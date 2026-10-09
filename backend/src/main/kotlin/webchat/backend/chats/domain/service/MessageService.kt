@@ -170,9 +170,22 @@ sealed interface MessageSendResult {
  *    rides the list leg [RealtimeEventPublisher.fanoutMessageCreated]
  *    with the [GroupMetrics] fan-out pair of T010
  *    (`webchat_group_message_fanout_total`/`_seconds`).
+ *
+ * T033 (008a, US2, data-model.md §2.1 transition 2): the typer's own
+ * successful №16 INSERT extinguishes his ephemeral typing state — the
+ * isolated [extinguishTypingAtSend] leg rides strictly AFTER the
+ * durable ack and reuses the idempotent claim+publish discipline of
+ * [TypingService.stop]: exactly ONE of the client `stop` (T036), this
+ * INSERT leg and the poller reap (T032) may publish `typing.stopped`,
+ * the losers find the claim empty and stay silent. A send REFUSED
+ * before the INSERT (blank text, flood, block) never reaches the leg —
+ * that stop belongs to the client alone (the spec edge: a rejected
+ * draft keeps the state while the typer goes on typing), and a №16
+ * resolution that wrote nothing (both `200` dedup legs) skips it too:
+ * the racing winner of the very row has already claimed.
  */
 @Service
-// the №16 path collaborators, one per leg (T041 the admission gate; T035 the 006 roster/metrics pair)
+// the №16 path collaborators, one per leg (T041 the admission gate; T035 the 006 roster/metrics pair; T033 the 008a typing extinguish)
 @Suppress("LongParameterList")
 class MessageService(
     private val chatService: ChatService,
@@ -184,6 +197,7 @@ class MessageService(
     private val meterRegistry: MeterRegistry,
     private val participantRepository: ParticipantRepository,
     private val groupMetrics: GroupMetrics,
+    private val typingService: TypingService,
 ) {
     private val log = LoggerFactory.getLogger(MessageService::class.java)
 
@@ -294,6 +308,10 @@ class MessageService(
                 }
                 ack.stop(ackTimer(OUTCOME_CREATED))
                 lease.acked()
+                // T033: strictly after the durable ack — the ephemeral
+                // typing leg never delays nor pollutes the SC-001 ack
+                // sample, and its failure can never fail the record.
+                extinguishTypingAtSend(chat.id, senderId)
                 MessageSendResult.Created(outcome.message)
             }
             is MessageInsertResult.Duplicate -> {
@@ -306,6 +324,39 @@ class MessageService(
                 lease.acked()
                 MessageSendResult.Existing(existing)
             }
+        }
+    }
+
+    /**
+     * T033 (008a, data-model.md §2.1 transition 2): the typer's own
+     * successful №16 INSERT extinguishes his typing state — one more
+     * competitor for the SAME atomic claim as the client `stop` of T036
+     * and the poller reap of T032; [TypingService.stop] owns the whole
+     * discipline (the claim itself, the №16 gate, the DIRECT block-pair
+     * suppression and the self-excluding `typing.stopped` fan-out), so
+     * a typer who was never typing costs one silent ZREM miss. Runs
+     * strictly AFTER the durable ack: the record is already answered,
+     * so this ephemeral leg is at-most-once isolated — a failure here
+     * never fails the send, and the un-claimed state dies by its TTL
+     * horizon and the poller reap anyway (SC-003; the observers' 10 s
+     * safety timeout hides the stale indicator in the meantime). Warn
+     * logs carry ids ONLY (constitution V).
+     */
+    @Suppress("TooGenericExceptionCaught") // at-most-once isolation of the ephemeral leg behind the durable ack
+    private fun extinguishTypingAtSend(
+        chatId: UUID,
+        senderId: UUID,
+    ) {
+        try {
+            typingService.stop(chatId, senderId)
+        } catch (failure: Exception) {
+            log.warn(
+                "typing extinguish at the durable send of user <{}> in chat <{}> failed; " +
+                    "the record stands and the state dies by its TTL/poller reap (SC-003): {}",
+                senderId,
+                chatId,
+                failure.message,
+            )
         }
     }
 

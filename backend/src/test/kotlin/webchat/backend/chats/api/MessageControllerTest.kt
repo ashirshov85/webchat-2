@@ -17,6 +17,7 @@ import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.backpressure.NoopSendAdmissionGate
 import webchat.backend.chats.NoopContactRepository
 import webchat.backend.chats.NoopProfileStore
+import webchat.backend.chats.TypingMetrics
 import webchat.backend.chats.api.dto.ReadRequest
 import webchat.backend.chats.api.dto.SendMessageRequest
 import webchat.backend.chats.domain.model.Chat
@@ -38,6 +39,8 @@ import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.chats.domain.port.TypingEvent
+import webchat.backend.chats.domain.port.TypingState
+import webchat.backend.chats.domain.port.TypingStore
 import webchat.backend.chats.domain.service.ChatService
 import webchat.backend.chats.domain.service.HistoryService
 import webchat.backend.chats.domain.service.InvalidUpToSeqException
@@ -45,6 +48,7 @@ import webchat.backend.chats.domain.service.MessageIdConflictException
 import webchat.backend.chats.domain.service.MessageService
 import webchat.backend.chats.domain.service.ReadService
 import webchat.backend.chats.domain.service.SendPolicyGate
+import webchat.backend.chats.domain.service.TypingService
 import webchat.backend.config.ChatsProperties
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.domain.model.UserBlock
@@ -283,6 +287,19 @@ class MessageControllerTest {
                     // this direct-dialog controller scope.
                     participantRepository = participants,
                     groupMetrics = GroupMetrics(SimpleMeterRegistry()),
+                    // T033 (008a): the typing extinguish at the INSERT —
+                    // inert here (no active state ever resolves), the leg
+                    // itself is asserted by MessageServiceTest/TypingIT.
+                    typingService =
+                        TypingService(
+                            chatService = chatService(participants),
+                            participantRepository = participants,
+                            blockRepository = NoopBlockRepository,
+                            typingStore = NoopTypingStore,
+                            realtimeEventPublisher = NoopRealtimePublisher,
+                            chatsProperties = TEST_PROPERTIES,
+                            typingMetrics = TypingMetrics(SimpleMeterRegistry()),
+                        ),
                 ),
             historyService =
                 HistoryService(
@@ -473,6 +490,22 @@ class MessageControllerTest {
             toUserIds: List<UUID>,
             event: TypingEvent,
         ) = Unit
+    }
+
+    /** The T033 leg stays inert here — no active typing state ever resolves, so the extinguish is a silent claim miss. */
+    private object NoopTypingStore : TypingStore {
+        override fun start(
+            chatId: UUID,
+            userId: UUID,
+            ttl: Duration,
+        ) = Unit
+
+        override fun stop(
+            chatId: UUID,
+            userId: UUID,
+        ): Boolean = false
+
+        override fun dueExpired(batch: Int): List<TypingState> = emptyList()
     }
 
     /** The FR-002 gate fixture: only the ensured pair chat resolves, `ensure` is never reached here. */

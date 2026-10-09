@@ -10,9 +10,9 @@ import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.chats.domain.port.TypingEvent
 import webchat.backend.chats.domain.port.TypingStartedEvent
+import webchat.backend.chats.domain.port.TypingState
 import webchat.backend.chats.domain.port.TypingStoppedEvent
 import webchat.backend.chats.domain.port.TypingStore
-import webchat.backend.chats.domain.port.TypingState
 import webchat.backend.config.ChatsProperties
 import webchat.backend.contacts.domain.port.BlockRepository
 import java.util.UUID
