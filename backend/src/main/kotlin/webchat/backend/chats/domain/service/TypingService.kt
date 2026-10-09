@@ -12,6 +12,7 @@ import webchat.backend.chats.domain.port.TypingEvent
 import webchat.backend.chats.domain.port.TypingStartedEvent
 import webchat.backend.chats.domain.port.TypingStoppedEvent
 import webchat.backend.chats.domain.port.TypingStore
+import webchat.backend.chats.domain.port.TypingState
 import webchat.backend.config.ChatsProperties
 import webchat.backend.contacts.domain.port.BlockRepository
 import java.util.UUID
@@ -109,6 +110,47 @@ class TypingService(
         if (chat.kind == ChatKind.DIRECT && directPairBlocked(chat, senderId)) return
         publishToAudience(chat.id, senderId, TypingStoppedEvent(chatId = chat.id, userId = senderId))
     }
+
+    /**
+     * The SC-003 self-expiry leg of the T032 poller
+     * (TypingTransitionScheduler): the state-ttl horizon lapsed without
+     * a single renewal — a hung tab, a killed pod, a metro gap — and
+     * [TypingStore.dueExpired] ALREADY claimed the lapse atomically (the
+     * ZREM inside the very script), so unlike [stop] there is nothing
+     * left to claim here: this method is the publication behind the
+     * claim, under the SAME discipline as every other extinguish:
+     *
+     *  * the №16 gate first — a typer who LEFT or was kicked since his
+     *    `start` (or whose chat vanished) answers nothing to anybody:
+     *    the refusal is an EXPECTED silent exit here, never a thrown
+     *    leg (one poisoned state must not kill the tick's remaining
+     *    batch — the claim is already durable), and the observers'
+     *    10 s safety timeout hides the stale indicator (FR-007);
+     *  * the DIRECT block-pair suppression — a state born BEFORE the
+     *    block dies silently exactly like its `stop` twin above (the
+     *    observers never see the block chatter, AC7/AC8);
+     *  * the self-excluding audience fold of [publishToAudience].
+     */
+    fun onStateExpired(state: TypingState) {
+        val chat = expiredTyperChatOf(state) ?: return
+        if (chat.kind == ChatKind.DIRECT && directPairBlocked(chat, state.userId)) return
+        publishToAudience(chat.id, state.userId, TypingStoppedEvent(chatId = chat.id, userId = state.userId))
+    }
+
+    /**
+     * The №16 gate of the poller leg, as a resolve-or-`null`: the two
+     * refusals (the chat gone, the typer no longer an active member)
+     * are the EXPECTED silent exits of an abandoned state — `null`,
+     * never a thrown leg.
+     */
+    private fun expiredTyperChatOf(state: TypingState): Chat? =
+        try {
+            chatService.get(state.chatId, state.userId)
+        } catch (_: ChatNotFoundException) {
+            null
+        } catch (_: NotParticipantException) {
+            null
+        }
 
     /**
      * FR-008 (AC7): the blocking-pair gate of a DIRECT dialog — the

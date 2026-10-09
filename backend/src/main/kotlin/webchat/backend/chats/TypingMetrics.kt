@@ -17,9 +17,14 @@ import webchat.backend.chats.domain.port.TypingStoppedEvent
  *    §2.1 state machine), wired by
  *    [TypingService][webchat.backend.chats.domain.service.TypingService]
  *    on every fan-out it hands to the №18 pipe — the published-events
- *    signal the SC-008 smoke correlates with the push timer (the
- *    `webchat_typing_state_expired_total` sibling of the poller joins in
- *    T032);
+ *    signal the SC-008 smoke correlates with the push timer;
+ *  * counter `webchat_typing_state_expired_total` — one increment per
+ *    LAPSED state the poller claims (the SC-003 self-expiry leg, T032
+ *    [TypingTransitionScheduler]
+ *    [webchat.backend.chats.scheduler.TypingTransitionScheduler]) — the
+ *    reap itself is counted even when the publication behind it is
+ *    suppressed (a block pair, a vanished member): the counter measures
+ *    the self-expiry machine, `webchat_typing_events_total` the frames;
  *  * counter `webchat_typing_flood_suppressed_total` — one increment per
  *    №41 signal the `rl:user:typing:` bucket refuses (429 `flood_limit`,
  *    FR-009), wired by the api layer (T031): a refused signal publishes
@@ -59,6 +64,18 @@ class TypingMetrics(
         floodSuppressedTotal().increment()
     }
 
+    /**
+     * SC-003: one typing state the poller claimed as self-EXPIRED (the
+     * state-ttl horizon lapsed without a single renewal — a hung tab, a
+     * killed pod, a metro gap) — wired by the T032
+     * [TypingTransitionScheduler][webchat.backend.chats.scheduler.TypingTransitionScheduler]
+     * on every claimed [TypingState][webchat.backend.chats.domain.port.TypingState],
+     * publication or not; the counter may only grow.
+     */
+    fun countStateExpired() {
+        stateExpiredTotal().increment()
+    }
+
     /** realtime-events.md 008a §1: the №18 `event:` name of the frame — exhaustive over the sealed hierarchy. */
     private fun eventName(event: TypingEvent): String =
         when (event) {
@@ -74,10 +91,20 @@ class TypingMetrics(
                     "429 flood_limit, nothing published (FR-009)",
             ).register(meterRegistry)
 
+    private fun stateExpiredTotal(): Counter =
+        Counter
+            .builder(TYPING_STATE_EXPIRED_TOTAL)
+            .description(
+                "Typing states self-expired by the state-ttl horizon and reaped by the " +
+                    "chats.typing poller: each claimed lapse increments, the typing.stopped " +
+                    "publication is counted separately by webchat_typing_events_total (SC-003)",
+            ).register(meterRegistry)
+
     private companion object {
         // realtime-events.md 008a §4 observability contract names (FR-017)
         const val TYPING_EVENTS_TOTAL = "webchat_typing_events_total"
         const val TYPING_FLOOD_SUPPRESSED_TOTAL = "webchat_typing_flood_suppressed_total"
+        const val TYPING_STATE_EXPIRED_TOTAL = "webchat_typing_state_expired_total"
 
         const val TAG_EVENT = "event"
 
