@@ -2550,6 +2550,133 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/profile:
+    put:
+      operationId: updateMyProfile
+      tags: [users]
+      summary: Обновить мой профиль (№39, Bearer)
+      description: >
+        Задаёт или сбрасывает профильное отображаемое имя displayName
+        вызывающего (FR-001): цепочка отображения у наблюдателей —
+        alias → displayName → username. null/отсутствие поля = сброс
+        (имя не задано, отображение по username); пустая или состоящая
+        только из пробелов строка → 400 (сброс — только явный null).
+        Валидация: серверный trim, допустимая длина 1–64 символа после
+        trim, Unicode без ограничений (кириллица/латиница/эмодзи).
+        Идемпотентно: повтор того же значения — 200 без побочных событий
+        (realtime-события смены имени нет — рефетч-семантика).
+        Флуд-контроль — per-user бакет 30/мин (паритет №38):
+        429 flood_limit + Retry-After.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateRequest'
+      responses:
+        '200':
+          description: Обновлённое представление пользователя (с displayName, если задано)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUser'
+        '400':
+          description: 'displayName пусто/пробельно после trim или длиннее 64 символов (errors: {displayName: [invalid_display_name]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Per-user флод-бакет 30/мин исчерпан (errors: {displayName: [flood_limit]})'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/contacts/{userId}/alias:
+    put:
+      operationId: setContactAlias
+      tags: [contacts]
+      summary: Задать/сбросить персональный alias контакта (№40, Bearer)
+      description: >
+        Персональный alias контакта в списке вызывающего — старший
+        элемент цепочки отображения alias → displayName → username
+        (FR-002/FR-003). null/отсутствие поля = сброс (отображение по
+        displayName/username); пустая или состоящая только из пробелов
+        строка → 400 (сброс — только явный null). Валидация: серверный
+        trim, допустимая длина 1–64 символа после trim, Unicode без
+        ограничений. Alias виден только вызывающему во всех его
+        представлениях — сам контакт и третьи лица его не получают.
+        Идемпотентность — последний write wins. Жизненный цикл: alias
+        переживает удаление чата и удаляется вместе с контактом (№22).
+        Флуд-контроль — per-user бакет 30/мин: 429 flood_limit +
+        Retry-After.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Контакт вызывающего, для которого задаётся alias
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AliasUpdateRequest'
+      responses:
+        '200':
+          description: 'Сохранённое представление контакта: user (PublicUser с displayName), alias?, createdAt, blockedByMe'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactView'
+        '400':
+          description: 'alias пусто/пробельно после trim или длиннее 64 символов (errors: {alias: [invalid_alias]}); не-UUID userId (errors: {userId: [invalid_uuid]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'userId не является контактом вызывающего (errors: {userId: [contact_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Per-user флод-бакет 30/мин исчерпан (errors: {alias: [flood_limit]})'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   securitySchemes:
     bearerAuth:
@@ -3542,3 +3669,19 @@ components:
         incognito:
           type: boolean
           description: 'Новое значение режима; не boolean → 400 malformed_request'
+    ProfileUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: 'Тело №39 PUT: обновление профиля вызывающего; displayName null/отсутствие = сброс (имя не задано); realtime-события смены имени нет — рефетч-семантика'
+      properties:
+        displayName:
+          type: [string, 'null']
+          description: 'Профильное отображаемое имя; серверный trim, допустимая длина 1–64 символа после trim, Unicode без ограничений; пусто/пробельно или длиннее 64 после trim → 400 invalid_display_name; null/отсутствие = сброс к отображению по username'
+    AliasUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: 'Тело №40 PUT: персональный alias контакта (виден только вызывающему); alias null/отсутствие = сброс → отображение по displayName/username; идемпотентность — последний write wins'
+      properties:
+        alias:
+          type: [string, 'null']
+          description: 'Персональный alias вызывающего к контакту; серверный trim, допустимая длина 1–64 символа после trim, Unicode без ограничений; пусто/пробельно или длиннее 64 после trim → 400 invalid_alias; null/отсутствие = сброс; удаляется вместе с контактом (№22), переживает удаление чата'

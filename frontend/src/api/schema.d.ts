@@ -812,6 +812,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users/me/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Обновить мой профиль (№39, Bearer)
+         * @description Задаёт или сбрасывает профильное отображаемое имя displayName вызывающего (FR-001): цепочка отображения у наблюдателей — alias → displayName → username. null/отсутствие поля = сброс (имя не задано, отображение по username); пустая или состоящая только из пробелов строка → 400 (сброс — только явный null). Валидация: серверный trim, допустимая длина 1–64 символа после trim, Unicode без ограничений (кириллица/латиница/эмодзи). Идемпотентно: повтор того же значения — 200 без побочных событий (realtime-события смены имени нет — рефетч-семантика). Флуд-контроль — per-user бакет 30/мин (паритет №38): 429 flood_limit + Retry-After.
+         */
+        put: operations["updateMyProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/contacts/{userId}/alias": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Задать/сбросить персональный alias контакта (№40, Bearer)
+         * @description Персональный alias контакта в списке вызывающего — старший элемент цепочки отображения alias → displayName → username (FR-002/FR-003). null/отсутствие поля = сброс (отображение по displayName/username); пустая или состоящая только из пробелов строка → 400 (сброс — только явный null). Валидация: серверный trim, допустимая длина 1–64 символа после trim, Unicode без ограничений. Alias виден только вызывающему во всех его представлениях — сам контакт и третьи лица его не получают. Идемпотентность — последний write wins. Жизненный цикл: alias переживает удаление чата и удаляется вместе с контактом (№22). Флуд-контроль — per-user бакет 30/мин: 429 flood_limit + Retry-After.
+         */
+        put: operations["setContactAlias"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1476,6 +1516,16 @@ export interface components {
         PresenceSettingsUpdateRequest: {
             /** @description Новое значение режима; не boolean → 400 malformed_request */
             incognito: boolean;
+        };
+        /** @description Тело №39 PUT: обновление профиля вызывающего; displayName null/отсутствие = сброс (имя не задано); realtime-события смены имени нет — рефетч-семантика */
+        ProfileUpdateRequest: {
+            /** @description Профильное отображаемое имя; серверный trim, допустимая длина 1–64 символа после trim, Unicode без ограничений; пусто/пробельно или длиннее 64 после trim → 400 invalid_display_name; null/отсутствие = сброс к отображению по username */
+            displayName?: string | null;
+        };
+        /** @description Тело №40 PUT: персональный alias контакта (виден только вызывающему); alias null/отсутствие = сброс → отображение по displayName/username; идемпотентность — последний write wins */
+        AliasUpdateRequest: {
+            /** @description Персональный alias вызывающего к контакту; серверный trim, допустимая длина 1–64 символа после trim, Unicode без ограничений; пусто/пробельно или длиннее 64 после trim → 400 invalid_alias; null/отсутствие = сброс; удаляется вместе с контактом (№22), переживает удаление чата */
+            alias?: string | null;
         };
     };
     responses: never;
@@ -3819,6 +3869,124 @@ export interface operations {
                 };
             };
             /** @description Per-user флод-бакет PUT исчерпан (errors: {incognito: [flood_limit]}) */
+            429: {
+                headers: {
+                    /** @description Секунды до доступного токена */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    updateMyProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Обновлённое представление пользователя (с displayName, если задано) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicUser"];
+                };
+            };
+            /** @description displayName пусто/пробельно после trim или длиннее 64 символов (errors: {displayName: [invalid_display_name]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Per-user флод-бакет 30/мин исчерпан (errors: {displayName: [flood_limit]}) */
+            429: {
+                headers: {
+                    /** @description Секунды до доступного токена */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    setContactAlias: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Контакт вызывающего, для которого задаётся alias */
+                userId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AliasUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Сохранённое представление контакта: user (PublicUser с displayName), alias?, createdAt, blockedByMe */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContactView"];
+                };
+            };
+            /** @description alias пусто/пробельно после trim или длиннее 64 символов (errors: {alias: [invalid_alias]}); не-UUID userId (errors: {userId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description userId не является контактом вызывающего (errors: {userId: [contact_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Per-user флод-бакет 30/мин исчерпан (errors: {alias: [flood_limit]}) */
             429: {
                 headers: {
                     /** @description Секунды до доступного токена */
