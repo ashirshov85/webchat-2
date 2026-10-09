@@ -1,8 +1,8 @@
 /**
  * Модальная оболочка «Aethergram» (feature 008, T012; FR-026, data-model
  * 1.6/3.3, ui-behavior §3): единая оболочка приложения для форм-обитателей
- * (contacts / add-contact / create-group / group-edit / group-members /
- * profile / confirm). DOM и классы — дословно из прототипа
+ * (contacts / add-contact / rename-contact (008a T022) / create-group /
+ * group-edit / group-members / profile / confirm). DOM и классы — дословно из прототипа
  * specs/008-chat-window-styling/design/chats.html: `.modal-back`
  * (подложка z-47, показ классом .show) > `.modal panel` > `.modal-title`
  * + тело-форма; стили — modal-shell.css на токенах --z-modal-back /
@@ -20,6 +20,7 @@ import './modal-shell.css'
 export type ModalFormId =
   | 'contacts'
   | 'add-contact'
+  | 'rename-contact'
   | 'create-group'
   | 'group-edit'
   | 'group-members'

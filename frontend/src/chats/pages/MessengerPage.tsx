@@ -10,8 +10,10 @@
  * US2 single modal shell (008 T034; FR-026, data-model 1.6/3.3,
  * ui-behavior §3): EVERY modal form of the app is an inhabitant of
  * ONE `ModalShell` mounted here — the main menu items (T030) open
- * contacts / add-contact (ContactsModal — its internal list ↔ add
- * switch lifts into the shell formId via onFormChange) / profile
+ * contacts / add-contact / rename-contact (ContactsModal — its internal
+ * list ↔ add ↔ rename switch lifts into the shell formId via
+ * onFormChange; the rename form is the #renameForm projection of the
+ * prototype, 008a T022) / profile
  * (ProfileModal) / create-group (the grpForm projection of the
  * prototype, 008 T035), and the header confirmations (№14/№23/№24)
  * ride the 'confirm' formId. A formId switch NEVER
@@ -377,6 +379,8 @@ function confirmUiOf(action: PendingAction, peerName: string): ConfirmUi {
 const MODAL_TITLES: Record<ModalFormId, string> = {
   contacts: 'Контакты',
   'add-contact': 'Добавить контакт',
+  // openRename прототипа (chats.html): «Редактировать контакт».
+  'rename-contact': 'Редактировать контакт',
   'create-group': 'Новый групповой чат',
   'group-edit': 'Редактировать групповой чат',
   'group-members': 'Участники',
@@ -1410,6 +1414,17 @@ function MessengerMachine() {
   }, [reloadChatList])
 
   /**
+   * №40 success FROM the contacts form (008a T022; FR-003, ui-behavior
+   * §1.2 «все поверхности владельца обновляются»): №12 converges AT
+   * ONCE — peerAlias/displayName of «Чаты» rows stop being stale
+   * without closing the shell/F5 (рефетч-семантика: realtime-события
+   * смены имени нет).
+   */
+  const handleContactRenamed = useCallback(() => {
+    reloadChatList()
+  }, [reloadChatList])
+
+  /**
    * №22 success FROM the contacts form (008 T089; Bug 11б, FR-017): the
    * №20 book of the page converges AT ONCE — the «Добавить в контакты»
    * offers of the gear and the members modal return immediately, not
@@ -1714,15 +1729,20 @@ function MessengerMachine() {
           смена обитателя, подложка не удваивается. Тост-слот ToastProvider
           (z-99) рендерится после — поверх модали (ui-behavior §5). */}
       <ModalShell formId={shellFormId} title={shellTitle} onClose={closeShell}>
-        {(shellFormId === 'contacts' || shellFormId === 'add-contact') && (
+        {(shellFormId === 'contacts' ||
+          shellFormId === 'add-contact' ||
+          shellFormId === 'rename-contact') && (
           <ContactsModal
             chats={chats}
             onOpenChat={handleOpenChatFromModal}
             onChatDeleted={handleChatDeleted}
             onContactBlockToggled={handleContactBlockToggled}
             onContactRemoved={handleContactRemoved}
+            onContactRenamed={handleContactRenamed}
             onFormChange={(form) => {
-              setModalForm(form === 'add' ? 'add-contact' : 'contacts')
+              setModalForm(
+                form === 'add' ? 'add-contact' : form === 'rename' ? 'rename-contact' : 'contacts',
+              )
             }}
           />
         )}

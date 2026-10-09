@@ -31,14 +31,17 @@ import { ContactsModal } from '../ContactsModal'
  * рендерятся ошибкой, список не размонтируется.
  *
  * Что меняет US2 (FR-011–013 вместо табов 004): сортировка/фильтр
- * становятся клиентскими (username ru-locale, подстрока
- * username/email без регистра — displayName в контрактах нет, alias
- * вне фичи ui-behavior §9); пометки «заблокирован»/«чат удалён» — из
+ * становятся клиентскими (с 008a T022 — по цепочке имён
+ * `alias → displayName → username` (locale ru прототипа, тай-брейк
+ * username 'und') и подстрока [цепочка, username, email] без
+ * регистра); пометки «заблокирован»/«чат удалён» — из
  * пропа chats (№12, blockedByMe/наличие связанного чата); клик без
  * чата — БЕЗ действия (Clarification: создание чата — только пунктом
  * «Создать чат»); «⋯»-меню (ContextMenu) с подтверждениями
  * (ConfirmDialog, SC-007) и тостами (ToastProvider, FR-025); форма
- * «Добавить контакт» (T032) — внутри той же модали.
+ * «Добавить контакт» (T032) — внутри той же модали. 008a T022
+ * добавляет пункт «Переименовать» (№40) ПЕРВЫМ в «⋯»-меню —
+ * глубокие тесты формы переименования/цепочки пишет T024.
  *
  * Тесты написаны ДО реализации (конституция VI): красные до T031/T032,
  * ContactsModal.tsx до них — контракт-заглушка (паттерн T027).
@@ -53,6 +56,7 @@ vi.mock('../../../api/chats', () => ({
   blockUser: vi.fn(),
   unblockUser: vi.fn(),
   deleteChat: vi.fn(),
+  setContactAlias: vi.fn(),
 }))
 
 const mockedListContacts = vi.mocked(listContacts)
@@ -63,6 +67,8 @@ const mockedAddContact = vi.mocked(addContact)
 const mockedBlockUser = vi.mocked(blockUser)
 const mockedUnblockUser = vi.mocked(unblockUser)
 const mockedDeleteChat = vi.mocked(deleteChat)
+// setContactAlias (№40) мокается фабрикой для компонента; поведенческие
+// тесты формы переименования — T024.
 
 const ALICE = '22222222-2222-2222-2222-222222222222'
 const BOB = '33333333-3333-3333-3333-333333333333'
@@ -198,16 +204,17 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('ContactsModal список (FR-011)', () => {
-  it('сортирует №20 по username (ru-locale, без регистра) и рендерит строки прототипа', async () => {
+  it('сортирует №20 по цепочке имён (locale ru прототипа, тай-брейк username) и рендерит строки', async () => {
     const { container } = renderModal()
 
     expect(await screen.findByText('alice')).toBeVisible()
     // Сервер вернул [Борис, анна, alice] — модаль пересортировала сама:
-    // латиница раньше кириллицы, «анна» < «Борис» (не code-unit порядок).
+    // цепочка без alias/displayName = username, ru-коллация прототипа —
+    // кириллица раньше латиницы, «анна» < «Борис» (не code-unit порядок).
     const names = Array.from(container.querySelectorAll('.ctc-row .c-name')).map(
       (node) => node.textContent,
     )
-    expect(names).toEqual(['alice', 'анна', 'Борис'])
+    expect(names).toEqual(['анна', 'Борис', 'alice'])
   })
 
   it('фильтрует живьём по username/email без регистра; промах — «Ничего не найдено»', async () => {
@@ -312,7 +319,12 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
 
     const menu = openContactMenu(container, 'alice')
 
-    expect(menuLabels()).toEqual(['Заблокировать', 'Удалить чат', 'Удалить контакт'])
+    expect(menuLabels()).toEqual([
+      'Переименовать',
+      'Заблокировать',
+      'Удалить чат',
+      'Удалить контакт',
+    ])
     // Единственный разделитель — перед «Удалить контакт»; пункт — danger.
     expect(menu.querySelectorAll('.ctx-sep')).toHaveLength(1)
     const danger = menu.querySelector('button.danger')
@@ -324,11 +336,21 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
     await screen.findByText('анна')
 
     openContactMenu(container, 'анна')
-    expect(menuLabels()).toEqual(['Разблокировать', 'Удалить чат', 'Удалить контакт'])
+    expect(menuLabels()).toEqual([
+      'Переименовать',
+      'Разблокировать',
+      'Удалить чат',
+      'Удалить контакт',
+    ])
     closeMenu()
 
     openContactMenu(container, 'Борис')
-    expect(menuLabels()).toEqual(['Заблокировать', 'Создать чат', 'Удалить контакт'])
+    expect(menuLabels()).toEqual([
+      'Переименовать',
+      'Заблокировать',
+      'Создать чат',
+      'Удалить контакт',
+    ])
   })
 
   it('блокировка: подтверждение (danger, имя жирным) → №23 → тост; метка после обновления №12', async () => {
@@ -362,7 +384,12 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
       /заблокирован/i,
     )
     openContactMenu(container, 'alice')
-    expect(menuLabels()).toEqual(['Разблокировать', 'Удалить чат', 'Удалить контакт'])
+    expect(menuLabels()).toEqual([
+      'Переименовать',
+      'Разблокировать',
+      'Удалить чат',
+      'Удалить контакт',
+    ])
   })
 
   it('разблокировка: подтверждение → №24 + тост «Контакт разблокирован»', async () => {
@@ -408,7 +435,12 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
       /чат удалён/i,
     )
     openContactMenu(container, 'alice')
-    expect(menuLabels()).toEqual(['Заблокировать', 'Создать чат', 'Удалить контакт'])
+    expect(menuLabels()).toEqual([
+      'Переименовать',
+      'Заблокировать',
+      'Создать чат',
+      'Удалить контакт',
+    ])
   })
 
   it('создание чата: подтверждение («Создать чат с <b>имя</b>?») → №11 → onOpenChat', async () => {
@@ -453,7 +485,7 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
     })
     expect(
       Array.from(container.querySelectorAll('.ctc-row .c-name')).map((n) => n.textContent),
-    ).toEqual(['alice', 'Борис'])
+    ).toEqual(['Борис', 'alice'])
     expect(mockedEnsureChat).not.toHaveBeenCalled()
     expect(onOpenChat).not.toHaveBeenCalled()
   })
@@ -589,7 +621,12 @@ describe('ContactsModal блокировка контакта с удалённ�
     expect(row.querySelector('.c-prev')?.textContent ?? '').toMatch(/заблокирован/i)
 
     openContactMenu(container, 'dave')
-    expect(menuLabels()).toEqual(['Разблокировать', 'Создать чат', 'Удалить контакт'])
+    expect(menuLabels()).toEqual([
+      'Переименовать',
+      'Разблокировать',
+      'Создать чат',
+      'Удалить контакт',
+    ])
   })
 
   it('(а) блокировка без чата: №23 → метка/.blocked сразу, пункт переключается, T089-доклад на месте', async () => {
@@ -601,7 +638,12 @@ describe('ContactsModal блокировка контакта с удалённ�
     await screen.findByText('dave')
 
     openContactMenu(container, 'dave')
-    expect(menuLabels()).toEqual(['Заблокировать', 'Создать чат', 'Удалить контакт'])
+    expect(menuLabels()).toEqual([
+      'Переименовать',
+      'Заблокировать',
+      'Создать чат',
+      'Удалить контакт',
+    ])
     fireEvent.click(screen.getByRole('menuitem', { name: 'Заблокировать' }))
     fireEvent.click(screen.getByRole('button', { name: 'Заблокировать' }))
 
@@ -615,7 +657,12 @@ describe('ContactsModal блокировка контакта с удалённ�
     expect(row.className).toMatch(/\bblocked\b/)
     expect(row.querySelector('.c-prev')?.textContent ?? '').toMatch(/заблокирован/i)
     openContactMenu(container, 'dave')
-    expect(menuLabels()).toEqual(['Разблокировать', 'Создать чат', 'Удалить контакт'])
+    expect(menuLabels()).toEqual([
+      'Переименовать',
+      'Разблокировать',
+      'Создать чат',
+      'Удалить контакт',
+    ])
     expect(onContactBlockToggled).toHaveBeenCalledWith(DAVE, true)
   })
 
@@ -635,7 +682,12 @@ describe('ContactsModal блокировка контакта с удалённ�
     expect(await screen.findByText('Контакт разблокирован — dave')).toBeVisible()
     expect(rowOf(container, 'dave').className).not.toMatch(/\bblocked\b/)
     openContactMenu(container, 'dave')
-    expect(menuLabels()).toEqual(['Заблокировать', 'Создать чат', 'Удалить контакт'])
+    expect(menuLabels()).toEqual([
+      'Переименовать',
+      'Заблокировать',
+      'Создать чат',
+      'Удалить контакт',
+    ])
     expect(onContactBlockToggled).toHaveBeenCalledWith(DAVE, false)
   })
 
@@ -647,14 +699,14 @@ describe('ContactsModal блокировка контакта с удалённ�
     await screen.findByText('alice')
     expect(rowOf(container, 'alice').className).not.toMatch(/\bblocked\b/)
     openContactMenu(container, 'alice')
-    expect(menuLabels()[0]).toBe('Заблокировать')
+    expect(menuLabels()[1]).toBe('Заблокировать')
     closeMenu()
 
     // №12 приехал с blockedByMe=true — метка есть поверх устаревшего №20.
     rerenderChats([directChat(ALICE, 'alice', 'alice@example.com', { blockedByMe: true })])
     expect(rowOf(container, 'alice').className).toMatch(/\bblocked\b/)
     openContactMenu(container, 'alice')
-    expect(menuLabels()[0]).toBe('Разблокировать')
+    expect(menuLabels()[1]).toBe('Разблокировать')
   })
 })
 
