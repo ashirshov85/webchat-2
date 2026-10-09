@@ -217,7 +217,17 @@
  * машину №41-сигналов useTyping (T036, §2.1): изменения черновика и
  * каждая попытка отправки (любой исход) → best-effort start/stop.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+} from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
 import type { GroupMember, GroupView } from '../../api/groups'
@@ -250,6 +260,7 @@ import { useChatList } from '../hooks/useChatList'
 import { useChatMessages } from '../hooks/useChatMessages'
 import { useOutbox } from '../hooks/useOutbox'
 import { useRealtime } from '../hooks/useRealtime'
+import type { RealtimeStream } from '../hooks/useRealtime'
 import { useTyping } from '../hooks/useTyping'
 import { headFloodRetryAt } from '../outbox'
 import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
@@ -504,6 +515,306 @@ function useVisualViewport(): void {
   }, [])
 }
 
+function useSidebarDrawer(modalAbove: boolean): {
+  narrowViewport: boolean
+  drawerOpen: boolean
+  setDrawerOpen: Dispatch<SetStateAction<boolean>>
+  backdropRef: RefObject<HTMLDivElement | null>
+  sidebarRef: RefObject<HTMLElement | null>
+} {
+  /**
+   * US5 burger-drawer (T065; FR-029): на ≤900px сайдбар — выдвижной
+   * drawer поверх контента; `.open`-словарь прототипа (openSidebar/
+   * closeSidebar) ведёт это состояние, DOM-проекция — ниже (burger /
+   * sidebar / backdrop).
+   */
+  const narrowViewport = useNarrowViewport()
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  /** Подложка drawer: нативный click-слушатель закрытия (как ModalShell). */
+  const backdropRef = useRef<HTMLDivElement>(null)
+  /**
+   * Корень ловушки drawer (T070; FR-035): сам сайдбар — Tab не покидает
+   * его, пока drawer — верхний слой; сюда же смотрит inert закрытого
+   * off-canvas состояния.
+   */
+  const sidebarRef = useRef<HTMLElement>(null)
+
+  // Возврат на широкий экран сбрасывает drawer: .backdrop не ограничен
+  // media-блоком — открытое состояние не должно заливать широкий экран,
+  // где сайдбар снова статичен в каркасе (T065).
+  useEffect(() => {
+    if (!narrowViewport) {
+      setDrawerOpen(false)
+    }
+  }, [narrowViewport])
+
+  // Esc закрывает drawer ТОЛЬКО как верхний слой (T065, data-model
+  // 3.1): модальная оболочка слушает Esc на document без
+  // stopPropagation, поэтому охрана «модалей выше нет» — на стороне
+  // drawer; ctx-menu/members-tip гасят Esc capture-фазой (T013/T043) и
+  // сюда не доходят вовсе.
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      if (modalAbove) {
+        return
+      }
+      setDrawerOpen(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [drawerOpen, modalAbove])
+
+  // Инициатор drawer (T070; FR-035, SC-008, ui-behavior §1): захват при
+  // открытии (burger — единственный вход), возврат фокуса при закрытии.
+  // Паттерн ModalShell/ContextMenu: перебиваем фокус ТОЛЬКО если он ещё
+  // внутри drawer или ни на чём — клик мимо уже увёл фокус на свою цель.
+  // Ключ только [drawerOpen]: formId-переключения выше не должны
+  // «закрывать» drawer и возвращать фокус (модаль живёт над ним).
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    const initiator = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const sidebar = sidebarRef.current
+    return () => {
+      const active = document.activeElement
+      const inside = sidebar !== null && active instanceof Node && sidebar.contains(active)
+      if (inside || active === null || active === document.body) {
+        initiator?.focus()
+      }
+    }
+  }, [drawerOpen])
+
+  // Tab-ловушка drawer (T070; FR-035, SC-008): пока drawer — верхний
+  // слой, Tab/Shift+Tab крутятся по фокусируемым сайдбара (словарь
+  // FOCUSABLE_SELECTOR — тот же, что у ModalShell). Модаль выше — её
+  // ловушка владеет Tab (data-model 3.1): здесь тихо отступаем.
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    if (modalAbove) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Tab') {
+        return
+      }
+      const root = sidebarRef.current
+      if (root === null) {
+        return
+      }
+      const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      const [first] = focusables
+      const last = focusables.at(-1)
+      if (first === undefined || last === undefined) {
+        return
+      }
+      const active = document.activeElement
+      const inside = root.contains(active)
+      if (event.shiftKey && (active === first || !inside)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (active === last || !inside)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [drawerOpen, modalAbove])
+
+  // Клик по затемнению закрывает drawer (T065): нативный слушатель на
+  // самой подложке — JSX-хендлер на статичном div это S6848/S1082
+  // (паттерн ModalShell); с клавиатуры drawer гасит Esc-эффект выше.
+  useEffect(() => {
+    const back = backdropRef.current
+    if (back === null) {
+      return
+    }
+    const onClick = (): void => {
+      setDrawerOpen(false)
+    }
+    back.addEventListener('click', onClick)
+    return () => {
+      back.removeEventListener('click', onClick)
+    }
+  }, [])
+
+  return { narrowViewport, drawerOpen, setDrawerOpen, backdropRef, sidebarRef }
+}
+
+function useTypingParticipants(
+  activeChat: ActiveChat | null,
+  activeChatId: string | null,
+  activeGroupMembers: readonly GroupMember[] | undefined,
+  realtime: RealtimeStream,
+): readonly TypingParticipant[] {
+  // 008a T038 (US2; FR-006–FR-008, ui-behavior §2.2): «кто печатает»
+  // активного чата — эфемерная карта дедлайнов наблюдателя. Каждый
+  // typing.started (пере)заводит 10-секундное окно своего печатающего
+  // (страховка at-most-once, TYPING_SAFETY_TIMEOUT_MS); typing.stopped
+  // и message.created от печатающего гасят запись; смена чата и каждый
+  // (ре)коннект №18 сбрасывают карту целиком — состояние не реплеится
+  // при (пере)подключении (realtime-events §1.1, edge спеки). События
+  // чужих диалогов сюда не приходят вовсе: подписка идёт под
+  // конкретным chatId открытого окна и пересоздаётся при переключении.
+  const [typingDeadlines, setTypingDeadlines] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  )
+
+  // Один свипер на всю карту: таймаут до САМОГО РАННЕГО дедлайна
+  // выбрасывает истёкшие записи; смена состояния перезаводит его, а
+  // продление печатающего отодвигает его дедлайн за работающий таймер —
+  // свип остаётся точным для каждого участника в отдельности.
+  useEffect(() => {
+    if (typingDeadlines.size === 0) {
+      return
+    }
+    const earliest = Math.min(...typingDeadlines.values())
+    const timer = window.setTimeout(
+      () => {
+        const now = Date.now()
+        setTypingDeadlines((previous) => {
+          let expired = false
+          const next = new Map<string, number>()
+          for (const [userId, deadline] of previous) {
+            if (deadline > now) {
+              next.set(userId, deadline)
+            } else {
+              expired = true
+            }
+          }
+          return expired ? next : previous
+        })
+      },
+      Math.max(0, earliest - Date.now()),
+    )
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [typingDeadlines])
+
+  // typing.started/stopped открытого чата (onTypingEvent демультиплексора):
+  // старт (пере)заводит окно (в т.ч. продления — «индикатор не отвисает»,
+  // §1.1), стоп гасит запись идемпотентно (отсутствующая — no-op).
+  useEffect(() => {
+    if (activeChatId === null) {
+      return
+    }
+    return realtime.onTypingEvent(activeChatId, (_chatId, userId, started) => {
+      // Демультиплексор уже отфильтровал чужие диалоги (подписка под
+      // конкретным chatId) — первый аргумент совпадает с активным по
+      // построению и не используется.
+      if (started) {
+        setTypingDeadlines((previous) =>
+          new Map(previous).set(userId, Date.now() + TYPING_SAFETY_TIMEOUT_MS),
+        )
+        return
+      }
+      setTypingDeadlines((previous) => {
+        if (!previous.has(userId)) {
+          return previous
+        }
+        const next = new Map(previous)
+        next.delete(userId)
+        return next
+      })
+    })
+  }, [activeChatId, realtime])
+
+  // message.created от печатающего (§2.2): коммит сообщения завершает
+  // набор — сервер гасит состояние при INSERT (T033), но парный
+  // typing.stopped может отставать или теряться, поэтому наблюдатель
+  // скрывает запись сразу по самому сообщению (его отправитель и есть
+  // печатающий).
+  useEffect(() => {
+    if (activeChatId === null) {
+      return
+    }
+    return realtime.onMessageCreated(activeChatId, (event) => {
+      const senderId = event.message.senderId
+      setTypingDeadlines((previous) => {
+        if (!previous.has(senderId)) {
+          return previous
+        }
+        const next = new Map(previous)
+        next.delete(senderId)
+        return next
+      })
+    })
+  }, [activeChatId, realtime])
+
+  // Смена чата скрывает строку немедленно (§2.2 — единый экземпляр
+  // индикатора, скрыт при смене чата).
+  useEffect(() => {
+    setTypingDeadlines((previous) => (previous.size === 0 ? previous : new Map()))
+  }, [activeChatId])
+
+  // (Ре)коннект №18 сбрасывает карту — эфемерное состояние не
+  // реплеится подключающимся (§1.1): onOpen стреляет на каждом
+  // (пере)подключении, начальный коннект чистит уже пустую карту.
+  useEffect(() => {
+    return realtime.onOpen(() => {
+      setTypingDeadlines((previous) => (previous.size === 0 ? previous : new Map()))
+    })
+  }, [realtime])
+
+  // TypingParticipant-проекция дедлайнов: имена разрешаются цепочкой
+  // US1 (resolveDisplayName) по КЛИЕНТСКОМУ кэшу участников — peer №11
+  // открытого личного чата (peerAlias → displayName → username) или
+  // ростер №28 открытой группы (alias → displayName → username).
+  // Неизвестный кэшу userId не даёт записи — такой печатающий не
+  // рендерится и выпадает из счёта N (§2.2, YAGNI — новых API нет).
+  const typingParticipants = useMemo<readonly TypingParticipant[]>(() => {
+    if (activeChat === null || typingDeadlines.size === 0) {
+      return []
+    }
+    const participants: TypingParticipant[] = []
+    for (const userId of typingDeadlines.keys()) {
+      if (activeChat.kind === 'direct') {
+        if (activeChat.peer.id === userId) {
+          participants.push({
+            userId,
+            name: resolveDisplayName(
+              activeChat.peerAlias,
+              activeChat.peer.displayName,
+              activeChat.peer.username,
+            ),
+            username: activeChat.peer.username,
+          })
+        }
+        continue
+      }
+      const member = activeGroupMembers?.find((entry) => entry.user.id === userId)
+      if (member !== undefined) {
+        participants.push({
+          userId,
+          name: resolveDisplayName(
+            member.user.alias,
+            member.user.displayName,
+            member.user.username,
+          ),
+          username: member.user.username,
+        })
+      }
+    }
+    return participants
+  }, [typingDeadlines, activeChat, activeGroupMembers])
+
+  return typingParticipants
+}
+
 /**
  * The pending confirmation's copy (T054): null — nothing pending or
  * the window kind carries no such entry; direct entries take the peer
@@ -737,138 +1048,13 @@ function MessengerMachine() {
    * stack a second backdrop.
    */
   const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
-  /**
-   * US5 burger-drawer (T065; FR-029): на ≤900px сайдбар — выдвижной
-   * drawer поверх контента; `.open`-словарь прототипа (openSidebar/
-   * closeSidebar) ведёт это состояние, DOM-проекция — ниже (burger /
-   * sidebar / backdrop).
-   */
-  const narrowViewport = useNarrowViewport()
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  /** Подложка drawer: нативный click-слушатель закрытия (как ModalShell). */
-  const backdropRef = useRef<HTMLDivElement>(null)
-  /**
-   * Корень ловушки drawer (T070; FR-035): сам сайдбар — Tab не покидает
-   * его, пока drawer — верхний слой; сюда же смотрит inert закрытого
-   * off-canvas состояния.
-   */
-  const sidebarRef = useRef<HTMLElement>(null)
+  const { narrowViewport, drawerOpen, setDrawerOpen, backdropRef, sidebarRef } = useSidebarDrawer(
+    modalForm !== null || pendingAction !== null,
+  )
 
   // US5 клавиатура (T066; FR-029, research §H): --vvh/--vvo на body для
   // высоты машины (machine.css) — композер над клавиатурой, лента сжимается.
   useVisualViewport()
-
-  // Возврат на широкий экран сбрасывает drawer: .backdrop не ограничен
-  // media-блоком — открытое состояние не должно заливать широкий экран,
-  // где сайдбар снова статичен в каркасе (T065).
-  useEffect(() => {
-    if (!narrowViewport) {
-      setDrawerOpen(false)
-    }
-  }, [narrowViewport])
-
-  // Esc закрывает drawer ТОЛЬКО как верхний слой (T065, data-model
-  // 3.1): модальная оболочка слушает Esc на document без
-  // stopPropagation, поэтому охрана «модалей выше нет» — на стороне
-  // drawer; ctx-menu/members-tip гасят Esc capture-фазой (T013/T043) и
-  // сюда не доходят вовсе.
-  useEffect(() => {
-    if (!drawerOpen) {
-      return
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') {
-        return
-      }
-      if (modalForm !== null || pendingAction !== null) {
-        return
-      }
-      setDrawerOpen(false)
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [drawerOpen, modalForm, pendingAction])
-
-  // Инициатор drawer (T070; FR-035, SC-008, ui-behavior §1): захват при
-  // открытии (burger — единственный вход), возврат фокуса при закрытии.
-  // Паттерн ModalShell/ContextMenu: перебиваем фокус ТОЛЬКО если он ещё
-  // внутри drawer или ни на чём — клик мимо уже увёл фокус на свою цель.
-  // Ключ только [drawerOpen]: formId-переключения выше не должны
-  // «закрывать» drawer и возвращать фокус (модаль живёт над ним).
-  useEffect(() => {
-    if (!drawerOpen) {
-      return
-    }
-    const initiator = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const sidebar = sidebarRef.current
-    return () => {
-      const active = document.activeElement
-      const inside = sidebar !== null && active instanceof Node && sidebar.contains(active)
-      if (inside || active === null || active === document.body) {
-        initiator?.focus()
-      }
-    }
-  }, [drawerOpen])
-
-  // Tab-ловушка drawer (T070; FR-035, SC-008): пока drawer — верхний
-  // слой, Tab/Shift+Tab крутятся по фокусируемым сайдбара (словарь
-  // FOCUSABLE_SELECTOR — тот же, что у ModalShell). Модаль выше — её
-  // ловушка владеет Tab (data-model 3.1): здесь тихо отступаем.
-  useEffect(() => {
-    if (!drawerOpen) {
-      return
-    }
-    if (modalForm !== null || pendingAction !== null) {
-      return
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Tab') {
-        return
-      }
-      const root = sidebarRef.current
-      if (root === null) {
-        return
-      }
-      const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-      const [first] = focusables
-      const last = focusables.at(-1)
-      if (first === undefined || last === undefined) {
-        return
-      }
-      const active = document.activeElement
-      const inside = root.contains(active)
-      if (event.shiftKey && (active === first || !inside)) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && (active === last || !inside)) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [drawerOpen, modalForm, pendingAction])
-
-  // Клик по затемнению закрывает drawer (T065): нативный слушатель на
-  // самой подложке — JSX-хендлер на статичном div это S6848/S1082
-  // (паттерн ModalShell); с клавиатуры drawer гасит Esc-эффект выше.
-  useEffect(() => {
-    const back = backdropRef.current
-    if (back === null) {
-      return
-    }
-    const onClick = (): void => {
-      setDrawerOpen(false)
-    }
-    back.addEventListener('click', onClick)
-    return () => {
-      back.removeEventListener('click', onClick)
-    }
-  }, [])
 
   /** №20 refetch of the gear's address-book basis (T054). */
   const reloadContacts = useCallback(() => {
@@ -994,157 +1180,12 @@ function MessengerMachine() {
     })
   }, [activeGroupChatId, realtime, reloadActiveGroup])
 
-  // 008a T038 (US2; FR-006–FR-008, ui-behavior §2.2): «кто печатает»
-  // активного чата — эфемерная карта дедлайнов наблюдателя. Каждый
-  // typing.started (пере)заводит 10-секундное окно своего печатающего
-  // (страховка at-most-once, TYPING_SAFETY_TIMEOUT_MS); typing.stopped
-  // и message.created от печатающего гасят запись; смена чата и каждый
-  // (ре)коннект №18 сбрасывают карту целиком — состояние не реплеится
-  // при (пере)подключении (realtime-events §1.1, edge спеки). События
-  // чужих диалогов сюда не приходят вовсе: подписка идёт под
-  // конкретным chatId открытого окна и пересоздаётся при переключении.
-  const [typingDeadlines, setTypingDeadlines] = useState<ReadonlyMap<string, number>>(
-    () => new Map(),
+  const typingParticipants = useTypingParticipants(
+    activeChat,
+    activeChatId,
+    activeGroupMembers,
+    realtime,
   )
-
-  // Один свипер на всю карту: таймаут до САМОГО РАННЕГО дедлайна
-  // выбрасывает истёкшие записи; смена состояния перезаводит его, а
-  // продление печатающего отодвигает его дедлайн за работающий таймер —
-  // свип остаётся точным для каждого участника в отдельности.
-  useEffect(() => {
-    if (typingDeadlines.size === 0) {
-      return
-    }
-    const earliest = Math.min(...typingDeadlines.values())
-    const timer = window.setTimeout(
-      () => {
-        const now = Date.now()
-        setTypingDeadlines((previous) => {
-          let expired = false
-          const next = new Map<string, number>()
-          for (const [userId, deadline] of previous) {
-            if (deadline > now) {
-              next.set(userId, deadline)
-            } else {
-              expired = true
-            }
-          }
-          return expired ? next : previous
-        })
-      },
-      Math.max(0, earliest - Date.now()),
-    )
-    return () => {
-      window.clearTimeout(timer)
-    }
-  }, [typingDeadlines])
-
-  // typing.started/stopped открытого чата (onTypingEvent демультиплексора):
-  // старт (пере)заводит окно (в т.ч. продления — «индикатор не отвисает»,
-  // §1.1), стоп гасит запись идемпотентно (отсутствующая — no-op).
-  useEffect(() => {
-    if (activeChatId === null) {
-      return
-    }
-    return realtime.onTypingEvent(activeChatId, (_chatId, userId, started) => {
-      // Демультиплексор уже отфильтровал чужие диалоги (подписка под
-      // конкретным chatId) — первый аргумент совпадает с активным по
-      // построению и не используется.
-      if (started) {
-        setTypingDeadlines((previous) =>
-          new Map(previous).set(userId, Date.now() + TYPING_SAFETY_TIMEOUT_MS),
-        )
-        return
-      }
-      setTypingDeadlines((previous) => {
-        if (!previous.has(userId)) {
-          return previous
-        }
-        const next = new Map(previous)
-        next.delete(userId)
-        return next
-      })
-    })
-  }, [activeChatId, realtime])
-
-  // message.created от печатающего (§2.2): коммит сообщения завершает
-  // набор — сервер гасит состояние при INSERT (T033), но парный
-  // typing.stopped может отставать или теряться, поэтому наблюдатель
-  // скрывает запись сразу по самому сообщению (его отправитель и есть
-  // печатающий).
-  useEffect(() => {
-    if (activeChatId === null) {
-      return
-    }
-    return realtime.onMessageCreated(activeChatId, (event) => {
-      const senderId = event.message.senderId
-      setTypingDeadlines((previous) => {
-        if (!previous.has(senderId)) {
-          return previous
-        }
-        const next = new Map(previous)
-        next.delete(senderId)
-        return next
-      })
-    })
-  }, [activeChatId, realtime])
-
-  // Смена чата скрывает строку немедленно (§2.2 — единый экземпляр
-  // индикатора, скрыт при смене чата).
-  useEffect(() => {
-    setTypingDeadlines((previous) => (previous.size === 0 ? previous : new Map()))
-  }, [activeChatId])
-
-  // (Ре)коннект №18 сбрасывает карту — эфемерное состояние не
-  // реплеится подключающимся (§1.1): onOpen стреляет на каждом
-  // (пере)подключении, начальный коннект чистит уже пустую карту.
-  useEffect(() => {
-    return realtime.onOpen(() => {
-      setTypingDeadlines((previous) => (previous.size === 0 ? previous : new Map()))
-    })
-  }, [realtime])
-
-  // TypingParticipant-проекция дедлайнов: имена разрешаются цепочкой
-  // US1 (resolveDisplayName) по КЛИЕНТСКОМУ кэшу участников — peer №11
-  // открытого личного чата (peerAlias → displayName → username) или
-  // ростер №28 открытой группы (alias → displayName → username).
-  // Неизвестный кэшу userId не даёт записи — такой печатающий не
-  // рендерится и выпадает из счёта N (§2.2, YAGNI — новых API нет).
-  const typingParticipants = useMemo<readonly TypingParticipant[]>(() => {
-    if (activeChat === null || typingDeadlines.size === 0) {
-      return []
-    }
-    const participants: TypingParticipant[] = []
-    for (const userId of typingDeadlines.keys()) {
-      if (activeChat.kind === 'direct') {
-        if (activeChat.peer.id === userId) {
-          participants.push({
-            userId,
-            name: resolveDisplayName(
-              activeChat.peerAlias,
-              activeChat.peer.displayName,
-              activeChat.peer.username,
-            ),
-            username: activeChat.peer.username,
-          })
-        }
-        continue
-      }
-      const member = activeGroupMembers?.find((entry) => entry.user.id === userId)
-      if (member !== undefined) {
-        participants.push({
-          userId,
-          name: resolveDisplayName(
-            member.user.alias,
-            member.user.displayName,
-            member.user.username,
-          ),
-          username: member.user.username,
-        })
-      }
-    }
-    return participants
-  }, [typingDeadlines, activeChat, activeGroupMembers])
 
   // 008a T038 (US2; FR-006, ui-behavior §2.1): композер открытого чата
   // ride'ит машину №41-сигналов (T036) — изменения черновика и каждая
@@ -1457,7 +1498,7 @@ function MessengerMachine() {
         }
       })()
     },
-    [chats, openChatView],
+    [chats, openChatView, setDrawerOpen],
   )
 
   /** №14 DELETE /chats/{chatId} + outbox purge (FR-021, T060) — direct only. */
@@ -1825,6 +1866,83 @@ function MessengerMachine() {
   const shellFormId: ModalFormId | null = pendingAction !== null ? 'confirm' : modalForm
   const shellTitle = shellTitleOf(confirmation, shellFormId)
 
+  const renderShellInhabitants = () => (
+    <>
+      {(shellFormId === 'contacts' ||
+        shellFormId === 'add-contact' ||
+        shellFormId === 'rename-contact') && (
+        <ContactsModal
+          chats={chats}
+          onOpenChat={handleOpenChatFromModal}
+          onChatDeleted={handleChatDeleted}
+          onContactBlockToggled={handleContactBlockToggled}
+          onContactRemoved={handleContactRemoved}
+          onContactRenamed={handleContactRenamed}
+          onFormChange={(form) => {
+            setModalForm(CONTACTS_SHELL_FORMS[form])
+          }}
+        />
+      )}
+      {shellFormId === 'profile' && <ProfileModal onClose={closeShell} />}
+      {/* grpForm-проекция прототипа (T035): №27 + валидация 006, тост
+          «Групповой чат создан — {title}» у формы, окно группы —
+          handleGroupCreated. */}
+      {shellFormId === 'create-group' && (
+        <CreateGroupDialog onCreated={handleGroupCreated} onCancel={closeShell} />
+      )}
+      {/* Групповые формы «шестерёнки» (T057): №28-ростер сходится в
+          слот оболочки — «Участники» (T055) несут ростер-действия
+          мьютекса useGroupMembers и №21-предложение строки (тост — у
+          страницы), «Редактировать» (T056) — конвейер №29+№31/№32;
+          успех №29 закрывает оболочку (прототип grpEditForm →
+          closeModal), тост завершённого submit — у самой формы (T045).
+          T098: строки «Участников» — навигация: №12-базис + штатный
+          onOpenChat владельца оболочки (как у «Контактов»). */}
+      {(shellFormId === 'group-members' || shellFormId === 'group-edit') &&
+        activeChat?.kind === 'group' && (
+          <GroupShellForm
+            formId={shellFormId}
+            group={activeGroup}
+            chatId={activeChat.chatId}
+            status={activeGroupStatus}
+            error={activeGroupError}
+            currentUserId={currentUserId}
+            rosterActions={rosterActions}
+            chats={chats}
+            onOpenChat={handleOpenChatFromModal}
+            contactUserIds={contactUserIds}
+            onAddContact={handleMemberAddContact}
+            onReload={reloadActiveGroup}
+            onMembersAdded={handleMembersAdded}
+            onUpdated={handleGroupUpdated}
+            onCancel={closeShell}
+          />
+        )}
+      {shellFormId === 'confirm' && confirmation !== null && (
+        <ConfirmDialog
+          text={confirmation.text}
+          confirmLabel={confirmation.confirmLabel}
+          variant={confirmation.variant}
+          onConfirm={() => {
+            if (actionPending) {
+              return
+            }
+            if (pendingAction === 'delete-chat') {
+              handleConfirmDeleteChat()
+            } else if (pendingAction === 'leave-group') {
+              handleConfirmLeaveGroup()
+            } else if (pendingAction === 'delete-group') {
+              handleConfirmDeleteGroup()
+            } else {
+              handleConfirmBlockToggle()
+            }
+          }}
+          onCancel={closeShell}
+        />
+      )}
+    </>
+  )
+
   return (
     <>
       {/* US5 кнопка каталога (T065; FR-029, design-tokens §9): плавающий
@@ -1952,78 +2070,7 @@ function MessengerMachine() {
           смена обитателя, подложка не удваивается. Тост-слот ToastProvider
           (z-99) рендерится после — поверх модали (ui-behavior §5). */}
       <ModalShell formId={shellFormId} title={shellTitle} onClose={closeShell}>
-        {(shellFormId === 'contacts' ||
-          shellFormId === 'add-contact' ||
-          shellFormId === 'rename-contact') && (
-          <ContactsModal
-            chats={chats}
-            onOpenChat={handleOpenChatFromModal}
-            onChatDeleted={handleChatDeleted}
-            onContactBlockToggled={handleContactBlockToggled}
-            onContactRemoved={handleContactRemoved}
-            onContactRenamed={handleContactRenamed}
-            onFormChange={(form) => {
-              setModalForm(CONTACTS_SHELL_FORMS[form])
-            }}
-          />
-        )}
-        {shellFormId === 'profile' && <ProfileModal onClose={closeShell} />}
-        {/* grpForm-проекция прототипа (T035): №27 + валидация 006, тост
-            «Групповой чат создан — {title}» у формы, окно группы —
-            handleGroupCreated. */}
-        {shellFormId === 'create-group' && (
-          <CreateGroupDialog onCreated={handleGroupCreated} onCancel={closeShell} />
-        )}
-        {/* Групповые формы «шестерёнки» (T057): №28-ростер сходится в
-            слот оболочки — «Участники» (T055) несут ростер-действия
-            мьютекса useGroupMembers и №21-предложение строки (тост — у
-            страницы), «Редактировать» (T056) — конвейер №29+№31/№32;
-            успех №29 закрывает оболочку (прототип grpEditForm →
-            closeModal), тост завершённого submit — у самой формы (T045).
-            T098: строки «Участников» — навигация: №12-базис + штатный
-            onOpenChat владельца оболочки (как у «Контактов»). */}
-        {(shellFormId === 'group-members' || shellFormId === 'group-edit') &&
-          activeChat?.kind === 'group' && (
-            <GroupShellForm
-              formId={shellFormId}
-              group={activeGroup}
-              chatId={activeChat.chatId}
-              status={activeGroupStatus}
-              error={activeGroupError}
-              currentUserId={currentUserId}
-              rosterActions={rosterActions}
-              chats={chats}
-              onOpenChat={handleOpenChatFromModal}
-              contactUserIds={contactUserIds}
-              onAddContact={handleMemberAddContact}
-              onReload={reloadActiveGroup}
-              onMembersAdded={handleMembersAdded}
-              onUpdated={handleGroupUpdated}
-              onCancel={closeShell}
-            />
-          )}
-        {shellFormId === 'confirm' && confirmation !== null && (
-          <ConfirmDialog
-            text={confirmation.text}
-            confirmLabel={confirmation.confirmLabel}
-            variant={confirmation.variant}
-            onConfirm={() => {
-              if (actionPending) {
-                return
-              }
-              if (pendingAction === 'delete-chat') {
-                handleConfirmDeleteChat()
-              } else if (pendingAction === 'leave-group') {
-                handleConfirmLeaveGroup()
-              } else if (pendingAction === 'delete-group') {
-                handleConfirmDeleteGroup()
-              } else {
-                handleConfirmBlockToggle()
-              }
-            }}
-            onCancel={closeShell}
-          />
-        )}
+        {renderShellInhabitants()}
       </ModalShell>
     </>
   )
