@@ -255,3 +255,60 @@
   color: var(--muted-2);
   flex: none;
 }
+
+/* ============ TYPING-ИНДИКАТОР (прототип §7: #typingRow, US2 T037) ============
+    Строка «X печатает…» — хвост ленты открытого чата: rides the
+    .msg.them row lexica of message-list.css (flex, 34px аватар,
+    тёмная панель пузыря), поэтому здесь только специфичное —
+    дословная проекция .typing-b/.tlamp/.typing-txt прототипа
+    (chats.html §7, строки 276–280). Рендерит компонент
+    chats/components/TypingRow.tsx (единый экземпляр после ленты).
+
+    prefers-reduced-motion (FR-004): глобальное правило
+    theme/machine.css глушит lampBlink — лампы без анимации. */
+
+.message-list .typing-row .bubble.typing-b {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 13px 16px;
+}
+
+/* Три лампы-точки (§7): золотые 8px, мерцание lampBlink 1.2 c
+   бесконечно, задержки второй/третьей .2/.4 c */
+.message-list .typing-b .tlamp {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--gold);
+  animation: lampBlink 1.2s infinite;
+}
+
+.message-list .typing-b .tlamp.d1 {
+  animation-delay: 0.2s;
+}
+
+.message-list .typing-b .tlamp.d2 {
+  animation-delay: 0.4s;
+}
+
+@keyframes lampBlink {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    box-shadow: none;
+  }
+  30% {
+    opacity: 1;
+    box-shadow: 0 0 8px rgba(201, 162, 74, 0.7);
+  }
+}
+
+/* Подпись — курсив Old Standard TT (§7), muted-2 */
+.message-list .typing-b .typing-txt {
+  font: italic 12px var(--font-body);
+  color: var(--muted-2);
+  margin-left: 4px;
+}
