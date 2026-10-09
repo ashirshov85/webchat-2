@@ -29,6 +29,10 @@ export type SyncResponse = components['schemas']['SyncResponse']
 
 export type SendMessageRequest = components['schemas']['SendMessageRequest']
 
+export type ProfileUpdateRequest = components['schemas']['ProfileUpdateRequest']
+
+export type AliasUpdateRequest = components['schemas']['AliasUpdateRequest']
+
 export type ReadRequest = components['schemas']['ReadRequest']
 
 export type MessageCreatedEvent = components['schemas']['MessageCreatedEvent']
@@ -173,6 +177,21 @@ export async function searchUsers(query: string): Promise<PublicUser[]> {
 }
 
 /**
+ * №39 `PUT /users/me/profile`: sets or clears the caller's display
+ * name (FR-001) — `displayName: null` (or absent) is an explicit reset
+ * (display falls back to username), while a blank/whitespace-only or
+ * >64-chars string is rejected by the mirror of the server-side
+ * `400 invalid_display_name`; the server trims and returns the
+ * updated `PublicUser`. Idempotent: repeating the same value is a
+ * plain `200` with no side effects (refetch semantics — no realtime
+ * rename event).
+ */
+export async function updateProfile(body: ProfileUpdateRequest): Promise<PublicUser> {
+  const response = await authedRequest('/users/me/profile', 'PUT', body)
+  return (await response.json()) as PublicUser
+}
+
+/**
  * №20 `GET /contacts?sort=login|email`: the caller's contacts in the
  * server-side case-insensitive alphabetical order of the chosen field
  * (FR-015) — the client switches the parameter, never re-sorts.
@@ -191,6 +210,24 @@ export async function listContacts(sort: ContactSort = 'login'): Promise<Contact
  */
 export async function addContact(userId: string): Promise<ContactView> {
   const response = await authedRequest('/contacts', 'POST', { userId })
+  return (await response.json()) as ContactView
+}
+
+/**
+ * №40 `PUT /contacts/{userId}/alias`: sets or resets the caller's
+ * personal alias for a contact (FR-003) — the top of the display
+ * chain `alias → displayName → username`, visible only to the caller.
+ * `alias: null` (or absent) resets the chain; a blank/whitespace-only
+ * or >64-chars string is a server-side `400 invalid_alias`;
+ * `404 contact_not_found` when {userId} is not the caller's contact.
+ * Last write wins; the alias survives chat deletion and is removed
+ * together with the contact (№22).
+ */
+export async function setContactAlias(
+  userId: string,
+  body: AliasUpdateRequest,
+): Promise<ContactView> {
+  const response = await authedRequest(`/contacts/${encodeURIComponent(userId)}/alias`, 'PUT', body)
   return (await response.json()) as ContactView
 }
 
