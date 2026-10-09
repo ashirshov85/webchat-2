@@ -101,7 +101,7 @@
 
 ### Implementation for User Story 2 (frontend)
 
-- [ ] T035 [P] [US2] Добавить API-функцию `sendTyping(chatId, action)` (№41) в `frontend/src/api/chats.ts`
+- [X] T035 [P] [US2] Добавить API-функцию `sendTyping(chatId, action)` (№41) в `frontend/src/api/chats.ts`
 - [ ] T036 [US2] Создать `frontend/src/chats/hooks/useTyping.ts` — машина состояний отправки: start после первого символа и далее не чаще 3 с; stop при отправке (любой исход), очистке поля, молчании 5 с; заблокированный композер (008 FR-022) сигналы не шлёт; смена чата = stop предыдущего best-effort (использует `sendTyping` из T035 — выполнять после него; ui-behavior.md §2.1)
 - [ ] T037 [P] [US2] Создать `frontend/src/chats/components/TypingRow.tsx` (пузырь `.typing-b` с тремя `.tlamp`, анимация `lampBlink` 1.2 с с задержками .2/.4 с, `.typing-txt` курсив; 1 печатающий — `{имя} печатает…`, N>1 — `{имя первого} и ещё {N-1} печатают…`; в группе — аватар участника; prefers-reduced-motion без анимации) + CSS (lampBlink) в `frontend/src/chats/components/chat-header.css` и подключение единым экземпляром после ленты в `frontend/src/chats/components/MessageList.tsx` (ui-behavior.md §2.2)
 - [ ] T038 [US2] Проводка realtime: обработчик `onTypingEvent(chatId, userId, started)` в `frontend/src/chats/hooks/useRealtime.ts` и состояние «кто печатает» активного чата в `frontend/src/chats/pages/MessengerPage.tsx`: появление ≤ 2 с, скрытие по `typing.stopped`/`message.created` от печатающего/страховочному таймауту 10 с, скрытие при смене чата и при реконнекте стрима №18 (сброс typing-состояния в onOpen после разрыва — состояние не реплеится), имя печатающего через `resolveDisplayName` из клиентского кэша участников (№11 peer / №28); неизвестный `userId` не рендерится (ui-behavior.md §2.2)

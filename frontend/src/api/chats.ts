@@ -33,6 +33,11 @@ export type ProfileUpdateRequest = components['schemas']['ProfileUpdateRequest']
 
 export type AliasUpdateRequest = components['schemas']['AliasUpdateRequest']
 
+export type TypingRequest = components['schemas']['TypingRequest']
+
+/** №41 `action` discriminator: start = begin/renew typing, stop = finish. */
+export type TypingAction = TypingRequest['action']
+
 /**
  * Пользователь с персональным alias вызывающего (008a, T023): PublicUser +
  * `alias?` — результат №19 и `GroupMember.user` №28; источник цепочки
@@ -92,6 +97,23 @@ export async function sendMessage(chatId: string, body: SendMessageRequest): Pro
     body,
   )
   return (await response.json()) as Message
+}
+
+/**
+ * №41 `POST /chats/{chatId}/typing`: ephemeral typing signal (FR-006–
+ * FR-009) — `start` begins or renews the typing state (the caller
+ * resends it at most once per 3 s window), `stop` finishes it; `204`
+ * means accepted, repeated `start` is a plain renewal (idempotent).
+ * No response body and nothing is refetched: observers learn about
+ * typing only via `typing.started`/`typing.stopped` frames of №18 —
+ * the state is never read, persisted or replayed on (re)connect.
+ * Errors: `400 invalid_action` (out of enum), `403/404` chat codes
+ * as №16, `429 flood_limit` + Retry-After (60/min per user — excess
+ * signals are dropped by the server, the client does not retry).
+ */
+export async function sendTyping(chatId: string, action: TypingAction): Promise<void> {
+  const body: TypingRequest = { action }
+  await authedRequest(`/chats/${encodeURIComponent(chatId)}/typing`, 'POST', body)
 }
 
 /**
