@@ -33,6 +33,13 @@ export type ProfileUpdateRequest = components['schemas']['ProfileUpdateRequest']
 
 export type AliasUpdateRequest = components['schemas']['AliasUpdateRequest']
 
+/**
+ * Пользователь с персональным alias вызывающего (008a, T023): PublicUser +
+ * `alias?` — результат №19 и `GroupMember.user` №28; источник цепочки
+ * `alias → displayName → username` этих поверхностей (ui-behavior §1).
+ */
+export type UserWithAlias = components['schemas']['UserWithAlias']
+
 export type ReadRequest = components['schemas']['ReadRequest']
 
 export type MessageCreatedEvent = components['schemas']['MessageCreatedEvent']
@@ -168,8 +175,11 @@ export type ContactSort = 'login' | 'email'
  * №19 `GET /users/search?query=`: exact full email OR full login match,
  * case-insensitive (`@` in the query → email, otherwise username); the
  * answer is 0..1 users — an empty list is a valid «no match» (FR-016).
+ * С 008a найденный несёт `displayName?` и `alias?` вызывающего (контракт
+ * 0.9.0) — результат отображается по цепочке имён, семантика поиска не
+ * меняется (FR-005).
  */
-export async function searchUsers(query: string): Promise<PublicUser[]> {
+export async function searchUsers(query: string): Promise<UserWithAlias[]> {
   const search = new URLSearchParams({ query })
   const response = await authedRequest(`/users/search?${search.toString()}`, 'GET')
   const body = (await response.json()) as components['schemas']['UsersSearchResponse']

@@ -48,11 +48,23 @@
  * the title itself is resolved by the page — the live №28 title
  * while the view is open (the optimistic `group.updated` half), the
  * №12/№27 answer until then.
+ *
+ * Цепочка отображаемых имён (feature 008a, US1, T023; FR-003, ui-behavior
+ * §1): заголовок ЛИЧНОГО чата и строки members-tip живут по
+ * `alias → displayName → username` — direct берёт №11/№12/№13 peer
+ * (`displayName`) + персональный `peerAlias` вызывающего (страница
+ * сходится №12-рефетчем, ui-behavior §1.2), №28-строки подсказки —
+ * `GroupMember.user` (`displayName`,`alias`). Инициалы — из цепочки
+ * (`initials`-prop T020), цвет — от username (переименование не
+ * перекрашивает, FR-004); усечение длинных имён — CSS с многоточием,
+ * полный текст — в `title` (конвенция 008). Группа — title 006.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { GroupMember } from '../../api/groups'
 import { Avatar } from '../../ui/Avatar'
+import { initialsOf } from '../../ui/avatar'
+import { resolveDisplayName } from '../../ui/names'
 import { pluralRu } from '../../ui/time'
 import { usePresenceStatus } from '../../presence/usePresence'
 import type { PresenceStatus } from '../../presence/presenceStore'
@@ -77,6 +89,10 @@ export interface DirectChatHeaderData {
   /** The peer of the 1:1 dialog — the presence surface userId (007). */
   readonly peerId: string
   readonly username: string
+  /** Профильное displayName peer №11/№12/№13 (008a T023; отсутствует → username). */
+  readonly displayName?: string | null
+  /** Персональный alias вызывающего к peer №11/№12/№13 (008a T023; верх цепочки). */
+  readonly peerAlias?: string | null
   /** The blocker-side mark «заблокирован» (№12 projection, FR-020). */
   readonly blockedByMe: boolean
   /** №20 membership of the peer — the gear's «Добавить в контакты» visibility (T054). */
@@ -258,6 +274,15 @@ function roleMarkOf(role: GroupMember['role'] | null): string | null {
   return null
 }
 
+/**
+ * Цепочка имени участника №28 (008a T023; ui-behavior §1):
+ * `GroupMember.user` несёт профильное `displayName` и персональный
+ * `alias` вызывающего — единая точка `resolveDisplayName` (ui/names).
+ */
+function memberChainOf(member: GroupMember): string {
+  return resolveDisplayName(member.user.alias, member.user.displayName, member.user.username)
+}
+
 /** The `.members-tip` roster body (FR-017): «Вы» first, then №28 minus me. */
 function MembersTip({ meUsername, myRole, members, tipRef }: MembersTipProps) {
   const meMark = roleMarkOf(myRole)
@@ -271,10 +296,19 @@ function MembersTip({ meUsername, myRole, members, tipRef }: MembersTipProps) {
       </div>
       {members.map((member) => {
         const mark = roleMarkOf(member.role)
+        // 008a T023: цепочка имени строки, инициалы — из неё, цвет —
+        // от username (FR-004); усечение — CSS, полный текст — в title.
+        const displayName = memberChainOf(member)
         return (
           <div className="mt-row" key={member.user.id}>
-            <Avatar source={member.user.username} size={TIP_AVATAR_SIZE} />
-            <span className="mt-name">{member.user.username}</span>
+            <Avatar
+              source={member.user.username}
+              initials={initialsOf(displayName)}
+              size={TIP_AVATAR_SIZE}
+            />
+            <span className="mt-name" title={displayName}>
+              {displayName}
+            </span>
             {mark !== null && <span className="mt-me">{mark}</span>}
           </div>
         )
@@ -310,7 +344,13 @@ export function ChatHeader({
   onLeaveChat,
 }: ChatHeaderProps) {
   const isGroup = chat.kind === 'group'
-  const name = isGroup ? chat.title : chat.username
+  // 008a T023: direct — цепочка `peerAlias → displayName → username`
+  // (ui-behavior §1), группа — title; инициалы — из имени, цвет — от
+  // username/title (FR-004: переименование не перекрашивает аватар).
+  const name = isGroup
+    ? chat.title
+    : resolveDisplayName(chat.peerAlias, chat.displayName, chat.username)
+  const avatarSource = isGroup ? chat.title : chat.username
   const gearChat = gearChatOf(chat)
 
   // The 007 surface of the open 1:1 dialog (T040): the status comes
@@ -385,7 +425,12 @@ export function ChatHeader({
   return (
     <header className="chat-head">
       <div className="head-av">
-        <Avatar source={name} shape={isGroup ? 'octagon' : 'circle'} size={HEADER_AVATAR_SIZE} />
+        <Avatar
+          source={avatarSource}
+          initials={initialsOf(name)}
+          shape={isGroup ? 'octagon' : 'circle'}
+          size={HEADER_AVATAR_SIZE}
+        />
       </div>
       <div className="chat-title">
         <h2 className="chat-name dialog-title" title={name}>

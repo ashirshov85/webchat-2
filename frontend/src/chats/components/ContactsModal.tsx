@@ -122,8 +122,7 @@ import {
   setContactAlias,
   unblockUser,
 } from '../../api/chats'
-import type { ChatListItem, ChatView, ContactView } from '../../api/chats'
-import type { PublicUser } from '../../api/auth'
+import type { ChatListItem, ChatView, ContactView, UserWithAlias } from '../../api/chats'
 import { problemMessage } from '../../auth/problem'
 import { usePresenceStatus } from '../../presence/usePresence'
 import { Avatar } from '../../ui/Avatar'
@@ -192,7 +191,7 @@ type PendingConfirm =
   | { readonly kind: 'delete-chat'; readonly contact: ContactView; readonly chatId: string }
   | { readonly kind: 'create-chat'; readonly contact: ContactView }
   | { readonly kind: 'remove-contact'; readonly contact: ContactView }
-  | { readonly kind: 'add-contact'; readonly user: PublicUser }
+  | { readonly kind: 'add-contact'; readonly user: UserWithAlias }
 
 type ListStatus = 'loading' | 'ready' | 'error'
 
@@ -720,20 +719,29 @@ export function ContactsModal({
             confirmLabel: 'Удалить',
             variant: 'danger',
           }
-        case 'add-contact':
+        case 'add-contact': {
           // askConfirm прототипа: имя + подпись «username · email» (.confirm-sub).
+          // 008a T023: имя — ЦЕПОЧКА найденного №19 (`alias → displayName →
+          // username`, ui-behavior §1); username/email в подписи различают
+          // совпадающие имена (identity-контекст).
+          const foundName = resolveDisplayName(
+            pending.user.alias,
+            pending.user.displayName,
+            pending.user.username,
+          )
           return {
             text: (
               <>
-                <b>{username}</b>
+                <b>{foundName}</b>
                 <span className="confirm-sub">
-                  {username} · {pending.user.email}
+                  {pending.user.username} · {pending.user.email}
                 </span>
               </>
             ),
             confirmLabel: 'Добавить',
             variant: 'primary',
           }
+        }
       }
     })()
     return (

@@ -258,6 +258,8 @@ interface DirectChatView {
   readonly kind: 'direct'
   readonly chatId: string
   readonly peer: PublicUser
+  /** Персональный alias вызывающего к peer №11/№12/№13 (008a T023) — цепочка заголовка. */
+  readonly peerAlias?: string | null
   readonly blockedByMe: boolean
 }
 
@@ -522,6 +524,10 @@ function headerChatOf(
     kind: 'direct',
     peerId: chat.peer.id,
     username: chat.peer.username,
+    // 008a T023: цепочка заголовка — peerAlias №11/№12/№13 поверх
+    // профильного displayName peer (ui-behavior §1).
+    displayName: chat.peer.displayName,
+    peerAlias: chat.peerAlias ?? null,
     blockedByMe: chat.blockedByMe,
     peerInContacts: contacts.some((contact) => contact.user.id === chat.peer.id),
   }
@@ -543,6 +549,7 @@ function activeChatOfView(view: ChatView): ActiveChat | null {
       kind: 'direct',
       chatId: view.chatId,
       peer: view.peer,
+      peerAlias: view.peerAlias ?? null,
       blockedByMe: view.blockedByMe ?? false,
     }
   }
@@ -1102,15 +1109,30 @@ function MessengerMachine() {
   // every list refetch (block actions, SSE reconnects) reconciles the
   // open dialog's mark to the server state. A GROUP window never
   // carries the mark — blocks never apply to groups (006 Assumptions).
+  // 008a T023: тем же №12-рефетчем сходится и ИМЯ заголовка (peer
+  // displayName + peerAlias) — «все поверхности владельца обновляются»
+  // по рефетчу (ui-behavior §1.2; realtime-события смены имени нет).
   useEffect(() => {
     if (activeChat?.kind !== 'direct') {
       return
     }
     const item = chats.find((entry) => entry.chatId === activeChat.chatId)
     const blockedByMe = item?.blockedByMe ?? false
-    if (item !== undefined && blockedByMe !== activeChat.blockedByMe) {
+    const peerChanged =
+      item !== undefined &&
+      item.peer !== null &&
+      (item.peer.displayName !== activeChat.peer.displayName ||
+        (item.peerAlias ?? null) !== (activeChat.peerAlias ?? null))
+    if (item !== undefined && (blockedByMe !== activeChat.blockedByMe || peerChanged)) {
       setActiveChat((previous) =>
-        previous !== null && previous.kind === 'direct' ? { ...previous, blockedByMe } : previous,
+        previous !== null && previous.kind === 'direct' && previous.chatId === item.chatId
+          ? {
+              ...previous,
+              blockedByMe,
+              peer: item.peer !== null ? item.peer : previous.peer,
+              peerAlias: item.peer !== null ? (item.peerAlias ?? null) : previous.peerAlias,
+            }
+          : previous,
       )
     }
   }, [chats, activeChat])
@@ -1205,6 +1227,7 @@ function MessengerMachine() {
           kind: 'direct',
           chatId: item.chatId,
           peer: item.peer,
+          peerAlias: item.peerAlias ?? null,
           blockedByMe: item.blockedByMe ?? false,
         })
         return
@@ -1229,6 +1252,7 @@ function MessengerMachine() {
               kind: 'direct',
               chatId: view.chatId,
               peer: view.peer,
+              peerAlias: view.peerAlias ?? null,
               blockedByMe: view.blockedByMe ?? false,
             })
           }
