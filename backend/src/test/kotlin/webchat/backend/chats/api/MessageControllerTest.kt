@@ -37,6 +37,7 @@ import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
+import webchat.backend.chats.domain.port.TypingEvent
 import webchat.backend.chats.domain.service.ChatService
 import webchat.backend.chats.domain.service.HistoryService
 import webchat.backend.chats.domain.service.InvalidUpToSeqException
@@ -466,6 +467,11 @@ class MessageControllerTest {
         override fun fanoutChatRead(
             toUserIds: List<UUID>,
             event: ChatReadEvent,
+        ) = Unit
+
+        override fun fanoutTypingEvent(
+            toUserIds: List<UUID>,
+            event: TypingEvent,
         ) = Unit
     }
 

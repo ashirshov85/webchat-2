@@ -14,6 +14,8 @@ import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.MessageCreatedEvent
+import webchat.backend.chats.domain.port.TypingStartedEvent
+import webchat.backend.chats.domain.port.TypingStoppedEvent
 import webchat.backend.config.ChatsProperties
 import java.time.Duration
 import java.time.Instant
@@ -31,6 +33,11 @@ import java.util.UUID
  * local session of the target user only. Malformed envelopes and foreign
  * channels are dropped without dispatch, and a dead transport never
  * fails the already-durable request (FR-009, constitution II).
+ *
+ * T029 (realtime-events.md 008a §1): the typing fan-out leg rides the
+ * same transport — the contract `{chatId, userId}` envelope per
+ * addressee and the FR-017 push-timer tags `event=typing.*` on both
+ * legs.
  *
  * The REAL Lettuce-backed transport — the shared connection factory, the
  * `RedisMessageListenerContainer`, the wire `retry:`/`:ka` framing — is
@@ -101,6 +108,57 @@ class RedisRealtimePublisherTest {
         assertThat(payload["chatId"].asText()).isEqualTo(CHAT_ID.toString())
         assertThat(payload["readUpToSeq"].asLong()).isEqualTo(SEQ)
         assertThat(payload["byUserId"].asText()).isEqualTo(BOB.toString())
+    }
+
+    @Test
+    fun `typing events publish the contract envelope to every addressee channel`() {
+        publisher.fanoutTypingEvent(listOf(BOB, CAROL), TYPING_STARTED)
+
+        assertThat(pubSub.published).hasSize(2)
+        assertThat(pubSub.published.map { it.first })
+            .overridingErrorMessage("the typing audience is the caller's exact list — one channel per addressee")
+            .containsExactlyInAnyOrder("rt:user:$BOB", "rt:user:$CAROL")
+        pubSub.published.forEach { (_, json) ->
+            assertThat(json).doesNotContain("\n")
+            val envelope = MAPPER.readTree(json)
+            assertThat(envelope["event"].asText()).isEqualTo("typing.started")
+            val payload = envelope["data"]
+            assertThat(fieldNames(payload))
+                .overridingErrorMessage("the payload must be exactly the TypingStartedEvent schema (008a §1.1)")
+                .containsExactlyInAnyOrder("chatId", "userId")
+            assertThat(payload["chatId"].asText()).isEqualTo(CHAT_ID.toString())
+            assertThat(payload["userId"].asText())
+                .overridingErrorMessage("userId is the TYPING user, never the observer")
+                .isEqualTo(ALICE.toString())
+        }
+
+        publisher.fanoutTypingEvent(listOf(BOB), TYPING_STOPPED)
+        val stopEnvelope = MAPPER.readTree(pubSub.published.last().second)
+        assertThat(stopEnvelope["event"].asText()).isEqualTo("typing.stopped")
+        assertThat(fieldNames(stopEnvelope["data"]))
+            .overridingErrorMessage("the stopped payload is identical to the started one (008a §1.2)")
+            .containsExactlyInAnyOrder("chatId", "userId")
+    }
+
+    @Test
+    fun `typing push legs record the push latency under the typing event tags`() {
+        publisher.fanoutTypingEvent(listOf(BOB), TYPING_STARTED)
+        val (channel, json) = pubSub.published.single()
+        pubSub.deliver(channel, json)
+
+        val typingTimers =
+            meterRegistry
+                .find(METRIC_PUSH_SECONDS)
+                .tag(TAG_EVENT, "typing.started")
+                .timers()
+        assertThat(typingTimers.map { it.id.getTag("stage") to it.count() })
+            .overridingErrorMessage(
+                "every typing frame must ride $METRIC_PUSH_SECONDS with event=typing.* (FR-017/SC-008) " +
+                    "on BOTH the publish leg and the SSE-dispatch leg",
+            ).containsExactlyInAnyOrder(
+                STAGE_PUBLISH to 1L,
+                STAGE_DISPATCH to 1L,
+            )
     }
 
     @Test
@@ -250,6 +308,7 @@ class RedisRealtimePublisherTest {
 
         val ALICE = UUID.fromString("00000000-0000-0000-0000-000000000001")
         val BOB = UUID.fromString("00000000-0000-0000-0000-000000000002")
+        val CAROL: UUID = UUID.fromString("00000000-0000-0000-0000-000000000003")
         val CHAT_ID = UUID.fromString("7dc5f5c0-0000-4a10-8b00-0000000000c1")
         val MESSAGE_ID = UUID.fromString("0b0f0000-0000-4000-8000-0000000000aa")
         const val TEXT = "Привет из RedisRealtimePublisherTest — внутренние  пробелы ✓"
@@ -268,10 +327,15 @@ class RedisRealtimePublisherTest {
         val MESSAGE_CREATED = MessageCreatedEvent(chatId = CHAT_ID, message = MESSAGE)
         val CHAT_READ = ChatReadEvent(chatId = CHAT_ID, readUpToSeq = SEQ, byUserId = BOB)
 
+        /** T029 (realtime-events.md 008a §1): ALICE types in the chat, BOB/CAROL observe. */
+        val TYPING_STARTED = TypingStartedEvent(chatId = CHAT_ID, userId = ALICE)
+        val TYPING_STOPPED = TypingStoppedEvent(chatId = CHAT_ID, userId = ALICE)
+
         const val ENVELOPE = """{"event":"message.created","data":{"seq":128}}"""
 
         /** T028: the SC-005 push timer and its stage tag values. */
         const val METRIC_PUSH_SECONDS = "webchat_realtime_push_seconds"
+        const val TAG_EVENT = "event"
         const val STAGE_PUBLISH = "publish"
         const val STAGE_DISPATCH = "dispatch"
 

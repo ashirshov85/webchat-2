@@ -25,6 +25,9 @@ import webchat.backend.chats.domain.port.GroupUpdatedEvent
 import webchat.backend.chats.domain.port.GroupYouRemovedEvent
 import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
+import webchat.backend.chats.domain.port.TypingEvent
+import webchat.backend.chats.domain.port.TypingStartedEvent
+import webchat.backend.chats.domain.port.TypingStoppedEvent
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -136,13 +139,15 @@ internal class RedisRealtimePubSubConfig {
 /**
  * The Redis adapter of the domain's [RealtimeEventPublisher] port (T019;
  * research.md 004 §2, data-model 004 §3 step 5; the 006 group frames and
- * the roster fan-out legs — T009/T014, realtime-group-events.md §3):
+ * the roster fan-out legs — T009/T014, realtime-group-events.md §3; the
+ * ephemeral 008a typing frames — T029, realtime-events.md 008a §1):
  * strictly AFTER the PG commit the caller hands over the event, and this
  * adapter PUBLISHES a compact one-line JSON envelope `{"event":…,"data":…}`
  * to the per-user channel `rt:user:{userId}` of every addressee — a
  * single addressee for the 004 dialog legs, the roster snapshot list
  * (≤ 200 by FR-002) for the group frames and the group `message.created`/
- * `chat.read` fan-outs, all over the SAME per-user channel family with
+ * `chat.read` fan-outs, the live-audience list for the typing frames,
+ * all over the SAME per-user channel family with
  * no new broker topology (research.md 006 §4).
  *
  * At the same time the adapter is the LOCAL half of the fan-out: it
@@ -162,7 +167,7 @@ internal class RedisRealtimePubSubConfig {
  * contract payloads ([MessageView] for `message.created`).
  */
 @Component
-@Suppress("TooManyFunctions") // T028/T009/T017: one function per fan-out leg plus the SC-005 timer
+@Suppress("TooManyFunctions") // T028/T029/T009/T017: one function per fan-out leg plus the SC-005 timer
 class RedisRealtimePublisher(
     private val connectionRegistry: SseConnectionRegistry,
     private val objectMapper: ObjectMapper,
@@ -220,6 +225,29 @@ class RedisRealtimePublisher(
         event: ChatReadEvent,
     ) {
         toUserIds.forEach { addressee -> publishEnvelope(addressee, EVENT_CHAT_READ, event) }
+    }
+
+    /**
+     * T029 (realtime-events.md 008a §1.1/§1.2): the ephemeral typing
+     * frames — ONE envelope per audience addressee on their own
+     * `rt:user:{userId}` channel, the SAME at-most-once discipline as
+     * every other №18 frame. The name/payload pair resolves ONCE per
+     * frame and the loop is the pure channel fan-out (the
+     * [fanoutGroupEvent] pattern); the audience (active participants
+     * minus the signal sender, block pairs already suppressed) is the
+     * caller's exact list — this transport never second-guesses it.
+     * Every envelope rides the SAME [pushTimer] pipeline, so each frame
+     * is observed in `webchat_realtime_push_seconds` with
+     * `event=typing.*` on the publish leg here and the dispatch leg in
+     * [handleFrame] (FR-017; the dispatch stage is the SC-008 norm).
+     */
+    override fun fanoutTypingEvent(
+        toUserIds: List<UUID>,
+        event: TypingEvent,
+    ) {
+        val eventName = typingEventName(event)
+        val payload = typingEventPayload(event)
+        toUserIds.forEach { addressee -> publishEnvelope(addressee, eventName, payload) }
     }
 
     /**
@@ -350,6 +378,29 @@ class RedisRealtimePublisher(
         }
 
     /**
+     * realtime-events.md 008a §1: the №18 `event:` name of every typing
+     * frame — exhaustive over the sealed [TypingEvent] hierarchy, so a
+     * future contract frame fails compilation here until mapped (the
+     * [groupEventName] discipline).
+     */
+    private fun typingEventName(event: TypingEvent): String =
+        when (event) {
+            is TypingStartedEvent -> EVENT_TYPING_STARTED
+            is TypingStoppedEvent -> EVENT_TYPING_STOPPED
+        }
+
+    /**
+     * realtime-events.md 008a §1.1/§1.2: both typing frames share the
+     * exact contract payload — `chatId` + `userId` (the TYPING user,
+     * never the observer), `additionalProperties: false`.
+     */
+    private fun typingEventPayload(event: TypingEvent): Map<String, UUID> =
+        mapOf(
+            FIELD_CHAT_ID to event.chatId,
+            FIELD_USER_ID to event.userId,
+        )
+
+    /**
      * The outbound half: one compact JSON envelope to the user channel.
      * Isolation (the port contract): a lost or failed at-most-once
      * delivery must NOT fail the already-durable request — the failure
@@ -451,6 +502,10 @@ class RedisRealtimePublisher(
 
         /** presence-events.md 007 §2: the №18 presence `event:` value (T017). */
         const val EVENT_PRESENCE_UPDATED = "presence.updated"
+
+        /** realtime-events.md 008a §1: the №18 typing `event:` values (T029). */
+        const val EVENT_TYPING_STARTED = "typing.started"
+        const val EVENT_TYPING_STOPPED = "typing.stopped"
 
         /** The internal wire envelope fields (transport detail, NOT the public SSE framing). */
         const val FIELD_EVENT = "event"

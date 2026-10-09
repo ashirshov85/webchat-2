@@ -33,6 +33,7 @@ import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
+import webchat.backend.chats.domain.port.TypingEvent
 import webchat.backend.config.ChatsProperties
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.domain.model.UserBlock
@@ -574,6 +575,12 @@ class MessageServiceTest {
         override fun fanoutChatRead(
             toUserIds: List<UUID>,
             event: ChatReadEvent,
+        ) = Unit
+
+        /** The 008a typing legs belong to TypingService — a silent sink here. */
+        override fun fanoutTypingEvent(
+            toUserIds: List<UUID>,
+            event: TypingEvent,
         ) = Unit
     }
 
