@@ -64,6 +64,7 @@ interface RenderableParticipant {
  * unresolved (the same leniency as names.ts). Exported for
  * MessageList's empty-state gate.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- фильтр неотделим от строки-компонента (ui-behavior 008a §2.2: TypingRow = единственный потребитель, MessageList — только empty-state гейт)
 export function renderableTyping(
   typing: readonly TypingParticipant[],
 ): readonly RenderableParticipant[] {
