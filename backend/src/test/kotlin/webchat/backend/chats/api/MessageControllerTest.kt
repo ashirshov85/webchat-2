@@ -15,6 +15,10 @@ import org.springframework.security.oauth2.jwt.Jwt
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.backpressure.NoopSendAdmissionGate
+import webchat.backend.chats.ChatSoundMetrics
+import webchat.backend.chats.NoopContactRepository
+import webchat.backend.chats.NoopProfileStore
+import webchat.backend.chats.TypingMetrics
 import webchat.backend.chats.api.dto.ReadRequest
 import webchat.backend.chats.api.dto.SendMessageRequest
 import webchat.backend.chats.domain.model.Chat
@@ -28,6 +32,7 @@ import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.ChatSoundUpdatedEvent
 import webchat.backend.chats.domain.port.GroupEvent
 import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
@@ -35,6 +40,9 @@ import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
+import webchat.backend.chats.domain.port.TypingEvent
+import webchat.backend.chats.domain.port.TypingState
+import webchat.backend.chats.domain.port.TypingStore
 import webchat.backend.chats.domain.service.ChatService
 import webchat.backend.chats.domain.service.HistoryService
 import webchat.backend.chats.domain.service.InvalidUpToSeqException
@@ -42,6 +50,7 @@ import webchat.backend.chats.domain.service.MessageIdConflictException
 import webchat.backend.chats.domain.service.MessageService
 import webchat.backend.chats.domain.service.ReadService
 import webchat.backend.chats.domain.service.SendPolicyGate
+import webchat.backend.chats.domain.service.TypingService
 import webchat.backend.config.ChatsProperties
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.domain.model.UserBlock
@@ -233,6 +242,10 @@ class MessageControllerTest {
             participants,
             NoopBlockRepository,
             GroupMembershipGate(participants, GroupMetrics(SimpleMeterRegistry())),
+            NoopProfileStore,
+            NoopContactRepository,
+            NoopRealtimePublisher,
+            ChatSoundMetrics(SimpleMeterRegistry()),
         )
 
     /**
@@ -278,6 +291,19 @@ class MessageControllerTest {
                     // this direct-dialog controller scope.
                     participantRepository = participants,
                     groupMetrics = GroupMetrics(SimpleMeterRegistry()),
+                    // T033 (008a): the typing extinguish at the INSERT —
+                    // inert here (no active state ever resolves), the leg
+                    // itself is asserted by MessageServiceTest/TypingIT.
+                    typingService =
+                        TypingService(
+                            chatService = chatService(participants),
+                            participantRepository = participants,
+                            blockRepository = NoopBlockRepository,
+                            typingStore = NoopTypingStore,
+                            realtimeEventPublisher = NoopRealtimePublisher,
+                            chatsProperties = TEST_PROPERTIES,
+                            typingMetrics = TypingMetrics(SimpleMeterRegistry()),
+                        ),
                 ),
             historyService =
                 HistoryService(
@@ -435,6 +461,13 @@ class MessageControllerTest {
             chatId: UUID,
             userId: UUID,
         ): Long = 0L
+
+        /** 008a №42 write leg is outside the messaging surface — inert default (T053). */
+        override fun updateSoundEnabled(
+            chatId: UUID,
+            userId: UUID,
+            enabled: Boolean,
+        ): ChatParticipant? = null
     }
 
     /** The realtime leg is irrelevant to the HTTP mapping — a silent sink keeps the unit surface narrow. */
@@ -463,6 +496,34 @@ class MessageControllerTest {
             toUserIds: List<UUID>,
             event: ChatReadEvent,
         ) = Unit
+
+        override fun fanoutTypingEvent(
+            toUserIds: List<UUID>,
+            event: TypingEvent,
+        ) = Unit
+
+        /** The 008a №42 sync frame is irrelevant to the №16 HTTP mapping — a silent sink (T053). */
+        override fun publishChatSoundUpdated(
+            toUserId: UUID,
+            event: ChatSoundUpdatedEvent,
+        ) = Unit
+    }
+
+    /** The T033 leg stays inert here — no active typing state ever resolves,
+     *  so the extinguish is a silent claim miss. */
+    private object NoopTypingStore : TypingStore {
+        override fun start(
+            chatId: UUID,
+            userId: UUID,
+            ttl: Duration,
+        ) = Unit
+
+        override fun stop(
+            chatId: UUID,
+            userId: UUID,
+        ): Boolean = false
+
+        override fun dueExpired(batch: Int): List<TypingState> = emptyList()
     }
 
     /** The FR-002 gate fixture: only the ensured pair chat resolves, `ensure` is never reached here. */
@@ -536,8 +597,21 @@ class MessageControllerTest {
         val TEST_PROPERTIES =
             ChatsProperties(
                 message = ChatsProperties.Message(maxLength = TEST_CAP, pageSize = PAGE_SIZE),
-                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30, searchesPerMinute = 30),
+                rateLimit =
+                    ChatsProperties.RateLimit(
+                        messagesPerMinute = 30,
+                        searchesPerMinute = 30,
+                        typingSignalsPerMinute = 60,
+                        soundWritesPerMinute = 30,
+                    ),
                 realtime = ChatsProperties.Realtime(heartbeat = Duration.ofSeconds(15)),
+                typing =
+                    ChatsProperties.Typing(
+                        stateTtl = Duration.ofSeconds(8),
+                        pollerEnabled = false,
+                        pollInterval = Duration.ofSeconds(1),
+                        pollBatch = 1000,
+                    ),
             )
     }
 }

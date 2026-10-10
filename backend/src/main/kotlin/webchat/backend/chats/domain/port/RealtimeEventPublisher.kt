@@ -143,6 +143,61 @@ data class GroupDeletedEvent(
 ) : GroupEvent
 
 /**
+ * Marker of the two ephemeral №18 typing frames of 008a
+ * (realtime-events.md §1; T029): a sealed hierarchy with the shared
+ * `{chatId, userId}` payload keeps
+ * [RealtimeEventPublisher.fanoutTypingEvent] exhaustive over the
+ * contract set — a future typing frame lands as its payload type, and
+ * every adapter must map it or fail to compile (the [GroupEvent]
+ * discipline of 006 T009). [userId] is always the TYPING user (the №41
+ * signal sender), never the observing addressee.
+ */
+sealed interface TypingEvent {
+    val chatId: UUID
+
+    val userId: UUID
+}
+
+/**
+ * `typing.started` (realtime-events.md 008a §1.1; FR-006): the member
+ * [userId] began/continued typing in the chat [chatId] — published on
+ * EVERY valid №41 `start` including the ~3 s renewals («the indicator
+ * does not sag», AC4); the anti-flap debounce is the client window +
+ * the 60/min flood bucket, never a server-side suppression.
+ */
+data class TypingStartedEvent(
+    override val chatId: UUID,
+    override val userId: UUID,
+) : TypingEvent
+
+/**
+ * `typing.stopped` (realtime-events.md 008a §1.2; FR-007): the member
+ * [userId] stopped typing in the chat [chatId] — one of the three
+ * extinguish legs (a №41 `stop` at an ACTIVE state, the typer's own №16
+ * message INSERT, the poller's reap of the lapsed 8 s state); the
+ * schema is identical to [TypingStartedEvent].
+ */
+data class TypingStoppedEvent(
+    override val chatId: UUID,
+    override val userId: UUID,
+) : TypingEvent
+
+/**
+ * `chat.sound.updated` (realtime-events.md 008a §1.3; FR-012/FR-015):
+ * the toggler's OWN per-chat sound switch genuinely CHANGED through №42
+ * (a repeat of the stored value is the idempotent no-op that publishes
+ * NOTHING) — the frame names the toggled dialog [chatId] and the NEW
+ * [soundEnabled]. It is the ONLY 008a frame with an audience of exactly
+ * one: the toggler himself (the multi-device sync of SC-006), never
+ * another participant — the value and the very fact of the setting are
+ * the row owner's alone (the privacy ban of FR-012).
+ */
+data class ChatSoundUpdatedEvent(
+    val chatId: UUID,
+    val soundEnabled: Boolean,
+)
+
+/**
  * Outbound realtime fan-out port (research.md 004 §2; DIP: the Redis
  * adapter lives outside the domain in
  * `webchat.backend.realtime.RedisRealtimePublisher`, T019).
@@ -161,6 +216,18 @@ data class GroupDeletedEvent(
  * the SAME per-user channels of a roster snapshot (≤ 200 by FR-002) —
  * a separate group realtime port is deliberately NOT introduced (YAGNI,
  * constitution VII; research.md 006 §4: no new broker topology).
+ *
+ * Since 008a (T029) it also carries the EPHEMERAL typing frames
+ * (realtime-events.md 008a §1): same per-user channel family, same
+ * at-most-once discipline — the state behind them lives in the
+ * [TypingStore] and never touches PG, so a lost frame is compensated
+ * by the observer's 10 s safety timeout, never by re-sending.
+ *
+ * Since 008a (T053) it also carries the №42 own-channel sound frame
+ * `chat.sound.updated` (realtime-events.md 008a §1.3): the durable
+ * `chat_participants.sound_enabled` change is already committed when
+ * the caller hands the frame over, and a lost frame is compensated by
+ * the №12/№13 refetch of a (re)connecting device — never by re-sending.
  */
 interface RealtimeEventPublisher {
     /**
@@ -220,5 +287,40 @@ interface RealtimeEventPublisher {
     fun fanoutChatRead(
         toUserIds: List<UUID>,
         event: ChatReadEvent,
+    )
+
+    /**
+     * T029 (realtime-events.md 008a §1.1/§1.2): the ephemeral №18 typing
+     * frames — ONE envelope per [toUserIds] addressee, each on their own
+     * `rt:user:{userId}` channel. The list is the caller's (T030
+     * TypingService) EXACT audience: the ACTIVE chat participants MINUS
+     * the signal sender (own devices never render their own typing —
+     * US2 AC9 solved by addressing, never by payload flags), with the
+     * DIRECT block-pair suppression already decided upstream (FR-008).
+     * The frames are fire-and-forget over the at-most-once channel:
+     * nothing is persisted, replayed or re-sent (FR-007) — a lost frame
+     * dies with the observer's 10 s safety timeout.
+     */
+    fun fanoutTypingEvent(
+        toUserIds: List<UUID>,
+        event: TypingEvent,
+    )
+
+    /**
+     * T053 (realtime-events.md 008a §1.3, FR-012/FR-015, SC-006): the
+     * №42 multi-device sync frame — ONE envelope to the toggler's OWN
+     * `rt:user:{userId}` channel and NOBODY else: the caller (T053
+     * [ChatService.updateSound]) has already resolved the membership
+     * gate, committed the durable change and judged the idempotency
+     * rule (only a genuine CHANGE reaches this leg — a repeat of the
+     * stored value never does), and the frame is the toggler's own
+     * business exclusively: another participant's channel must never
+     * carry it (privacy FR-012). At-most-once like every №18 frame: a
+     * lost frame is compensated by the №12/№13 `soundEnabled` refetch
+     * of a (re)connecting device, never by a re-send.
+     */
+    fun publishChatSoundUpdated(
+        toUserId: UUID,
+        event: ChatSoundUpdatedEvent,
     )
 }

@@ -12,6 +12,7 @@ import webchat.backend.presence.domain.port.PresenceUpdatedEvent
 import webchat.backend.presence.domain.port.PublishedPresence
 import webchat.backend.presence.domain.port.VisibilityAudienceReader
 import webchat.backend.realtime.PresenceConnectionLifecycle
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -104,6 +105,16 @@ import java.util.UUID
  * (at-most-once channel, constitution III).
  * A Switched leg with an EMPTY audience (a subject nobody may observe
  * yet) publishes nothing — set semantics make that structural.
+ *
+ * T044 (tasks.md 008a, US3; research 008a §B2): the lastSeen DISCLOSURE
+ * filter — the conjunction `offline ∧ audience ∧ not «невидимка» ∧ the
+ * stamp exists` — lives HERE, never in the store: every offline surface
+ * (the №36 item of [snapshot] and the offline `presence.updated` of
+ * [publishIfSwitched]) resolves through the same verdict so the two can
+ * never disagree (SC-004 discipline), and the deferred offq-drain
+ * publication of the T025 scheduler reuses [discloseOfflineLastSeen]
+ * verbatim. Every rejection is the ABSENT field — «скрыто» ≡ «нет
+ * данных» on the wire (SC-002, FR-010).
  *
  * Failure etiquette (SC-001 ≤ 2 s): the open leg runs on the SSE
  * handshake thread, so every store call is ONE round trip and the
@@ -217,6 +228,18 @@ class PresenceService(
      *    makes the client's strictly-greater max(rev) merge a structural
      *    no-op, so an `unknown` item can never overwrite a live state.
      *
+     * T044 (008a US3, research 008a §B2): the visible OFFLINE entries
+     * additionally run through the lastSeen DISCLOSURE conjunction —
+     * `lastSeenAt` rides the item ONLY when status=offline ∧ the target
+     * is NOT «невидимка» (ONE batch `presence_hidden` read over the
+     * candidates that actually have a stamp — an ONLINE item or a
+     * no-stamp «нет данных» item needs no SQL at all) ∧ the
+     * `presence:lastseen:{userId}` stamp exists. Every rejection keeps
+     * the field ABSENT, never `null`: the №36 shape of a hidden subject
+     * stays byte-identical to a no-data subject («скрыто» ≡ «нет
+     * данных», SC-002), and a missing key is the client's neutral «давно»
+     * fallback (FR-010/FR-011).
+     *
      * [targetIds] arrives deduped and ≤ 200 — the №36 contract
      * validation is the API layer's business (presence-api.md §1);
      * duplicates/self-entries stay harmless anyway (set semantics).
@@ -234,8 +257,18 @@ class PresenceService(
             } else {
                 presenceStore.readPublishedBatch(visible)
             }
+        val hidden = hiddenSubjectsOf(published.values)
         return distinct.associateWith { target ->
-            published[target]?.let { PresenceSnapshotEntry.of(it) } ?: PresenceSnapshotEntry.unknown(target)
+            published[target]?.let { entry ->
+                if (entry.status == PresencePublishedStatus.OFFLINE &&
+                    entry.lastSeenAt != null &&
+                    target !in hidden
+                ) {
+                    PresenceSnapshotEntry.of(entry, entry.lastSeenAt)
+                } else {
+                    PresenceSnapshotEntry.of(entry)
+                }
+            } ?: PresenceSnapshotEntry.unknown(target)
         }
     }
 
@@ -320,6 +353,16 @@ class PresenceService(
      * Unchanged leg must stay unobservable (FR-003). The T017 adapter
      * absence (pre-US1-interim) and an empty audience both stop BEFORE
      * the SQL/publish legs: nothing to observe means nothing to resolve.
+     *
+     * T044 (008a US3): an OFFLINE frame additionally carries the
+     * disclosed `lastSeenAt` — [discloseOfflineLastSeen] resolves the
+     * §B2 conjunction (the audience half is already structural: the
+     * frame addresses exactly [VisibilityAudienceReader.audienceOf]).
+     * An ONLINE frame never carries the field, and the FREEZE offline
+     * resolves it away by the incognito gate («не время включения
+     * инкогнито» — the №38 enable persists `presence_hidden` BEFORE the
+     * freeze transition runs, so the very filter that protects №36
+     * protects the frame).
      */
     private fun publishIfSwitched(transition: PresenceTransition) {
         val publisher = presenceEventPublisher.ifAvailable
@@ -332,10 +375,63 @@ class PresenceService(
                         userId = transition.userId,
                         status = transition.publishedStatus,
                         rev = transition.rev,
+                        lastSeenAt =
+                            if (transition.publishedStatus == PresencePublishedStatus.OFFLINE) {
+                                discloseOfflineLastSeen(transition.userId)
+                            } else {
+                                null
+                            },
                     ),
                 )
             }
         }
+    }
+
+    /**
+     * The T044 offline disclosure filter (research 008a §B2) — the ONE
+     * verdict every offline `presence.updated` leg resolves through,
+     * whether it rides THIS service's [publishIfSwitched] (the logout
+     * bypass, the №38 freeze/reveal switch) or the deferred offq-drain
+     * publication of the T025 scheduler (the graceful close and the
+     * TTL-reap «обрыв»). The conjunction, applied in short-circuit
+     * order:
+     *
+     *  1. the subject is NOT «невидимка» — ONE durable V15
+     *     [PresenceSettingsStore.incognitoOf] read; the FREEZE leg has
+     *     already persisted `presence_hidden = true` before its own
+     *     transition runs, so the freeze offline answers `null` here and
+     *     goes out BARE (SC-002: the mode hides the time entirely);
+     *  2. the `presence:lastseen:{userId}` stamp EXISTS — the very
+     *     [PresenceStore.readPublishedBatch] round trip T043 taught to
+     *     carry the raw stamp; `null` ⟺ no key, the neutral «нет
+     *     данных» of a subject never seen since the feature deployment.
+     *
+     * The audience and the offline-status halves of the §B2 conjunction
+     * are the CALLER's structural facts — every caller of this leg
+     * publishes an offline frame addressed to the resolved audience — so
+     * the answer is the disclosed stamp or nothing, and `null` keeps the
+     * wire field ABSENT (never an explicit `null`): «скрыто» ≡ «нет
+     * данных» (SC-002, FR-010).
+     */
+    fun discloseOfflineLastSeen(subjectId: UUID): Instant? {
+        if (presenceSettingsStore.incognitoOf(subjectId)) return null
+        return presenceStore.readPublishedBatch(listOf(subjectId))[subjectId]?.lastSeenAt
+    }
+
+    /**
+     * The №36 incognito half of the T044 conjunction: ONE batch V15 read
+     * over the candidates that would otherwise disclose — the visible
+     * OFFLINE targets that actually HAVE a stamp (an ONLINE item and a
+     * no-stamp item reject before any SQL runs). Returns the subject ids
+     * whose mode is `presence_hidden = true`.
+     */
+    private fun hiddenSubjectsOf(published: Collection<PublishedPresence>): Set<UUID> {
+        val candidates =
+            published
+                .filter { it.status == PresencePublishedStatus.OFFLINE && it.lastSeenAt != null }
+                .map { it.userId }
+        if (candidates.isEmpty()) return emptySet()
+        return presenceSettingsStore.incognitoBatch(candidates).filterValues { it }.keys
     }
 }
 
@@ -359,15 +455,28 @@ enum class PresenceSnapshotStatus {
  * with №18 `presence.updated` frames by strictly-greater `rev` per user
  * (FR-003); an [PresenceSnapshotStatus.UNKNOWN] entry carries rev 0, so
  * it never overwrites a previously observed state.
+ *
+ * [lastSeenAt] (008a T044, US3): the DISCLOSED stamp — present ONLY on
+ * a visible OFFLINE entry of a non-incognito subject that has one; the
+ * API layer projects it as the optional wire field, ABSENT whenever
+ * `null` (never an explicit `null` — «скрыто» ≡ «нет данных», SC-002).
  */
 data class PresenceSnapshotEntry(
     val userId: UUID,
     val status: PresenceSnapshotStatus,
     val rev: Long,
+    val lastSeenAt: Instant? = null,
 ) {
     internal companion object {
-        /** The visible projection: the published status + its very rev (SC-006). */
-        fun of(published: PublishedPresence): PresenceSnapshotEntry =
+        /**
+         * The visible projection: the published status + its very rev
+         * (SC-006) + the T044-disclosed stamp when the §B2 conjunction
+         * admitted one (default `null` — absent).
+         */
+        fun of(
+            published: PublishedPresence,
+            lastSeenAt: Instant? = null,
+        ): PresenceSnapshotEntry =
             PresenceSnapshotEntry(
                 userId = published.userId,
                 status =
@@ -376,6 +485,7 @@ data class PresenceSnapshotEntry(
                         PresencePublishedStatus.OFFLINE -> PresenceSnapshotStatus.OFFLINE
                     },
                 rev = published.rev,
+                lastSeenAt = lastSeenAt,
             )
 
         /** The «no access» projection: unknown + rev 0 (a structural merge no-op). */

@@ -10,8 +10,10 @@
  * US2 single modal shell (008 T034; FR-026, data-model 1.6/3.3,
  * ui-behavior §3): EVERY modal form of the app is an inhabitant of
  * ONE `ModalShell` mounted here — the main menu items (T030) open
- * contacts / add-contact (ContactsModal — its internal list ↔ add
- * switch lifts into the shell formId via onFormChange) / profile
+ * contacts / add-contact / rename-contact (ContactsModal — its internal
+ * list ↔ add ↔ rename switch lifts into the shell formId via
+ * onFormChange; the rename form is the #renameForm projection of the
+ * prototype, 008a T022) / profile
  * (ProfileModal) / create-group (the grpForm projection of the
  * prototype, 008 T035), and the header confirmations (№14/№23/№24)
  * ride the 'confirm' formId. A formId switch NEVER
@@ -201,8 +203,46 @@
  * остаётся над клавиатурой, лента сжимается, прокрутки страницы нет
  * (quickstart E1–E2, SC-005). Тесты — MessengerPage.viewport.test.tsx;
  * мобильные снимки — T068.
+ *
+ * 008a US2 typing-проводка (T038; FR-006–FR-008, ui-behavior §2.2,
+ * realtime-events §1/§3): состояние «кто печатает» ОТКРЫТОГО чата
+ * живёт в странице — кадры typing.started/stopped №18 (демультиплексор
+ * onTypingEvent хука useRealtime) (пере)заводят per-печатающий
+ * 10-секундный дедлайн наблюдателя, message.created от печатающего
+ * гасит запись сразу, смена чата и каждый (ре)коннект №18 сбрасывают
+ * карту (эфемерное состояние не реплеится); имена разрешаются
+ * цепочкой US1 (resolveDisplayName) по клиентскому кэшу участников
+ * (№11 peer / №28 ростер), неизвестные userId не рендерятся — и
+ * кормят TypingRow ленты (T037). Композер открытого чата ride'ит
+ * машину №41-сигналов useTyping (T036, §2.1): изменения черновика и
+ * каждая попытка отправки (любой исход) → best-effort start/stop.
+ *
+ * 008a US4 звук-синхронизация (T058; FR-012–FR-015, ui-behavior §4,
+ * realtime-events §1.3): per-chat карта звук-переключателей
+ * вызывающего сходится из ЧЕТЫРЁХ источников — №12-строки (рефетчи/
+ * реконнекты), №11/№13 ChatView (adoptChatViewSound: select-фолбэк и
+ * модальные пути), ответ №42 (echo, T057) и кадры `chat.sound.updated`
+ * СОБСТВЕННОГО канала №18 (onChatSoundUpdated — мультидевайс ≤ 2 с,
+ * SC-006; другие участники кадр не получают — приватность). Карта
+ * кормит колокол заголовка (T057) и ДВА звук-гейта приёма: реальное
+ * время передаёт per-chat состояние в chimeOnRealtimeIncoming
+ * (решение — в ui/sound: false → тишина, undefined → звучит),
+ * sync-батч 005 считает входящие PER-CHAT — звонок цикла звучит
+ * только если среди пришедших есть неприглушённые чаты (итог 0 —
+ * тишина самого sound). ВИЗУАЛЬНЫЕ уведомления (бейджи, лента,
+ * превью, тосты) гейтом не фильтруются вовсе (FR-014).
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type Dispatch,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+} from 'react'
 import { getCurrentUser } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
 import type { GroupMember, GroupView } from '../../api/groups'
@@ -213,9 +253,11 @@ import {
   deleteChat,
   getChat,
   listContacts,
+  setChatSound,
   unblockUser,
 } from '../../api/chats'
 import type { ChatListItem, ChatView, ContactView, Message } from '../../api/chats'
+import { problemMessage } from '../../auth/problem'
 import { getAckBatcher } from '../../sync/ack'
 import { advanceCursor } from '../../sync/cursors'
 import { useSync } from '../../sync/hooks/useSync'
@@ -223,16 +265,20 @@ import { ChatHeader } from '../components/ChatHeader'
 import type { ChatHeaderChat } from '../components/ChatHeader'
 import { ChatListPanel } from '../components/ChatListPanel'
 import { ContactsModal } from '../components/ContactsModal'
+import type { ModalForm } from '../components/ContactsModal'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { MessageInput } from '../components/MessageInput'
 import { MessageList } from '../components/MessageList'
 import { ProfileModal } from '../components/ProfileModal'
 import { QueueOverflowBanner } from '../components/QueueOverflowBanner'
 import { SyncIndicator } from '../components/SyncIndicator'
+import type { TypingParticipant } from '../components/TypingRow'
 import { useChatList } from '../hooks/useChatList'
 import { useChatMessages } from '../hooks/useChatMessages'
 import { useOutbox } from '../hooks/useOutbox'
 import { useRealtime } from '../hooks/useRealtime'
+import type { RealtimeStream } from '../hooks/useRealtime'
+import { useTyping } from '../hooks/useTyping'
 import { headFloodRetryAt } from '../outbox'
 import { CreateGroupDialog } from '../../groups/components/CreateGroupDialog'
 import { GroupEditModal } from '../../groups/components/GroupEditModal'
@@ -247,7 +293,13 @@ import type { ConfirmVariant } from '../../ui/ConfirmDialog'
 import { FOCUSABLE_SELECTOR, ModalShell } from '../../ui/ModalShell'
 import type { ModalFormId } from '../../ui/ModalShell'
 import { ToastProvider, useToast } from '../../ui/Toast'
-import { chimeOnRealtimeIncoming, chimeOnSyncBatch } from '../../ui/sound'
+import {
+  chimeOnRealtimeIncoming,
+  chimeOnSyncBatch,
+  playBellTone,
+  playMuteTone,
+} from '../../ui/sound'
+import { resolveDisplayName } from '../../ui/names'
 import '../components/states.css'
 import './messenger.css'
 
@@ -256,6 +308,8 @@ interface DirectChatView {
   readonly kind: 'direct'
   readonly chatId: string
   readonly peer: PublicUser
+  /** Персональный alias вызывающего к peer №11/№12/№13 (008a T023) — цепочка заголовка. */
+  readonly peerAlias?: string | null
   readonly blockedByMe: boolean
 }
 
@@ -312,6 +366,16 @@ const GROUP_PENDING_ACTIONS: ReadonlySet<PendingAction> = new Set(['leave-group'
  * with the session.
  */
 const OWN_ACK_TRACK_CAP = 16
+
+/**
+ * 008a US2 (T038; FR-008, realtime-events.md §3): страховочный
+ * таймаут индикатора наблюдателя — 10 с без продления; каждый
+ * повторный `typing.started` (клиентское окно повтора 3 с)
+ * перезаводит окно своего печатающего, компенсируя at-most-once
+ * потери канала №18 (серверное состояние самоистекает TTL 8 с —
+ * парный stopped может не дойти).
+ */
+const TYPING_SAFETY_TIMEOUT_MS = 10_000
 
 function confirmUiOf(action: PendingAction, peerName: string): ConfirmUi {
   if (action === 'delete-chat') {
@@ -377,11 +441,20 @@ function confirmUiOf(action: PendingAction, peerName: string): ConfirmUi {
 const MODAL_TITLES: Record<ModalFormId, string> = {
   contacts: 'Контакты',
   'add-contact': 'Добавить контакт',
+  // openRename прототипа (chats.html): «Редактировать контакт».
+  'rename-contact': 'Редактировать контакт',
   'create-group': 'Новый групповой чат',
   'group-edit': 'Редактировать групповой чат',
   'group-members': 'Участники',
   profile: 'Мой профиль',
   confirm: 'Подтверждение',
+}
+
+/** Проекция внутренних форм «Контактов» (ModalForm) в обитателей оболочки (T034). */
+const CONTACTS_SHELL_FORMS: Record<ModalForm, ModalFormId> = {
+  list: 'contacts',
+  add: 'add-contact',
+  rename: 'rename-contact',
 }
 
 /**
@@ -464,6 +537,306 @@ function useVisualViewport(): void {
   }, [])
 }
 
+function useSidebarDrawer(modalAbove: boolean): {
+  narrowViewport: boolean
+  drawerOpen: boolean
+  setDrawerOpen: Dispatch<SetStateAction<boolean>>
+  backdropRef: RefObject<HTMLDivElement | null>
+  sidebarRef: RefObject<HTMLElement | null>
+} {
+  /**
+   * US5 burger-drawer (T065; FR-029): на ≤900px сайдбар — выдвижной
+   * drawer поверх контента; `.open`-словарь прототипа (openSidebar/
+   * closeSidebar) ведёт это состояние, DOM-проекция — ниже (burger /
+   * sidebar / backdrop).
+   */
+  const narrowViewport = useNarrowViewport()
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  /** Подложка drawer: нативный click-слушатель закрытия (как ModalShell). */
+  const backdropRef = useRef<HTMLDivElement>(null)
+  /**
+   * Корень ловушки drawer (T070; FR-035): сам сайдбар — Tab не покидает
+   * его, пока drawer — верхний слой; сюда же смотрит inert закрытого
+   * off-canvas состояния.
+   */
+  const sidebarRef = useRef<HTMLElement>(null)
+
+  // Возврат на широкий экран сбрасывает drawer: .backdrop не ограничен
+  // media-блоком — открытое состояние не должно заливать широкий экран,
+  // где сайдбар снова статичен в каркасе (T065).
+  useEffect(() => {
+    if (!narrowViewport) {
+      setDrawerOpen(false)
+    }
+  }, [narrowViewport])
+
+  // Esc закрывает drawer ТОЛЬКО как верхний слой (T065, data-model
+  // 3.1): модальная оболочка слушает Esc на document без
+  // stopPropagation, поэтому охрана «модалей выше нет» — на стороне
+  // drawer; ctx-menu/members-tip гасят Esc capture-фазой (T013/T043) и
+  // сюда не доходят вовсе.
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      if (modalAbove) {
+        return
+      }
+      setDrawerOpen(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [drawerOpen, modalAbove])
+
+  // Инициатор drawer (T070; FR-035, SC-008, ui-behavior §1): захват при
+  // открытии (burger — единственный вход), возврат фокуса при закрытии.
+  // Паттерн ModalShell/ContextMenu: перебиваем фокус ТОЛЬКО если он ещё
+  // внутри drawer или ни на чём — клик мимо уже увёл фокус на свою цель.
+  // Ключ только [drawerOpen]: formId-переключения выше не должны
+  // «закрывать» drawer и возвращать фокус (модаль живёт над ним).
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    const initiator = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const sidebar = sidebarRef.current
+    return () => {
+      const active = document.activeElement
+      const inside = sidebar !== null && active instanceof Node && sidebar.contains(active)
+      if (inside || active === null || active === document.body) {
+        initiator?.focus()
+      }
+    }
+  }, [drawerOpen])
+
+  // Tab-ловушка drawer (T070; FR-035, SC-008): пока drawer — верхний
+  // слой, Tab/Shift+Tab крутятся по фокусируемым сайдбара (словарь
+  // FOCUSABLE_SELECTOR — тот же, что у ModalShell). Модаль выше — её
+  // ловушка владеет Tab (data-model 3.1): здесь тихо отступаем.
+  useEffect(() => {
+    if (!drawerOpen) {
+      return
+    }
+    if (modalAbove) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Tab') {
+        return
+      }
+      const root = sidebarRef.current
+      if (root === null) {
+        return
+      }
+      const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+      const [first] = focusables
+      const last = focusables.at(-1)
+      if (first === undefined || last === undefined) {
+        return
+      }
+      const active = document.activeElement
+      const inside = root.contains(active)
+      if (event.shiftKey && (active === first || !inside)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (active === last || !inside)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [drawerOpen, modalAbove])
+
+  // Клик по затемнению закрывает drawer (T065): нативный слушатель на
+  // самой подложке — JSX-хендлер на статичном div это S6848/S1082
+  // (паттерн ModalShell); с клавиатуры drawer гасит Esc-эффект выше.
+  useEffect(() => {
+    const back = backdropRef.current
+    if (back === null) {
+      return
+    }
+    const onClick = (): void => {
+      setDrawerOpen(false)
+    }
+    back.addEventListener('click', onClick)
+    return () => {
+      back.removeEventListener('click', onClick)
+    }
+  }, [])
+
+  return { narrowViewport, drawerOpen, setDrawerOpen, backdropRef, sidebarRef }
+}
+
+function useTypingParticipants(
+  activeChat: ActiveChat | null,
+  activeChatId: string | null,
+  activeGroupMembers: readonly GroupMember[] | undefined,
+  realtime: RealtimeStream,
+): readonly TypingParticipant[] {
+  // 008a T038 (US2; FR-006–FR-008, ui-behavior §2.2): «кто печатает»
+  // активного чата — эфемерная карта дедлайнов наблюдателя. Каждый
+  // typing.started (пере)заводит 10-секундное окно своего печатающего
+  // (страховка at-most-once, TYPING_SAFETY_TIMEOUT_MS); typing.stopped
+  // и message.created от печатающего гасят запись; смена чата и каждый
+  // (ре)коннект №18 сбрасывают карту целиком — состояние не реплеится
+  // при (пере)подключении (realtime-events §1.1, edge спеки). События
+  // чужих диалогов сюда не приходят вовсе: подписка идёт под
+  // конкретным chatId открытого окна и пересоздаётся при переключении.
+  const [typingDeadlines, setTypingDeadlines] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
+  )
+
+  // Один свипер на всю карту: таймаут до САМОГО РАННЕГО дедлайна
+  // выбрасывает истёкшие записи; смена состояния перезаводит его, а
+  // продление печатающего отодвигает его дедлайн за работающий таймер —
+  // свип остаётся точным для каждого участника в отдельности.
+  useEffect(() => {
+    if (typingDeadlines.size === 0) {
+      return
+    }
+    const earliest = Math.min(...typingDeadlines.values())
+    const timer = window.setTimeout(
+      () => {
+        const now = Date.now()
+        setTypingDeadlines((previous) => {
+          let expired = false
+          const next = new Map<string, number>()
+          for (const [userId, deadline] of previous) {
+            if (deadline > now) {
+              next.set(userId, deadline)
+            } else {
+              expired = true
+            }
+          }
+          return expired ? next : previous
+        })
+      },
+      Math.max(0, earliest - Date.now()),
+    )
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [typingDeadlines])
+
+  // typing.started/stopped открытого чата (onTypingEvent демультиплексора):
+  // старт (пере)заводит окно (в т.ч. продления — «индикатор не отвисает»,
+  // §1.1), стоп гасит запись идемпотентно (отсутствующая — no-op).
+  useEffect(() => {
+    if (activeChatId === null) {
+      return
+    }
+    return realtime.onTypingEvent(activeChatId, (_chatId, userId, started) => {
+      // Демультиплексор уже отфильтровал чужие диалоги (подписка под
+      // конкретным chatId) — первый аргумент совпадает с активным по
+      // построению и не используется.
+      if (started) {
+        setTypingDeadlines((previous) =>
+          new Map(previous).set(userId, Date.now() + TYPING_SAFETY_TIMEOUT_MS),
+        )
+        return
+      }
+      setTypingDeadlines((previous) => {
+        if (!previous.has(userId)) {
+          return previous
+        }
+        const next = new Map(previous)
+        next.delete(userId)
+        return next
+      })
+    })
+  }, [activeChatId, realtime])
+
+  // message.created от печатающего (§2.2): коммит сообщения завершает
+  // набор — сервер гасит состояние при INSERT (T033), но парный
+  // typing.stopped может отставать или теряться, поэтому наблюдатель
+  // скрывает запись сразу по самому сообщению (его отправитель и есть
+  // печатающий).
+  useEffect(() => {
+    if (activeChatId === null) {
+      return
+    }
+    return realtime.onMessageCreated(activeChatId, (event) => {
+      const senderId = event.message.senderId
+      setTypingDeadlines((previous) => {
+        if (!previous.has(senderId)) {
+          return previous
+        }
+        const next = new Map(previous)
+        next.delete(senderId)
+        return next
+      })
+    })
+  }, [activeChatId, realtime])
+
+  // Смена чата скрывает строку немедленно (§2.2 — единый экземпляр
+  // индикатора, скрыт при смене чата).
+  useEffect(() => {
+    setTypingDeadlines((previous) => (previous.size === 0 ? previous : new Map()))
+  }, [activeChatId])
+
+  // (Ре)коннект №18 сбрасывает карту — эфемерное состояние не
+  // реплеится подключающимся (§1.1): onOpen стреляет на каждом
+  // (пере)подключении, начальный коннект чистит уже пустую карту.
+  useEffect(() => {
+    return realtime.onOpen(() => {
+      setTypingDeadlines((previous) => (previous.size === 0 ? previous : new Map()))
+    })
+  }, [realtime])
+
+  // TypingParticipant-проекция дедлайнов: имена разрешаются цепочкой
+  // US1 (resolveDisplayName) по КЛИЕНТСКОМУ кэшу участников — peer №11
+  // открытого личного чата (peerAlias → displayName → username) или
+  // ростер №28 открытой группы (alias → displayName → username).
+  // Неизвестный кэшу userId не даёт записи — такой печатающий не
+  // рендерится и выпадает из счёта N (§2.2, YAGNI — новых API нет).
+  const typingParticipants = useMemo<readonly TypingParticipant[]>(() => {
+    if (activeChat === null || typingDeadlines.size === 0) {
+      return []
+    }
+    const participants: TypingParticipant[] = []
+    for (const userId of typingDeadlines.keys()) {
+      if (activeChat.kind === 'direct') {
+        if (activeChat.peer.id === userId) {
+          participants.push({
+            userId,
+            name: resolveDisplayName(
+              activeChat.peerAlias,
+              activeChat.peer.displayName,
+              activeChat.peer.username,
+            ),
+            username: activeChat.peer.username,
+          })
+        }
+        continue
+      }
+      const member = activeGroupMembers?.find((entry) => entry.user.id === userId)
+      if (member !== undefined) {
+        participants.push({
+          userId,
+          name: resolveDisplayName(
+            member.user.alias,
+            member.user.displayName,
+            member.user.username,
+          ),
+          username: member.user.username,
+        })
+      }
+    }
+    return participants
+  }, [typingDeadlines, activeChat, activeGroupMembers])
+
+  return typingParticipants
+}
+
 /**
  * The pending confirmation's copy (T054): null — nothing pending or
  * the window kind carries no such entry; direct entries take the peer
@@ -518,6 +891,10 @@ function headerChatOf(
     kind: 'direct',
     peerId: chat.peer.id,
     username: chat.peer.username,
+    // 008a T023: цепочка заголовка — peerAlias №11/№12/№13 поверх
+    // профильного displayName peer (ui-behavior §1).
+    displayName: chat.peer.displayName,
+    peerAlias: chat.peerAlias ?? null,
     blockedByMe: chat.blockedByMe,
     peerInContacts: contacts.some((contact) => contact.user.id === chat.peer.id),
   }
@@ -539,6 +916,7 @@ function activeChatOfView(view: ChatView): ActiveChat | null {
       kind: 'direct',
       chatId: view.chatId,
       peer: view.peer,
+      peerAlias: view.peerAlias ?? null,
       blockedByMe: view.blockedByMe ?? false,
     }
   }
@@ -693,137 +1071,31 @@ function MessengerMachine() {
    */
   const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
   /**
-   * US5 burger-drawer (T065; FR-029): на ≤900px сайдбар — выдвижной
-   * drawer поверх контента; `.open`-словарь прототипа (openSidebar/
-   * closeSidebar) ведёт это состояние, DOM-проекция — ниже (burger /
-   * sidebar / backdrop).
+   * Персональные звук-переключатели чатов вызывающего (008a US4,
+   * T057/T058; FR-012): chatId → soundEnabled. Источники сходятся здесь:
+   * №12-строки (каждый рефетч/реконнект несут актуальное значение),
+   * №11/№13 ChatView (select-фолбэк и модальные пути — adoptChatViewSound),
+   * ответ №42 (echo сохранённого) и кадры `chat.sound.updated`
+   * собственного канала (мультидевайс ≤ 2 с, SC-006). Отсутствие записи
+   * = «вкл» — умолчание контракта (отсутствие поля №12/№13 клиент
+   * трактует как true; обратная совместимость 008).
    */
-  const narrowViewport = useNarrowViewport()
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  /** Подложка drawer: нативный click-слушатель закрытия (как ModalShell). */
-  const backdropRef = useRef<HTMLDivElement>(null)
+  const [soundStates, setSoundStates] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   /**
-   * Корень ловушки drawer (T070; FR-035): сам сайдбар — Tab не покидает
-   * его, пока drawer — верхний слой; сюда же смотрит inert закрытого
-   * off-canvas состояния.
+   * Синхронное зеркало звук-состояния для слушателей реального времени
+   * (T058): гейт chimeOnRealtimeIncoming и per-chat подсчёт sync-батчей
+   * читают актуальное значение БЕЗ пересоздания подписок на каждый
+   * переключатель (паттерн chatsRef/currentUserIdRef useChatList).
    */
-  const sidebarRef = useRef<HTMLElement>(null)
+  const soundStatesRef = useRef(soundStates)
+  soundStatesRef.current = soundStates
+  const { narrowViewport, drawerOpen, setDrawerOpen, backdropRef, sidebarRef } = useSidebarDrawer(
+    modalForm !== null || pendingAction !== null,
+  )
 
   // US5 клавиатура (T066; FR-029, research §H): --vvh/--vvo на body для
   // высоты машины (machine.css) — композер над клавиатурой, лента сжимается.
   useVisualViewport()
-
-  // Возврат на широкий экран сбрасывает drawer: .backdrop не ограничен
-  // media-блоком — открытое состояние не должно заливать широкий экран,
-  // где сайдбар снова статичен в каркасе (T065).
-  useEffect(() => {
-    if (!narrowViewport) {
-      setDrawerOpen(false)
-    }
-  }, [narrowViewport])
-
-  // Esc закрывает drawer ТОЛЬКО как верхний слой (T065, data-model
-  // 3.1): модальная оболочка слушает Esc на document без
-  // stopPropagation, поэтому охрана «модалей выше нет» — на стороне
-  // drawer; ctx-menu/members-tip гасят Esc capture-фазой (T013/T043) и
-  // сюда не доходят вовсе.
-  useEffect(() => {
-    if (!drawerOpen) {
-      return
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') {
-        return
-      }
-      if (modalForm !== null || pendingAction !== null) {
-        return
-      }
-      setDrawerOpen(false)
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [drawerOpen, modalForm, pendingAction])
-
-  // Инициатор drawer (T070; FR-035, SC-008, ui-behavior §1): захват при
-  // открытии (burger — единственный вход), возврат фокуса при закрытии.
-  // Паттерн ModalShell/ContextMenu: перебиваем фокус ТОЛЬКО если он ещё
-  // внутри drawer или ни на чём — клик мимо уже увёл фокус на свою цель.
-  // Ключ только [drawerOpen]: formId-переключения выше не должны
-  // «закрывать» drawer и возвращать фокус (модаль живёт над ним).
-  useEffect(() => {
-    if (!drawerOpen) {
-      return
-    }
-    const initiator = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const sidebar = sidebarRef.current
-    return () => {
-      const active = document.activeElement
-      const inside = sidebar !== null && active instanceof Node && sidebar.contains(active)
-      if (inside || active === null || active === document.body) {
-        initiator?.focus()
-      }
-    }
-  }, [drawerOpen])
-
-  // Tab-ловушка drawer (T070; FR-035, SC-008): пока drawer — верхний
-  // слой, Tab/Shift+Tab крутятся по фокусируемым сайдбара (словарь
-  // FOCUSABLE_SELECTOR — тот же, что у ModalShell). Модаль выше — её
-  // ловушка владеет Tab (data-model 3.1): здесь тихо отступаем.
-  useEffect(() => {
-    if (!drawerOpen) {
-      return
-    }
-    if (modalForm !== null || pendingAction !== null) {
-      return
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Tab') {
-        return
-      }
-      const root = sidebarRef.current
-      if (root === null) {
-        return
-      }
-      const focusables = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
-      const [first] = focusables
-      const last = focusables.at(-1)
-      if (first === undefined || last === undefined) {
-        return
-      }
-      const active = document.activeElement
-      const inside = root.contains(active)
-      if (event.shiftKey && (active === first || !inside)) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && (active === last || !inside)) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [drawerOpen, modalForm, pendingAction])
-
-  // Клик по затемнению закрывает drawer (T065): нативный слушатель на
-  // самой подложке — JSX-хендлер на статичном div это S6848/S1082
-  // (паттерн ModalShell); с клавиатуры drawer гасит Esc-эффект выше.
-  useEffect(() => {
-    const back = backdropRef.current
-    if (back === null) {
-      return
-    }
-    const onClick = (): void => {
-      setDrawerOpen(false)
-    }
-    back.addEventListener('click', onClick)
-    return () => {
-      back.removeEventListener('click', onClick)
-    }
-  }, [])
 
   /** №20 refetch of the gear's address-book basis (T054). */
   const reloadContacts = useCallback(() => {
@@ -949,6 +1221,23 @@ function MessengerMachine() {
     })
   }, [activeGroupChatId, realtime, reloadActiveGroup])
 
+  const typingParticipants = useTypingParticipants(
+    activeChat,
+    activeChatId,
+    activeGroupMembers,
+    realtime,
+  )
+
+  // 008a T038 (US2; FR-006, ui-behavior §2.1): композер открытого чата
+  // ride'ит машину №41-сигналов (T036) — изменения черновика и каждая
+  // попытка отправки (любой исход, вкл. отклонённую пустую) переводятся
+  // в best-effort start/stop; заблокированный композер (FR-022) сигналов
+  // не шлёт вовсе.
+  const typingSignals = useTyping({
+    chatId: activeChatId,
+    blocked: activeChat?.kind === 'direct' && activeChat.blockedByMe,
+  })
+
   // T086в (bug 8): ids the outbox engine confirmed via 201/200.
   // When the ack races the first render of the optimistic row (a
   // batched flush skips the intermediate state entirely), MessageList's
@@ -1012,10 +1301,22 @@ function MessengerMachine() {
   // композера страницы этим путём не идут вовсе, отправка звука не
   // имеет (Clarification); sync-цикл не тронут — только слушатель
   // страницы (research «Сводка без изменений»).
+  //
+  // 008a US4 (T058; FR-013, ui-behavior §4.2): подсчёт PER-CHAT —
+  // входящие приглушённого чата (soundEnabled === false) в счётчик не
+  // попадают: звонок батча звучит только если среди пришедших есть
+  // НЕприглушённые чаты (батч только с приглушёнными → итог 0 →
+  // тишина sound). ВИЗУАЛЬНАЯ доставка (бейджи/лента/позиции —
+  // эффект applyChatListSync/applyDialogSync выше) гейтом не
+  // фильтруется вовсе (FR-014); слушатель не пересоздаётся на каждое
+  // переключение — состояние читается через soundStatesRef.
   const syncIncomingRef = useRef(0)
   const syncCycleRanRef = useRef(false)
   useEffect(() => {
     return onChatUpdate((update) => {
+      if (soundStatesRef.current.get(update.chatId) === false) {
+        return
+      }
       for (const message of update.messages) {
         if (message.senderId !== currentUserId) {
           syncIncomingRef.current += 1
@@ -1059,12 +1360,19 @@ function MessengerMachine() {
   // подтверждается только визуально) и сам синтез живут в ui/sound
   // (T061/T063); сюда приходит каждое событие №18 потока, «двойного»
   // сигнала на событие нет — слушатель один.
+  //
+  // 008a US4 (T058; FR-013, ui-behavior §4.2): per-chat mute-гейт —
+  // странице принадлежит только ПЕРЕДАЧА состояния (soundStates:
+  // №12/№13/№42/chat.sound.updated), решение «звонить ли» — в самом
+  // sound (soundEnabled === false → тишина, undefined → звучит,
+  // обратная совместимость 008); визуальные поверхности события не
+  // фильтруются (FR-014).
   useEffect(() => {
     if (currentUserId === null) {
       return
     }
     return realtime.onMessageCreated(null, (event) => {
-      chimeOnRealtimeIncoming(event, currentUserId)
+      chimeOnRealtimeIncoming(event, currentUserId, soundStatesRef.current.get(event.chatId))
     })
   }, [currentUserId, realtime])
 
@@ -1098,18 +1406,72 @@ function MessengerMachine() {
   // every list refetch (block actions, SSE reconnects) reconciles the
   // open dialog's mark to the server state. A GROUP window never
   // carries the mark — blocks never apply to groups (006 Assumptions).
+  // 008a T023: тем же №12-рефетчем сходится и ИМЯ заголовка (peer
+  // displayName + peerAlias) — «все поверхности владельца обновляются»
+  // по рефетчу (ui-behavior §1.2; realtime-события смены имени нет).
   useEffect(() => {
     if (activeChat?.kind !== 'direct') {
       return
     }
     const item = chats.find((entry) => entry.chatId === activeChat.chatId)
     const blockedByMe = item?.blockedByMe ?? false
-    if (item !== undefined && blockedByMe !== activeChat.blockedByMe) {
+    const peerChanged =
+      item !== undefined &&
+      item.peer !== null &&
+      (item.peer.displayName !== activeChat.peer.displayName ||
+        (item.peerAlias ?? null) !== (activeChat.peerAlias ?? null))
+    if (item !== undefined && (blockedByMe !== activeChat.blockedByMe || peerChanged)) {
       setActiveChat((previous) =>
-        previous !== null && previous.kind === 'direct' ? { ...previous, blockedByMe } : previous,
+        previous !== null && previous.kind === 'direct' && previous.chatId === item.chatId
+          ? {
+              ...previous,
+              blockedByMe,
+              peer: item.peer ?? previous.peer,
+              peerAlias: item.peer !== null ? (item.peerAlias ?? null) : previous.peerAlias,
+            }
+          : previous,
       )
     }
   }, [chats, activeChat])
+
+  // 008a US4 (T057; FR-012, ui-behavior §4.1): №12-сходимость звук-
+  // переключателей — каждая строка списка несёт актуальное
+  // `soundEnabled` вызывающего (начальная загрузка + рефетчи
+  // действий/реконнекты), поэтому колокол и звук-гейт приёма (T058)
+  // стартуют с серверной правды, а не с умолчания «вкл».
+  useEffect(() => {
+    setSoundStates((previous) => {
+      let changed = false
+      const next = new Map(previous)
+      for (const item of chats) {
+        if (item.soundEnabled !== undefined && next.get(item.chatId) !== item.soundEnabled) {
+          next.set(item.chatId, item.soundEnabled)
+          changed = true
+        }
+      }
+      return changed ? next : previous
+    })
+  }, [chats])
+
+  // 008a US4 (T058; FR-015, realtime-events §1.3): кадр
+  // `chat.sound.updated` приходит ТОЛЬКО в собственный канал — другой
+  // девайс того же пользователя переключил №42; состояние (колокол
+  // `aria-pressed`, звук-гейт приёма) сходится ≤ 2 с (SC-006).
+  // Дублей не бывает (сервер публикует только фактическую СМЕНУ), а
+  // (ре)подключение сходится №12/№13-ресурсами выше — кадр живого
+  // соединения не реплеится.
+  useEffect(() => {
+    return realtime.onChatSoundUpdated((chatId, soundEnabled) => {
+      setSoundStates((previous) => {
+        if (previous.get(chatId) === soundEnabled) {
+          return previous
+        }
+        const next = new Map(previous)
+        next.set(chatId, soundEnabled)
+        return next
+      })
+    })
+  }, [realtime])
 
   // FR-014 badge reset of the open dialog: rendering its incoming
   // messages is exactly when useChatMessages advances the read
@@ -1125,6 +1487,29 @@ function MessengerMachine() {
 
   const openChatView = useCallback((view: ActiveChat) => {
     setActiveChat(view)
+  }, [])
+
+  /**
+   * 008a US4 (T058; FR-012, api-contract §1.3 №42): звук-состояние из
+   * №11/№13 ChatView — select-фолбэк №13 и модальные пути №11
+   * (ContactsModal/GroupMembersModal → ensureChat) несут актуальное
+   * `soundEnabled` вызывающего; (ре)подключение сходится тем же
+   * правилом через №12 (эффект сходимости выше). Отсутствие поля
+   * (старый сервер) — no-op: умолчание «вкл» живёт в потребителях.
+   */
+  const adoptChatViewSound = useCallback((view: ChatView) => {
+    const soundEnabled = view.soundEnabled
+    if (soundEnabled === undefined) {
+      return
+    }
+    setSoundStates((previous) => {
+      if (previous.get(view.chatId) === soundEnabled) {
+        return previous
+      }
+      const next = new Map(previous)
+      next.set(view.chatId, soundEnabled)
+      return next
+    })
   }, [])
 
   /** Shell closure (data-model 3.3): Esc / фон / «Отмена» / успех submit. */
@@ -1145,13 +1530,15 @@ function MessengerMachine() {
   const handleOpenChatFromModal = useCallback(
     (view: ChatView) => {
       closeShell()
+      // 008a T058: №11-ответ несёт звук-состояние чата вызывающего.
+      adoptChatViewSound(view)
       const next = activeChatOfView(view)
       if (next !== null) {
         openChatView(next)
       }
       reloadChatList()
     },
-    [closeShell, openChatView, reloadChatList],
+    [closeShell, openChatView, reloadChatList, adoptChatViewSound],
   )
 
   /**
@@ -1201,6 +1588,7 @@ function MessengerMachine() {
           kind: 'direct',
           chatId: item.chatId,
           peer: item.peer,
+          peerAlias: item.peerAlias ?? null,
           blockedByMe: item.blockedByMe ?? false,
         })
         return
@@ -1210,6 +1598,8 @@ function MessengerMachine() {
       void (async () => {
         try {
           const view = await getChat(chatId)
+          // 008a T058: №13-ответ несёт звук-состояние чата вызывающего.
+          adoptChatViewSound(view)
           if (view.type === 'group') {
             openChatView({
               kind: 'group',
@@ -1225,6 +1615,7 @@ function MessengerMachine() {
               kind: 'direct',
               chatId: view.chatId,
               peer: view.peer,
+              peerAlias: view.peerAlias ?? null,
               blockedByMe: view.blockedByMe ?? false,
             })
           }
@@ -1233,7 +1624,7 @@ function MessengerMachine() {
         }
       })()
     },
-    [chats, openChatView],
+    [chats, openChatView, setDrawerOpen, adoptChatViewSound],
   )
 
   /** №14 DELETE /chats/{chatId} + outbox purge (FR-021, T060) — direct only. */
@@ -1349,6 +1740,59 @@ function MessengerMachine() {
   }, [activeChat])
 
   /**
+   * Bell-колокол заголовка (008a US4, T057; FR-013, ui-behavior §4.1):
+   * №42 с ЦЕЛЕВЫМ значением кнопки. Успех — состояние сходится ОТВЕТОМ
+   * №42 (echo сохранённого, не локальным оптимизмом), один тост
+   * «Звуковые оповещения включены/отключены — {имя чата}» (личный —
+   * peer по цепочке FR-003, группа — название 006: живой №28-титул,
+   * иначе №12-базис) и звук отклика §4.2 («вкл» — playBellTone, «выкл»
+   * — глухой щелчок playMuteTone). Ошибка сети/429 — тост ошибки
+   * problemMessage, состояние НЕ меняется (офлайн-очереди нет — №42
+   * идемпотентен, повторный клик просто пошлёт то же значение).
+   */
+  const handleToggleChatSound = useCallback(
+    (next: boolean) => {
+      const target = activeChat
+      if (target === null) {
+        return
+      }
+      const liveGroupTitle =
+        activeGroup !== null && activeGroup.chatId === target.chatId && target.kind === 'group'
+          ? activeGroup.title
+          : null
+      const chatName =
+        target.kind === 'direct'
+          ? resolveDisplayName(
+              target.peerAlias ?? undefined,
+              target.peer.displayName,
+              target.peer.username,
+            )
+          : (liveGroupTitle ?? target.title)
+      void (async () => {
+        try {
+          const answer = await setChatSound(target.chatId, next)
+          setSoundStates((previous) => {
+            const updated = new Map(previous)
+            updated.set(target.chatId, answer.soundEnabled)
+            return updated
+          })
+          if (answer.soundEnabled) {
+            playBellTone()
+          } else {
+            playMuteTone()
+          }
+          showToast(
+            `Звуковые оповещения ${answer.soundEnabled ? 'включены' : 'отключены'} — ${chatName}`,
+          )
+        } catch (cause) {
+          showToast(problemMessage(cause))
+        }
+      })()
+    },
+    [activeChat, activeGroup, showToast],
+  )
+
+  /**
    * «Добавить в контакты» строки модали «Участники» (T055/T057,
    * FR-012): №21 с id участника — идемпотентно 201/200 без дублей,
    * один тост прототипа addContact (имя — из живого №28-ростра),
@@ -1406,6 +1850,17 @@ function MessengerMachine() {
    * truth.
    */
   const handleContactBlockToggled = useCallback(() => {
+    reloadChatList()
+  }, [reloadChatList])
+
+  /**
+   * №40 success FROM the contacts form (008a T022; FR-003, ui-behavior
+   * §1.2 «все поверхности владельца обновляются»): №12 converges AT
+   * ONCE — peerAlias/displayName of «Чаты» rows stop being stale
+   * without closing the shell/F5 (рефетч-семантика: realtime-события
+   * смены имени нет).
+   */
+  const handleContactRenamed = useCallback(() => {
     reloadChatList()
   }, [reloadChatList])
 
@@ -1590,6 +2045,83 @@ function MessengerMachine() {
   const shellFormId: ModalFormId | null = pendingAction !== null ? 'confirm' : modalForm
   const shellTitle = shellTitleOf(confirmation, shellFormId)
 
+  const renderShellInhabitants = () => (
+    <>
+      {(shellFormId === 'contacts' ||
+        shellFormId === 'add-contact' ||
+        shellFormId === 'rename-contact') && (
+        <ContactsModal
+          chats={chats}
+          onOpenChat={handleOpenChatFromModal}
+          onChatDeleted={handleChatDeleted}
+          onContactBlockToggled={handleContactBlockToggled}
+          onContactRemoved={handleContactRemoved}
+          onContactRenamed={handleContactRenamed}
+          onFormChange={(form) => {
+            setModalForm(CONTACTS_SHELL_FORMS[form])
+          }}
+        />
+      )}
+      {shellFormId === 'profile' && <ProfileModal onClose={closeShell} />}
+      {/* grpForm-проекция прототипа (T035): №27 + валидация 006, тост
+          «Групповой чат создан — {title}» у формы, окно группы —
+          handleGroupCreated. */}
+      {shellFormId === 'create-group' && (
+        <CreateGroupDialog onCreated={handleGroupCreated} onCancel={closeShell} />
+      )}
+      {/* Групповые формы «шестерёнки» (T057): №28-ростер сходится в
+          слот оболочки — «Участники» (T055) несут ростер-действия
+          мьютекса useGroupMembers и №21-предложение строки (тост — у
+          страницы), «Редактировать» (T056) — конвейер №29+№31/№32;
+          успех №29 закрывает оболочку (прототип grpEditForm →
+          closeModal), тост завершённого submit — у самой формы (T045).
+          T098: строки «Участников» — навигация: №12-базис + штатный
+          onOpenChat владельца оболочки (как у «Контактов»). */}
+      {(shellFormId === 'group-members' || shellFormId === 'group-edit') &&
+        activeChat?.kind === 'group' && (
+          <GroupShellForm
+            formId={shellFormId}
+            group={activeGroup}
+            chatId={activeChat.chatId}
+            status={activeGroupStatus}
+            error={activeGroupError}
+            currentUserId={currentUserId}
+            rosterActions={rosterActions}
+            chats={chats}
+            onOpenChat={handleOpenChatFromModal}
+            contactUserIds={contactUserIds}
+            onAddContact={handleMemberAddContact}
+            onReload={reloadActiveGroup}
+            onMembersAdded={handleMembersAdded}
+            onUpdated={handleGroupUpdated}
+            onCancel={closeShell}
+          />
+        )}
+      {shellFormId === 'confirm' && confirmation !== null && (
+        <ConfirmDialog
+          text={confirmation.text}
+          confirmLabel={confirmation.confirmLabel}
+          variant={confirmation.variant}
+          onConfirm={() => {
+            if (actionPending) {
+              return
+            }
+            if (pendingAction === 'delete-chat') {
+              handleConfirmDeleteChat()
+            } else if (pendingAction === 'leave-group') {
+              handleConfirmLeaveGroup()
+            } else if (pendingAction === 'delete-group') {
+              handleConfirmDeleteGroup()
+            } else {
+              handleConfirmBlockToggle()
+            }
+          }}
+          onCancel={closeShell}
+        />
+      )}
+    </>
+  )
+
   return (
     <>
       {/* US5 кнопка каталога (T065; FR-029, design-tokens §9): плавающий
@@ -1643,6 +2175,8 @@ function MessengerMachine() {
               <>
                 <ChatHeader
                   chat={headerChatOf(activeChat, activeGroup, contacts, currentUserId, meUsername)}
+                  soundEnabled={soundStates.get(activeChat.chatId) ?? true}
+                  onToggleSound={handleToggleChatSound}
                   onAddContact={handleGearAddContact}
                   onToggleBlock={handleGearToggleBlock}
                   onDeleteChat={handleGearDeleteChat}
@@ -1685,12 +2219,15 @@ function MessengerMachine() {
                   othersReadUpToSeq={othersReadUpToSeq}
                   unreadFromSeq={unreadFromSeq}
                   ownAckIds={ownAckIds}
+                  typing={typingParticipants}
                 />
                 <MessageInput
                   onSend={handleSend}
                   disabled={currentUserId === null}
                   blocked={activeChat.kind === 'direct' && activeChat.blockedByMe}
                   floodRetryAt={headFloodRetryAt(chatOutbox)}
+                  onDraftChange={typingSignals.onDraftChange}
+                  onSendAttempt={typingSignals.onSendAttempt}
                 />
               </>
             ) : (
@@ -1714,75 +2251,7 @@ function MessengerMachine() {
           смена обитателя, подложка не удваивается. Тост-слот ToastProvider
           (z-99) рендерится после — поверх модали (ui-behavior §5). */}
       <ModalShell formId={shellFormId} title={shellTitle} onClose={closeShell}>
-        {(shellFormId === 'contacts' || shellFormId === 'add-contact') && (
-          <ContactsModal
-            chats={chats}
-            onOpenChat={handleOpenChatFromModal}
-            onChatDeleted={handleChatDeleted}
-            onContactBlockToggled={handleContactBlockToggled}
-            onContactRemoved={handleContactRemoved}
-            onFormChange={(form) => {
-              setModalForm(form === 'add' ? 'add-contact' : 'contacts')
-            }}
-          />
-        )}
-        {shellFormId === 'profile' && <ProfileModal onClose={closeShell} />}
-        {/* grpForm-проекция прототипа (T035): №27 + валидация 006, тост
-            «Групповой чат создан — {title}» у формы, окно группы —
-            handleGroupCreated. */}
-        {shellFormId === 'create-group' && (
-          <CreateGroupDialog onCreated={handleGroupCreated} onCancel={closeShell} />
-        )}
-        {/* Групповые формы «шестерёнки» (T057): №28-ростер сходится в
-            слот оболочки — «Участники» (T055) несут ростер-действия
-            мьютекса useGroupMembers и №21-предложение строки (тост — у
-            страницы), «Редактировать» (T056) — конвейер №29+№31/№32;
-            успех №29 закрывает оболочку (прототип grpEditForm →
-            closeModal), тост завершённого submit — у самой формы (T045).
-            T098: строки «Участников» — навигация: №12-базис + штатный
-            onOpenChat владельца оболочки (как у «Контактов»). */}
-        {(shellFormId === 'group-members' || shellFormId === 'group-edit') &&
-          activeChat?.kind === 'group' && (
-            <GroupShellForm
-              formId={shellFormId}
-              group={activeGroup}
-              chatId={activeChat.chatId}
-              status={activeGroupStatus}
-              error={activeGroupError}
-              currentUserId={currentUserId}
-              rosterActions={rosterActions}
-              chats={chats}
-              onOpenChat={handleOpenChatFromModal}
-              contactUserIds={contactUserIds}
-              onAddContact={handleMemberAddContact}
-              onReload={reloadActiveGroup}
-              onMembersAdded={handleMembersAdded}
-              onUpdated={handleGroupUpdated}
-              onCancel={closeShell}
-            />
-          )}
-        {shellFormId === 'confirm' && confirmation !== null && (
-          <ConfirmDialog
-            text={confirmation.text}
-            confirmLabel={confirmation.confirmLabel}
-            variant={confirmation.variant}
-            onConfirm={() => {
-              if (actionPending) {
-                return
-              }
-              if (pendingAction === 'delete-chat') {
-                handleConfirmDeleteChat()
-              } else if (pendingAction === 'leave-group') {
-                handleConfirmLeaveGroup()
-              } else if (pendingAction === 'delete-group') {
-                handleConfirmDeleteGroup()
-              } else {
-                handleConfirmBlockToggle()
-              }
-            }}
-            onCancel={closeShell}
-          />
-        )}
+        {renderShellInhabitants()}
       </ModalShell>
     </>
   )

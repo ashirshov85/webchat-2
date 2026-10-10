@@ -1,5 +1,6 @@
 package webchat.backend.presence.api
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import org.slf4j.LoggerFactory
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
@@ -15,6 +16,7 @@ import webchat.backend.config.UserRateLimiter
 import webchat.backend.presence.domain.PresenceService
 import webchat.backend.presence.domain.PresenceSnapshotEntry
 import webchat.backend.presence.domain.PresenceSnapshotStatus
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -26,7 +28,8 @@ import java.util.UUID
  *    per-pair visibility policy of [PresenceService.snapshot] answers
  *    every target with the PUBLISHED status + rev (hysteresis-consistent
  *    with `presence.updated`, FR-004/SC-006) or the indistinguishable
- *    `unknown` of «no access» (FR-007);
+ *    `unknown` of «no access» (FR-007) — plus, since 008a (T044), the
+ *    optional `lastSeenAt` on disclosed offline items (FR-010);
  *  * `POST /api/v1/users/me/presence/heartbeat` (№37, T015) — the
  *    APPLICATION-level presence heartbeat that atomically (one Lua leg of
  *    [webchat.backend.presence.repository.RedisPresenceStore]) extends the
@@ -138,7 +141,12 @@ class PresenceController(
         return distinct
     }
 
-    /** openapi №36 200: the wire projection of one snapshot entry (the lowercase contract enum). */
+    /**
+     * openapi №36 200: the wire projection of one snapshot entry (the
+     * lowercase contract enum + the T044-disclosed `lastSeenAt`, ABSENT
+     * whenever the service's §B2 verdict rejected it — never an explicit
+     * `null`).
+     */
     private fun itemOf(
         target: UUID,
         entries: Map<UUID, PresenceSnapshotEntry>,
@@ -153,6 +161,7 @@ class PresenceController(
                         PresenceSnapshotStatus.UNKNOWN -> STATUS_UNKNOWN
                     },
                 rev = entry.rev,
+                lastSeenAt = entry.lastSeenAt,
             )
         } ?: PresenceStatusItem(userId = target, status = STATUS_UNKNOWN, rev = 0L)
 
@@ -255,12 +264,17 @@ data class PresenceSnapshotResponse(
  * One №36 item (openapi `PresenceStatusItem`): the target, the wire
  * status (`online`/`offline` — the published value; `unknown` — the
  * indistinguishable «no access») and the revision the client merges by
- * max(rev) per user (FR-003).
+ * max(rev) per user (FR-003). [lastSeenAt] (008a T044, US3): the
+ * RFC 3339 stamp of the target's last presence activity — present ONLY
+ * on a visible offline item of a non-incognito target that has data;
+ * ABSENT in every other case (`NON_NULL` — «скрыто» ≡ «нет данных»,
+ * SC-002), the client's neutral fallback «Был в сети — давно».
  */
 data class PresenceStatusItem(
     val userId: UUID,
     val status: String,
     val rev: Long,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val lastSeenAt: Instant? = null,
 )
 
 /**

@@ -3,9 +3,15 @@
  * research §E): инициалы и детерминированный цвет вычисляются на лету из
  * единственного источника — username для пользователей либо title для групп,
  * без персистентности (переименование группы пересчитывает аватар само).
- * Алгоритм и палитра — дословно из прототипа
- * specs/008-chat-window-styling/design/chats.html (initialsOf, GROUP_COLORS);
- * норматив констант — contracts/design-tokens.md §4.
+ * Палитра — дословно из прототипа specs/008-chat-window-styling/design/
+ * chats.html (GROUP_COLORS); норматив констант — contracts/design-tokens.md §4.
+ *
+ * 008a T020 (FR-004, SC-006): источники аватара разделены — инициалы
+ * вычисляются из отображаемого имени (`initialsOf(resolveDisplayName(...))`,
+ * names.ts), цвет — по-прежнему `colorOf(username)`/title группы
+ * (переименование пользователя не перекрашивает). Инициалы — первый
+ * графемный кластер (`Intl.Segmenter`) каждого из первых двух слов
+ * (кириллица/латиница/эмодзи, «тофу» недопустимо — 008a ui-behavior §1).
  */
 
 /** Палитра детерминированного цвета из прототипа (design-tokens §4). */
@@ -34,14 +40,27 @@ export function fnv1a32(source: string): number {
 }
 
 /**
- * Инициалы: первые буквы первых двух слов, uppercase; одиночное слово —
- * одна буква. Артикль «the» пропускается (алгоритм прототипа). Пустой
- * источник — пустая строка (аватар-компонент покажет заглушку).
+ * Графемная сегментация (008a ui-behavior §1): кластеры Unicode, а не
+ * UTF-16 code units — суррогатные пары/ZWJ-эмодзи/диакритика не рвутся.
+ */
+const GRAPHEME_SEGMENTER = new Intl.Segmenter('ru', { granularity: 'grapheme' })
+
+/** Первый графемный кластер слова целиком (без «тофу» из одиночных суррогатов). */
+function firstGrapheme(word: string): string {
+  const [first] = GRAPHEME_SEGMENTER.segment(word)
+  return first?.segment ?? ''
+}
+
+/**
+ * Инициалы: первые графемные кластеры первых двух слов, uppercase; одиночное
+ * слово — один кластер. Пустые части и артикль «the» пропускаются (алгоритм
+ * прототипа). Пустой источник — пустая строка (аватар-компонент покажет
+ * заглушку; в цепочке FR-003 вход всегда непуст — фолбэк `username`).
  */
 export function initialsOf(source: string): string {
   const words = source.split(' ').filter((word) => word.length > 0 && word.toLowerCase() !== 'the')
-  const first = words[0]?.[0] ?? ''
-  const second = words[1]?.[0] ?? ''
+  const first = firstGrapheme(words[0] ?? '')
+  const second = firstGrapheme(words[1] ?? '')
   return (first + second).toUpperCase()
 }
 

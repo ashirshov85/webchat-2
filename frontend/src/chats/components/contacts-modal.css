@@ -8,8 +8,9 @@
     .contacts-form (#contactsForm: колонка gap 8), поле поиска .ctc-search
     (#ctcSearch, дословно .modal input:not([type=checkbox])) и высота списка
     контактов (прототип #ctcList{max-height:280px} поверх базовой 220px),
-    а также форма добавления .add-form (#addForm + #addQuery + label —
-    .modal form/.modal label/.modal input прототипа, T032/FR-012).
+    а также формы добавления .add-form (#addForm + #addQuery + label —
+    .modal form/.modal label/.modal input прототипа, T032/FR-012) и
+    переименования .rename-form (#renameForm + #renameInput, 008a T022).
 
    Общие классы строк-пикеров прототипа определены здесь впервые и
    переиспользуются задачами T035+ (create-group/group-edit/group-members):
@@ -204,23 +205,32 @@ button.pick-row:hover:not(:disabled) {
 }
 
 /* ============ ФОРМА «ДОБАВИТЬ КОНТАКТ» (#addForm прототипа, T032) ============ */
+/* ============ ФОРМА «ИМЯ КОНТАКТА» (#renameForm прототипа, 008a T022) ============
+   Каркас обеих форм одинаков (.modal form прототипа: колонка gap 8);
+   readonly username/email #renameForm — глобальные .modal-ro
+   (определены в profile-modal.css «для переиспользования renameForm и
+   пр.», загрузка гарантирована оболочкой MessengerPage). */
 
 /* .modal form прототипа: колонка gap 8 (как #contactsForm). */
-.add-form {
+.add-form,
+.rename-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
 /* .modal label прототипа: italic 12.5px, muted-2. */
-.add-form label {
+.add-form label,
+.rename-form label {
   font: italic 12.5px var(--font-body);
   color: var(--muted-2);
 }
 
-/* #addQuery — дословно .modal input прототипа (как #ctcSearch):
-   полная перекрыка auth-наследия index.css (светлое поле, синий focus). */
-.add-form .add-query {
+/* #addQuery/#renameInput — дословно .modal input прототипа (как
+   #ctcSearch): полная перекрыка auth-наследия index.css (светлое поле,
+   синий focus). */
+.add-form .add-query,
+.rename-form .rename-input {
   width: 100%;
   padding: 10px 12px;
   border-radius: var(--r-field);
@@ -234,11 +244,13 @@ button.pick-row:hover:not(:disabled) {
     box-shadow 0.2s;
 }
 
-.add-form .add-query::placeholder {
+.add-form .add-query::placeholder,
+.rename-form .rename-input::placeholder {
   color: var(--muted-3);
 }
 
-.add-form .add-query:focus-visible {
+.add-form .add-query:focus-visible,
+.rename-form .rename-input:focus-visible {
   border-color: var(--gold-light);
   box-shadow: 0 0 0 2px rgba(232, 200, 119, 0.25);
   outline: none;

@@ -41,6 +41,12 @@ const { mockGetCurrentUser, mockChats, mockGroups, mockSse, mockPresence, mockSo
       listMessagesAfter: vi.fn(),
       sync: vi.fn(),
       sendMessage: vi.fn(),
+      // 008a T038: машина №41-сигналов композера (useTyping) — best-effort;
+      // контракт api-функции — Promise.
+      sendTyping: vi.fn(() => Promise.resolve()),
+      // 008a T057: bell-колокол заголовка — №42 страницы (тосты/звук
+      // отклика — паттерн для T059).
+      setChatSound: vi.fn(),
       deliveryAck: vi.fn(),
       ensureChat: vi.fn(),
       listContacts: vi.fn(),
@@ -71,6 +77,9 @@ const { mockGetCurrentUser, mockChats, mockGroups, mockSse, mockPresence, mockSo
     mockSound: {
       chimeOnRealtimeIncoming: vi.fn(),
       chimeOnSyncBatch: vi.fn(),
+      // 008a T057: звуки отклика bell (§4.2) — «вкл»/«выкл».
+      playBellTone: vi.fn(),
+      playMuteTone: vi.fn(),
     },
   }),
 )
@@ -245,9 +254,12 @@ describe('реальное время — один сигнал на входя�
     emitMessageCreated(stream, makeMessage(BOB_CHAT_ID, 3, BOB))
 
     expect(mockSound.chimeOnRealtimeIncoming).toHaveBeenCalledTimes(1)
+    // 008a T058: проводка передаёт per-chat звук-состояние третьим
+    // аргументом (undefined = неизвестно/legacy — звучит, ui/sound).
     expect(mockSound.chimeOnRealtimeIncoming).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: BOB_CHAT_ID }),
       ME,
+      undefined,
     )
   })
 
@@ -261,6 +273,7 @@ describe('реальное время — один сигнал на входя�
     expect(mockSound.chimeOnRealtimeIncoming).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: ALICE_CHAT_ID }),
       ME,
+      undefined,
     )
   })
 
@@ -294,6 +307,7 @@ describe('реальное время — один сигнал на входя�
     expect(mockSound.chimeOnRealtimeIncoming).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: ALICE_CHAT_ID, message: own }),
       ME,
+      undefined,
     )
     expect(mockSound.chimeOnSyncBatch).not.toHaveBeenCalled()
   })

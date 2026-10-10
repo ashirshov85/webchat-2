@@ -25,9 +25,11 @@
  *    relies on; №37 heartbeats answer 204.
  *
  * The assertion surface is the observer's 1:1 dialog header
- * (`.status-row .status-txt` — «В сети»/«офлайн»/«неизвестно»): the
- * page is NEVER reloaded across the whole scenario; convergence must
- * happen through the live №18 frame and/or the №36 heal alone.
+ * (`.status-row .status-txt` — «В сети» / «Был в сети — давно»: the
+ * 008a US3 offline label of T048 replaced the 008-era «офлайн»; an
+ * unknown entry renders no status text at all): the page is NEVER
+ * reloaded across the whole scenario; convergence must happen
+ * through the live №18 frame and/or the №36 heal alone.
  */
 import { expect, test } from '@playwright/test'
 import type { Page, Route } from '@playwright/test'
@@ -244,7 +246,7 @@ async function bootUser(page: Page, me: PublicUser, peer: PublicUser): Promise<v
 }
 
 test.describe('T077 bug 1 e2e — two users converge without a page refresh', () => {
-  test('A opens → B sees «В сети» live; A leaves silently → B sees «офлайн»', async ({
+  test('A opens → B sees «В сети» live; A leaves silently → B sees the offline label', async ({
     browser,
   }) => {
     const server = new PresenceServer()
@@ -266,7 +268,11 @@ test.describe('T077 bug 1 e2e — two users converge without a page refresh', ()
     }
     await observerPage.locator('.chat-item').first().click()
     const observerStatus = observerPage.locator('.chat-head .status-row .status-txt')
-    await expect(observerStatus).toHaveText('офлайн')
+    // 008a US3 (T048): the offline label is «Был в сети — давно» —
+    // the ALICE fixture discloses no `lastSeenAt`, the neutral
+    // fallback of ui-behavior §3 (the two-user dataset answers №36
+    // without the field).
+    await expect(observerStatus).toHaveText('Был в сети — давно')
 
     // ALICE OPENS THE APP: her №18 registration publishes `online` rev 6
     // to the audience; BOB's page receives the frame (or the №36 heal)
@@ -287,7 +293,7 @@ test.describe('T077 bug 1 e2e — two users converge without a page refresh', ()
     await subjectContext.close()
     server.subjectExpired(ALICE.id)
 
-    await expect(observerStatus).toHaveText('офлайн')
+    await expect(observerStatus).toHaveText('Был в сети — давно')
 
     await observerContext.close()
   })

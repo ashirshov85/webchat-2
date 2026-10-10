@@ -10,14 +10,13 @@
  * Реализовано в T031 (список/меню; контракт закреплён красными тестами
  * T028 — написаны ДО реализации, конституция VI):
  *
- * - Список: №20 `listContacts` на монтировании; КЛИЕНТСКАЯ сортировка
- *   username (`byUsername`: алфавит без регистра, латиница раньше
- *   кириллицы — см. комментарий у компаратора; displayName в контрактах
- *   004–007 нет — alias-имена вне фичи, ui-behavior §9; «displayName →
- *   username» FR-011 вырождается в username); живой фильтр по подстроке
- *   username/email без регистра; пустые состояния «Нет контактов —
- *   добавьте первого» / «Ничего не найдено»; сбой №20 — ошибка +
- *   «Повторить» с рефетчем (ожидание 004, FR-034).
+ * - Список: №20 `listContacts` на монтировании; КЛИЕНТСКАЯ сортировка —
+ *   с 008a T022 по цепочке имён (`byDisplayChain`: locale `ru` прототипа,
+ *   тай-брейк — прежний `byUsername` 'und', см. комментарии у
+ *   компараторов); живой фильтр по подстроке [цепочка, username, email]
+ *   без регистра; пустые состояния «Нет контактов — добавьте первого» /
+ *   «Ничего не найдено»; сбой №20 — ошибка + «Повторить» с рефетчем
+ *   (ожидание 004, FR-034).
  *
  * - Пометки из пропа `chats` (№12, владелец — MessengerPage): связанный
  *   direct-чат с `blockedByMe` → «заблокирован» (+ класс .blocked);
@@ -42,7 +41,9 @@
  *   (Clarification FR-013: создание чата — только осознанным пунктом
  *   «Создать чат»).
  *
- * - Меню «⋯» (ContextMenu; FR-013/FR-014): «Заблокировать»/«Разблокировать»
+ * - Меню «⋯» (ContextMenu; FR-013/FR-014): «Переименовать» — ПЕРВЫЙ пункт
+ *   (008a T022, ui-behavior §1.2 — см. блок ниже); «Заблокировать»/
+ *   «Разблокировать»
  *   (по blockedByMe связанного чата; подтверждение — №23/№24, тосты
  *   «Контакт заблокирован/разблокирован — {username}»); «Удалить чат»
  *   (есть связанный; подтверждение danger — №14, тост «Чат удалён —
@@ -60,9 +61,9 @@
  * Форма «Добавить контакт» (FR-012, T032) — проекция #addForm прототипа
  * (label «Username или email — точное совпадание», поле, .modal-btns
  * «Отмена»/submit «Добавить»): №19 `searchUsers` с ТРИММИНГОМ запроса
- * (точное совпадение username/email без регистра — `@`-правило на сервере,
+ * (точное совпадание username/email без регистра — `@`-правило на сервере,
  * 0..1 ответ, ожидание 004); промах — спокойная ошибка «требуется точное
- * совпадение», №21 НЕ вызывается; находка — подтверждение ConfirmDialog
+ * совпадание», №21 НЕ вызывается; находка — подтверждение ConfirmDialog
  * (имя <b> + подпись .confirm-sub «username · email», как askConfirm
  * прототипа) → №21 `addContact` (идемпотентно 201/200: контакт уже в
  * книге — тост «Уже в контактах — {username}», иначе «Контакт добавлен —
@@ -70,8 +71,28 @@
  * (новая строка в списке). Сбой №21/№11 — ошибка при живом списке
  * (ожидание 004). Пустой запрос — без запроса на сервер (004).
  *
+ * Цепочка имён + «Переименовать» (feature 008a, US1, T022; FR-003/FR-005,
+ * ui-behavior §1/§1.2): строки/сортировка/фильтр живут по ЕДИНОЙ цепочке
+ * `resolveDisplayName(alias, displayName, username)` (ui/names, T018) —
+ * `.c-name` и aria-label строки несут цепочку; сортировка — по цепочке
+ * (locale `ru` прототипа renderContactsModal, кириллица раньше латиницы),
+ * тай-брейк username — прежняя корневая коллация 'und'; фильтр — подстрока
+ * без регистра по [цепочка, username, email]. Пункт «Переименовать» —
+ * ПЕРВЫЙ в «⋯»-меню (перед «Заблокировать/Разблокировать»), открывает
+ * форму «Имя контакта» (#renameForm прототипа: поле, предзаполненное
+ * текущей цепочкой/alias, maxlength 64, readonly username/email .modal-ro):
+ * сохранение №40 `setContactAlias` — полностью очищенное поле = явный
+ * `null` (сброс alias, возврат к displayName → username); непустая строка
+ * только из пробелов — ошибка «Укажите имя контакта» (строка прототипа
+ * chats.html:1648, зеркалит 400 invalid_alias) БЕЗ запроса. Успех — строка
+ * обновляется ответом №40, тост «Контакт переименован — {цепочка}» и
+ * доклад владельцу (onContactRenamed → рефетч №12: peerAlias сходится в
+ * «Чатах» без F5, паттерн T089); сбой — инлайн-ошибка формы, список жив.
+ * Отдельной кнопки сброса нет — пустым значением той же формы (YAGNI).
+ *
  * Встраивание форм в ModalShell MessengerPage (заголовки «Контакты»/
- * «Добавить контакт», закрытие Esc/фоном) — T034.
+ * «Добавить контакт»/«Редактировать контакт», закрытие Esc/фоном) —
+ * T034; форма переименования поднимает formId 'rename' (T022).
  *
  * Presence-точки контактов (feature 008, US3, T042; FR-024,
  * design-tokens §4, контракт T040): статус — ТОЛЬКО из presenceStore
@@ -80,6 +101,16 @@
  * монтирование списка): online — зелёная мерцающая, offline — тусклая;
  * bug 12 (T090): unknown точки НЕ выводит — до первого №36 строка без
  * индикатора, ложный «офлайн» запрещён (семантика 007).
+ *
+ * Превью-статус `.c-prev` (feature 008a, US3, T048; FR-011, ui-behavior
+ * §3, прототип renderContactsModal — `flags.length ? capFirst(…) :
+ * presenceOf(c)`): пометки «заблокирован»/«чат удалён» приоритетнее —
+ * при них превью остаётся прежним; иначе `.c-prev` несёт presence-текст
+ * через `usePresenceEntry` (T047): online — «В сети», offline с
+ * раскрытым `lastSeenAt` — «Был в сети — {время}» (`lastSeenFormat`
+ * T046), offline без поля — нейтральный фолбэк «Был в сети — давно»
+ * (нет данных/инкогнито/блок-пара неотличимы, SC-002); `unknown`
+ * превью не выводит (bug 12 — ложный «офлайн» запрещён).
  */
 import {
   useCallback,
@@ -98,16 +129,20 @@ import {
   listContacts,
   removeContact,
   searchUsers,
+  setContactAlias,
   unblockUser,
 } from '../../api/chats'
-import type { ChatListItem, ChatView, ContactView } from '../../api/chats'
-import type { PublicUser } from '../../api/auth'
+import type { ChatListItem, ChatView, ContactView, UserWithAlias } from '../../api/chats'
 import { problemMessage } from '../../auth/problem'
-import { usePresenceStatus } from '../../presence/usePresence'
+import { usePresenceEntry, usePresenceStatus } from '../../presence/usePresence'
+import type { PresenceEntry } from '../../presence/presenceStore'
 import { Avatar } from '../../ui/Avatar'
+import { initialsOf } from '../../ui/avatar'
 import { ConfirmDialog, type ConfirmVariant } from '../../ui/ConfirmDialog'
 import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
 import { useToast } from '../../ui/Toast'
+import { resolveDisplayName } from '../../ui/names'
+import { lastSeenFormat } from '../../ui/time'
 import './contacts-modal.css'
 
 export interface ContactsModalProps {
@@ -131,12 +166,21 @@ export interface ContactsModalProps {
    */
   readonly onContactBlockToggled?: (userId: string, blockedByMe: boolean) => void
   /**
-   * T089 (Bug 11б): успешный №22 «Удалить контакт» — владелец
-   * оболочки синхронизирует книгу №20 страницы (reloadContacts), и
+   * T089 (Bug 11б): успешный №22 «Удалить контакт» — владелец оболочки
+   * синхронизирует книгу №20 страницы (reloadContacts), и
    * «Добавить в контакты» шестерёнки/members-модали возвращается
    * сразу, а не после закрытия оболочки/перезагрузки.
    */
   readonly onContactRemoved?: (userId: string) => void
+  /**
+   * T022 (008a US1): успешный №40 «Переименовать» — владелец оболочки
+   * рефетчит №12 (паттерн T089), и peerAlias/имена peer в «Чатах»
+   * сходятся живьём, без закрытия оболочки/F5 (ui-behavior §1.2 «все
+   * поверхности владельца обновляются»; realtime-события смены имени
+   * нет — рефетч-семантика). Доклад — только об успехе: сбой остаётся
+   * инлайн-ошибкой формы переименования (ожидание 004).
+   */
+  readonly onContactRenamed?: (userId: string) => void
   /**
    * T034 (ModalShell): сообщает владельцу оболочки о внутреннем
    * переключении list ↔ add — page отображает это в formId
@@ -159,7 +203,7 @@ type PendingConfirm =
   | { readonly kind: 'delete-chat'; readonly contact: ContactView; readonly chatId: string }
   | { readonly kind: 'create-chat'; readonly contact: ContactView }
   | { readonly kind: 'remove-contact'; readonly contact: ContactView }
-  | { readonly kind: 'add-contact'; readonly user: PublicUser }
+  | { readonly kind: 'add-contact'; readonly user: UserWithAlias }
 
 type ListStatus = 'loading' | 'ready' | 'error'
 
@@ -202,6 +246,27 @@ function byUsername(a: ContactView, b: ContactView): number {
   return a.user.username.localeCompare(b.user.username, 'und')
 }
 
+/**
+ * Цепочка отображаемого имени строки (008a T022; ui-behavior §1):
+ * `alias → displayName → username` — единая точка `resolveDisplayName`
+ * (ui/names, T018). №20 `ContactView` несёт alias вызывающего поверх
+ * `user.displayName` (контракт 0.9.0).
+ */
+function chainOf(contact: ContactView): string {
+  return resolveDisplayName(contact.alias, contact.user.displayName, contact.user.username)
+}
+
+/**
+ * FR-005 сортировка по цепочке (008a T022): locale `ru` ПРОТОТИПА
+ * renderContactsModal (chats.html:1292 — `displayName.localeCompare(
+ * …, 'ru')`) — кириллица раньше латиницы; тай-брейк — прежняя
+ * корневая коллация 'und' (`byUsername`, «текущая коллация»
+ * ui-behavior §1): совпадающие цепочки различаются username.
+ */
+function byDisplayChain(a: ContactView, b: ContactView): number {
+  return chainOf(a).localeCompare(chainOf(b), 'ru') || byUsername(a, b)
+}
+
 /** Параметры подтверждения по виду действия (ConfirmDialog, ui-behavior §3). */
 interface ConfirmUi {
   readonly text: ReactNode
@@ -209,8 +274,8 @@ interface ConfirmUi {
   readonly variant: ConfirmVariant
 }
 
-/** Форма модали (переключение внутри одной оболочки, data-model 3.3): список / добавление. */
-export type ModalForm = 'list' | 'add'
+/** Форма модали (переключение внутри одной оболочки, data-model 3.3): список / добавление / переименование. */
+export type ModalForm = 'list' | 'add' | 'rename'
 
 /**
  * Аватар контакта с presence-точкой (T042): отдельный компонент — хук
@@ -225,10 +290,45 @@ function ContactAvatar({ contact }: { readonly contact: ContactView }) {
   return (
     <Avatar
       source={contact.user.username}
+      // 008a T020/T022 (FR-004): инициалы — из цепочки отображаемого
+      // имени строки, цвет — от username (переименование не перекрашивает).
+      initials={initialsOf(chainOf(contact))}
       size={32}
       presenceDot={status === 'unknown' ? null : status}
     />
   )
+}
+
+/**
+ * Текст presence-статуса строки (008a US3, T048; ui-behavior §3,
+ * FR-011): online — «В сети»; offline с раскрытым `lastSeenAt` —
+ * «Был в сети — {время}» (`lastSeenFormat` T046); offline без поля —
+ * нейтральный фолбэк «Был в сети — давно» (скрытые случаи и «нет
+ * данных» неотличимы для наблюдателя, SC-002).
+ */
+function contactStatusText(entry: PresenceEntry): string {
+  if (entry.status === 'online') {
+    return 'В сети'
+  }
+  return `Был в сети — ${entry.lastSeenAt !== undefined ? lastSeenFormat(entry.lastSeenAt) : 'давно'}`
+}
+
+/**
+ * Превью-статус строки «Контактов» (008a T048; прототип
+ * renderContactsModal — flags.length ? capFirst(…) : presenceOf(c)):
+ * вызывается ТОЛЬКО без пометок «заблокирован»/«чат удалён» — они
+ * приоритетнее статуса. Отдельный компонент — хук записи нужен СТРОКЕ
+ * (`usePresenceEntry` T047: та же регистрация поверхности и №36-
+ * бэкфилл, что у точки аватара), а строки выводятся циклом. Bug 12
+ * (T090): `unknown` (нет записи в store) превью НЕ выводит — до
+ * сходимости №36 строка без строки статуса, ложный «офлайн» запрещён.
+ */
+function ContactPresencePreview({ userId }: { readonly userId: string }) {
+  const entry = usePresenceEntry(userId)
+  if (entry === undefined || entry.status === 'unknown') {
+    return null
+  }
+  return <div className="c-prev">{contactStatusText(entry)}</div>
 }
 
 export function ContactsModal({
@@ -237,6 +337,7 @@ export function ContactsModal({
   onChatDeleted,
   onContactBlockToggled,
   onContactRemoved,
+  onContactRenamed,
   onFormChange,
 }: ContactsModalProps) {
   const showToast = useToast()
@@ -252,6 +353,14 @@ export function ContactsModal({
   const [addQuery, setAddQuery] = useState('')
   const [addError, setAddError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  /**
+   * Форма «Имя контакта» (008a T022, ui-behavior §1.2): цель №40 и
+   * предзаполненное поле (текущая цепочка строки — alias, если задан).
+   */
+  const [renameTarget, setRenameTarget] = useState<ContactView | null>(null)
+  const [renameQuery, setRenameQuery] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState(false)
   /**
    * T097 (а): сессионный optimistic-override блокировки — пишется только
    * собственными №23/№24-успехами этой модали (см. докблок компонента:
@@ -277,15 +386,17 @@ export function ContactsModal({
     loadContacts()
   }, [loadContacts])
 
-  /** FR-011: клиентская сортировка username (ru-locale) + живой фильтр username/email. */
+  /** FR-005: клиентская сортировка по цепочке (ru прототипа, тай-брейк
+   * username 'und') + живой фильтр [цепочка, username, email] без регистра. */
   const normalizedQuery = query.trim().toLowerCase()
   const visibleContacts = useMemo(() => {
-    const sorted = [...contacts].sort(byUsername)
+    const sorted = [...contacts].sort(byDisplayChain)
     if (normalizedQuery === '') {
       return sorted
     }
     return sorted.filter(
       (contact) =>
+        chainOf(contact).toLowerCase().includes(normalizedQuery) ||
         contact.user.username.toLowerCase().includes(normalizedQuery) ||
         contact.user.email.toLowerCase().includes(normalizedQuery),
     )
@@ -367,6 +478,76 @@ export function ContactsModal({
       })
   }
 
+  /** «⋯» → «Переименовать» (ui-behavior §1.2): форма «Имя контакта»,
+   * предзаполненная текущей цепочкой строки (alias, если задан). */
+  const openRenameForm = useCallback(
+    (contact: ContactView) => {
+      setRenameTarget(contact)
+      setRenameQuery(chainOf(contact))
+      setRenameError(null)
+      setActionError(null)
+      setForm('rename')
+      onFormChange?.('rename')
+    },
+    [onFormChange],
+  )
+
+  /** «Отмена» формы переименования — назад к списку, БЕЗ запроса (SC-007). */
+  const closeRenameForm = () => {
+    setRenameTarget(null)
+    setRenameError(null)
+    setForm('list')
+    onFormChange?.('list')
+  }
+
+  /**
+   * Submit #renameForm (№40, ui-behavior §1.2): полностью очищенное
+   * поле — явный `null` (сброс alias → цепочка возвращается к
+   * displayName → username); непустая строка только из пробелов —
+   * ошибка «Укажите имя контакта» (прототип chats.html:1648, зеркалит
+   * 400 invalid_alias) БЕЗ запроса; иные значения сервер сохраняет
+   * после trim (1–64). Успех — строка обновляется ответом №40, тост
+   * «Контакт переименован — {цепочка}», доклад владельцу (№12-рефетч);
+   * сбой — инлайн-ошибка, форма жива.
+   */
+  const handleRenameSubmit = (event: SubmitEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (renaming || renameTarget === null) {
+      return
+    }
+    // Непустая строка только из пробелов — не сброс, а ошибка валидации
+    // (зеркаль серверной 400 invalid_alias) — запроса нет вовсе.
+    if (renameQuery.length > 0 && renameQuery.trim().length === 0) {
+      setRenameError('Укажите имя контакта')
+      return
+    }
+    setRenaming(true)
+    setRenameError(null)
+    const target = renameTarget
+    // Полностью очищенное поле — явный null (сброс alias), не «как есть».
+    void setContactAlias(target.user.id, {
+      alias: renameQuery.trim() === '' ? null : renameQuery,
+    })
+      .then((updated) => {
+        setContacts((current) =>
+          current.map((item) => (item.user.id === updated.user.id ? updated : item)),
+        )
+        showToast(`Контакт переименован — ${chainOf(updated)}`)
+        setRenameTarget(null)
+        setForm('list')
+        onFormChange?.('list')
+        // Владелец рефетчит №12 — peerAlias/имена peer «Чатов» сходятся
+        // живьём (паттерн T089), без закрытия оболочки.
+        onContactRenamed?.(updated.user.id)
+      })
+      .catch((error: unknown) => {
+        setRenameError(problemMessage(error))
+      })
+      .finally(() => {
+        setRenaming(false)
+      })
+  }
+
   /** Кебаб «⋯»: якорь — rect кнопки (паттерн MainMenuButton); клик не
    * проваливается в строку (menuBtn-early-return прототипа). */
   const handleMenuButtonClick = (
@@ -386,6 +567,14 @@ export function ContactsModal({
     const bound = boundChatOf(chats, menuContact)
     const blocked = blockedStateOf(menuContact, bound)
     return [
+      {
+        // ПЕРВЫЙ пункт «⋯»-меню (ui-behavior §1.2) — перед
+        // «Заблокировать/Разблокировать».
+        label: 'Переименовать',
+        onSelect: () => {
+          openRenameForm(menuContact)
+        },
+      },
       {
         label: blocked ? 'Разблокировать' : 'Заблокировать',
         onSelect: () => {
@@ -414,7 +603,7 @@ export function ContactsModal({
         },
       },
     ]
-  }, [menuContact, chats, blockedStateOf])
+  }, [menuContact, chats, blockedStateOf, openRenameForm])
 
   /** Подтверждённое действие (submit ConfirmDialog): форма возвращается к
    * списку, операция идёт своим ходом; успех — ровно один тост (FR-025),
@@ -574,20 +763,29 @@ export function ContactsModal({
             confirmLabel: 'Удалить',
             variant: 'danger',
           }
-        case 'add-contact':
+        case 'add-contact': {
           // askConfirm прототипа: имя + подпись «username · email» (.confirm-sub).
+          // 008a T023: имя — ЦЕПОЧКА найденного №19 (`alias → displayName →
+          // username`, ui-behavior §1); username/email в подписи различают
+          // совпадающие имена (identity-контекст).
+          const foundName = resolveDisplayName(
+            pending.user.alias,
+            pending.user.displayName,
+            pending.user.username,
+          )
           return {
             text: (
               <>
-                <b>{username}</b>
+                <b>{foundName}</b>
                 <span className="confirm-sub">
-                  {username} · {pending.user.email}
+                  {pending.user.username} · {pending.user.email}
                 </span>
               </>
             ),
             confirmLabel: 'Добавить',
             variant: 'primary',
           }
+        }
       }
     })()
     return (
@@ -642,6 +840,53 @@ export function ContactsModal({
     )
   }
 
+  /**
+   * Форма «Имя контакта» (#renameForm прототипа, 008a T022; ui-behavior
+   * §1.2) — вместо списка, в той же оболочке: поле, предзаполненное
+   * цепочкой (alias, если задан), maxlength 64; username/email — ТОЛЬКО
+   * для чтения (.modal-ro, прототип «меняется только имя»).
+   */
+  if (form === 'rename' && renameTarget !== null) {
+    return (
+      <form className="rename-form" onSubmit={handleRenameSubmit}>
+        <label htmlFor="ctc-rename-input">Имя контакта</label>
+        <input
+          id="ctc-rename-input"
+          className="rename-input"
+          placeholder={chainOf(renameTarget)}
+          maxLength={64}
+          autoComplete="off"
+          value={renameQuery}
+          disabled={renaming}
+          onChange={(event) => {
+            setRenameQuery(event.target.value)
+          }}
+        />
+        <div className="modal-ro">
+          <span>username</span>
+          <b>{renameTarget.user.username}</b>
+        </div>
+        <div className="modal-ro">
+          <span>email</span>
+          <b>{renameTarget.user.email || '—'}</b>
+        </div>
+        {renameError !== null && (
+          <div className="modal-err" role="alert">
+            {renameError}
+          </div>
+        )}
+        <div className="modal-btns">
+          <button type="button" className="m-btn" disabled={renaming} onClick={closeRenameForm}>
+            Отмена
+          </button>
+          <button type="submit" className="m-btn primary" disabled={renaming}>
+            Сохранить
+          </button>
+        </div>
+      </form>
+    )
+  }
+
   return (
     <div className="contacts-form">
       <input
@@ -677,6 +922,9 @@ export function ContactsModal({
             const bound = boundChatOf(chats, contact)
             const blocked = blockedStateOf(contact, bound)
             const flags = contactFlags(bound, blocked)
+            // Цепочка имён (008a T022, ui-behavior §1): `.c-name` и
+            // aria-label строки несут отображаемое имя, username — фолбэк.
+            const displayName = chainOf(contact)
             return (
               <button
                 type="button"
@@ -686,7 +934,7 @@ export function ContactsModal({
                   (blocked ? ' blocked' : '') +
                   (bound === null ? ' nochat' : '')
                 }
-                aria-label={`Контакт ${contact.user.username}`}
+                aria-label={`Контакт ${displayName}`}
                 title={bound !== null ? 'Открыть чат' : 'Чат удалён — создайте через меню ⋯'}
                 onClick={() => {
                   handleRowActivate(contact)
@@ -695,9 +943,16 @@ export function ContactsModal({
                 <ContactAvatar contact={contact} />
                 <div className="c-main">
                   <div className="c-top">
-                    <span className="c-name">{contact.user.username}</span>
+                    <span className="c-name">{displayName}</span>
                   </div>
-                  {flags.length > 0 && <div className="c-prev">{capFirst(flags.join(', '))}</div>}
+                  {/* 008a T048 (ui-behavior §3): пометки «заблокирован»/
+                      «чат удалён» приоритетнее; иначе превью-строка —
+                      presence-статус «В сети»/«Был в сети — …». */}
+                  {flags.length > 0 ? (
+                    <div className="c-prev">{capFirst(flags.join(', '))}</div>
+                  ) : (
+                    <ContactPresencePreview userId={contact.user.id} />
+                  )}
                 </div>
                 <button
                   type="button"

@@ -8,6 +8,11 @@ const SECOND_NOTE_HZ = 1400
 const SECOND_NOTE_DELAY_S = 0.1
 const PARTIAL_RATIOS = [1, 2.76, 5.4]
 
+/** «глухой щелчок» отклика «выкл» = 1 нота × 3 парциала (008a ui-behavior §4.2). */
+const MUTE_CLICK_OSCILLATOR_COUNT = 3
+const MUTE_CLICK_HZ = 300
+const MUTE_CLICK_VOLUME = 0.05
+
 const ME = '11111111-1111-1111-1111-111111111111'
 const PEER = '22222222-2222-2222-2222-222222222222'
 
@@ -265,12 +270,77 @@ describe('массовая доставка — ровно один сигнал
   })
 })
 
+describe('per-chat mute-гейт realtime-приёма (008a US4, FR-013, ui-behavior §4.2)', () => {
+  it('приглушённый чат (soundEnabled === false) — тишина, контекст не создаётся', () => {
+    sound.chimeOnRealtimeIncoming(incomingEvent('chat-muted'), ME, false)
+    expect(FakeAudioContext.instances).toHaveLength(0)
+  })
+
+  it('обычный чат (soundEnabled === true) — сигнал звучит', () => {
+    sound.chimeOnRealtimeIncoming(incomingEvent('chat-on'), ME, true)
+    expect(singleContext().oscillators).toHaveLength(CHIME_OSCILLATOR_COUNT)
+  })
+
+  it('состояние неизвестно (undefined, поля №12/№13 нет) — звучит: гейт строго !== false', () => {
+    sound.chimeOnRealtimeIncoming(incomingEvent('chat-legacy'), ME, undefined)
+    expect(singleContext().oscillators).toHaveLength(CHIME_OSCILLATOR_COUNT)
+  })
+
+  it('гейт не трогает фильтр собственных сообщений — оба молчания независимы', () => {
+    sound.chimeOnRealtimeIncoming(incomingEvent('chat-a', ME), ME, true)
+    sound.chimeOnRealtimeIncoming(incomingEvent('chat-a', ME), ME, false)
+    expect(FakeAudioContext.instances).toHaveLength(0)
+  })
+})
+
+describe('отклик «выкл» — «глухой щелчок» 300 Гц (008a US4, ui-behavior §4.2, прототип :779)', () => {
+  it('одна нота × три синус-парциала 1 : 2.76 : 5.4 — 3 осциллятора на отклик', () => {
+    sound.playMuteTone()
+    const context = singleContext()
+    expect(context.oscillators).toHaveLength(MUTE_CLICK_OSCILLATOR_COUNT)
+    for (const oscillator of context.oscillators) {
+      expect(oscillator.type).toBe('sine')
+    }
+    expectPartialFrequencies(context.oscillators, [MUTE_CLICK_HZ])
+  })
+
+  it('нота стартует на t=0, парциалы гасятся экспоненциальным затуханием', () => {
+    sound.playMuteTone()
+    const context = singleContext()
+    expect(oscillatorsStartingNear(context, 0)).toHaveLength(MUTE_CLICK_OSCILLATOR_COUNT)
+    for (const oscillator of context.oscillators) {
+      expect(gainOf(oscillator).gain.exponentialRampCalls.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('громкость 0.05 по парциалам 1 : 0.4 : 0.2 — щелчок тише звоночка (прототип .05)', () => {
+    sound.playMuteTone()
+    const context = singleContext()
+    const volumes = context.oscillators
+      .map((oscillator) => gainOf(oscillator).gain.value)
+      .sort((a, b) => a - b)
+    const expected = [1, 0.4, 0.2]
+      .map((amplitude) => MUTE_CLICK_VOLUME * amplitude)
+      .sort((a, b) => a - b)
+    expected.forEach((wanted, index) => {
+      expect(volumes[index]).toBeCloseTo(wanted, 6)
+    })
+  })
+
+  it('AudioContext недоступен — тихий пропуск без исключения (запрет автозвука)', () => {
+    vi.stubGlobal('AudioContext', undefined)
+    expect(() => sound.playMuteTone()).not.toThrow()
+    expect(FakeAudioContext.instances).toHaveLength(0)
+  })
+})
+
 describe('история/пагинация/отправка — без сигнала (FR-028, Clarification)', () => {
-  it('поверхность модуля — только приём: триггеров истории/пагинации/отправки нет', () => {
+  it('поверхность модуля — только приём и отклики bell: триггеров истории/пагинации/отправки нет', () => {
     expect(Object.keys(sound).sort()).toEqual([
       'chimeOnRealtimeIncoming',
       'chimeOnSyncBatch',
       'playBellTone',
+      'playMuteTone',
     ])
   })
 })

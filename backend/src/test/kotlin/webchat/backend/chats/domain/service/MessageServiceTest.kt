@@ -13,6 +13,10 @@ import org.mockito.Mockito
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.backpressure.NoopSendAdmissionGate
+import webchat.backend.chats.ChatSoundMetrics
+import webchat.backend.chats.NoopContactRepository
+import webchat.backend.chats.NoopProfileStore
+import webchat.backend.chats.TypingMetrics
 import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.model.InvalidMessageTextException
@@ -24,6 +28,7 @@ import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.ChatSoundUpdatedEvent
 import webchat.backend.chats.domain.port.GroupEvent
 import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
@@ -31,6 +36,9 @@ import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
+import webchat.backend.chats.domain.port.TypingEvent
+import webchat.backend.chats.domain.port.TypingState
+import webchat.backend.chats.domain.port.TypingStore
 import webchat.backend.config.ChatsProperties
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.domain.model.UserBlock
@@ -369,6 +377,49 @@ class MessageServiceTest {
         assertThat(meterRegistry.find(METRIC_SEND_REJECTED).counters()).isEmpty()
     }
 
+    @Test
+    fun `a fresh record extinguishes the typer typing state at the send`() {
+        // T033 (008a, data-model.md §2.1 transition 2): the durable
+        // INSERT claims the typer's ephemeral state — the send path
+        // hands the leg to the idempotent TypingService.stop.
+        service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+
+        assertThat(typingStore.stops).containsExactly(CHAT_ID to ALICE)
+    }
+
+    @Test
+    fun `refused sends and dedup retries never extinguish the typing state`() {
+        // T033 edge (the spec): a send refused BEFORE the INSERT (blank
+        // text here) never claims — that stop belongs to the client's
+        // useTyping alone (a rejected draft keeps the indicator while
+        // the typer goes on typing)…
+        assertThrows<InvalidMessageTextException> {
+            service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, BLANKISH_TEXT)
+        }
+        // …and a №16 resolution that wrote nothing — the fast-path 200
+        // and the race-leg 200 — never claims either: the racing winner
+        // of the very row has already done it.
+        repository.existingById = STORED
+        service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+        repository.existingById = null
+        repository.outcome = MessageInsertResult.Duplicate(STORED)
+        service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+
+        assertThat(typingStore.stops).isEmpty()
+    }
+
+    @Test
+    fun `a typing extinguish failure never fails the durable send`() {
+        // T033: the ephemeral leg rides strictly AFTER the durable ack —
+        // even a dead store cannot take the answered record down.
+        typingStore.failStops = true
+
+        val result = service.send(CHAT_ID, ALICE, CLIENT_MESSAGE_ID, VALID_TEXT)
+
+        assertThat(result).isEqualTo(MessageSendResult.Created(STORED))
+        assertThat(repository.inserts).hasSize(1)
+    }
+
     private val timeline = mutableListOf<String>()
 
     private val repository = ScriptedMessageRepository(MessageInsertResult.Inserted(STORED), timeline)
@@ -376,6 +427,9 @@ class MessageServiceTest {
     private val publisher = RecordingRealtimePublisher(timeline = timeline)
 
     private val meterRegistry = SimpleMeterRegistry()
+
+    /** The T033 seam: remembers the extinguish claims of the №16 INSERT leg — the only `stop` caller of this scope. */
+    private val typingStore = RecordingTypingStore()
 
     /**
      * T032: the flood-bucket seam of the unit scope — every token probe
@@ -405,17 +459,40 @@ class MessageServiceTest {
     /** The T054 seam: the (blocker, blocked) pairs the FR-020 gate answers `true` for. */
     private val blocks = ScriptedBlockRepository()
 
+    /** The shared №16 gate fixture — one ChatService serves the send path and the T033 typing leg alike. */
+    private val chatService =
+        ChatService(
+            NoopUserRepository,
+            GateChatRepository,
+            ChatListRepository { emptyList() },
+            NoopParticipantRepository,
+            blocks,
+            GroupMembershipGate(NoopParticipantRepository, GroupMetrics(SimpleMeterRegistry())),
+            NoopProfileStore,
+            NoopContactRepository,
+            publisher,
+            ChatSoundMetrics(SimpleMeterRegistry()),
+        )
+
+    /**
+     * The T033 collaborator: the REAL service, so the send path rides
+     * the production claim+publish discipline (the №16 gate, the atomic
+     * claim, the suppression rules) over the scripted store above.
+     */
+    private val typingService =
+        TypingService(
+            chatService = chatService,
+            participantRepository = NoopParticipantRepository,
+            blockRepository = blocks,
+            typingStore = typingStore,
+            realtimeEventPublisher = publisher,
+            chatsProperties = TEST_PROPERTIES,
+            typingMetrics = TypingMetrics(meterRegistry),
+        )
+
     private val service =
         MessageService(
-            chatService =
-                ChatService(
-                    NoopUserRepository,
-                    GateChatRepository,
-                    ChatListRepository { emptyList() },
-                    NoopParticipantRepository,
-                    blocks,
-                    GroupMembershipGate(NoopParticipantRepository, GroupMetrics(SimpleMeterRegistry())),
-                ),
+            chatService = chatService,
             messageRepository = repository,
             realtimeEventPublisher = publisher,
             chatsProperties = TEST_PROPERTIES,
@@ -432,6 +509,9 @@ class MessageServiceTest {
             // direct-dialog unit scope (the group slice is GroupRealtimeIT/T030).
             participantRepository = NoopParticipantRepository,
             groupMetrics = GroupMetrics(meterRegistry),
+            // T033 (008a): the typing extinguish at the INSERT — the
+            // claim+publish discipline is TypingService's, asserted above.
+            typingService = typingService,
         )
 
     private companion object {
@@ -484,8 +564,21 @@ class MessageServiceTest {
         val TEST_PROPERTIES =
             ChatsProperties(
                 message = ChatsProperties.Message(maxLength = TEST_CAP, pageSize = 50),
-                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30, searchesPerMinute = 30),
+                rateLimit =
+                    ChatsProperties.RateLimit(
+                        messagesPerMinute = 30,
+                        searchesPerMinute = 30,
+                        typingSignalsPerMinute = 60,
+                        soundWritesPerMinute = 30,
+                    ),
                 realtime = ChatsProperties.Realtime(heartbeat = Duration.ofSeconds(15)),
+                typing =
+                    ChatsProperties.Typing(
+                        stateTtl = Duration.ofSeconds(8),
+                        pollerEnabled = false,
+                        pollInterval = Duration.ofSeconds(1),
+                        pollBatch = 1000,
+                    ),
             )
     }
 
@@ -557,6 +650,18 @@ class MessageServiceTest {
         override fun fanoutChatRead(
             toUserIds: List<UUID>,
             event: ChatReadEvent,
+        ) = Unit
+
+        /** The 008a typing legs belong to TypingService — a silent sink here. */
+        override fun fanoutTypingEvent(
+            toUserIds: List<UUID>,
+            event: TypingEvent,
+        ) = Unit
+
+        /** The 008a №42 own-channel sync frame belongs to ChatService — a silent sink here (T053). */
+        override fun publishChatSoundUpdated(
+            toUserId: UUID,
+            event: ChatSoundUpdatedEvent,
         ) = Unit
     }
 
@@ -642,6 +747,42 @@ class MessageServiceTest {
             chatId: UUID,
             userId: UUID,
         ): Long = 0L
+
+        /** 008a №42 write leg is outside the send path — inert default (T053). */
+        override fun updateSoundEnabled(
+            chatId: UUID,
+            userId: UUID,
+            enabled: Boolean,
+        ): ChatParticipant? = null
+    }
+
+    /**
+     * The T033 seam: remembers the extinguish claims of the №16 INSERT
+     * leg; [failStops] simulates a dead store — the at-most-once
+     * isolation guard of the send path. The other legs stay inert: the
+     * send path never starts a state nor reaps lapses.
+     */
+    private class RecordingTypingStore : TypingStore {
+        val stops = mutableListOf<Pair<UUID, UUID>>()
+
+        var failStops: Boolean = false
+
+        override fun start(
+            chatId: UUID,
+            userId: UUID,
+            ttl: Duration,
+        ) = Unit
+
+        override fun stop(
+            chatId: UUID,
+            userId: UUID,
+        ): Boolean {
+            if (failStops) error("store down")
+            stops += chatId to userId
+            return true
+        }
+
+        override fun dueExpired(batch: Int): List<TypingState> = emptyList()
     }
 
     /** The auth port stands unused here — the send path reads membership, not user rows. */

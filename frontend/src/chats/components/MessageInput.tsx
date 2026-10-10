@@ -56,6 +56,17 @@
  * «отправляется» row. The waiting bubble itself never carries a
  * countdown (Clarification).
  *
+ * Typing signal hooks (feature 008a, US2, T038; FR-006, ui-behavior
+ * §2.1): the composer reports its RAW draft flow to the №41 signal
+ * machine (useTyping, wired by the page) — `onDraftChange` fires on
+ * every textarea edit (blank = the field was cleared/deleted into
+ * emptiness), `onSendAttempt` at the top of EVERY send attempt
+ * whatever its outcome, including a draft rejected by
+ * pre-validation (the §2.1 edge: попытка = завершение набора). A
+ * programmatic clear after a successful send reports nothing — the
+ * attempt itself already stopped the signal. The hooks are optional
+ * notifications only: no state of the composer depends on them.
+ *
  * The field grows with its content (Bug 6, T084): a multiline
  * (Shift+Enter) draft lifts the golden frame row by row — the
  * auto-resize fits the textarea to its scrollHeight (+ the 2px of
@@ -140,6 +151,20 @@ export interface MessageInputProps {
    * deferral, no line; the input stays active either way.
    */
   readonly floodRetryAt?: number | null
+  /**
+   * Raw draft change of the field (008a T038; FR-006, ui-behavior
+   * §2.1): every textarea edit reports the RAW value to the typing
+   * signal machine (useTyping) — a blank value means the field was
+   * cleared; a programmatic clear after a successful send stays
+   * silent (the attempt already stopped the signal).
+   */
+  readonly onDraftChange?: (value: string) => void
+  /**
+   * Fires at the top of EVERY send attempt — any outcome, including
+   * a draft rejected by pre-validation (§2.1 edge: попытка =
+   * завершение набора).
+   */
+  readonly onSendAttempt?: () => void
 }
 
 export function MessageInput({
@@ -147,6 +172,8 @@ export function MessageInput({
   disabled = false,
   blocked = false,
   floodRetryAt = null,
+  onDraftChange,
+  onSendAttempt,
 }: MessageInputProps) {
   const [value, setValue] = useState('')
   const [floodSecondsLeft, setFloodSecondsLeft] = useState<number | null>(null)
@@ -213,6 +240,9 @@ export function MessageInput({
   }, [floodRetryAt])
 
   function send() {
+    // §2.1: попытка отправки завершает набор ЛЮБЫМ исходом — сигнал
+    // уходит до предвалидации (вкл. отклонённую пустую отправку).
+    onSendAttempt?.()
     const validation = validateMessageText(value)
     if (!validation.ok) {
       // Bug 4 (T082) + Bug 15 (T093а): ЛЮБОЙ отказ предвалидации —
@@ -281,7 +311,10 @@ export function MessageInput({
           rows={1}
           disabled={disabled || blocked}
           onChange={(event) => {
-            setValue(event.target.value)
+            const next = event.target.value
+            setValue(next)
+            // 008a §2.1: сырой черновик уходит машине №41-сигналов как есть.
+            onDraftChange?.(next)
           }}
           onKeyDown={handleKeyDown}
         />

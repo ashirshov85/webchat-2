@@ -10,6 +10,37 @@
 # presence context, where PresenceTestSupport re-enables them — exactly
 # ONE poller owner per test JVM (production always runs them: the
 # conditional defaults to TRUE).
+#
+# 008a T001 (baseline repair): Boot's auto-configured SimpleAsyncTaskScheduler
+# runs EVERY fixed-delay task on ONE shared single-thread ScheduledThreadPoolExecutor
+# (SimpleAsyncTaskScheduler.createFixedDelayExecutor, Spring 6.2) — the OutboxPoller
+# tick (synchronous SMTP to the compose Mailpit, 1.5–11 s per letter on a slow Docker
+# host) monopolizes that thread and starves the 200 ms presence offq/watch pollers far
+# past the SC-003 budgets (observed ~8–13 s stall in the US3 AC4 storm). No IT depends
+# on asynchronous SMTP delivery (verification tokens are read straight from
+# email_outbox; EmailOutboxResilienceIT drives dispatchPending synchronously and pins
+# this very delay for its own context) — the tick is therefore disabled JVM-wide,
+# which also removes all real SMTP traffic from the IT JVM on hosts with slow Docker
+# networking.
+auth:
+  outbox:
+    poll-fixed-delay: 1h
+
+chats:
+  typing:
+    # 008a T008: accelerated typing windows for the IT profile (the
+    # presence T003 pattern) — the SC-003 self-expiry budget (stopped ≤
+    # TTL + poll-interval) must not flake on poller slack, and scenarios
+    # must not wait out the production 8 s TTL. The poller is OFF for
+    # EVERY test context of the JVM (the T036 single-poller-owner rule
+    # against the ONE shared Redis); TypingTestSupport (T027) re-enables
+    # it — exactly ONE poller owner per test run, production always runs
+    # it. The flood capacities keep their production values: the TypingIT
+    # flood leg drains the bucket on purpose.
+    poller-enabled: false
+    state-ttl: 3s
+    poll-interval: 200ms
+
 presence:
   poller-enabled: false
   ttl: 3s

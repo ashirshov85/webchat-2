@@ -35,7 +35,16 @@ import java.util.UUID
  *  - `presence:conn:{userId}` — the adapter-internal HASH
  *    connectionId→sessionId, the index [clearSessionRegistrations] needs
  *    to remove exactly the logout session's registrations (T029/research
- *    §B2); a TTL-bounded projection of `alive` that self-expires.
+ *    §B2); a TTL-bounded projection of `alive` that self-expires;
+ *  - `presence:lastseen:{userId}` — STRING, the epoch-ms stamp of the
+ *    last presence activity (008a US3, data-model 008a §2.2): the
+ *    REGISTER/RENEW/UNREGISTER/CLEAR_SESSION legs refresh it atomically
+ *    with their own mutation (Redis `TIME` — the same clock as the
+ *    scores; TTL 30 d, older simply lapses into the client's «давно»
+ *    fallback), the SNAPSHOT leg reads it batch-wise (T043) and the
+ *    reap leg deliberately writes NOTHING on a silent expiry — the
+ *    stamp of the last heartbeat stays, so «обрыв» drifts only within
+ *    the TTL-model budget of SC-005 (research 008a §B1).
  *
  * Every state leg of the §1.2 machine is ONE atomic Lua script — the
  * CAS of `presence:pub` + the rev advance + the counter arithmetic + the
@@ -78,7 +87,7 @@ class RedisPresenceStore(
         val result =
             evalList(
                 REGISTER_SCRIPT,
-                listOf(aliveKey(userId), connKey(userId), WATCH_KEY),
+                listOf(aliveKey(userId), connKey(userId), WATCH_KEY, lastSeenKey(userId)),
                 ttlMs.toString(),
                 connectionId.toString(),
                 sessionId.toString(),
@@ -95,14 +104,14 @@ class RedisPresenceStore(
         )
     }
 
-    /** №37: one atomic extend of alive AND watch (max score, GT) plus the pub/rev TTL renew. */
+    /** №37: one atomic extend of alive AND watch (max score, GT) plus the pub/rev TTL renew and the lastSeen stamp. */
     override fun renewRegistration(
         userId: UUID,
         connectionId: UUID,
     ): Boolean =
         evalLong(
             RENEW_SCRIPT,
-            listOf(aliveKey(userId), WATCH_KEY, pubKey(userId), revKey(userId), connKey(userId)),
+            listOf(aliveKey(userId), WATCH_KEY, pubKey(userId), revKey(userId), connKey(userId), lastSeenKey(userId)),
             ttlMs.toString(),
             connectionId.toString(),
             userId.toString(),
@@ -118,7 +127,7 @@ class RedisPresenceStore(
     ) {
         evalLong(
             UNREGISTER_SCRIPT,
-            listOf(aliveKey(userId), connKey(userId), OFFQ_KEY, pubKey(userId), WATCH_KEY),
+            listOf(aliveKey(userId), connKey(userId), OFFQ_KEY, pubKey(userId), WATCH_KEY, lastSeenKey(userId)),
             hysteresisMs.toString(),
             connectionId.toString(),
             userId.toString(),
@@ -142,6 +151,7 @@ class RedisPresenceStore(
                     OFFQ_KEY,
                     ONLINE_COUNT_KEY,
                     WATCH_KEY,
+                    lastSeenKey(userId),
                 ),
                 sessionId.toString(),
                 userId.toString(),
@@ -221,24 +231,34 @@ class RedisPresenceStore(
             userId.toString(),
         ) == 1L
 
-    /** №36: the published status+rev of every requested user in ONE round trip (nil pub → offline, nil rev → 0). */
+    /**
+     * №36: the published status+rev AND the raw `presence:lastseen` stamp
+     * of every requested user in ONE round trip (nil pub → offline, nil
+     * rev → 0, nil stamp → `lastSeenAt = null` — T043; the disclosure
+     * policy is the service's business, research 008a §B2).
+     */
     override fun readPublishedBatch(userIds: Collection<UUID>): Map<UUID, PublishedPresence> {
         val distinct = userIds.distinct()
         if (distinct.isEmpty()) return emptyMap()
-        val keys = distinct.flatMap { listOf(pubKey(it), revKey(it)) }
+        val keys = distinct.flatMap { listOf(pubKey(it), revKey(it), lastSeenKey(it)) }
         val flat = evalList(SNAPSHOT_SCRIPT, keys)
         return distinct
             .mapIndexed { index, userId ->
+                val base = SNAPSHOT_STRIDE * index
                 userId to
                     PublishedPresence(
                         userId = userId,
                         status =
-                            if (flag(flat.getOrElse(2 * index) { null }) == 1) {
+                            if (flag(flat.getOrElse(base) { null }) == 1) {
                                 PresencePublishedStatus.ONLINE
                             } else {
                                 PresencePublishedStatus.OFFLINE
                             },
-                        rev = number(flat.getOrElse(2 * index + 1) { null }),
+                        rev = number(flat.getOrElse(base + 1) { null }),
+                        lastSeenAt =
+                            flat.getOrElse(base + 2) { null }?.let { stamp ->
+                                Instant.ofEpochMilli(number(stamp))
+                            },
                     )
             }.toMap()
     }
@@ -302,16 +322,22 @@ class RedisPresenceStore(
 
     private fun revKey(userId: UUID): String = "$REV_KEY_PREFIX$userId"
 
+    private fun lastSeenKey(userId: UUID): String = "$LASTSEEN_KEY_PREFIX$userId"
+
     private companion object {
         /** data-model 007 §3: the `presence:online:count` Lua outcome codes of the offq execution. */
         const val SUPPRESSED = 1
         const val WENT_OFFLINE = 2
 
-        /** data-model 007 §3 key families. */
+        /** The SNAPSHOT Lua triple per user: {pub, rev, lastSeen} (readPublishedBatch). */
+        const val SNAPSHOT_STRIDE = 3
+
+        /** data-model 007 §3 key families (+ data-model 008a §2.2 — lastSeen). */
         const val ALIVE_KEY_PREFIX = "presence:alive:"
         const val CONN_KEY_PREFIX = "presence:conn:"
         const val PUB_KEY_PREFIX = "presence:pub:"
         const val REV_KEY_PREFIX = "presence:rev:"
+        const val LASTSEEN_KEY_PREFIX = "presence:lastseen:"
         const val WATCH_KEY = "presence:watch"
         const val OFFQ_KEY = "presence:offq"
         const val ONLINE_COUNT_KEY = "presence:online:count"
@@ -319,6 +345,9 @@ class RedisPresenceStore(
         /** data-model 007 §3: pub TTL 25 h, rev TTL 7 h (milliseconds). */
         const val PUB_TTL_MS = 90_000_000L
         const val REV_TTL_MS = 25_200_000L
+
+        /** data-model 008a §2.2: the lastSeen stamp horizon — 30 days (milliseconds), older → «давно». */
+        const val LASTSEEN_TTL_MS = 2_592_000_000L
 
         /** The server-clock preamble of every script: scores stay comparable across pods. */
         private const val CLOCK_LUA =
@@ -341,9 +370,10 @@ class RedisPresenceStore(
             end
             """
 
-        // KEYS: alive, conn, watch; ARGV: ttlMs, connectionId, sessionId, userId → {now, expiry}
+        // KEYS: alive, conn, watch, lastseen; ARGV: ttlMs, connectionId, sessionId, userId → {now, expiry}
         // (watch GT: a fresh expiry may only push the shared deadline UP — never below another live max;
-        //  a pending offq entry survives for the poller's due recount — the suppression must be counted)
+        //  a pending offq entry survives for the poller's due recount — the suppression must be counted;
+        //  the lastSeen stamp refreshes on EVERY open — an SSE open IS presence activity, 008a §2.2)
         private val REGISTER_SCRIPT: DefaultRedisScript<List<*>> =
             DefaultRedisScript(
                 """
@@ -354,12 +384,15 @@ class RedisPresenceStore(
                 redis.call('ZADD', KEYS[3], 'GT', expiry, ARGV[4])
                 redis.call('HSET', KEYS[2], ARGV[2], ARGV[3])
                 redis.call('PEXPIRE', KEYS[2], $PUB_TTL_MS)
+                redis.call('SET', KEYS[4], now, 'PX', $LASTSEEN_TTL_MS)
                 return {now, expiry}
                 """.trimIndent(),
                 List::class.java,
             )
 
-        // KEYS: alive, watch, pub, rev, conn; ARGV: ttlMs, connectionId, userId → 1|0
+        // KEYS: alive, watch, pub, rev, conn, lastseen; ARGV: ttlMs, connectionId, userId → 1|0
+        // (the stamp rides ONLY the successful beat: a dead connectionId returns 0 BEFORE the SET —
+        //  a rejected №37 must not move the last-activity time, 008a §2.2)
         private val RENEW_SCRIPT: DefaultRedisScript<Long> =
             DefaultRedisScript(
                 """
@@ -378,20 +411,26 @@ class RedisPresenceStore(
                 if redis.call('EXISTS', KEYS[4]) == 1 then
                   redis.call('PEXPIRE', KEYS[4], $REV_TTL_MS)
                 end
+                redis.call('SET', KEYS[6], now, 'PX', $LASTSEEN_TTL_MS)
                 return 1
                 """.trimIndent(),
                 Long::class.java,
             )
 
-        // KEYS: alive, conn, offq, pub, watch; ARGV: hysteresisMs, connectionId, userId → 1
+        // KEYS: alive, conn, offq, pub, watch, lastseen; ARGV: hysteresisMs, connectionId, userId → 1
         // (watch = MAX score of the REMAINING members — plain ZADD, the deadline may LOWER;
-        //  none left → ZREM: the deferred publish is already armed in the offq)
+        //  none left → ZREM: the deferred publish is already armed in the offq;
+        //  the stamp rides ONLY a close that actually REMOVED a live member — «штатное закрытие
+        //  — точное», a repeat close of an unknown connectionId re-stamps nothing, 008a §2.2)
         private val UNREGISTER_SCRIPT: DefaultRedisScript<Long> =
             DefaultRedisScript(
                 """
                 $CLOCK_LUA
                 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
-                redis.call('ZREM', KEYS[1], ARGV[2])
+                local removed = redis.call('ZREM', KEYS[1], ARGV[2])
+                if removed > 0 then
+                  redis.call('SET', KEYS[6], now, 'PX', $LASTSEEN_TTL_MS)
+                end
                 redis.call('HDEL', KEYS[2], ARGV[2])
                 local last = redis.call('ZRANGE', KEYS[1], -1, -1, 'WITHSCORES')
                 if #last == 0 then
@@ -407,15 +446,19 @@ class RedisPresenceStore(
                 Long::class.java,
             )
 
-        // KEYS: alive, conn, pub, rev, offq, count, watch; ARGV: sessionId, userId → {switched, statusOnline, rev}
+        // KEYS: alive, conn, pub, rev, offq, count, watch, lastseen;
+        // ARGV: sessionId, userId → {switched, statusOnline, rev}
         // (watch = the unregister-leg discipline of T027: the removed top scorer must LOWER the deadline to the
         //  MAX of the REMAINING registrations — or a surviving device's silent lapse would be reaped up to one
-        //  TTL late, outside the SC-003 budget; none left → ZREM, the immediate publish below replaces the offq)
+        //  TTL late, outside the SC-003 budget; none left → ZREM, the immediate publish below replaces the offq;
+        //  the stamp is UNCONDITIONAL — the logout request itself is presence activity, live registrations or
+        //  not, 008a §2.2)
         private val CLEAR_SESSION_SCRIPT: DefaultRedisScript<List<*>> =
             DefaultRedisScript(
                 """
                 $CLOCK_LUA
                 $NEXT_REV_LUA
+                redis.call('SET', KEYS[8], now, 'PX', $LASTSEEN_TTL_MS)
                 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
                 local mapping = redis.call('HGETALL', KEYS[2])
                 for i = 1, #mapping, 2 do
@@ -586,18 +629,21 @@ class RedisPresenceStore(
                 Long::class.java,
             )
 
-        // KEYS: pub1, rev1, pub2, rev2, … → {statusFlag1, rev1, …} (nil pub → offline, nil rev → 0)
+        // KEYS: pub1, rev1, lastseen1, pub2, rev2, lastseen2, … → {statusFlag1, rev1, lastSeen1|nil, …}
+        // (nil pub → offline, nil rev → 0; the raw stamp GET: a missing key replies false → a nil list element —
+        //  a nil in the table would punch a hole and truncate the reply, `false` travels safely, 008a §2.2)
         private val SNAPSHOT_SCRIPT: DefaultRedisScript<List<*>> =
             DefaultRedisScript(
                 """
                 local result = {}
-                for i = 1, #KEYS, 2 do
+                for i = 1, #KEYS, 3 do
                   local status = 0
                   if redis.call('GET', KEYS[i]) == 'online' then
                     status = 1
                   end
                   result[#result + 1] = status
                   result[#result + 1] = tonumber(redis.call('GET', KEYS[i + 1]) or '0')
+                  result[#result + 1] = redis.call('GET', KEYS[i + 2])
                 end
                 return result
                 """.trimIndent(),

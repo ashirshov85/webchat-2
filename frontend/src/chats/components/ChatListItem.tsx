@@ -64,11 +64,22 @@
  * нет); a GROUP row carries no presence UI (006/007) — `null`.
  * React.memo + the row's `content-visibility`
  * (chat-list-panel.css) keep a 200+ list at 60 fps (SC-011, §G).
+ *
+ * Цепочка отображаемых имён (feature 008a, US1, T023; FR-003, ui-behavior
+ * §1): direct-строка живёт по `alias → displayName → username` — №12 peer
+ * несёт профильный `displayName`, персональный alias вызывающего приезжает
+ * отдельным полем `peerAlias` (аддитивность контракта 0.9.0); `.c-name`
+ * выводит цепочку (усечение — CSS, полный текст — в `title` tooltip,
+ * конвенция 008). Инициалы аватара — из цепочки (`initials`-prop T020),
+ * цвет — по-прежнему от `peer.username` (переименование не перекрашивает,
+ * FR-004); группа — title без изменений (006).
  */
 import { memo } from 'react'
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
 import { usePresenceStatus } from '../../presence/usePresence'
 import { Avatar } from '../../ui/Avatar'
+import { initialsOf } from '../../ui/avatar'
+import { resolveDisplayName } from '../../ui/names'
 import { formatTime } from '../../ui/time'
 
 /** Превью последнего сообщения: обрезка ≤64 симв. — клиентский рендер (контракт №12). */
@@ -111,7 +122,15 @@ export const ChatListItem = memo(function ChatListItem({
 }: ChatListItemProps) {
   const last = item.lastMessage
   const isGroup = item.type === 'group'
-  const title = isGroup ? item.title : item.peer?.username
+  // Цепочка US1 (T023): direct — `peerAlias → peer.displayName → username`,
+  // группа — title 006 без изменений; инициалы — из цепочки, цвет аватара —
+  // от username/title (FR-004: переименование не перекрашивает).
+  const peerName =
+    !isGroup && item.peer !== null
+      ? resolveDisplayName(item.peerAlias, item.peer.displayName, item.peer.username)
+      : null
+  const name = isGroup ? item.title : peerName
+  const avatarSource = isGroup ? (item.title ?? '') : (item.peer?.username ?? '')
   const peerId = directPeerId(item, isGroup)
   // Состояние — ТОЛЬКО из presenceStore 007 (T040): null-ключ (группа/
   // защитный direct без peer) ничего не региструет и точку не даёт;
@@ -131,14 +150,15 @@ export const ChatListItem = memo(function ChatListItem({
         }}
       >
         <Avatar
-          source={title ?? ''}
+          source={avatarSource}
+          initials={initialsOf(name ?? '')}
           shape={isGroup ? 'octagon' : 'circle'}
           presenceDot={peerId !== null && presence !== 'unknown' ? presence : null}
         />
         <span className="c-main">
           <span className="c-top">
-            <span className="c-name" title={title ?? ''}>
-              {title ?? ''}
+            <span className="c-name" title={name ?? ''}>
+              {name ?? ''}
             </span>
             {item.blockedByMe === true && <span className="chat-item-blocked">заблокирован</span>}
             <span className="c-time">{last !== null ? formatTime(last.createdAt) : ''}</span>

@@ -43,6 +43,10 @@ const { mockGetCurrentUser, mockChats, mockGroups, mockSse, mockPresence, mockUs
       listMessagesAfter: vi.fn(),
       sync: vi.fn(),
       sendMessage: vi.fn(),
+      // 008a T038: машина №41-сигналов композера (useTyping) — best-effort,
+      // исход не проверяется (тесты композера — про тосты/enqueue); контракт
+      // api-функции — Promise (иначе .catch в useTyping падает).
+      sendTyping: vi.fn(() => Promise.resolve()),
       deliveryAck: vi.fn(),
       ensureChat: vi.fn(),
       listContacts: vi.fn(),

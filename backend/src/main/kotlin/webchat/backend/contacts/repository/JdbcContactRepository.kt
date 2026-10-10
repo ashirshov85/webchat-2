@@ -5,11 +5,13 @@ import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
 import webchat.backend.contacts.domain.model.Contact
+import webchat.backend.contacts.domain.model.ContactAlias
 import webchat.backend.contacts.domain.model.ContactSort
 import webchat.backend.contacts.domain.model.UserProfile
 import webchat.backend.contacts.domain.port.ContactAddResult
 import webchat.backend.contacts.domain.port.ContactEntry
 import webchat.backend.contacts.domain.port.ContactRepository
+import webchat.backend.users.domain.model.DisplayName
 import java.sql.ResultSet
 import java.util.UUID
 
@@ -21,9 +23,21 @@ import java.util.UUID
  * (owner_id, contact_user_id) DO NOTHING` where the rowcount distinguishes
  * [ContactAddResult.Created] (`201`, api-contract.md №21) from
  * [ContactAddResult.Existing] (`200` with the SAME row — the committed
- * `created_at` survives, edge spec). The remove is an unconditional
- * single-row DELETE by the PK pair. Contacts never touch `user_blocks`
- * or the V10 tables (FR-017/FR-020).
+ * `created_at` AND a previously stored alias survive, edge spec). The
+ * remove is an unconditional single-row DELETE by the PK pair — the row
+ * goes as a whole, alias included (008a lifecycle of №22). Contacts never
+ * touch `user_blocks` or the V10 tables (FR-017/FR-020).
+ *
+ * 008a (data-model §1.2, T013): the alias write is ONE `UPDATE …
+ * RETURNING` over the PK pair — `null` back means «no row» (the uniform
+ * `404 contact_not_found` of №40) and the returning read cannot race a
+ * concurrent write (the [JdbcProfileStore][webchat.backend.users.repository.JdbcProfileStore]
+ * discipline). The value arrives already trimmed by
+ * [ContactAlias.normalize], satisfying the `ck_user_contacts_alias`
+ * CHECK of V16 on every write; the read legs rebuild the value object
+ * from the CHECK-guaranteed column. `aliasesOf` is ONE `SELECT` by the
+ * PK prefix over a `uuid[]` parameter — the peer-fragment join of
+ * T015/T016 never degrades into per-row point reads.
  */
 @Repository
 class JdbcContactRepository(
@@ -56,6 +70,24 @@ class JdbcContactRepository(
         sort: ContactSort,
     ): List<ContactEntry> = jdbcTemplate.query(listSql(sort), ENTRY_ROW_MAPPER, ownerId)
 
+    override fun storeAlias(
+        ownerId: UUID,
+        contactUserId: UUID,
+        alias: ContactAlias?,
+    ): Contact? =
+        jdbcTemplate
+            .query(STORE_ALIAS_SQL, CONTACT_ROW_MAPPER, alias?.value, ownerId, contactUserId)
+            .firstOrNull()
+
+    override fun aliasesOf(
+        ownerId: UUID,
+        userIds: Collection<UUID>,
+    ): Map<UUID, String> {
+        if (userIds.isEmpty()) return emptyMap()
+        val joinedIds = userIds.joinToString(separator = ",") { it.toString() }
+        return jdbcTemplate.query(ALIASES_OF_SQL, ALIAS_PAIR_ROW_MAPPER, ownerId, joinedIds).toMap()
+    }
+
     private companion object {
         val CONTACT_ROW_MAPPER =
             RowMapper { rs: ResultSet, _: Int ->
@@ -63,6 +95,7 @@ class JdbcContactRepository(
                     ownerId = rs.getObject("owner_id", UUID::class.java),
                     contactUserId = rs.getObject("contact_user_id", UUID::class.java),
                     createdAt = rs.getTimestamp("created_at").toInstant(),
+                    alias = aliasOf(rs),
                 )
             }
 
@@ -74,10 +107,14 @@ class JdbcContactRepository(
                             ownerId = rs.getObject("owner_id", UUID::class.java),
                             contactUserId = rs.getObject("contact_user_id", UUID::class.java),
                             createdAt = rs.getTimestamp("created_at").toInstant(),
+                            alias = aliasOf(rs),
                         ),
                     user = userProfile(rs),
                 )
             }
+
+        /** The value object is rebuilt from the `ck_user_contacts_alias`-guaranteed column. */
+        private fun aliasOf(rs: ResultSet): ContactAlias? = rs.getString("alias")?.let(ContactAlias::normalize)
 
         private fun userProfile(rs: ResultSet): UserProfile =
             UserProfile(
@@ -86,6 +123,7 @@ class JdbcContactRepository(
                 email = rs.getString("email"),
                 status = rs.getString("status"),
                 createdAt = rs.getTimestamp("user_created_at").toInstant(),
+                displayName = rs.getString("user_display_name")?.let(DisplayName::normalize),
             )
 
         val INSERT_SQL =
@@ -97,7 +135,7 @@ class JdbcContactRepository(
 
         val FIND_SQL =
             """
-            SELECT owner_id, contact_user_id, created_at
+            SELECT owner_id, contact_user_id, alias, created_at
             FROM user_contacts
             WHERE owner_id = ? AND contact_user_id = ?
             """.trimIndent()
@@ -108,6 +146,28 @@ class JdbcContactRepository(
             WHERE owner_id = ? AND contact_user_id = ?
             """.trimIndent()
 
+        /** №40 set/reset: one statement over the PK pair — no row reads as the uniform 404 gate. */
+        val STORE_ALIAS_SQL =
+            """
+            UPDATE user_contacts
+            SET alias = ?
+            WHERE owner_id = ? AND contact_user_id = ?
+            RETURNING owner_id, contact_user_id, alias, created_at
+            """.trimIndent()
+
+        /** `ANY (uuid[])` keeps the peer-fragment join of T015/T016 a single round-trip. */
+        val ALIASES_OF_SQL =
+            """
+            SELECT contact_user_id, alias
+            FROM user_contacts
+            WHERE owner_id = ? AND contact_user_id = ANY (string_to_array(?, ',')::uuid[]) AND alias IS NOT NULL
+            """.trimIndent()
+
+        val ALIAS_PAIR_ROW_MAPPER =
+            RowMapper { rs: ResultSet, _: Int ->
+                rs.getObject("contact_user_id", UUID::class.java) to rs.getString("alias")
+            }
+
         private fun listSql(sort: ContactSort): String {
             val orderBy =
                 when (sort) {
@@ -115,8 +175,9 @@ class JdbcContactRepository(
                     ContactSort.EMAIL -> "lower(u.email)"
                 }
             return """
-                SELECT c.owner_id, c.contact_user_id, c.created_at,
-                       u.id AS user_id, u.username, u.email, u.status, u.created_at AS user_created_at
+                SELECT c.owner_id, c.contact_user_id, c.alias, c.created_at,
+                       u.id AS user_id, u.username, u.email, u.status,
+                       u.created_at AS user_created_at, u.display_name AS user_display_name
                 FROM user_contacts c
                 JOIN users u ON u.id = c.contact_user_id
                 WHERE c.owner_id = ?

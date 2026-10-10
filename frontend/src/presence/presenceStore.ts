@@ -12,6 +12,16 @@
  * signal at all until the first №36 snapshot arrives — a false
  * «офлайн» before data is a spec violation (clarify 2026-10-01).
  *
+ * 008a US3 (T047): entries carry an optional `lastSeenAt` — the last
+ * presence-channel activity time, disclosed by the backend ONLY on
+ * offline ∧ audience ∧ not-incognito ∧ data-exists (realtime-events.md
+ * §2.1, SC-002). The absence of the field is neutral («давно») and
+ * indistinguishable from hidden, so an APPLIED frame replaces the
+ * stored value wholesale: a new offline frame sets it, and any applied
+ * frame without it (online, freeze-offline, «нет данных») clears it —
+ * the old timestamp never leaks into a newer status (ui-behavior.md
+ * §3.1 «обновление и скрытие поля»).
+ *
  * Producers: №36 snapshot items (`applySnapshot`, presenceApi) and
  * `presence.updated` №18 frames (`applyEvent`, usePresence). Consumers:
  * `getStatus`/`getEntry` + `subscribe` for re-renders. This module is
@@ -34,6 +44,12 @@ export type PresenceStatus = PresenceStatusItem['status']
 export interface PresenceEntry {
   readonly status: PresenceStatus
   readonly rev: number
+  /**
+   * Время последней активности presence-канала (008a, date-time):
+   * присутствует только при применённом offline-кадре с раскрытием;
+   * отсутствие нейтрально — «Был в сети — давно» (FR-010/FR-011).
+   */
+  readonly lastSeenAt?: string
 }
 
 export type PresenceStoreListener = () => void
@@ -68,13 +84,23 @@ function createPresenceStoreCore(): ResettablePresenceStore {
   const entries = new Map<string, PresenceEntry>()
   const listeners = new Set<PresenceStoreListener>()
 
-  /** Единственное правило слияния: строго большее rev per-user. */
-  function apply(userId: string, status: PresenceStatus, rev: number): boolean {
+  /**
+   * Единственное правило слияния: строго большее rev per-user.
+   * `lastSeenAt` применяется только вместе с применённым кадром и
+   * замещается целиком (нет поля → сброс), поэтому устаревший кадр
+   * никогда не протаскивает старую метку в новый статус.
+   */
+  function apply(
+    userId: string,
+    status: PresenceStatus,
+    rev: number,
+    lastSeenAt: string | undefined,
+  ): boolean {
     const current = entries.get(userId)
     if (current !== undefined && rev <= current.rev) {
       return false
     }
-    entries.set(userId, { status, rev })
+    entries.set(userId, lastSeenAt === undefined ? { status, rev } : { status, rev, lastSeenAt })
     return true
   }
 
@@ -96,7 +122,7 @@ function createPresenceStoreCore(): ResettablePresenceStore {
       return entries.get(userId)
     },
     applyEvent(event) {
-      if (!apply(event.userId, event.status, event.rev)) {
+      if (!apply(event.userId, event.status, event.rev, event.lastSeenAt)) {
         return false
       }
       notify()
@@ -105,7 +131,7 @@ function createPresenceStoreCore(): ResettablePresenceStore {
     applySnapshot(items) {
       let applied = 0
       for (const item of items) {
-        if (apply(item.userId, item.status, item.rev)) {
+        if (apply(item.userId, item.status, item.rev, item.lastSeenAt)) {
           applied += 1
         }
       }

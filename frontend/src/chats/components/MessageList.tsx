@@ -86,6 +86,15 @@
  * T016(а) feed baselines carry both, so SC-001 at the US1
  * checkpoint needs them; the US3/T044 polish builds on top.
  *
+ * Typing row (feature 008a, US2, T037; FR-006–FR-008, ui-behavior
+ * §2.2): the feed's ephemeral tail — a SINGLE TypingRow instance
+ * renders after the messages/local rows while somebody types in the
+ * open chat (`.msg.them` → `.bubble.typing-b`, prototype #typingRow
+ * — the last element of #messages). The `typing` prop carries raw
+ * client-cache lookups: unresolved `userId`s drop out (TypingRow),
+ * and an empty chat with a live typist keeps the real feed instead
+ * of the empty state. The realtime state behind the prop is T038.
+ *
  * Open seat (bug 2 T078 → bug 7 T085 → bug 13 T091 → bug 14 T092):
  * the first render of an open chat seats the feed with the TOP edge
  * of the FIRST unread INCOMING message at the TOP edge of the
@@ -171,6 +180,8 @@ import { QUEUE_OVERFLOW_ERROR_CODE } from '../outbox'
 import type { OutboxRecord } from '../outbox'
 import { Avatar } from '../../ui/Avatar'
 import { formatDate, formatTime } from '../../ui/time'
+import { TypingRow, renderableTyping } from './TypingRow'
+import type { TypingParticipant } from './TypingRow'
 import './message-list.css'
 import './states.css'
 
@@ -312,6 +323,15 @@ export interface MessageListProps {
    * the server copy scrolls as own, unconditionally.
    */
   readonly ownAckIds?: ReadonlySet<string>
+  /**
+   * Typing participants of the open chat (feature 008a, US2, T037;
+   * FR-006–FR-008, ui-behavior §2.2): raw client-cache lookups —
+   * entries whose name resolved (№11 peer / №28 roster, US1 chain)
+   * render in the SINGLE TypingRow instance after the feed; unknown
+   * `userId`s are suppressed (TypingRow). The realtime wiring of the
+   * list itself is T038 (MessengerPage).
+   */
+  readonly typing?: readonly TypingParticipant[]
 }
 
 /**
@@ -487,6 +507,7 @@ export function MessageList({
   othersReadUpToSeq = 0,
   unreadFromSeq = null,
   ownAckIds,
+  typing = [],
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
@@ -821,8 +842,15 @@ export function MessageList({
     }
   }
 
+  // Typing row gate (T037): the row renders only when at least one
+  // participant resolved — and an empty chat with somebody typing
+  // keeps the real feed (the empty state steps aside).
+  const knownTyping = renderableTyping(typing)
+
   if (messages.length === 0 && activePending.length === 0 && activeOutbox.length === 0) {
-    return <p className="messenger-empty">Сообщений пока нет</p>
+    if (knownTyping.length === 0) {
+      return <p className="messenger-empty">Сообщений пока нет</p>
+    }
   }
 
   return (
@@ -892,6 +920,7 @@ export function MessageList({
           onRemove={onRemove}
         />
       ))}
+      {knownTyping.length > 0 && <TypingRow typing={knownTyping} />}
     </ol>
   )
 }

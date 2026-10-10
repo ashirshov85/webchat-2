@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDate, formatTime, pluralRu } from '../time'
+import { formatDate, formatTime, lastSeenFormat, pluralRu } from '../time'
 
 describe('formatTime — ЧЧ:ММ из createdAt, Intl ru-RU (FR-019, research §J)', () => {
   it('24-часовой формат с ведущим нулём', () => {
@@ -52,6 +52,47 @@ describe('formatDate — «19 сентября», +год при отличии 
 
   it('невалидная дата — пустая строка без падения', () => {
     expect(formatDate(new Date(NaN), new Date(2026, 3, 1))).toBe('')
+  })
+})
+
+describe('lastSeenFormat — «Был в сети — {время}» (008a US3, T046; ui-behavior §3.1, FR-011, research B3)', () => {
+  /** Локальные конструкторы + toISOString: вход API — date-time строка. */
+  function iso(year: number, month: number, day: number, hours: number, minutes: number): string {
+    return new Date(year, month, day, hours, minutes).toISOString()
+  }
+
+  it('сегодня — только ЧЧ:ММ, без даты', () => {
+    const now = new Date(2026, 8, 19, 18, 0)
+    expect(lastSeenFormat(iso(2026, 8, 19, 16, 20), now)).toBe('16:20')
+    // та же ветка в начале/конце суток: полночь сегодня — всё ещё «сегодня»
+    expect(lastSeenFormat(iso(2026, 8, 19, 0, 1), now)).toBe('00:01')
+    expect(lastSeenFormat(iso(2026, 8, 19, 23, 59), now)).toBe('23:59')
+  })
+
+  it('другой день текущего года — «D месяца, HH:MM»', () => {
+    const now = new Date(2026, 9, 10, 12, 0)
+    expect(lastSeenFormat(iso(2026, 8, 24, 16, 20), now)).toBe('24 сентября, 16:20')
+    expect(lastSeenFormat(iso(2026, 0, 2, 9, 5), now)).toBe('2 января, 09:05')
+  })
+
+  it('другой год — «D месяца YYYY, HH:MM» (через formatDate с годом)', () => {
+    const now = new Date(2026, 9, 10, 12, 0)
+    expect(lastSeenFormat(iso(2024, 8, 24, 16, 20), now)).toBe('24 сентября 2024 г., 16:20')
+    expect(lastSeenFormat(iso(2027, 0, 2, 9, 5), now)).toBe('2 января 2027 г., 09:05')
+  })
+
+  it('граница суток: минуту назад, но уже вчера — полная дата; ровно полночь сегодня — время', () => {
+    // now = 00:00:30 сегодня; 23:59 вчера — другой локальный день
+    const now = new Date(2026, 9, 10, 0, 0, 30)
+    expect(lastSeenFormat(iso(2026, 9, 9, 23, 59), now)).toBe('9 октября, 23:59')
+    // ровно 00:00 сегодня — ещё «сегодня» (сравнение по календарной дате)
+    expect(lastSeenFormat(iso(2026, 9, 10, 0, 0), now)).toBe('00:00')
+  })
+
+  it('невалидное/пустое значение — нейтральный фолбэк «давно»', () => {
+    const now = new Date(2026, 9, 10, 12, 0)
+    expect(lastSeenFormat('not-a-date', now)).toBe('давно')
+    expect(lastSeenFormat('', now)).toBe('давно')
   })
 })
 

@@ -9,10 +9,16 @@
  *
  * The status row is the FULL US3 projection (T043):
  *  * direct — the prototype presence-лампа `.lamp` + `.status-txt`
- *    label «В сети»/«офлайн» driven by the 007 presenceStore through
- *    `usePresenceStatus(peerId)` (the T040 contract: `.off` ONLY for a
- *    true store offline — a missing №36 snapshot and №36 `unknown`
- *    never yield a false «офлайн»); bug 12 (T090): `unknown` renders
+ *    label driven by the 007 presenceStore; 008a US3 (T048, ui-behavior
+ *    §3, FR-011) widens the label through `usePresenceEntry(peerId)`
+ *    (T047: status + lastSeenAt?): online — «В сети» (без изменений
+ *    007), offline с раскрытым `lastSeenAt` — «Был в сети — {время}»
+ *    (`lastSeenFormat` T046: локаль ru-RU, пояс наблюдателя), offline
+ *    без поля — единый нейтральный фолбэк «Был в сети — давно» (нет
+ *    данных/инкогнито/блок-пара неотличимы, SC-002). The T040
+ *    contract holds: `.off` ONLY for a true store offline — a missing
+ *    №36 snapshot and №36 `unknown` never yield a false «офлайн»);
+ *    bug 12 (T090): `unknown` renders
  *    NO indicator at all — the empty `.status-row` keeps the height
  *    (chat-header.css min-height) until №36 converges; the blocker-side
  *    «заблокирован» mark follows (FR-020);
@@ -34,28 +40,52 @@
  *    (mePresenceDot) is not carried: data-model 2.3 derives the tip
  *    from members + myRole only.
  *
- * US4 (T054): the ONLY right-side control is the «шестерёнка»
- * ChatGearMenu (ui-behavior §4) — direct: №21 add / №23-24 block
- * toggle / №14 delete (подтверждения — у страницы через форму confirm
- * оболочки T034); group: the №28 myRole matrix of 006 («Участники» /
- * «Редактировать чат» / «Удалить чат» vs «Выйти из чата»). While the
- * role is unknown (no live №28 and no basis) the group header carries
- * no gear — the menu matrix needs the role. The prototype search/sound
- * buttons never join the header (FR-016: 013/008a are out of scope).
+ * US4 (T054): the «шестерёнка» ChatGearMenu (ui-behavior §4) — direct:
+ * №21 add / №23-24 block toggle / №14 delete (подтверждения — у
+ * страницы через форму confirm оболочки T034); group: the №28 myRole
+ * matrix of 006 («Участники» / «Редактировать чат» / «Удалить чат» vs
+ * «Выйти из чата»). While the role is unknown (no live №28 and no
+ * basis) the group header carries no gear — the menu matrix needs the
+ * role. The prototype search button never joins the header (FR-016:
+ * 013 is out of scope).
+ *
+ * 008a US4 (T057; FR-012, ui-behavior §4.1): bell-колокол звука —
+ * `.ch-btn` SVG прототипа (#btnBell, chats.html:446) ПЕРЕД
+ * шестернёнкой (место поиска 013 не отображается — колокол между ним
+ * и шестернёнкой); живёт в ЛЮБОМ открытом чате (звук — персональная
+ * настройка участия, роли/вида чата не требует). Состояние «выкл» —
+ * только класс `.off` (opacity .45, chat-header.css — прототип :221),
+ * aria-pressed — первое применение в проекте (вкл = pressed, умолчание
+ * true — контракт №12/№13 «отсутствие поля клиент трактует как true»);
+ * focus-visible — конвенция 008 FR-035 (.ch-btn:focus-visible). Сама
+ * операция №42 (+ тосты, звук отклика, откат при ошибке) — у страницы
+ * (onToggleSound), заголовок — проекция.
  *
  * The avatar derives from the peer username (circle) or the group
  * title (octagon, FR-024) via ui/Avatar and recalculates on renames;
  * the title itself is resolved by the page — the live №28 title
  * while the view is open (the optimistic `group.updated` half), the
  * №12/№27 answer until then.
+ *
+ * Цепочка отображаемых имён (feature 008a, US1, T023; FR-003, ui-behavior
+ * §1): заголовок ЛИЧНОГО чата и строки members-tip живут по
+ * `alias → displayName → username` — direct берёт №11/№12/№13 peer
+ * (`displayName`) + персональный `peerAlias` вызывающего (страница
+ * сходится №12-рефетчем, ui-behavior §1.2), №28-строки подсказки —
+ * `GroupMember.user` (`displayName`,`alias`). Инициалы — из цепочки
+ * (`initials`-prop T020), цвет — от username (переименование не
+ * перекрашивает, FR-004); усечение длинных имён — CSS с многоточием,
+ * полный текст — в `title` (конвенция 008). Группа — title 006.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { GroupMember } from '../../api/groups'
 import { Avatar } from '../../ui/Avatar'
-import { pluralRu } from '../../ui/time'
-import { usePresenceStatus } from '../../presence/usePresence'
-import type { PresenceStatus } from '../../presence/presenceStore'
+import { initialsOf } from '../../ui/avatar'
+import { resolveDisplayName } from '../../ui/names'
+import { pluralRu, lastSeenFormat } from '../../ui/time'
+import { usePresenceEntry } from '../../presence/usePresence'
+import type { PresenceEntry } from '../../presence/presenceStore'
 import { ChatGearMenu } from './ChatGearMenu'
 import type { GearMenuChat } from './ChatGearMenu'
 import './chat-header.css'
@@ -77,6 +107,10 @@ export interface DirectChatHeaderData {
   /** The peer of the 1:1 dialog — the presence surface userId (007). */
   readonly peerId: string
   readonly username: string
+  /** Профильное displayName peer №11/№12/№13 (008a T023; отсутствует → username). */
+  readonly displayName?: string | null
+  /** Персональный alias вызывающего к peer №11/№12/№13 (008a T023; верх цепочки). */
+  readonly peerAlias?: string | null
   /** The blocker-side mark «заблокирован» (№12 projection, FR-020). */
   readonly blockedByMe: boolean
   /** №20 membership of the peer — the gear's «Добавить в контакты» visibility (T054). */
@@ -117,6 +151,19 @@ export type ChatHeaderChat =
 export interface ChatHeaderProps {
   /** The open dialog of either kind — drives avatar shape and status. */
   readonly chat: ChatHeaderChat
+  /**
+   * Персональный звук-переключатель открытого чата (008a US4, T057;
+   * FR-012, ui-behavior §4.1): №12/№13 `soundEnabled` (или локальный
+   * итог №42 у страницы); undefined/true — «вкл» (умолчание контракта:
+   * отсутствие поля трактуется как true), false — «выкл» (.off).
+   */
+  readonly soundEnabled?: boolean
+  /**
+   * Клик bell-колокола (008a T057): страница владеет №42 — получает
+   * ЦЕЛЕВОЕ значение (`!текущего`), по успеху сходится состояние, тост
+   * и звук отклика (§4.2); ошибка — состояние не меняется.
+   */
+  readonly onToggleSound?: (next: boolean) => void
   /** direct: «Добавить в контакты» — №21 belongs to the page (T054). */
   readonly onAddContact?: () => void
   /** direct: «Заблокировать/Разблокировать контакт» — №23/№24 of the page. */
@@ -136,11 +183,19 @@ function membersStatus(count: number): string {
   return `${count} ${pluralRu(count, 'участник', 'участника', 'участников')}`
 }
 
-/** `.status-txt` of the direct row (T040 «В сети»/«офлайн»; bug 12/T090:
- *  «неизвестно» не выводится — unknown рендерит пустую строку статуса). */
-const DIRECT_STATUS_TEXT: Readonly<Record<'online' | 'offline', string>> = {
-  online: 'В сети',
-  offline: 'офлайн',
+/**
+ * `.status-txt` личного чата (008a US3, T048; ui-behavior §3, FR-011):
+ * online — «В сети» (007, без изменений); offline с раскрытым
+ * `lastSeenAt` — «Был в сети — {время}» (`lastSeenFormat` T046 —
+ * сегодня ЧЧ:ММ, иначе дата+время, год при отличии); offline без
+ * поля — единый нейтральный фолбэк «Был в сети — давно» (нет данных /
+ * инкогнито / блок-пара неотличимы для наблюдателя, SC-002).
+ */
+function directStatusText(entry: PresenceEntry): string {
+  if (entry.status === 'online') {
+    return 'В сети'
+  }
+  return `Был в сети — ${entry.lastSeenAt !== undefined ? lastSeenFormat(entry.lastSeenAt) : 'давно'}`
 }
 
 /** The tip rows (FR-017): the live №28 members minus me ([] until №28 is live). */
@@ -152,22 +207,27 @@ function tipMembersOf(chat: ChatHeaderChat): readonly GroupMember[] {
 }
 
 interface DirectStatusRowProps {
-  /** The merged 007 status of the peer (T040). */
-  readonly presence: PresenceStatus
+  /**
+   * The merged 007 entry of the peer (008a T047/T048): status +
+   * disclosed `lastSeenAt?`; undefined — no store entry yet («unknown»,
+   * до первого №36/кадра №18).
+   */
+  readonly entry: PresenceEntry | undefined
   /** The blocker-side mark «заблокирован» (№12 projection, FR-020). */
   readonly blockedByMe: boolean
 }
 
 /**
  * The direct `.status-row` — the prototype presence lamp + label (US3
- * T043). Bug 12 (T090): the neutral «unknown» is NOT displayed — no
- * lamp, no `.status-txt` — only the empty row stays (its min-height in
- * chat-header.css holds the header height) so the header does not jump
- * when №36 converges; the «заблокирован» mark (FR-020) is not a
- * presence indicator and stays.
+ * T043; 008a T048 — «Был в сети — …» при offline). Bug 12 (T090): the
+ * neutral «unknown» is NOT displayed — no lamp, no `.status-txt` —
+ * only the empty row stays (its min-height in chat-header.css holds
+ * the header height) so the header does not jump when №36 converges;
+ * the «заблокирован» mark (FR-020) is not a presence indicator and
+ * stays.
  */
-function DirectStatusRow({ presence, blockedByMe }: DirectStatusRowProps) {
-  if (presence === 'unknown') {
+function DirectStatusRow({ entry, blockedByMe }: DirectStatusRowProps) {
+  if (entry === undefined || entry.status === 'unknown') {
     return (
       <div className="status-row">
         {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
@@ -176,8 +236,8 @@ function DirectStatusRow({ presence, blockedByMe }: DirectStatusRowProps) {
   }
   return (
     <div className="status-row">
-      <span className={presence === 'offline' ? 'lamp off' : 'lamp'} aria-hidden="true" />
-      <span className="status-txt">{DIRECT_STATUS_TEXT[presence]}</span>
+      <span className={entry.status === 'offline' ? 'lamp off' : 'lamp'} aria-hidden="true" />
+      <span className="status-txt">{directStatusText(entry)}</span>
       {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
     </div>
   )
@@ -258,6 +318,15 @@ function roleMarkOf(role: GroupMember['role'] | null): string | null {
   return null
 }
 
+/**
+ * Цепочка имени участника №28 (008a T023; ui-behavior §1):
+ * `GroupMember.user` несёт профильное `displayName` и персональный
+ * `alias` вызывающего — единая точка `resolveDisplayName` (ui/names).
+ */
+function memberChainOf(member: GroupMember): string {
+  return resolveDisplayName(member.user.alias, member.user.displayName, member.user.username)
+}
+
 /** The `.members-tip` roster body (FR-017): «Вы» first, then №28 minus me. */
 function MembersTip({ meUsername, myRole, members, tipRef }: MembersTipProps) {
   const meMark = roleMarkOf(myRole)
@@ -271,10 +340,19 @@ function MembersTip({ meUsername, myRole, members, tipRef }: MembersTipProps) {
       </div>
       {members.map((member) => {
         const mark = roleMarkOf(member.role)
+        // 008a T023: цепочка имени строки, инициалы — из неё, цвет —
+        // от username (FR-004); усечение — CSS, полный текст — в title.
+        const displayName = memberChainOf(member)
         return (
           <div className="mt-row" key={member.user.id}>
-            <Avatar source={member.user.username} size={TIP_AVATAR_SIZE} />
-            <span className="mt-name">{member.user.username}</span>
+            <Avatar
+              source={member.user.username}
+              initials={initialsOf(displayName)}
+              size={TIP_AVATAR_SIZE}
+            />
+            <span className="mt-name" title={displayName}>
+              {displayName}
+            </span>
             {mark !== null && <span className="mt-me">{mark}</span>}
           </div>
         )
@@ -302,6 +380,8 @@ function gearChatOf(chat: ChatHeaderChat): GearMenuChat | null {
 
 export function ChatHeader({
   chat,
+  soundEnabled,
+  onToggleSound,
   onAddContact,
   onToggleBlock,
   onDeleteChat,
@@ -310,12 +390,20 @@ export function ChatHeader({
   onLeaveChat,
 }: ChatHeaderProps) {
   const isGroup = chat.kind === 'group'
-  const name = isGroup ? chat.title : chat.username
+  // 008a T023: direct — цепочка `peerAlias → displayName → username`
+  // (ui-behavior §1), группа — title; инициалы — из имени, цвет — от
+  // username/title (FR-004: переименование не перекрашивает аватар).
+  const name = isGroup
+    ? chat.title
+    : resolveDisplayName(chat.peerAlias, chat.displayName, chat.username)
+  const avatarSource = isGroup ? chat.title : chat.username
   const gearChat = gearChatOf(chat)
 
   // The 007 surface of the open 1:1 dialog (T040): the status comes
   // ONLY from the presenceStore — a group header registers nothing.
-  const presence = usePresenceStatus(!isGroup ? chat.peerId : null)
+  // 008a US3 (T048): полная запись (status + lastSeenAt?) ведёт
+  // «Был в сети — …» проекцию строки статуса.
+  const presenceEntry = usePresenceEntry(!isGroup ? chat.peerId : null)
 
   // The members-tip anchor (the ContextMenu pattern): the status row
   // rect captured at open — null keeps the tip out of the DOM.
@@ -385,7 +473,12 @@ export function ChatHeader({
   return (
     <header className="chat-head">
       <div className="head-av">
-        <Avatar source={name} shape={isGroup ? 'octagon' : 'circle'} size={HEADER_AVATAR_SIZE} />
+        <Avatar
+          source={avatarSource}
+          initials={initialsOf(name)}
+          shape={isGroup ? 'octagon' : 'circle'}
+          size={HEADER_AVATAR_SIZE}
+        />
       </div>
       <div className="chat-title">
         <h2 className="chat-name dialog-title" title={name}>
@@ -400,14 +493,30 @@ export function ChatHeader({
             closeTip={closeTip}
           />
         ) : (
-          <DirectStatusRow presence={presence} blockedByMe={chat.blockedByMe} />
+          <DirectStatusRow entry={presenceEntry} blockedByMe={chat.blockedByMe} />
         )}
       </div>
-      {/* Единственная кнопка заголовка — «шестерёнка» (FR-016, T054):
-           direct — всегда; group — с известной ролью (живой №28 или
-           базис №12/№13/№27) — без роли матрица пунктов 006 не определена. */}
-      {gearChat !== null && (
-        <div className="ch-btns">
+      {/* Правые кнопки: bell-колокол звука (008a T057, ui-behavior §4.1)
+          — всегда, персональная настройка участия; «шестерёнка» (FR-016,
+          T054): direct — всегда, group — с известной ролью (живой №28 или
+          базис №12/№13/№27) — без роли матрица пунктов 006 не определена. */}
+      <div className="ch-btns">
+        <button
+          type="button"
+          className={soundEnabled === false ? 'ch-btn off' : 'ch-btn'}
+          title="Звуковые оповещения"
+          aria-pressed={soundEnabled !== false}
+          onClick={() => {
+            // ЦЕЛЕВОЕ значение: текущее «вкл» → выключить, «выкл» → включить.
+            onToggleSound?.(soundEnabled === false)
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M18 16v-5a6 6 0 0 0-12 0v5l-1.5 2.5h15L18 16z" />
+            <path d="M10 20a2 2 0 0 0 4 0" />
+          </svg>
+        </button>
+        {gearChat !== null && (
           <ChatGearMenu
             chat={gearChat}
             onAddContact={onAddContact}
@@ -417,8 +526,8 @@ export function ChatHeader({
             onOpenEdit={onOpenEdit}
             onLeaveChat={onLeaveChat}
           />
-        </div>
-      )}
+        )}
+      </div>
       {/* Подсказка состава (FR-017) — портал в body, как #membersTip
           прототипа: fixed-позиционирование относительно вьюпорта,
           поверх машины (z-56), pointer-events: none — чистый ховер. */}

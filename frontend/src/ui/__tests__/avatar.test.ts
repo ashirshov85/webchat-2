@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { AVATAR_PALETTE, colorOf, fnv1a32, initialsOf } from '../avatar'
+import { resolveDisplayName } from '../names'
 
 describe('initialsOf — первые буквы первых двух слов (FR-024, design-tokens §4)', () => {
   it('одиночное слово — одна буква', () => {
@@ -79,6 +80,50 @@ describe('colorOf — детерминированный цвет из пали�
     ]
     const used = new Set(sources.map(colorOf))
     expect(used).toEqual(new Set(AVATAR_PALETTE))
+  })
+})
+
+describe('initialsOf — Unicode-safe графемные кластеры (008a T020, FR-004, SC-006)', () => {
+  it('эмодзи-имя: первый графемный кластер, суррогатная пара не рвётся (без «тофу»)', () => {
+    expect(initialsOf('😀')).toBe('😀')
+    expect(initialsOf('😀🙂 Тест')).toBe('😀Т')
+    expect(initialsOf('😀 🙂')).toBe('😀🙂')
+  })
+
+  it('составные эмодзи — один кластер целиком: ZWJ-последовательность, тон кожи, флаг', () => {
+    expect(initialsOf('👨‍💻')).toBe('👨‍💻')
+    expect(initialsOf('🧑‍🚀 Мария')).toBe('🧑‍🚀М')
+    expect(initialsOf('👍🏽')).toBe('👍🏽')
+    expect(initialsOf('🇷🇺')).toBe('🇷🇺')
+  })
+
+  it('эмодзи-кластер не распадается на одиночные суррогаты (код-юниты вместе)', () => {
+    const initials = initialsOf('😀 Мария')
+    expect(initials.codePointAt(0)).toBe(0x1f600)
+    expect(initials).toHaveLength(3) // 😀 (2 код-юнита) + М
+  })
+
+  it('диакритика: базовая буква + combining-знак — один кластер, регистр базовой меняется', () => {
+    expect(initialsOf('éva')).toBe('É')
+    expect(initialsOf('e\u0301va')).toBe('E\u0301')
+  })
+
+  it('кириллица и латиница — по-кластерно на слово', () => {
+    expect(initialsOf('Мария')).toBe('М')
+    expect(initialsOf('ada lovelace')).toBe('AL')
+    expect(initialsOf('Мария Соколова')).toBe('МС')
+  })
+
+  it('имя из пробельных частей: пустые части пропускаются, слова те же', () => {
+    expect(initialsOf('Мария   Соколова')).toBe('МС')
+    expect(initialsOf('  ada    lovelace  ')).toBe('AL')
+    expect(initialsOf('     ')).toBe('')
+  })
+
+  it('композиция с цепочкой US1: initialsOf(resolveDisplayName(alias, displayName, username))', () => {
+    expect(initialsOf(resolveDisplayName('Маша', 'Мария', 'mikhail'))).toBe('М')
+    expect(initialsOf(resolveDisplayName(null, 'Мария Соколова', 'mikhail'))).toBe('МС')
+    expect(initialsOf(resolveDisplayName(undefined, null, 'mikhail'))).toBe('M')
   })
 })
 

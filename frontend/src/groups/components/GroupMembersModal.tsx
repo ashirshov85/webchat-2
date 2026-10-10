@@ -53,6 +53,8 @@ import type { GroupMember } from '../../api/groups'
 import { problemMessage } from '../../auth/problem'
 import { ErrorBanner } from '../../chats/components/ErrorBanner'
 import { Avatar } from '../../ui/Avatar'
+import { initialsOf } from '../../ui/avatar'
+import { resolveDisplayName } from '../../ui/names'
 import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
 import './group-members-modal.css'
 
@@ -142,6 +144,15 @@ function directChatOf(chats: readonly ChatListItem[], userId: string): ChatListI
   return null
 }
 
+/**
+ * Цепочка имени участника (008a T023; ui-behavior §1): №28
+ * `GroupMember.user` несёт профильное `displayName` и персональный
+ * `alias` вызывающего — единая точка `resolveDisplayName` (ui/names).
+ */
+function chainOf(member: GroupMember): string {
+  return resolveDisplayName(member.user.alias, member.user.displayName, member.user.username)
+}
+
 export function GroupMembersModal({
   members,
   myRole,
@@ -180,6 +191,9 @@ export function GroupMembersModal({
         type: 'direct',
         chatId: bound.chatId,
         peer: bound.peer,
+        // 008a T023: alias вызывающего к участнику доезжает в заголовок
+        // открытой переписки (№12-фрагмент синтетического ChatView).
+        peerAlias: bound.peerAlias,
         blockedByMe: bound.blockedByMe ?? false,
         peerReadUpToSeq: null,
         myReadUpToSeq: 0,
@@ -215,7 +229,9 @@ export function GroupMembersModal({
     if (menuMember === null) {
       return []
     }
-    const username = menuMember.user.username
+    // 008a T023: aria-label'ы пунктов несут цепочку имени участника
+    // (`alias → displayName → username`, ui-behavior §1).
+    const displayName = chainOf(menuMember)
     const actions = actionsFor(myRole, menuMember)
     const offerContact =
       contactUserIds !== undefined && onAddContact !== undefined
@@ -225,7 +241,7 @@ export function GroupMembersModal({
       actions.kick
         ? {
             label: 'Исключить',
-            ariaLabel: `Исключить ${username}`,
+            ariaLabel: `Исключить ${displayName}`,
             danger: true,
             onSelect: () => {
               onKick(menuMember.user.id)
@@ -235,7 +251,7 @@ export function GroupMembersModal({
       actions.grantAdmin
         ? {
             label: 'Назначить админом',
-            ariaLabel: `Назначить админом ${username}`,
+            ariaLabel: `Назначить админом ${displayName}`,
             onSelect: () => {
               onSetRole(menuMember.user.id, 'admin')
             },
@@ -244,7 +260,7 @@ export function GroupMembersModal({
       actions.revokeAdmin
         ? {
             label: 'Снять админа',
-            ariaLabel: `Снять админа ${username}`,
+            ariaLabel: `Снять админа ${displayName}`,
             onSelect: () => {
               onSetRole(menuMember.user.id, 'member')
             },
@@ -253,7 +269,7 @@ export function GroupMembersModal({
       actions.transferOwnership
         ? {
             label: 'Передать владение',
-            ariaLabel: `Передать владение ${username}`,
+            ariaLabel: `Передать владение ${displayName}`,
             onSelect: () => {
               onTransferOwnership(menuMember.user.id)
             },
@@ -282,7 +298,10 @@ export function GroupMembersModal({
           rows.map((member) => {
             const actions = actionsFor(myRole, member)
             const pending = pendingUserId === member.user.id
-            const username = member.user.username
+            // 008a T023: цепочка имени строки (ui-behavior §1) —
+            // инициалы — из неё, цвет аватара — от username (FR-004);
+            // усечение — CSS, полный текст — в `title` (конвенция 008).
+            const displayName = chainOf(member)
             // Кебаб несёт меню — рендерим только когда пункты есть:
             // ростер-действия по матрице myRole ИЛИ «Добавить в контакты»
             // (member-зритель кебаба не видит вовсе — T095).
@@ -296,23 +315,29 @@ export function GroupMembersModal({
             return (
               // T098: строка — навигация (паттерн ctc-строки «Контактов»):
               // button лексики pick-row/ctc-row, доступное имя «Участник
-              // {username}», title «Открыть чат»; кебаб-клик гасится
-              // stopPropagation'ом обработчика кебаба (как .c-menu
+              // {цепочка}» (008a T023), title «Открыть чат»; кебаб-клик
+              // гасится stopPropagation'ом обработчика кебаба (как .c-menu
               // ContactsModal). Доступна всем ролям (006).
               <button
                 type="button"
                 key={member.user.id}
                 className="pick-row ctc-row member-row"
-                aria-label={`Участник ${username}`}
+                aria-label={`Участник ${displayName}`}
                 title="Открыть чат"
                 onClick={() => {
                   handleRowActivate(member)
                 }}
               >
-                <Avatar source={username} size={32} />
+                <Avatar
+                  source={member.user.username}
+                  initials={initialsOf(displayName)}
+                  size={32}
+                />
                 <div className="c-main">
                   <div className="c-top">
-                    <span className="c-name">{username}</span>
+                    <span className="c-name" title={displayName}>
+                      {displayName}
+                    </span>
                   </div>
                   <div className="c-prev">{ROLE_LABELS[member.role]}</div>
                 </div>

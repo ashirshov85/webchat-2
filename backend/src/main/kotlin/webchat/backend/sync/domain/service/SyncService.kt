@@ -5,8 +5,6 @@ import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import webchat.backend.auth.domain.model.User
-import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.chats.api.dto.ChatPeerView
 import webchat.backend.chats.api.dto.MessageView
 import webchat.backend.chats.domain.model.ChatKind
@@ -19,6 +17,8 @@ import webchat.backend.config.DeliveryProperties
 import webchat.backend.contacts.domain.port.BlockRepository
 import webchat.backend.sync.api.dto.SyncChatDelta
 import webchat.backend.sync.api.dto.SyncResponse
+import webchat.backend.users.domain.model.Profile
+import webchat.backend.users.domain.port.ProfileStore
 import java.util.UUID
 
 /**
@@ -98,7 +98,7 @@ data class ClientCursor(
 class SyncService(
     private val participantRepository: ParticipantRepository,
     private val messageRepository: MessageRepository,
-    private val userRepository: UserRepository,
+    private val profileStore: ProfileStore,
     private val blockRepository: BlockRepository,
     private val deliveryProperties: DeliveryProperties,
     private val meterRegistry: MeterRegistry,
@@ -234,6 +234,15 @@ class SyncService(
      * through the dialog's OTHER participant row (the 004 semantics
      * verbatim, `peerReadUpToSeq` stays the peer ✓✓ watermark and
      * `blockedByMe` the only block projection of the API).
+     *
+     * 008a (T015, api-contract.md §2): the peer resolves through the
+     * SHARED `PublicUser` point read [ProfileStore.findByUserId] — the
+     * same projector that serves №10 — so the delta peer carries the
+     * optional profile `displayName` (FR-001; NULL renders the field
+     * ABSENT, 008 clients fall back to `username`, SC-007). No
+     * `peerAlias` here: the №26 delta peer stays the plain `PublicUser`
+     * fragment of the contract (the alias slots exist only on №11/№12/
+     * №13).
      */
     private fun directDelta(
         common: SyncChatDelta,
@@ -244,7 +253,7 @@ class SyncService(
             participantRepository.findForChat(candidate.chatId).firstOrNull { it.userId != callerId }
                 ?: error("chat ${candidate.chatId} must carry the peer participant row of the dialog")
         val peer =
-            userRepository.findById(peerParticipant.userId)
+            profileStore.findByUserId(peerParticipant.userId)
                 ?: error("chat ${candidate.chatId} peer ${peerParticipant.userId} does not resolve")
         return common.copy(
             peer = peerView(peer),
@@ -264,14 +273,20 @@ class SyncService(
             .groupBy(keySelector = { it.chatId })
             .mapValues { (_, items) -> items.maxOf { it.upToSeq } }
 
-    /** The `PublicUser` projection of the delta peer — the same shape as №12/№13 (ChatController). */
-    private fun peerView(peer: User): ChatPeerView =
+    /**
+     * The `PublicUser` projection of the delta peer — the same shape as
+     * №12/№13 (ChatController); since 008a (T015) it carries the optional
+     * profile `displayName` of [Profile] (NULL = «not set» — the field
+     * stays ABSENT and the client renders `username`).
+     */
+    private fun peerView(peer: Profile): ChatPeerView =
         ChatPeerView(
             id = peer.id,
             username = peer.username,
             email = peer.email,
-            status = peer.status.name.lowercase(),
+            status = peer.status,
             createdAt = peer.createdAt,
+            displayName = peer.displayName?.value,
         )
 
     /** The reused `Message` schema (one schema for №15/№16/SSE/sync — US6 of 004). */

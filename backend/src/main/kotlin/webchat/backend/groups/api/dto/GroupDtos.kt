@@ -1,5 +1,6 @@
 package webchat.backend.groups.api.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import webchat.backend.groups.api.EmptyPatchException
 import webchat.backend.groups.api.InvalidMemberIdsException
 import webchat.backend.groups.api.InvalidUserIdsException
@@ -156,10 +157,23 @@ data class GroupMembersResponse(
 
 /**
  * The reused `PublicUser {id, username, email, status, createdAt}`
- * fragment of [GroupMember] (openapi.yaml 0.6.0): the groups-local
+ * fragment of [GroupMember] (openapi.yaml 0.9.0): the groups-local
  * projection of the contract schema, in the [ChatPeerView] convention —
  * `status` carries the lowercase `user_status` label, no password
  * material leaves the service (SC-005).
+ *
+ * 008a (api-contract.md §2, T016): `GroupMember.user` refs the
+ * `UserWithAlias` schema — PublicUser plus the caller's PERSONAL alias
+ * slot living INSIDE the user object (unlike the separate additive
+ * `peerAlias` field of №11/№12/№13). The OPTIONAL [displayName] is the
+ * member's profile display name of FR-001 (NULL = «not set» renders the
+ * field ABSENT — 008 clients fall back to `username`, SC-007); the
+ * OPTIONAL [alias] is the CALLER's own `user_contacts` alias toward
+ * THIS member (FR-003) — strictly caller-scoped material that never
+ * reaches the member himself or any third party (the leakage ban of
+ * FR-003). NULL/ABSENT = «not set or the member is not a contact of the
+ * caller» → the client renders the display chain
+ * `alias → displayName → username`.
  */
 data class PublicUserView(
     val id: UUID,
@@ -167,6 +181,8 @@ data class PublicUserView(
     val email: String,
     val status: String,
     val createdAt: Instant,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val displayName: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val alias: String? = null,
 )
 
 /**

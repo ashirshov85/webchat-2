@@ -1,5 +1,6 @@
 package webchat.backend.contacts.api.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import webchat.backend.contacts.domain.model.UserProfile
 import java.time.Instant
 import java.util.UUID
@@ -9,6 +10,14 @@ import java.util.UUID
  * createdAt}` (openapi.yaml 0.4.0) — the projection carried by №19
  * `users.search` answers and by [ContactView.user]; no password material
  * or internal columns (SC-005).
+ *
+ * 008a (api-contract.md §2, T014): the OPTIONAL [displayName] — the
+ * profile display name of FR-001 rides every `PublicUser` `$ref`
+ * surface, here the `ContactView.user` of №20/№21/№40. NULL = «not
+ * set» and renders the field ABSENT (backward compatibility: 008
+ * clients fall back to `username`, SC-007); the column value already
+ * re-validates against the `ck_users_display_name` CHECK of V16 on
+ * every read.
  */
 data class PublicUserView(
     val id: UUID,
@@ -16,6 +25,7 @@ data class PublicUserView(
     val email: String,
     val status: String,
     val createdAt: Instant,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val displayName: String? = null,
 )
 
 /** [UserProfile] projected as the contract `PublicUser` schema — verbatim, no reshaping. */
@@ -26,6 +36,7 @@ internal fun UserProfile.toPublicUserView(): PublicUserView =
         email = email,
         status = status,
         createdAt = createdAt,
+        displayName = displayName?.value,
     )
 
 /**
@@ -42,6 +53,17 @@ data class AddContactRequest(
 )
 
 /**
+ * The №40 PUT body (openapi `AliasUpdateRequest`, T014): bound
+ * leniently as a plain JSON value — the FR-003 shape gate is the
+ * controller's `400 invalid_alias` (errors.alias), not a framework
+ * parse failure (the [ProfileUpdateRequest][webchat.backend.users.api.ProfileUpdateRequest]
+ * precedent of №39); `null`/omitted = the reset leg («not set»).
+ */
+data class AliasUpdateRequest(
+    val alias: Any? = null,
+)
+
+/**
  * Contract №20/№21 success body — `ContactView` (openapi.yaml 0.8.0):
  * the contact user as `PublicUser`, the `createdAt` of the stored
  * `user_contacts` row (a repeat add returns the SAME row, edge spec) and
@@ -49,11 +71,19 @@ data class AddContactRequest(
  * bug 16): the same `user_blocks` relation №12/№13 project, kept here so
  * the state survives a deleted (hidden) dialog; strictly one-directional
  * — no inverse «who blocked me» field exists (FR-020).
+ *
+ * 008a (api-contract.md §2, T014): the OPTIONAL [alias] — the caller's
+ * personal name for the contact (FR-003), served on №20/№21/№40 of the
+ * OWNER only; NULL = «not set» renders the field ABSENT (008 clients
+ * fall back to displayName/`username`, SC-007) and the value is the
+ * stored trimmed form of [ContactAlias][webchat.backend.contacts.domain.model.ContactAlias]
+ * (the `ck_user_contacts_alias` CHECK of V16).
  */
 data class ContactView(
     val user: PublicUserView,
     val createdAt: Instant,
     val blockedByMe: Boolean,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val alias: String? = null,
 )
 
 /** Contract №20 success body — `ContactsResponse {contacts: [ContactView]}`; an empty list is valid. */
@@ -61,7 +91,52 @@ data class ContactsResponse(
     val contacts: List<ContactView>,
 )
 
-/** Contract №19 success body — `UsersSearchResponse {users: [PublicUser]}`: 0..1 element, empty is valid (edge). */
+/**
+ * The №19 search item (008a, api-contract.md §2, T017): the contract
+ * `UserWithAlias` schema — the `PublicUser` fields plus the caller's
+ * PERSONAL alias slot living INSIDE the user object (the same shape as
+ * the `GroupMember.user` fragment of №28, unlike the separate additive
+ * `peerAlias` field of №11/№12/№13).
+ *
+ * The OPTIONAL [displayName] is the found user's profile display name
+ * of FR-001 (NULL = «not set» renders the field ABSENT — 008 clients
+ * fall back to `username`, SC-007); the OPTIONAL [alias] is the
+ * CALLER's own `user_contacts` alias toward the found user (FR-003) —
+ * present ONLY when the found user is the caller's contact AND an
+ * alias is stored, strictly caller-scoped material that never reaches
+ * the found user himself or any third party. ABSENT = «not set or not
+ * a contact» → the client renders the display chain
+ * `alias → displayName → username`.
+ */
+data class UserWithAliasView(
+    val id: UUID,
+    val username: String,
+    val email: String,
+    val status: String,
+    val createdAt: Instant,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val displayName: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val alias: String? = null,
+)
+
+/**
+ * [UserProfile] as the №19 search item — the `PublicUser` projection
+ * verbatim plus the caller's [alias] slot (joined by the caller id in
+ * [UserSearchController], T017); the search semantics themselves stay
+ * the exact username/email match of [UserLookupPort.searchExact]
+ * (FR-005/FR-016 — server-side search by displayName is out of scope).
+ */
+internal fun UserProfile.toUserWithAliasView(alias: String?): UserWithAliasView =
+    UserWithAliasView(
+        id = id,
+        username = username,
+        email = email,
+        status = status,
+        createdAt = createdAt,
+        displayName = displayName?.value,
+        alias = alias,
+    )
+
+/** Contract №19 success body — `UsersSearchResponse {users: [UserWithAlias]}`: 0..1 element, empty is valid (edge). */
 data class UsersSearchResponse(
-    val users: List<PublicUserView>,
+    val users: List<UserWithAliasView>,
 )

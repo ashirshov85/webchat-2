@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WebChat Public API
-  version: 0.8.0
+  version: 0.9.0
   description: >
     Публичный API веб-чата. Единственный источник истины публичного API;
     TypeScript-типы фронтенда генерируются из этого файла автоматически.
@@ -91,6 +91,36 @@ info:
     FR-020); блокировки и контакты по-прежнему независимы (FR-017/FR-020),
     новых путей и problem-кодов нет. Изменение — только additive
     (0.7.0 → 0.8.0, без BREAKING.md).
+
+    Фича 008a (social-signals): endpoints №39–№42 — отображаемые имена
+    и социальные сигналы: обновление профиля с профильным именем
+    displayName (№39, цепочка отображения alias → displayName → username),
+    персональный alias контакта (№40, виден только запросчику),
+    эфемерный сигнал набора текста (№41, состояние не читается —
+    подключившимся не реплеится; DIRECT-блок-пара — 204 без публикации)
+    и переключатель звуковых оповещений чата per-user-per-chat (№42,
+    значение и факт настройки другим участникам не раскрываются; событие
+    chat.sound.updated — только в собственный канал). Опциональные поля
+    существующих схем: PublicUser.displayName (все $ref-поверхности,
+    включая peer №26 sync-дельты), ContactView.alias, peer-фрагменты
+    №11/№12/№13 (displayName, alias), GroupMember.user №28 (displayName,
+    alias), результат поиска №19 (displayName, alias), ChatView/
+    ChatListItem.soundEnabled, PresenceStatusItem.lastSeenAt и
+    PresenceUpdatedEvent.lastSeenAt (только offline ∧ аудитория
+    видимости 007 ∧ не инкогнито ∧ данные есть; отсутствие поля
+    нейтрально). №18 — 3 новых event:-типа (typing.started,
+    typing.stopped, chat.sound.updated). Фиксированные константы фичи:
+    длина displayName/alias — 1–64 символа после trim; typing — окно
+    повтора клиента 3 с, окно молчания 5 с, серверный TTL состояния 8 с,
+    страховый таймаут наблюдателя 10 с, флуд 60 сигналов/мин;
+    точность lastSeen ≤ TTL-модели 007 (регистрация 90 с + гистерезис
+    45 с + poller 1 с); флуд №39/№40/№42 — 30/мин. Новые problem-коды:
+    invalid_display_name (400), invalid_alias (400), contact_not_found
+    (404), invalid_action (400); flood_limit (429) переиспользован.
+    Серверные сортировки и семантика поиска №19 не меняются. Все новые
+    пути требуют Bearer (/users/me/*, /contacts/*, /chats/* — per-user,
+    публичный перечень 002–003 не расширен). Изменение — только
+    additive (0.8.0 → 0.9.0, без BREAKING.md).
 tags:
   - name: auth
     description: Регистрация, вход, сессии, восстановление пароля
@@ -905,7 +935,10 @@ paths:
         group-элементы несут type:'group', title, memberCount, myRole,
         а peer/blockedByMe = null; lastMessage/unreadCount/сортировка —
         без изменений; включаются только чаты с active-членством
-        вызывающего.
+        вызывающего. С 008a direct-элементы несут peer с профильным
+        displayName, персональный peerAlias вызывающего к peer и
+        персональный soundEnabled (звуковые оповещения чата вызывающего,
+        смена — №42).
       security:
         - bearerAuth: []
       responses:
@@ -943,7 +976,10 @@ paths:
         знаков прочтения остальных активных участников — ✓✓ при прочтении
         хотя бы одним; 0 в группе из одного — ✓✓ не выставляется;
         монотонно, не сбрасывается новыми участниками; FR-012), memberCount;
-        peer/blockedByMe/peerReadUpToSeq = null.
+        peer/blockedByMe/peerReadUpToSeq = null. С 008a peer direct-диалога
+        несёт профильное displayName, ответ — персональный peerAlias
+        вызывающего к peer и soundEnabled (звуковые оповещения чата
+        вызывающего, смена — №42).
       security:
         - bearerAuth: []
       parameters:
@@ -1329,11 +1365,35 @@ paths:
         регистрации присутствия не относится; presence-heartbeat №37 —
         прикладное продление регистрации каждые 30 c (отдельный REST-
         вызов); 404/429 на №37 не влияют на :ka, и наоборот.
+        Социальные сигналы (008a): event: typing.started | typing.stopped
+        с payload TypingStartedEvent/TypingStoppedEvent {chatId, userId} —
+        эфемерный сигнал набора текста; публикуется активным участникам
+        чата кроме отправителя сигнала при каждом валидном start №41
+        (включая продления — окно повтора клиента 3 с) и при завершении:
+        stop №41 (только при активном состоянии — идемпотентность),
+        успешной отправке сообщения №16 печатающим, серверном истечении
+        состояния (TTL 8 с, poller 1 с — событие stopped ≤ TTL +
+        poll-interval). Нормативные константы: окно повтора клиента 3 с,
+        окно молчания клиента 5 с, серверный TTL состояния 8 с,
+        страховой таймаут наблюдателя 10 с, флуд-лимит сигналов 60/мин.
+        DIRECT-блок-пара — без публикации в обе стороны (сигнал
+        принимается 204); состояние не читается, не сохраняется и не
+        реплеится при (пере)подключении (эфемерность). event:
+        chat.sound.updated с payload ChatSoundUpdatedEvent {chatId,
+        soundEnabled} — только в собственный канал пользователя при
+        успешной смене №42 (мультидевайс ≤ 2 с; повтор того же
+        значения — без события); другие участники чата событие не
+        получают (приватность). presence.updated (007) с 008a может
+        нести опциональное lastSeenAt при offline-переходе субъекта в
+        рамках аудитории видимости (правила раскрытия и точность —
+        в схеме PresenceUpdatedEvent). Неизвестные клиенту event:-типы
+        обязаны игнорироваться (прямая совместность, US6-3) — механизм
+        аддитивности новых событий.
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: 'SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, opening-фрейм connected (007), события message.created, chat.read, presence.updated (007) и события групп (group.updated, group.member.added, group.member.removed, group.role.changed, group.you_removed, group.deleted; фрейминг и payloads — в описании операции)'
+          description: 'SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, opening-фрейм connected (007), события message.created, chat.read, presence.updated (007), события групп (group.updated, group.member.added, group.member.removed, group.role.changed, group.you_removed, group.deleted), typing.started, typing.stopped, chat.sound.updated (008a); фрейминг и payloads — в описании операции'
           headers:
             X-Accel-Buffering:
               description: 'no — отключение буферизации прокси (кадры доставляются немедленно, без агрегации за ingress)'
@@ -1347,7 +1407,7 @@ paths:
                 description: Сырой SSE-поток (текст по спецификации WHATWG)
               examples:
                 streamSample:
-                  summary: 'Первый кадр (retry) + opening-фрейм connected + события message.created, chat.read, presence.updated, group.member.added, group.you_removed + heartbeat'
+                  summary: 'Первый кадр (retry) + opening-фрейм connected + события message.created, chat.read, presence.updated, group.member.added, group.you_removed, typing.started, typing.stopped, chat.sound.updated, presence.updated с lastSeenAt + heartbeat'
                   value: |
                     retry: 3000
 
@@ -1369,6 +1429,18 @@ paths:
                     event: group.you_removed
                     data: {"groupId":"7dc5f5c0-0000-4a10-8b00-000000000002","reason":"kicked"}
 
+                    event: typing.started
+                    data: {"chatId":"7dc5f5c0-0000-4a10-8b00-000000000001","userId":"9a2c8e40-0000-4d30-a100-000000000003"}
+
+                    event: typing.stopped
+                    data: {"chatId":"7dc5f5c0-0000-4a10-8b00-000000000001","userId":"9a2c8e40-0000-4d30-a100-000000000003"}
+
+                    event: chat.sound.updated
+                    data: {"chatId":"7dc5f5c0-0000-4a10-8b00-000000000001","soundEnabled":false}
+
+                    event: presence.updated
+                    data: {"userId":"9a2c8e40-0000-4d30-a100-000000000003","status":"offline","rev":43,"lastSeenAt":"2026-09-20T12:10:03Z"}
+
                     :ka
         '401':
           description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
@@ -1386,7 +1458,11 @@ paths:
         регистра (FR-016): query содержит @ → сравнение lower(email),
         иначе lower(username) — username не допускает @ (правило 002).
         Результат — 0..1 пользователь: пустой список — корректный ответ
-        (совпадения нет, edge). Защита от перебора (FR-016): не более
+        (совпадения нет, edge). С 008a найденный несёт профильное
+        displayName (если задано) и alias вызывающего (если найденный —
+        его контакт); серверная семантика поиска не меняется (точное
+        совпадение, без сортировки по displayName). Защита от перебора
+        (FR-016): не более
         30 запросов/мин на пользователя — 31-й запрос в окне →
         429 flood_limit + Retry-After (сек до доступного токена), поиск
         не выполняется.
@@ -2333,7 +2409,11 @@ paths:
         неотличимо от реального офлайна (FR-007). rev — ревизия
         статуса цели: клиент сливает снимок с событиями №18 по
         max(rev) per-user (идемпотентность FR-003: дубль кадра,
-        задержавшийся кадр, устаревший снимок — no-op). Цикл вызова —
+        задержавшийся кадр, устаревший снимок — no-op). С 008a
+        offline-элементы могут нести опциональное lastSeenAt — время
+        последней активности presence-канала цели; условия раскрытия
+        и точность — в схеме PresenceStatusItem (отсутствие поля
+        нейтрально, SC-002). Цикл вызова —
         (re)connect 005 (после sync/chats/contacts) и открытие новых
         поверхностей. Флуд-контроль — per-user бакет: 429 flood_limit +
         Retry-After (консервативно, как №26).
@@ -2520,6 +2600,290 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /api/v1/users/me/profile:
+    put:
+      operationId: updateMyProfile
+      tags: [users]
+      summary: Обновить мой профиль (№39, Bearer)
+      description: >
+        Задаёт или сбрасывает профильное отображаемое имя displayName
+        вызывающего (FR-001): цепочка отображения у наблюдателей —
+        alias → displayName → username. null/отсутствие поля = сброс
+        (имя не задано, отображение по username); пустая или состоящая
+        только из пробелов строка → 400 (сброс — только явный null).
+        Валидация: серверный trim, допустимая длина 1–64 символа после
+        trim, Unicode без ограничений (кириллица/латиница/эмодзи).
+        Идемпотентно: повтор того же значения — 200 без побочных событий
+        (realtime-события смены имени нет — рефетч-семантика).
+        Флуд-контроль — per-user бакет 30/мин (паритет №38):
+        429 flood_limit + Retry-After.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileUpdateRequest'
+      responses:
+        '200':
+          description: Обновлённое представление пользователя (с displayName, если задано)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUser'
+        '400':
+          description: 'displayName пусто/пробельно после trim или длиннее 64 символов (errors: {displayName: [invalid_display_name]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Per-user флод-бакет 30/мин исчерпан (errors: {displayName: [flood_limit]})'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/contacts/{userId}/alias:
+    put:
+      operationId: setContactAlias
+      tags: [contacts]
+      summary: Задать/сбросить персональный alias контакта (№40, Bearer)
+      description: >
+        Персональный alias контакта в списке вызывающего — старший
+        элемент цепочки отображения alias → displayName → username
+        (FR-002/FR-003). null/отсутствие поля = сброс (отображение по
+        displayName/username); пустая или состоящая только из пробелов
+        строка → 400 (сброс — только явный null). Валидация: серверный
+        trim, допустимая длина 1–64 символа после trim, Unicode без
+        ограничений. Alias виден только вызывающему во всех его
+        представлениях — сам контакт и третьи лица его не получают.
+        Идемпотентность — последний write wins. Жизненный цикл: alias
+        переживает удаление чата и удаляется вместе с контактом (№22).
+        Флуд-контроль — per-user бакет 30/мин: 429 flood_limit +
+        Retry-After.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          description: Контакт вызывающего, для которого задаётся alias
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AliasUpdateRequest'
+      responses:
+        '200':
+          description: 'Сохранённое представление контакта: user (PublicUser с displayName), alias?, createdAt, blockedByMe'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactView'
+        '400':
+          description: 'alias пусто/пробельно после trim или длиннее 64 символов (errors: {alias: [invalid_alias]}); не-UUID userId (errors: {userId: [invalid_uuid]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'userId не является контактом вызывающего (errors: {userId: [contact_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Per-user флод-бакет 30/мин исчерпан (errors: {alias: [flood_limit]})'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/chats/{chatId}/typing:
+    post:
+      operationId: sendTypingSignal
+      tags: [chats]
+      summary: Сигнал набора текста в чате (№41, Bearer)
+      description: >
+        Эфемерный сигнал набора текста (FR-006–FR-009): start — начало
+        или продление набора, stop — завершение; 204 — сигнал принят
+        (повтор start = продление, идемпотентно). Публикация через канал
+        №18: start → typing.started {chatId, userId} активным участникам
+        чата кроме отправителя (own-устройства свой набор не отображают —
+        решается адресацией); stop → typing.stopped той же аудитории
+        только при активном состоянии (повторный stop без активного
+        состояния — без публикации, идемпотентность). Нормативные
+        константы (фиксация таймингов в публичном контракте): окно
+        повтора клиента start — 3 с; окно молчания клиента до stop — 5 с;
+        серверный TTL состояния набора — 8 с (самоистечение →
+        typing.stopped не позднее TTL + poll-interval 1 с); страховый
+        таймаут индикатора наблюдателя — 10 с без продления; флуд-лимит —
+        60 сигналов/мин на пользователя. Состояние эфемерно: операции
+        чтения нет, в историю/sync не попадает, подключившимся не
+        реплеится. DIRECT-блок-пара (обе стороны, 004 FR-020): сигналы
+        принимаются 204 при валидном членстве, но не публикуются в обе
+        стороны — наблюдатели дребезга не видят. Флуд-контроль — per-user
+        бакет 60/мин (все чаты пользователя): 429 flood_limit +
+        Retry-After; избыточные сигналы не публикуются.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          description: Идентификатор чата
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TypingRequest'
+      responses:
+        '204':
+          description: 'Сигнал принят (идемпотентно: повтор start = продление)'
+        '400':
+          description: 'action не задан или вне start|stop (errors: {action: [invalid_action]}); не-UUID chatId (errors: {chatId: [invalid_uuid]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: 'Вызывающий — не участник чата (errors: {chat: [not_participant]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Чат не найден (errors: {chat: [chat_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Флуд-лимит 60 сигналов/мин на пользователя (errors: {action: [flood_limit]}; избыточные сигналы не публикуются)'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /api/v1/chats/{chatId}/sound:
+    put:
+      operationId: setChatSound
+      tags: [chats]
+      summary: Переключить звуковые оповещения чата (№42, Bearer)
+      description: >
+        Персональный (per-user-per-chat) переключатель звуковых оповещений
+        (FR-012–FR-015). Смена значения → realtime-событие
+        chat.sound.updated {chatId, soundEnabled} только в собственный
+        канал №18 вызывающего (синхронизация мультидевайс ≤ 2 с); повтор
+        того же значения — 200 без события (идемпотентность). Приватность:
+        значение и факт настройки не раскрываются другим участникам — ни
+        в представлениях, ни в событиях. Подключающиеся/переподключающиеся
+        клиенты читают актуальное состояние из soundEnabled №12/№13;
+        событие — только для живых подключений. Без сети операция не
+        выполняется (офлайн-очереди переключений нет). Флуд-контроль —
+        per-user бакет 30/мин: 429 flood_limit + Retry-After.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: chatId
+          in: path
+          required: true
+          description: Идентификатор чата
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatSoundRequest'
+      responses:
+        '200':
+          description: 'Сохранённое значение: ChatSoundResponse {soundEnabled}'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSoundResponse'
+        '400':
+          description: 'enabled отсутствует или не boolean (errors: {enabled: [malformed_request]}); не-UUID chatId (errors: {chatId: [invalid_uuid]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '403':
+          description: 'Вызывающий — не участник чата (errors: {chat: [not_participant]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: 'Чат не найден (errors: {chat: [chat_not_found]})'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Флуд-лимит 30 переключений/мин на пользователя (errors: {enabled: [flood_limit]})'
+          headers:
+            Retry-After:
+              description: Секунды до доступного токена
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 components:
   securitySchemes:
     bearerAuth:
@@ -2681,6 +3045,45 @@ components:
         createdAt:
           type: string
           format: date-time
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 'Профильное отображаемое имя (008a, FR-001): отсутствует → клиент отображает username (единая цепочка alias → displayName → username); задаётся/сбрасывается №39 (серверный trim, 1–64 символа после trim, Unicode без ограничений); чтение возвращает сохранённое значение; экранирование при рендере — клиентский инвариант 008 FR-033'
+    UserWithAlias:
+      type: object
+      description: 'Пользователь с персональным alias вызывающего (008a, FR-003/FR-016): поля PublicUser + alias — для поверхностей, где alias вызывающего живёт внутри пользовательского объекта: GroupMember.user №28, результат поиска №19; в №11/№12/№13 peer остаётся PublicUser (displayName), alias передаётся отдельным полем peerAlias (аддитивность anyOf-контракта)'
+      additionalProperties: false
+      required: [id, username, email, status, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+          pattern: '^[a-zA-Z0-9]([a-zA-Z0-9_.-]{1,30}[a-zA-Z0-9])$'
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        status:
+          type: string
+          enum: [pending_email_confirmation, awaiting_password, active]
+        createdAt:
+          type: string
+          format: date-time
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 'Профильное отображаемое имя (008a, FR-001): отсутствует → клиент отображает username (единая цепочка alias → displayName → username); задаётся/сбрасывается №39 (серверный trim, 1–64 символа после trim, Unicode без ограничений); чтение возвращает сохранённое значение; экранирование при рендере — клиентский инвариант 008 FR-033'
+        alias:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 'Персональный alias вызывающего к этому пользователю (008a, FR-003): виден только вызывающему — сам пользователь и третьи лица поле не получают; отсутствует = не задан или пользователь не контакт вызывающего → отображение по displayName/username; задаётся/сбрасывается №40 (серверный trim, 1–64 символа после trim); alias переживает удаление чата и удаляется вместе с контактом (№22)'
     Problem:
       type: object
       description: 'RFC 9457: единая модель ошибок; расширения допускаются'
@@ -2844,7 +3247,12 @@ components:
           anyOf:
             - $ref: '#/components/schemas/PublicUser'
             - type: 'null'
-          description: Собеседник (вторая сторона диалога; direct); null у group-варианта (006)
+          description: Собеседник (вторая сторона диалога; direct) с профильным displayName (008a; отсутствует → username); null у group-варианта (006)
+        peerAlias:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 'Персональный alias вызывающего к собеседнику (008a, FR-003; peer-фрагмент №11): виден только вызывающему; отсутствует = не задан или peer не контакт вызывающего → отображение по displayName/username (цепочка alias → displayName → username); задаётся/сбрасывается №40 (серверный trim, 1–64 символа после trim); null/отсутствует у group-варианта'
         blockedByMe:
           type: [boolean, 'null']
           description: 'Вызывающий блокирует собеседника (FR-020). Единственная проекция блокировок в API: поле «кто заблокировал меня» отсутствует — заблокированный узнаёт о блокировке только из 403 you_are_blocked при отправке. Null у group-варианта (006): блокировки на группы не действуют'
@@ -2858,6 +3266,9 @@ components:
           format: int64
           minimum: 0
           description: Водяной знак прочтения вызывающего (0 — ничего не прочитано)
+        soundEnabled:
+          type: boolean
+          description: 'Персональный переключатель звуковых оповещений чата вызывающего (008a, FR-012): chat_participants.sound_enabled; сервер выставляет всегда (умолчание для новых участий — true); отсутствие поля (старый сервер) клиент трактует как true; смена — №42 + событие chat.sound.updated только в собственный канал вызывающего; значение и факт настройки другим участникам не раскрываются'
     Message:
       type: object
       additionalProperties: false
@@ -2917,7 +3328,12 @@ components:
           anyOf:
             - $ref: '#/components/schemas/PublicUser'
             - type: 'null'
-          description: Собеседник (direct); null у group-элемента (006)
+          description: Собеседник (direct) с профильным displayName (008a; отсутствует → username); null у group-элемента (006)
+        peerAlias:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 'Персональный alias вызывающего к собеседнику (008a, FR-003; peer-фрагмент №12): виден только вызывающему; отсутствует = не задан или peer не контакт вызывающего → отображение по displayName/username (цепочка alias → displayName → username); задаётся/сбрасывается №40 (серверный trim, 1–64 символа после trim); null/отсутствует у group-элемента'
         lastMessage:
           description: Последнее видимое вызывающему сообщение (входящее или исходящее); null — видимых сообщений нет (пустой или полностью удалённый у себя диалог)
           anyOf:
@@ -2931,6 +3347,9 @@ components:
         blockedByMe:
           type: [boolean, 'null']
           description: 'Вызывающий блокирует собеседника — метка «заблокирован» в UI (FR-020). Null у group-элемента (006): блокировки на группы не действуют'
+        soundEnabled:
+          type: boolean
+          description: 'Персональный переключатель звуковых оповещений чата вызывающего (008a, FR-012): chat_participants.sound_enabled; сервер выставляет всегда (умолчание для новых участий — true); отсутствие поля (старый сервер) клиент трактует как true; смена — №42 + событие chat.sound.updated только в собственный канал вызывающего; значение и факт настройки другим участникам не раскрываются'
     MessagePage:
       type: object
       additionalProperties: false
@@ -3023,6 +3442,11 @@ components:
         blockedByMe:
           type: boolean
           description: 'Собственная блокировка вызывающим этого контакта (008/T097): та же проекция, что blockedByMe №12/№13, но живёт и без чата — блокировка контакта с удалённым (скрытым) диалогом остаётся видимой после F5; поле «кто заблокировал меня» отсутствует (FR-020); контакты и блокировки независимы (FR-017/FR-020) — поле не меняет ни одну операцию'
+        alias:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 'Персональный alias вызывающего к контакту (008a, FR-003): виден только вызывающему; отсутствует = не задан → отображение по displayName/username (цепочка alias → displayName → username); задаётся/сбрасывается №40 (серверный trim, 1–64 символа после trim, null = сброс); удаляется вместе с контактом (№22), переживает удаление чата; сортировка/фильтр списка — клиентские по цепочке имён'
     ContactsResponse:
       type: object
       additionalProperties: false
@@ -3041,9 +3465,9 @@ components:
         users:
           type: array
           maxItems: 1
-          description: 'Точное совпадение полного email ИЛИ полного логина без учёта регистра (FR-016): 0..1 элемент; пустой список — корректный ответ (совпадения нет)'
+          description: 'Точное совпадение полного email ИЛИ полного логина без учёта регистра (FR-016): 0..1 элемент; пустой список — корректный ответ (совпадения нет); с 008a найденный несёт displayName (если задан) и alias вызывающего (если найденный — его контакт)'
           items:
-            $ref: '#/components/schemas/PublicUser'
+            $ref: '#/components/schemas/UserWithAlias'
     DeliveryAckItem:
       type: object
       description: 'Элемент батча №25: подтверждение доставки по одному чату (chatId + upToSeq)'
@@ -3282,8 +3706,8 @@ components:
       required: [user, role, joinedAt]
       properties:
         user:
-          $ref: '#/components/schemas/PublicUser'
-          description: Участник группы
+          $ref: '#/components/schemas/UserWithAlias'
+          description: Участник группы с профильным displayName и персональным alias вызывающего к нему (008a, FR-003)
         role:
           type: string
           enum: [owner, admin, member]
@@ -3454,6 +3878,10 @@ components:
           type: integer
           format: int64
           description: Монотонная ревизия статуса per-user; строгое возрастание — дубль/устаревший кадр игнорируется
+        lastSeenAt:
+          type: string
+          format: date-time
+          description: 'Время последней активности presence-канала субъекта (008a, FR-010/FR-011, SC-002): поле присутствует ТОЛЬКО при status=offline (при online поля нет) ∧ наблюдатель в аудитории видимости субъекта (007; событие уже адресуется аудитории) ∧ субъект НЕ в режиме «невидимки» (FREEZE публикует offline без lastSeenAt — целиком скрыт) ∧ данные есть. Во всех остальных случаях поле ОТСУТСТВУЕТ — нейтрально и неотличимо: «нет данных» ≡ «инкогнито» ≡ «блок-пара» ≡ «вне аудитории» (клиент рендерит «Был в сети — давно»). Точность значения — в пределах TTL-модели 007: штатное закрытие — точное, обрыв/TTL-истечение — ≤ регистрации 90 с + гистерезиса 45 с + poller 1 с (SC-005). Клиенты 007, не знающие поля, игнорируют его без изменения поведения'
     PresenceStatusItem:
       type: object
       additionalProperties: false
@@ -3472,6 +3900,10 @@ components:
           type: integer
           format: int64
           description: Ревизия статуса цели; слияние с событиями №18 по max(rev) per-user (идемпотентность FR-003)
+        lastSeenAt:
+          type: string
+          format: date-time
+          description: 'Время последней активности presence-канала цели (008a, FR-010/FR-011, SC-002): поле присутствует ТОЛЬКО при status=offline ∧ вызывающий в аудитории видимости цели (007) ∧ цель НЕ в режиме «невидимки» (неотличимо от offline без поля) ∧ данные есть (был онлайн после развёртывания фичи). Во всех остальных случаях поле ОТСУТСТВУЕТ — нейтрально и неотличимо: «нет данных» ≡ «инкогнито» ≡ «блок-пара» ≡ «вне аудитории» (клиент рендерит «Был в сети — давно»). Точность значения — в пределах TTL-модели 007: штатное закрытие — точное, обрыв/TTL-истечение — ≤ регистрации 90 с + гистерезиса 45 с + poller 1 с (SC-005); ретроспективы до развёртывания фичи нет'
     PresenceSnapshotResponse:
       type: object
       additionalProperties: false
@@ -3512,3 +3944,88 @@ components:
         incognito:
           type: boolean
           description: 'Новое значение режима; не boolean → 400 malformed_request'
+    ProfileUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: 'Тело №39 PUT: обновление профиля вызывающего; displayName null/отсутствие = сброс (имя не задано); realtime-события смены имени нет — рефетч-семантика'
+      properties:
+        displayName:
+          type: [string, 'null']
+          description: 'Профильное отображаемое имя; серверный trim, допустимая длина 1–64 символа после trim, Unicode без ограничений; пусто/пробельно или длиннее 64 после trim → 400 invalid_display_name; null/отсутствие = сброс к отображению по username'
+    AliasUpdateRequest:
+      type: object
+      additionalProperties: false
+      description: 'Тело №40 PUT: персональный alias контакта (виден только вызывающему); alias null/отсутствие = сброс → отображение по displayName/username; идемпотентность — последний write wins'
+      properties:
+        alias:
+          type: [string, 'null']
+          description: 'Персональный alias вызывающего к контакту; серверный trim, допустимая длина 1–64 символа после trim, Unicode без ограничений; пусто/пробельно или длиннее 64 после trim → 400 invalid_alias; null/отсутствие = сброс; удаляется вместе с контактом (№22), переживает удаление чата'
+    TypingRequest:
+      type: object
+      additionalProperties: false
+      description: 'Тело №41 POST: эфемерный сигнал набора текста; состояние не читается и не реплеится (подключившимся не восстанавливается); повтор start = продление'
+      required: [action]
+      properties:
+        action:
+          type: string
+          enum: [start, stop]
+          description: 'start — начало/продление набора (публикация typing.started участникам чата кроме отправителя); stop — завершение (typing.stopped только при активном состоянии — идемпотентность против двойного погашения); значение вне enum или отсутствие → 400 invalid_action'
+    ChatSoundRequest:
+      type: object
+      additionalProperties: false
+      description: 'Тело №42 PUT: персональный (per-user-per-chat) переключатель звуковых оповещений; значение и факт настройки другим участникам не раскрываются'
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: 'Новое значение звуковых оповещений чата для вызывающего; не boolean или отсутствие → 400 malformed_request; смена значения → событие chat.sound.updated только в собственный канал №18, повтор того же значения — 200 без события'
+    ChatSoundResponse:
+      type: object
+      additionalProperties: false
+      description: 'Ответ №42: сохранённое персональное значение звуковых оповещений чата'
+      required: [soundEnabled]
+      properties:
+        soundEnabled:
+          type: boolean
+          description: Сохранённое значение вызывающего для чата (умолчание для новых участий — true)
+    TypingStartedEvent:
+      type: object
+      additionalProperties: false
+      description: 'SSE-событие №18 typing.started (008a, FR-006/FR-007): участник userId начал/продолжает набор текста в чате chatId; публикуется всем активным участникам чата КРОМЕ отправителя сигнала (own-устройства свой набор не отображают) при каждом валидном start №41, включая продления (окно повтора клиента 3 с — «индикатор не отвисает»); дребезг исключён клиентским дебаунсом и флуд-лимитом 60/мин; DIRECT-блок-пара — не публикуется ни в одну сторону (сигнал при этом принимается 204). Эфемерность: состояние не сохраняется (0 следов в истории/sync) и не реплеится при (пере)подключении; операции чтения состояния набора нет. Клиент отображает «{имя} печатает…» (имя — цепочка alias → displayName → username) ≤ 2 с (SC-001) и скрывает по typing.stopped, message.created от печатающего или страховочному таймауту 10 с (компенсация at-most-once); серверное состояние самоистекает TTL 8 с; клиенты, не знающие события, игнорируют его (контракт 004)'
+      required: [chatId, userId]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+          description: Чат, в котором идёт набор
+        userId:
+          type: string
+          format: uuid
+          description: Печатающий (отправитель сигнала, не наблюдатель)
+    TypingStoppedEvent:
+      type: object
+      additionalProperties: false
+      description: 'SSE-событие №18 typing.stopped (008a, FR-007): участник userId прекратил набор в чате chatId; схема идентична TypingStartedEvent; публикуется той же аудитории (активные участники чата кроме отправителя) в трёх случаях: (1) валидный stop №41 при активном состоянии — повторный stop без активного состояния не публикуется (идемпотентность против двойного погашения, в т.ч. клиентский stop при отклонённой валидацией пустой отправке); (2) успешная отправка сообщения №16 печатающим (сервер гасит состояние при INSERT); (3) серверное истечение состояния по TTL 8 с (poller, тик 1 с — обрыв сети/падение клиента; событие ≤ TTL + poll-interval, SC-003). DIRECT-блок-пара — не публикуется; эфемерность — как у typing.started; клиенты, не знающие события, игнорируют его'
+      required: [chatId, userId]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+          description: Чат, в котором шёл набор
+        userId:
+          type: string
+          format: uuid
+          description: Прекративший набор (отправитель сигнала, не наблюдатель)
+    ChatSoundUpdatedEvent:
+      type: object
+      additionalProperties: false
+      description: 'SSE-событие №18 chat.sound.updated (008a, FR-012/FR-015): персональный переключатель звуковых оповещений чата изменён; публикуется ТОЛЬКО в собственный канал пользователя (rt:user:{me} — синхронизация мультидевайс ≤ 2 с, SC-006); другие участники чата событие не получают никогда — значение и факт настройки не раскрываются. Публикуется при успешной СМЕНЕ значения №42; повтор того же значения — 200 без события (идемпотентность); подключающиеся/переподключающиеся клиенты получают актуальное состояние из №12/№13 (soundEnabled), событие — только для живых подключений; клиенты, не знающие события, игнорируют его'
+      required: [chatId, soundEnabled]
+      properties:
+        chatId:
+          type: string
+          format: uuid
+          description: Чат настройки
+        soundEnabled:
+          type: boolean
+          description: Новое значение звуковых оповещений вызывающего в этом чате

@@ -11,6 +11,15 @@ import java.util.UUID
  * CHECK of V11 is the second line of defense; the primary self-guard is
  * the service layer (`422 self_forbidden`, T052).
  *
+ * 008a (data-model §1.2, FR-003): the row now carries the owner's
+ * optional personal [alias] of the contact (V16 `user_contacts.alias`,
+ * NULL = «not set» → the display chain falls back to displayName and
+ * `username`). Strictly private material: it is served ONLY on the
+ * owner's own surfaces and never reaches the contact himself or third
+ * parties; it survives chat deletion (№14 — it lives here, not on
+ * chats) and dies with the row on №22 (a re-add starts from a clean
+ * slate).
+ *
  * Independence (FR-017/FR-020): removing a contact never touches the chat
  * or history of the pair; blocks never touch contacts and vice versa.
  * Clicking a contact opens the dialog via `POST /chats/ensure` (FR-018).
@@ -19,6 +28,7 @@ data class Contact(
     val ownerId: UUID,
     val contactUserId: UUID,
     val createdAt: Instant,
+    val alias: ContactAlias? = null,
 ) {
     init {
         require(ownerId != contactUserId) { "a contact entry requires two distinct users (FR-016)" }
@@ -28,7 +38,9 @@ data class Contact(
         /**
          * `POST /contacts` (№21): a new entry for the owner's list; the
          * service (T052) rejects `ownerId == contactUserId` and an unknown
-         * contact user BEFORE the repository call.
+         * contact user BEFORE the repository call. A fresh entry never
+         * carries an [alias] — only №40 (T013/T014) sets one, and a re-add
+         * after №22 starts from that same clean slate (edge spec).
          */
         fun between(
             ownerId: UUID,

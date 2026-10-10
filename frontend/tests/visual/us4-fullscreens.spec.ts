@@ -97,9 +97,11 @@ async function openPhoenix({ page, chatItems }: MessengerHarness): Promise<void>
   await expect(page.locator('.chat-name')).toHaveText('Project Phoenix')
 }
 
-/** Opens the chat gear menu over the currently open group (#btnGear ≙ .ch-btn). */
+/** Opens the chat gear menu over the currently open group (#btnGear ≙
+ *  .ch-btn[title="Настройки чата"] — 008a T057 added the bell .ch-btn
+ *  before it, so the bare class selector no longer resolves uniquely). */
 async function openGear(page: Page): Promise<void> {
-  await page.locator('.ch-btn').click()
+  await page.locator('.ch-btn[title="Настройки чата"]').click()
   await expect(page.locator('.ctx-menu.show')).toBeVisible()
 }
 
@@ -187,20 +189,53 @@ visualTest.describe('T060 — US4 surfaces', () => {
     await expect(page.locator('.message-list').getByText('не отправлено')).toBeVisible()
     await expect(page.locator('.message-input-retry')).toHaveText('Повтор через 45 с')
     expect(await page.evaluate(() => Date.now())).toBe(FROZEN_MS)
+    // The catch-up strip of the sidebar stays out of the shot by
+    // construction (the aborted №18 never fires onOpen, so no №26
+    // cycle runs); the shot waits it dark regardless — a cheap guard
+    // against any lingering cycle shifting the sidebar below.
+    await expect(page.locator('.sync-indicator')).toHaveCount(0)
     // T085 (bug 7): the open seat folds «alex» at its last read row —
     // the seeded outbox rows land right below the fold, out of frame.
     // The capture's subject is the outbox states, so the feed parks
     // at the very bottom (the same bottom seat T079 gives an
-    // own-send) and the rows are proven on screen before the shot;
-    // parking at scrollTop max also kills the content-visibility
-    // warm-up race (research §G) that made the ride non-deterministic.
-    await page.evaluate(() => {
-      const list = document.querySelector('.message-list')
-      if (list !== null) {
-        list.scrollTop = list.scrollHeight
-      }
+    // own-send). Two warm-up hazards stand between the click and a
+    // reproducible seat, and the capture neutralises each explicitly
+    // (the T050 fix — the original one-shot park raced them into a
+    // bimodal ~11% diff / an out-of-frame row):
+    //  * the T086 open-seat settle loop (MessageList SCROLL_SETTLE_*)
+    //    re-anchors its seat row via `scrollIntoView` on every rAF
+    //    for its whole 90-frame budget — for the alex dialog the
+    //    corrections never reach sustained convergence, and any park
+    //    issued mid-storm is undone by the next frame's correction
+    //    (scrollTop even sits CONSTANT while the loop runs, so plain
+    //    quiescence sampling cannot see it). The park therefore
+    //    RETRIES until the outbox row is verifiably in view — only a
+    //    park issued after the budget is spent sticks, and that is
+    //    the state the baseline is captured against;
+    //  * the browser virtualisation of message-list.css (research §G,
+    //    `content-visibility: auto` + `contain-intrinsic-size:
+    //    auto 64px`) keeps off-screen rows at the 64px estimate until
+    //    they once intersect the viewport, then remembers the real
+    //    height — whether the upper rows had been warmed depends on
+    //    timing, and the remembered-vs-estimated delta above shifts
+    //    the bottom seat's content slice. The test-only style renders
+    //    the list fully (the same determinism lever as
+    //    `animations: 'disabled'` — the visible window is
+    //    pixel-identical to a fully warmed list).
+    await page.addStyleTag({
+      content: '.message-list > li { content-visibility: visible; }',
     })
-    await expect(page.locator('.message-list').getByText('не отправлено')).toBeInViewport()
+    await expect(async () => {
+      await page.evaluate(() => {
+        const list = document.querySelector('.message-list')
+        if (list !== null) {
+          list.scrollTop = list.scrollHeight
+        }
+      })
+      await expect(page.locator('.message-list').getByText('не отправлено')).toBeInViewport({
+        timeout: 500,
+      })
+    }).toPass({ timeout: 20_000 })
     await expect(page).toHaveScreenshot('us4-outbox-states.png', SHOT)
   })
 

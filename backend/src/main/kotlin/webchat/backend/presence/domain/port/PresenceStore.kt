@@ -43,11 +43,22 @@ enum class PresencePublishedStatus {
  * plus the monotone [rev] of that publication. `unknown` is NOT a store
  * value: the per-pair visibility policy (`VisibilityAudienceReader`,
  * data-model §1.4) decides it in the service BEFORE this read is issued.
+ *
+ * [lastSeenAt] (008a T036/T043, US3): the RAW `presence:lastseen:
+ * {userId}` stamp of data-model 008a §2.2 — the epoch-ms STRING the
+ * REGISTER/RENEW/UNREGISTER/CLEAR_SESSION legs refresh atomically (Redis
+ * `TIME`, TTL 30 d), read BATCH-WISE by the very snapshot leg. `null` ⟺
+ * the key does not exist (no presence activity since the feature
+ * deployment — the neutral «давно» fallback). The store applies NO
+ * disclosure policy: whether the stamp ever leaves the server
+ * (offline ∧ audience ∧ not incognito — research 008a §B2) is decided
+ * by the SERVICE (T044), never here.
  */
 data class PublishedPresence(
     val userId: UUID,
     val status: PresencePublishedStatus,
     val rev: Long,
+    val lastSeenAt: Instant? = null,
 )
 
 /**
@@ -152,7 +163,10 @@ interface PresenceStore {
      * (US3 AC4). A reconnect before the old registration expires simply
      * adds a second member — the duplicate never distorts the status
      * (edge «reconnect», FR-003); the orphaned old member lapses by its
-     * own score (FR-002).
+     * own score (FR-002). The same atomic leg also refreshes the
+     * `presence:lastseen:{userId}` stamp (008a US3, data-model 008a
+     * §2.2): an SSE open IS presence activity, and Redis `TIME` keeps
+     * the stamp on the very clock of the expiry scores (TTL 30 d, T043).
      */
     fun register(
         userId: UUID,
@@ -167,7 +181,10 @@ interface PresenceStore {
      * this user (unknown, expired or someone else's) → `404
      * presence_connection_not_found` — the client then reconnects the
      * SSE channel (research §A3/§E2). Never changes the published
-     * status.
+     * status. A SUCCESSFUL beat also refreshes the
+     * `presence:lastseen:{userId}` stamp (008a US3): a rejected renewal
+     * (the `false` branch) writes NOTHING — a dead connectionId must not
+     * move the last-activity time (T043).
      */
     fun renewRegistration(
         userId: UUID,
@@ -181,7 +198,11 @@ interface PresenceStore {
      * score = now + 45 s, FR-004, T024). It NEVER publishes «offline»
      * directly: at this moment a tab close is indistinguishable from a
      * metro gap (research §B1/B2). Removing an unknown/expired
-     * connectionId is a no-op.
+     * connectionId is a no-op. A close that actually REMOVED a live
+     * member stamps `presence:lastseen:{userId}` with the very close
+     * moment (008a US3: «штатное закрытие — точное», research 008a
+     * §B1); a repeat close stays the port's no-op and re-stamps NOTHING
+     * (T043).
      */
     fun unregister(
         userId: UUID,
@@ -196,7 +217,10 @@ interface PresenceStore {
      * status stays «online»); the removal of the LAST one flips the
      * published status offline IMMEDIATELY, bypassing the hysteresis
      * queue (the session is revoked — a reconnect is impossible, the
-     * window is pointless) → [PresenceTransition.Switched].
+     * window is pointless) → [PresenceTransition.Switched]. The leg
+     * stamps `presence:lastseen:{userId}` unconditionally (008a US3):
+     * the logout request itself is presence-channel activity, with or
+     * without live registrations of the session (T043).
      */
     fun clearSessionRegistrations(
         userId: UUID,
@@ -306,6 +330,11 @@ interface PresenceStore {
      * reads [PresencePublishedStatus.OFFLINE] with rev = 0 — the
      * epoch-initialized rev (§3: nil → now_ms) keeps the client's
      * strictly-greater merge correct across «epochs» (research §C2).
+     * 008a T043 (US3): the same round trip also reads the RAW
+     * `presence:lastseen:{userId}` stamp into
+     * [PublishedPresence.lastSeenAt] (`null` ⟺ no key) — batch-wise,
+     * no extra circle; the disclosure policy is NOT the store's
+     * business (research 008a §B1/B2, T044).
      */
     fun readPublishedBatch(userIds: Collection<UUID>): Map<UUID, PublishedPresence>
 

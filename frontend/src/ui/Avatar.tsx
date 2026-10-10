@@ -5,8 +5,12 @@
  * `.avatar[.oct] > .av-in > span` + presence-точка `.av-dot[.off|.unknown]`.
  * Обод `--gold-gradient`, бликовая внутренность с `--av`, инициалы Cormorant
  * SC и формы круга/октагона (clip-path 30/70%) — в avatar.css; деривация
- * инициалов и детерминированного цвета — ui/avatar.ts (T008): аватар
- * пересчитывается сам при переименовании источника (без персистентности).
+ * детерминированного цвета — ui/avatar.ts (T008): аватар пересчитывается
+ * сам при переименовании источника (без персистентности).
+ * 008a T020 (FR-004): источники разделены — инициалы можно передать
+ * готовыми (`initialsOf(resolveDisplayName(...))`, ui/names.ts), цвет
+ * всегда `colorOf(source)` — username/название группы: переименование
+ * пользователя не перекрашивает аватар. Проводку поверхностей делает T023.
  * Presence-точка: online — зелёная с мерцанием, offline — тусклая,
  * unknown — нейтральная (без ложного «офлайн», семантика 007);
  * null — без точки (группы, свой аватар, отправители ленты).
@@ -42,8 +46,13 @@ const PRESENCE_LABELS: Readonly<Record<AvatarPresence, string>> = {
 const AV_DOT_SRC = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 
 export interface AvatarProps {
-  /** Источник деривации: username (пользователи) либо title (группы). */
+  /** Источник деривации цвета: username (пользователи) либо title (группы). */
   readonly source: string
+  /**
+   * Готовые инициалы — из отображаемого имени `initialsOf(resolveDisplayName(...))`
+   * (008a T020, FR-004); пустая строка/отсутствие — деривация из source.
+   */
+  readonly initials?: string
   /** Форма: circle (пользователи) / octagon (группы); по умолчанию circle. */
   readonly shape?: AvatarShape
   /** Размер в px (design-tokens §4: список 40, заголовок 46, лента 34, подсказки 24–32). */
@@ -65,6 +74,7 @@ function avatarStyle(source: string, size: number): CSSProperties {
 
 export function Avatar({
   source,
+  initials,
   shape = 'circle',
   size = 40,
   presenceDot = null,
@@ -73,11 +83,11 @@ export function Avatar({
   const classes = ['avatar', shape === 'octagon' ? 'oct' : '', className ?? '']
     .filter((name) => name.length > 0)
     .join(' ')
-  const initials = initialsOf(source) || '?'
+  const initialsText = initials || initialsOf(source) || '?'
   return (
     <div className={classes} style={avatarStyle(source, size)}>
       <div className="av-in" aria-hidden="true">
-        <span>{initials}</span>
+        <span>{initialsText}</span>
       </div>
       {presenceDot !== null && (
         <img

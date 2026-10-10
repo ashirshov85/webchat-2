@@ -31,6 +31,12 @@ import java.util.UUID
  * the deletion watermark survives (FR-021). Parallel ensures of the same
  * pair are safe: the conflict wait guarantees the committed row is visible
  * to the follow-up SELECT of the same READ COMMITTED transaction.
+ *
+ * 008a (V16, T052): the №12 aggregate carries the caller's PERSONAL
+ * `sound_enabled` (data-model 008a §1.3) on the same single query, and
+ * the lazily created participant rows anchor at the column DEFAULT
+ * `sound_enabled = true` — no INSERT names the column (every new
+ * participation sounds, the 008 parity of FR-012).
  */
 @Repository
 class JdbcChatRepository(
@@ -162,6 +168,7 @@ class JdbcChatRepository(
                                 email = rs.getString("peer_email"),
                                 status = rs.getString("peer_status"),
                                 createdAt = rs.getTimestamp("peer_created_at").toInstant(),
+                                displayName = rs.getString("peer_display_name"),
                             )
                         },
                     lastMessage =
@@ -177,6 +184,9 @@ class JdbcChatRepository(
                         },
                     unreadCount = rs.getLong("unread_count"),
                     blockedByMe = rs.getObject("blocked_by_me")?.let { (it as Boolean) },
+                    // 008a (V16, data-model §1.3): the caller's own sound
+                    // switch rides the same single №12 aggregate query.
+                    soundEnabled = rs.getBoolean("sound_enabled"),
                 )
             }
 
@@ -221,17 +231,19 @@ class JdbcChatRepository(
                 p.email AS peer_email,
                 p.status::text AS peer_status,
                 p.created_at AS peer_created_at,
+                p.display_name AS peer_display_name,
                 lm.id AS last_message_id,
                 lm.sender_id AS last_message_sender_id,
                 lm.text AS last_message_text,
                 lm.seq AS last_message_seq,
                 lm.created_at AS last_message_created_at,
                 (SELECT count(*)
-                   FROM messages um
-                  WHERE um.chat_id = c.id
-                    AND um.sender_id <> me.user_id
-                    AND um.seq > GREATEST(me.last_read_seq, me.deleted_up_to_seq)
-                    AND um.seq <= LEAST(c.last_seq, me.delivered_up_to_seq)) AS unread_count,
+                    FROM messages um
+                   WHERE um.chat_id = c.id
+                     AND um.sender_id <> me.user_id
+                     AND um.seq > GREATEST(me.last_read_seq, me.deleted_up_to_seq)
+                     AND um.seq <= LEAST(c.last_seq, me.delivered_up_to_seq)) AS unread_count,
+                me.sound_enabled AS sound_enabled,
                 CASE WHEN c.kind = 'group' THEN NULL
                      ELSE EXISTS (SELECT 1
                                     FROM user_blocks ub

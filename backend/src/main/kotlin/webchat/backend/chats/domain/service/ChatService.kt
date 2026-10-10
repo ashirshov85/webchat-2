@@ -1,17 +1,25 @@
 package webchat.backend.chats.domain.service
 
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.chats.ChatSoundMetrics
+import webchat.backend.chats.SoundUpdateResult
 import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.ChatSoundUpdatedEvent
 import webchat.backend.chats.domain.port.ParticipantRepository
+import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.contacts.domain.port.BlockRepository
+import webchat.backend.contacts.domain.port.ContactRepository
 import webchat.backend.groups.domain.model.MemberRole
 import webchat.backend.groups.domain.service.GroupMembershipGate
+import webchat.backend.users.domain.port.ProfileStore
 import java.util.UUID
 
 /**
@@ -55,10 +63,16 @@ class NotParticipantException : RuntimeException("the caller is not a participan
  * (T043, openapi 0.4.0 №11/№13): [myReadUpToSeq] is the caller's own
  * mark, [peerReadUpToSeq] the peer's mark the sender's ✓✓ renders from
  * (research.md 004 §5) — per-user state, never a chat-wide value.
+ *
+ * 008a (T052, data-model §1.3): [soundEnabled] — the CALLER's own
+ * per-chat sound switch riding the SAME single `findForChat` read (the
+ * №11/№13 `soundEnabled` slot, FR-012; a missing row reads as the V16
+ * column default `true` exactly like the fresh-participation anchor).
  */
 data class ReadWatermarks(
     val myReadUpToSeq: Long,
     val peerReadUpToSeq: Long,
+    val soundEnabled: Boolean = true,
 )
 
 /**
@@ -68,12 +82,33 @@ data class ReadWatermarks(
  * (`MAX(last_read_seq)` of the other active members — ✓✓ once any one
  * of them has read) and the ACTIVE
  * [memberCount] — the group-side counterpart of [ReadWatermarks].
+ *
+ * 008a (T052, data-model §1.3): [soundEnabled] — the caller's own
+ * per-chat sound switch off the SAME ACTIVE membership row (the №13
+ * `soundEnabled` slot, FR-012; the №42 write leg T053 flips it).
  */
 data class GroupChatProjection(
     val myRole: MemberRole,
     val myReadUpToSeq: Long,
     val othersReadUpToSeq: Long,
     val memberCount: Long,
+    val soundEnabled: Boolean,
+)
+
+/**
+ * The 008a name pair of a DIRECT dialog peer projected for the caller
+ * (T015, api-contract.md §2): the peer's optional profile
+ * [displayName] (FR-001 — the `PublicUser.displayName` slot of the
+ * №11/№13 peer fragment, NULL = «not set» → the client renders
+ * `username`) and the caller's PERSONAL [alias] toward the peer (FR-003
+ * — the separate additive `peerAlias` slot, NULL = «not set or the peer
+ * is not a contact of the caller»). Strictly caller-scoped material:
+ * the alias is the caller's own `user_contacts` row and never reaches
+ * the peer or any third party (the leakage ban of FR-003).
+ */
+data class PeerNames(
+    val displayName: String?,
+    val alias: String?,
 )
 
 /**
@@ -110,8 +145,32 @@ data class GroupChatProjection(
  * [blockedByMe] is a point lookup `exists(me, peer)` on the block pair —
  * the ONLY direction ever exposed; the inverse «who blocked me» is
  * deliberately not derivable from this service (research.md 004 §6).
+ *
+ * The 008a name pair of the DIRECT peer (T015, api-contract.md §2):
+ * [peerNames] joins the peer's optional profile displayName (the shared
+ * `PublicUser` read of [ProfileStore]) with the caller's PERSONAL alias
+ * ([ContactRepository.aliasesOf] — one SELECT) for the
+ * `peer.displayName`/`peerAlias` slots of №11/№13, while [peerAliases]
+ * serves the whole №12 panel in ONE batched read; the №12 displayName
+ * itself rides the single aggregate query of [ChatListRepository]
+ * (`ChatPeerSnapshot.displayName`).
+ *
+ * The 008a per-chat sound switch (T052, api-contract.md §2,
+ * data-model §1.3, FR-012): the caller's PERSONAL `soundEnabled` rides
+ * the per-user row projections already serving №11/№13 —
+ * [readWatermarks] (the direct `findForChat` read) and
+ * [groupProjection] (the ACTIVE membership row) — while №12 carries it
+ * inside the single aggregate query (`ChatListEntry.soundEnabled`);
+ * zero extra round trips, and the slot is always set (the V16 default
+ * `true` of a fresh participation). The №42 write leg (T053,
+ * [updateSound]) flips the column through
+ * [ParticipantRepository.updateSoundEnabled] — its ONLY writer.
  */
 @Service
+// The №11/№12/№13 collaborators, one port per leg (DIP, plan.md VIII;
+// the T015 name pair grew the last two; T053 added the №42 write leg's
+// publisher and metrics).
+@Suppress("LongParameterList", "TooManyFunctions") // one function per chats surface (№11–№14/№42)
 class ChatService(
     private val userRepository: UserRepository,
     private val chatRepository: ChatRepository,
@@ -119,7 +178,13 @@ class ChatService(
     private val participantRepository: ParticipantRepository,
     private val blockRepository: BlockRepository,
     private val groupMembershipGate: GroupMembershipGate,
+    private val profileStore: ProfileStore,
+    private val contactRepository: ContactRepository,
+    private val realtimeEventPublisher: RealtimeEventPublisher,
+    private val chatSoundMetrics: ChatSoundMetrics,
 ) {
+    private val log: Logger = LoggerFactory.getLogger(ChatService::class.java)
+
     fun ensure(
         callerId: UUID,
         peerId: UUID,
@@ -205,6 +270,10 @@ class ChatService(
      * не прочитано»), matching the `minimum: 0` of openapi 0.4.0. Monotone
      * by construction: the values mirror the GREATEST-watermark rows and
      * are never derived.
+     *
+     * 008a (T052): the caller's `soundEnabled` rides the SAME read — the
+     * №11/№13 slot is always set (a missing row keeps the V16 default
+     * `true`, the fresh-participation anchor of data-model §1.3).
      */
     fun readWatermarks(
         chat: Chat,
@@ -217,6 +286,7 @@ class ChatService(
         return ReadWatermarks(
             myReadUpToSeq = marks[callerId]?.lastReadSeq ?: DEFAULT_READ_UP_TO_SEQ,
             peerReadUpToSeq = marks[peerId]?.lastReadSeq ?: DEFAULT_READ_UP_TO_SEQ,
+            soundEnabled = marks[callerId]?.soundEnabled ?: DEFAULT_SOUND_ENABLED,
         )
     }
 
@@ -240,6 +310,46 @@ class ChatService(
     }
 
     /**
+     * T015 (008a, api-contract.md §2, FR-001/FR-003): the name pair of
+     * the DIRECT dialog peer — the `peer.displayName`/`peerAlias` slots
+     * of the №11/№13 bodies. The displayName rides the SHARED
+     * `PublicUser` point read [ProfileStore.findByUserId] (the same
+     * projector that serves №10 — one source of the name, no drift); the
+     * alias is ONE [ContactRepository.aliasesOf] lookup over the caller's
+     * own `(owner, peer)` row, holding only non-null values (an absent
+     * key = «no alias» — the neutral fallback of the display chain
+     * `alias → displayName → username`). Strictly caller-scoped: the
+     * answer never leaves the caller's own surfaces (FR-003).
+     */
+    fun peerNames(
+        chat: Chat,
+        callerId: UUID,
+    ): PeerNames {
+        require(chat.kind == ChatKind.DIRECT) { "chat ${chat.id} is not a direct dialog" }
+        val peerId =
+            chat.peerOf(callerId)
+                ?: error("chat ${chat.id} does not involve the authenticated caller")
+        val displayName = profileStore.findByUserId(peerId)?.displayName?.value
+        val alias = contactRepository.aliasesOf(callerId, listOf(peerId))[peerId]
+        return PeerNames(displayName = displayName, alias = alias)
+    }
+
+    /**
+     * T015 (008a, FR-003): the caller's personal aliases toward [userIds]
+     * — the batched `peerAlias` join of the №12 panel: ONE
+     * [ContactRepository.aliasesOf] SELECT over the caller's
+     * `user_contacts` rows serves every DIRECT row of the list (an empty
+     * collection costs no database round-trip; the map holds ONLY
+     * non-null aliases — a missing key renders the slot ABSENT). The
+     * same strictly-personal scope as [peerNames]: never projected into
+     * anyone else's surfaces.
+     */
+    fun peerAliases(
+        callerId: UUID,
+        userIds: Collection<UUID>,
+    ): Map<UUID, String> = contactRepository.aliasesOf(callerId, userIds)
+
+    /**
      * T024 (006, api-contract.md §3 №13): the GROUP projection of
      * `ChatView` — the caller's own role and read watermark from his
      * ACTIVE membership row (the one [get] has just proven), the ✓✓ rule
@@ -249,6 +359,10 @@ class ChatService(
      * roster size (1–200, the `ix_chat_participants_chat_active` scan of
      * [ParticipantRepository.activeMembers] — no `FOR UPDATE` lock of a
      * plain read). A pure read: nothing here mutates dialog state.
+     *
+     * 008a (T052): the caller's `soundEnabled` rides the SAME membership
+     * row — the №13 slot of both kinds answers from the participant row
+     * the view has already resolved, never a separate round trip.
      */
     fun groupProjection(
         chat: Chat,
@@ -267,11 +381,91 @@ class ChatService(
             myReadUpToSeq = membership.lastReadSeq,
             othersReadUpToSeq = participantRepository.maxOtherReadUpToSeq(chat.id, callerId),
             memberCount = participantRepository.activeMembers(chat.id).size.toLong(),
+            soundEnabled = membership.soundEnabled,
         )
+    }
+
+    /**
+     * T053 (008a, api-contract.md §1 №42, FR-012–FR-015, SC-006): the
+     * caller's PERSONAL per-chat sound switch write leg — the whole №42
+     * service semantics in one method:
+     *
+     *  * the membership gate of every chats resource FIRST — [get]
+     *   answers the №13/№16 refusal order `404 chat_not_found` → `403
+     *   not_participant` (a group resolves through the ACTIVE membership
+     *   row, a REMOVED former member is refused like a stranger), so
+     *   neither the stored value nor the toggle itself is ever judged
+     *   for a stranger;
+     *  * the IDEMPOTENCY rule — the read happens BEFORE the write in
+     *   this same leg: a repeat of the ALREADY STORED value (the fresh
+     *   default `true` included) answers the stored value and performs
+     *   NO write and NO event (api-contract.md №42 «повтор того же
+     *   значения — 200 без события»), counted as the `unchanged` leg of
+     *   `webchat_sound_settings_updated_total`;
+     *  * a genuine CHANGE — the single-row [ParticipantRepository
+     *   .updateSoundEnabled] flip of the CALLER's own row (the peer's
+     *   row is never touched, FR-012) and the `chat.sound.updated`
+     *   frame to the toggler's OWN channel ONLY (the multi-device sync
+     *   of SC-006 — another participant's channel never carries it,
+     *   privacy FR-012), counted as the `changed` leg.
+     *
+     * Returns the STORED value for the `ChatSoundResponse` echo. The
+     * frame is fire-and-forget over the at-most-once №18 pipe
+     * ([publishOwnSoundUpdated] isolation): the durable change is
+     * already committed, so a lost frame converges via the №12/№13
+     * `soundEnabled` refetch of a (re)connecting device — never by a
+     * re-send.
+     */
+    fun updateSound(
+        chatId: UUID,
+        callerId: UUID,
+        enabled: Boolean,
+    ): Boolean {
+        val chat = get(chatId, callerId)
+        val stored = participantRepository.find(chat.id, callerId)?.soundEnabled ?: DEFAULT_SOUND_ENABLED
+        if (stored == enabled) {
+            chatSoundMetrics.countUpdate(SoundUpdateResult.UNCHANGED)
+            return stored
+        }
+        val updated =
+            checkNotNull(participantRepository.updateSoundEnabled(chat.id, callerId, enabled)) {
+                "chat ${chat.id} passed the membership gate, so the caller's participant row must exist"
+            }
+        chatSoundMetrics.countUpdate(SoundUpdateResult.CHANGED)
+        publishOwnSoundUpdated(callerId, ChatSoundUpdatedEvent(chatId = chat.id, soundEnabled = updated.soundEnabled))
+        return updated.soundEnabled
+    }
+
+    /**
+     * At-most-once isolation (the port contract, constitution II/III;
+     * the [TypingService.publishToAudience] discipline): the switch is
+     * already durable when this runs, so a failed frame delivery must
+     * NOT fail the answered `200` — the toggler's other devices
+     * converge on the №12/№13 refetch. Warn logs carry ids ONLY
+     * (constitution V).
+     */
+    @Suppress("TooGenericExceptionCaught") // the transport adapter signals any delivery failure by throwing
+    private fun publishOwnSoundUpdated(
+        callerId: UUID,
+        event: ChatSoundUpdatedEvent,
+    ) {
+        try {
+            realtimeEventPublisher.publishChatSoundUpdated(callerId, event)
+        } catch (failure: Exception) {
+            log.warn(
+                "realtime publish of a chat.sound.updated frame to the toggler <{}> failed; " +
+                    "the change is durable and devices converge on the refetch (FR-012): {}",
+                callerId,
+                failure.message,
+            )
+        }
     }
 
     private companion object {
         /** Openapi 0.4.0 `peerReadUpToSeq`/`myReadUpToSeq`: 0 — nothing read yet. */
         const val DEFAULT_READ_UP_TO_SEQ = 0L
+
+        /** 008a (V16, data-model §1.3): a fresh participation sounds — the column default. */
+        const val DEFAULT_SOUND_ENABLED = true
     }
 }

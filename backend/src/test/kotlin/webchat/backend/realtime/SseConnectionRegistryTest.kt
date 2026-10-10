@@ -231,8 +231,21 @@ class SseConnectionRegistryTest {
         val TEST_PROPERTIES =
             ChatsProperties(
                 message = ChatsProperties.Message(maxLength = 4096, pageSize = 50),
-                rateLimit = ChatsProperties.RateLimit(messagesPerMinute = 30, searchesPerMinute = 30),
+                rateLimit =
+                    ChatsProperties.RateLimit(
+                        messagesPerMinute = 30,
+                        searchesPerMinute = 30,
+                        typingSignalsPerMinute = 60,
+                        soundWritesPerMinute = 30,
+                    ),
                 realtime = ChatsProperties.Realtime(heartbeat = Duration.ofMinutes(10)),
+                typing =
+                    ChatsProperties.Typing(
+                        stateTtl = Duration.ofSeconds(8),
+                        pollerEnabled = false,
+                        pollInterval = Duration.ofSeconds(1),
+                        pollBatch = 1000,
+                    ),
             )
 
         /** Fast ticks so the heartbeat test observes real scheduler periods in seconds, not minutes. */

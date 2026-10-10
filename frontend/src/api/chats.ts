@@ -29,11 +29,39 @@ export type SyncResponse = components['schemas']['SyncResponse']
 
 export type SendMessageRequest = components['schemas']['SendMessageRequest']
 
+export type ProfileUpdateRequest = components['schemas']['ProfileUpdateRequest']
+
+export type AliasUpdateRequest = components['schemas']['AliasUpdateRequest']
+
+export type TypingRequest = components['schemas']['TypingRequest']
+
+/** №41 `action` discriminator: start = begin/renew typing, stop = finish. */
+export type TypingAction = TypingRequest['action']
+
+export type ChatSoundRequest = components['schemas']['ChatSoundRequest']
+
+export type ChatSoundResponse = components['schemas']['ChatSoundResponse']
+
+/**
+ * Пользователь с персональным alias вызывающего (008a, T023): PublicUser +
+ * `alias?` — результат №19 и `GroupMember.user` №28; источник цепочки
+ * `alias → displayName → username` этих поверхностей (ui-behavior §1).
+ */
+export type UserWithAlias = components['schemas']['UserWithAlias']
+
 export type ReadRequest = components['schemas']['ReadRequest']
 
 export type MessageCreatedEvent = components['schemas']['MessageCreatedEvent']
 
 export type ChatReadEvent = components['schemas']['ChatReadEvent']
+
+/**
+ * №18 `chat.sound.updated` frame (008a, FR-015): the caller's personal
+ * sound toggle for a chat changed — delivered ONLY to the user's own
+ * realtime channel (multi-device sync ≤ 2 s, SC-006); other
+ * participants never receive it (privacy FR-012).
+ */
+export type ChatSoundUpdatedEvent = components['schemas']['ChatSoundUpdatedEvent']
 
 async function authedRequest(path: string, method: string, body?: unknown): Promise<Response> {
   const response = await apiFetch(path, {
@@ -81,6 +109,44 @@ export async function sendMessage(chatId: string, body: SendMessageRequest): Pro
     body,
   )
   return (await response.json()) as Message
+}
+
+/**
+ * №41 `POST /chats/{chatId}/typing`: ephemeral typing signal (FR-006–
+ * FR-009) — `start` begins or renews the typing state (the caller
+ * resends it at most once per 3 s window), `stop` finishes it; `204`
+ * means accepted, repeated `start` is a plain renewal (idempotent).
+ * No response body and nothing is refetched: observers learn about
+ * typing only via `typing.started`/`typing.stopped` frames of №18 —
+ * the state is never read, persisted or replayed on (re)connect.
+ * Errors: `400 invalid_action` (out of enum), `403/404` chat codes
+ * as №16, `429 flood_limit` + Retry-After (60/min per user — excess
+ * signals are dropped by the server, the client does not retry).
+ */
+export async function sendTyping(chatId: string, action: TypingAction): Promise<void> {
+  const body: TypingRequest = { action }
+  await authedRequest(`/chats/${encodeURIComponent(chatId)}/typing`, 'POST', body)
+}
+
+/**
+ * №42 `PUT /chats/{chatId}/sound`: toggles the caller's personal
+ * (per-user-per-chat) sound notifications (FR-012–FR-015) — `enabled`
+ * is required, the `200` answer echoes the stored value (default
+ * `true` for fresh memberships). Idempotent: repeating the same value
+ * is a plain `200` with NO event; only an actual change publishes
+ * `chat.sound.updated` to the caller's own №18 channel (multi-device
+ * ≤ 2 s, SC-006) — other participants never learn the value or the
+ * fact of the setting (privacy FR-012). (Re)connecting clients read
+ * the current state from `soundEnabled` of №12/№13 — the event is for
+ * live connections only. No offline queue: a network error leaves the
+ * setting unchanged. Errors: `400 malformed_request`/`invalid_uuid`,
+ * `403/404` chat codes as №13/№16, `429 flood_limit` + Retry-After
+ * (30/min per user).
+ */
+export async function setChatSound(chatId: string, enabled: boolean): Promise<ChatSoundResponse> {
+  const body: ChatSoundRequest = { enabled }
+  const response = await authedRequest(`/chats/${encodeURIComponent(chatId)}/sound`, 'PUT', body)
+  return (await response.json()) as ChatSoundResponse
 }
 
 /**
@@ -164,12 +230,30 @@ export type ContactSort = 'login' | 'email'
  * №19 `GET /users/search?query=`: exact full email OR full login match,
  * case-insensitive (`@` in the query → email, otherwise username); the
  * answer is 0..1 users — an empty list is a valid «no match» (FR-016).
+ * С 008a найденный несёт `displayName?` и `alias?` вызывающего (контракт
+ * 0.9.0) — результат отображается по цепочке имён, семантика поиска не
+ * меняется (FR-005).
  */
-export async function searchUsers(query: string): Promise<PublicUser[]> {
+export async function searchUsers(query: string): Promise<UserWithAlias[]> {
   const search = new URLSearchParams({ query })
   const response = await authedRequest(`/users/search?${search.toString()}`, 'GET')
   const body = (await response.json()) as components['schemas']['UsersSearchResponse']
   return body.users
+}
+
+/**
+ * №39 `PUT /users/me/profile`: sets or clears the caller's display
+ * name (FR-001) — `displayName: null` (or absent) is an explicit reset
+ * (display falls back to username), while a blank/whitespace-only or
+ * >64-chars string is rejected by the mirror of the server-side
+ * `400 invalid_display_name`; the server trims and returns the
+ * updated `PublicUser`. Idempotent: repeating the same value is a
+ * plain `200` with no side effects (refetch semantics — no realtime
+ * rename event).
+ */
+export async function updateProfile(body: ProfileUpdateRequest): Promise<PublicUser> {
+  const response = await authedRequest('/users/me/profile', 'PUT', body)
+  return (await response.json()) as PublicUser
 }
 
 /**
@@ -191,6 +275,24 @@ export async function listContacts(sort: ContactSort = 'login'): Promise<Contact
  */
 export async function addContact(userId: string): Promise<ContactView> {
   const response = await authedRequest('/contacts', 'POST', { userId })
+  return (await response.json()) as ContactView
+}
+
+/**
+ * №40 `PUT /contacts/{userId}/alias`: sets or resets the caller's
+ * personal alias for a contact (FR-003) — the top of the display
+ * chain `alias → displayName → username`, visible only to the caller.
+ * `alias: null` (or absent) resets the chain; a blank/whitespace-only
+ * or >64-chars string is a server-side `400 invalid_alias`;
+ * `404 contact_not_found` when {userId} is not the caller's contact.
+ * Last write wins; the alias survives chat deletion and is removed
+ * together with the contact (№22).
+ */
+export async function setContactAlias(
+  userId: string,
+  body: AliasUpdateRequest,
+): Promise<ContactView> {
+  const response = await authedRequest(`/contacts/${encodeURIComponent(userId)}/alias`, 'PUT', body)
   return (await response.json()) as ContactView
 }
 

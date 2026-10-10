@@ -1,6 +1,8 @@
 package webchat.backend.contacts.domain.service
 
 import org.springframework.stereotype.Service
+import webchat.backend.contacts.domain.model.Contact
+import webchat.backend.contacts.domain.model.ContactAlias
 import webchat.backend.contacts.domain.model.ContactSort
 import webchat.backend.contacts.domain.port.BlockRepository
 import webchat.backend.contacts.domain.port.ContactAddResult
@@ -87,6 +89,23 @@ class ContactService(
         sort: ContactSort,
     ): List<ContactEntry> = contactRepository.listByOwner(ownerId, sort)
 
+    /**
+     * №40 set/reset (T014 routes here): stores the owner's [alias] —
+     * already normalized by
+     * [ContactAlias.normalize][webchat.backend.contacts.domain.model.ContactAlias]
+     * (`null` = the reset leg) — and answers the stored row for the
+     * `200 ContactView`; `null` when the `(owner, contact_user)` pair has
+     * no row, the uniform `404 contact_not_found` gate of the API layer
+     * (an existing user never added and an unknown userId read
+     * identically). Last-write-wins idempotent, no side events by
+     * contract (refetch semantics, api-contract.md §1 №40).
+     */
+    fun setAlias(
+        ownerId: UUID,
+        contactUserId: UUID,
+        alias: ContactAlias?,
+    ): Contact? = contactRepository.storeAlias(ownerId, contactUserId, alias)
+
     /** T097 №20: every user [ownerId] currently blocks — one set query for the whole list. */
     fun blockedTargetsOf(ownerId: UUID): Set<UUID> = blockRepository.blockedTargetsOf(ownerId)
 
@@ -95,4 +114,19 @@ class ContactService(
         ownerId: UUID,
         targetId: UUID,
     ): Boolean = blockRepository.exists(ownerId, targetId)
+
+    /**
+     * 008a (T017, FR-003/FR-005): the CALLER's personal alias point
+     * lookup for the №19 search answer — the single-user leg of
+     * [ContactRepository.aliasesOf] (one SELECT over `user_contacts`,
+     * holding only non-null values): `null` when the found user is not
+     * the caller's contact or no alias is stored (the neutral «not set»
+     * of the display chain `alias → displayName → username`). Strictly
+     * caller-scoped: the answer is the caller's own row material and
+     * must never be projected into anyone else's answer.
+     */
+    fun aliasOf(
+        ownerId: UUID,
+        contactUserId: UUID,
+    ): String? = contactRepository.aliasesOf(ownerId, listOf(contactUserId))[contactUserId]
 }

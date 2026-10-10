@@ -30,19 +30,36 @@ import { ModalShell } from '../../../ui/ModalShell'
  * prototype demo data — its single «администратор» mark). The tip
  * closes on mouseleave/blur and Esc (the top layer of data-model 3.1).
  *
- * US4 (T054): the ONLY right-side control is the «шестерёнка»
- * ChatGearMenu — the per-kind item sets live in their own suite
+ * US4 (T054): the «шестерёнка» ChatGearMenu is the header menu
+ * control — the per-kind item sets live in their own suite
  * (ChatGearMenu.test.tsx); here the embedding is pinned: the direct
  * entries fire the page callbacks (№21/№23-24/№14 — the confirm shell
  * belongs to the page, T034), the group matrix follows myRole
  * (№33/№30/«Участники»/«Редактировать чат»), and a group without a
  * role (no №28, no basis) carries no gear at all.
+ *
+ * 008a US4 (T057; FR-012, ui-behavior §4.1): the bell-колокол звука
+ * joins .ch-btns ПЕРЕД шестернёнкой — проекция состояния страницы
+ * (soundEnabled, умолчание true) + wire onToggleSound(next); aria-
+ * pressed — первое применение в проекте; клик отдаёт ЦЕЛЕВОЕ значение.
  */
 
-const presence = vi.hoisted(() => ({ status: 'unknown' }))
+/** Состояние presence-мока (008a T048): статус + раскрытая метка lastSeen. */
+type PresenceMockState = {
+  status: 'online' | 'offline' | 'unknown'
+  lastSeenAt: string | undefined
+}
+
+const presence = vi.hoisted((): PresenceMockState => ({ status: 'unknown', lastSeenAt: undefined }))
 
 vi.mock('../../../presence/usePresence', () => ({
   usePresenceStatus: () => presence.status,
+  // 008a T048: заголовок читает полную запись (status + lastSeenAt?);
+  // undefined = нет записи в store («unknown» до первого №36).
+  usePresenceEntry: () =>
+    presence.status === 'unknown'
+      ? undefined
+      : { status: presence.status, rev: 1, lastSeenAt: presence.lastSeenAt },
 }))
 
 const ALICE = '22222222-2222-2222-2222-222222222222'
@@ -138,6 +155,7 @@ function renderHeader(
 afterEach(() => {
   cleanup()
   presence.status = 'unknown'
+  presence.lastSeenAt = undefined
 })
 
 describe('ChatHeader prototype block (T021, FR-016 base, data-model 2.3)', () => {
@@ -176,7 +194,8 @@ describe('ChatHeader direct status: the prototype lamp (T043, FR-016, data-model
     const { container } = renderHeader(directChat())
 
     expect(screen.queryByText('неизвестно')).toBeNull()
-    expect(screen.queryByText('офлайн')).toBeNull()
+    expect(screen.queryByText(/Был в сети/)).toBeNull()
+    expect(screen.queryByText('В сети')).toBeNull()
     expect(container.querySelector('.chat-head .status-row .lamp')).toBeNull()
     expect(container.querySelector('.chat-head .status-row .status-txt')).toBeNull()
     // Строка остаётся — якорь высоты (min-height в chat-header.css):
@@ -184,7 +203,7 @@ describe('ChatHeader direct status: the prototype lamp (T043, FR-016, data-model
     expect(container.querySelector('.chat-head .status-row')).not.toBeNull()
   })
 
-  it('online: lamp without .off + «В сети»; offline: .lamp.off + «офлайн» (store truth)', () => {
+  it('online: lamp without .off + «В сети»; offline: .lamp.off + «Был в сети — давно» (008a T048)', () => {
     presence.status = 'online'
     const online = renderHeader(directChat())
     expect(online.container.querySelector('.status-row .lamp')?.classList.contains('off')).toBe(
@@ -193,10 +212,64 @@ describe('ChatHeader direct status: the prototype lamp (T043, FR-016, data-model
     expect(online.getByText('В сети')).toBeVisible()
     online.unmount()
 
+    // 008a US3 (T048, ui-behavior §3): offline без раскрытого lastSeenAt
+    // (нет данных / инкогнито / блок-пара — неотличимы, SC-002) —
+    // нейтральный фолбэк «Был в сети — давно», НЕ «офлайн».
     presence.status = 'offline'
     const offline = renderHeader(directChat())
     expect(offline.container.querySelector('.status-row .lamp')?.className).toBe('lamp off')
-    expect(offline.getByText('офлайн')).toBeVisible()
+    expect(offline.getByText('Был в сети — давно')).toBeVisible()
+  })
+
+  it('008a T048: offline + lastSeenAt → «Был в сети — {время}» (формат T046 — сегодня ЧЧ:ММ)', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-10T12:00:00'))
+    try {
+      // Фикстура «минуту назад» от подменённых часов: в любом поясе это
+      // тот же локальный день → ветка «сегодня» lastSeenFormat (T046).
+      const seen = new Date(Date.now() - 60_000)
+      presence.status = 'offline'
+      presence.lastSeenAt = seen.toISOString()
+      const { container } = renderHeader(directChat())
+
+      expect(container.querySelector('.status-row .lamp')?.className).toBe('lamp off')
+      const expected = new Intl.DateTimeFormat('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(seen)
+      expect(screen.getByText(`Был в сети — ${expected}`)).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('008a T049: offline + lastSeenAt не сегодня → «Был в сети — {D месяца, HH:MM}» (формат T046)', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 9, 10, 12, 0, 0))
+    try {
+      presence.status = 'offline'
+      presence.lastSeenAt = new Date(2026, 8, 24, 16, 20).toISOString()
+      const { container } = renderHeader(directChat())
+
+      expect(container.querySelector('.status-row .lamp')?.className).toBe('lamp off')
+      expect(screen.getByText('Был в сети — 24 сентября, 16:20')).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('008a T049: offline + lastSeenAt другой год → «Был в сети — {D месяца YYYY, HH:MM}»', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 9, 10, 12, 0, 0))
+    try {
+      presence.status = 'offline'
+      presence.lastSeenAt = new Date(2024, 8, 24, 16, 20).toISOString()
+      renderHeader(directChat())
+
+      expect(screen.getByText('Был в сети — 24 сентября 2024 г., 16:20')).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('pluralizes the group status «N участников» (pluralRu boundaries)', () => {
@@ -518,7 +591,7 @@ describe('ChatHeader members-tip: clamp at screen edges and the Esc top layer (T
   })
 })
 
-describe('ChatHeader embeds the ChatGearMenu — the ONLY header button (T054, FR-016, ui-behavior §4)', () => {
+describe('ChatHeader embeds the ChatGearMenu — the header menu control (T054, FR-016, ui-behavior §4)', () => {
   /** Прототип #btnGear: title «Настройки чата» — открывает меню чата. */
   function openGearMenu(): HTMLElement {
     fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
@@ -593,10 +666,76 @@ describe('ChatHeader embeds the ChatGearMenu — the ONLY header button (T054, F
     expect(props.onDeleteChat).not.toHaveBeenCalled()
   })
 
-  it('group without a role (no №28, no basis): no gear — the matrix needs the role', () => {
+  it('group without a role (no №28, no basis): no gear — the matrix needs the role; the bell stays (008a T057)', () => {
     const { container } = renderHeader(groupChat())
 
     expect(screen.queryByRole('button', { name: 'Настройки чата' })).toBeNull()
-    expect(container.querySelector('.chat-head .ch-btns')).toBeNull()
+    // 008a US4 (T057): bell-колокол не зависит от роли группы — звук
+    // персональная настройка участия; .ch-btns остаётся с одним колоколом.
+    expect(screen.getByRole('button', { name: 'Звуковые оповещения' })).toBeVisible()
+    expect(container.querySelector('.chat-head .ch-btns .ch-btn')).toBeInstanceOf(HTMLElement)
+  })
+})
+
+describe('ChatHeader bell-колокол звука (008a US4, T057; FR-012, ui-behavior §4.1)', () => {
+  /** Bell по title прототипа #btnBell («Звуковые оповещения»). */
+  function bell(): HTMLElement {
+    return screen.getByRole('button', { name: 'Звуковые оповещения' })
+  }
+
+  it('перед шестернёнкой: .ch-btn с SVG-колоколом прототипа (chats.html:446), всегда в .ch-btns', () => {
+    const { container } = renderHeader(directChat())
+
+    const buttons = container.querySelector('.chat-head .ch-btns')
+    expect(buttons).not.toBeNull()
+    // Колокол — ПЕРВЫМ (место поиска 013 не отображается — между ним и
+    // шестернёнкой), шестерёнка — за ним.
+    const children = Array.from(buttons?.children ?? [])
+    expect(children[0]).toBe(bell())
+    expect(children[1]).toBe(screen.getByRole('button', { name: 'Настройки чата' }))
+    expect(bell().querySelector('svg path')).toBeInstanceOf(SVGElement)
+  })
+
+  it('умолчание true (поле №12/№13 отсутствует = вкл): без .off, aria-pressed=true; клик отдаёт цель false', () => {
+    const props = headerProps()
+    const onToggleSound = vi.fn()
+    render(<ChatHeader chat={directChat()} {...props} onToggleSound={onToggleSound} />)
+
+    expect(bell()).not.toHaveClass('off')
+    expect(bell()).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(bell())
+    expect(onToggleSound).toHaveBeenCalledTimes(1)
+    expect(onToggleSound).toHaveBeenCalledWith(false)
+  })
+
+  it('выкл (soundEnabled=false): класс .off (opacity .45 прототипа :221), aria-pressed=false; клик отдаёт true', () => {
+    const onToggleSound = vi.fn()
+    render(<ChatHeader chat={directChat()} onToggleSound={onToggleSound} soundEnabled={false} />)
+
+    expect(bell()).toHaveClass('ch-btn', 'off')
+    expect(bell()).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(bell())
+    expect(onToggleSound).toHaveBeenCalledWith(true)
+  })
+
+  it('группа: колокол живёт и без роли — звук не требует матрицы 006', () => {
+    const onToggleSound = vi.fn()
+    render(<ChatHeader chat={groupChat()} onToggleSound={onToggleSound} soundEnabled={false} />)
+
+    expect(bell()).toHaveClass('off')
+    fireEvent.click(bell())
+    expect(onToggleSound).toHaveBeenCalledWith(true)
+  })
+
+  it('.off глушит только прозрачность — правило .ch-btn.off прототипа в chat-header.css', () => {
+    const headerCss = readFileSync(join(import.meta.dirname, '../chat-header.css'), 'utf8')
+    const match = headerCss.match(/\.chat-head \.ch-btn\.off\s*\{([^}]*)\}/)
+    expect(match).not.toBeNull()
+    expect(match?.[1]).toContain('opacity: 0.45')
+    // Только прозрачность: ни рамка, ни цвет штриха не переопределяются.
+    expect(match?.[1]).not.toContain('border')
+    expect(match?.[1]).not.toContain('color')
   })
 })

@@ -5,6 +5,7 @@ import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
 import webchat.backend.contacts.domain.model.UserProfile
 import webchat.backend.contacts.domain.port.UserLookupPort
+import webchat.backend.users.domain.model.DisplayName
 import java.sql.ResultSet
 import java.util.UUID
 
@@ -18,6 +19,11 @@ import java.util.UUID
  * (api-contract.md №19, FR-016): a query containing `@` compares the email
  * only, everything else the login; the branches are disjoint because a
  * username cannot contain `@` (002 rule).
+ *
+ * 008a (T014): the projection also reads the optional V16
+ * `users.display_name`, so every [UserProfile] of this port carries the
+ * profile display name for the `PublicUser.displayName` answer surface
+ * (NULL = «not set», rendered ABSENT by the API layer, SC-007).
  */
 @Repository
 class JdbcUserLookup(
@@ -43,6 +49,7 @@ class JdbcUserLookup(
                     email = rs.getString("email"),
                     status = rs.getString("status"),
                     createdAt = rs.getTimestamp("created_at").toInstant(),
+                    displayName = rs.getString("display_name")?.let(DisplayName::normalize),
                 )
             }
 
@@ -52,7 +59,7 @@ class JdbcUserLookup(
 
         private fun findSql(condition: String): String =
             """
-            SELECT id, username, email, status, created_at
+            SELECT id, username, email, status, created_at, display_name
             FROM users
             WHERE $condition
             """.trimIndent()

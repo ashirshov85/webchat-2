@@ -38,7 +38,7 @@ import { useRealtime } from '../chats/hooks/useRealtime'
 import type { RealtimeStream } from '../chats/hooks/useRealtime'
 import { createPresenceHeartbeat, fetchPresenceSnapshot } from './presenceApi'
 import { presenceStore } from './presenceStore'
-import type { PresenceStatus } from './presenceStore'
+import type { PresenceEntry, PresenceStatus } from './presenceStore'
 
 /** №36 batch limit after dedup (contracts/presence-api.md §1). */
 const SNAPSHOT_BATCH_LIMIT = 200
@@ -174,6 +174,34 @@ export function usePresenceStatus(userId: string | null | undefined): PresenceSt
     }
   }, [userId])
   return useSyncExternalStore(subscribeToPresenceStore, () => presenceStore.getStatus(userId ?? ''))
+}
+
+/**
+ * The full entry of one displayed surface (008a US3, T047): the same
+ * registration/refetch/re-render wiring as [usePresenceStatus], but
+ * returning the merged `{status, rev, lastSeenAt?}` — the US3 status
+ * line renders «Был в сети — {время}» only when an applied offline
+ * frame carried the disclosed `lastSeenAt`; an offline WITHOUT the
+ * field is the neutral «давно» (hidden/incognito/no-data are
+ * indistinguishable — SC-002), and «unknown»/absent entries render no
+ * status text at all. Entries are immutable snapshots, so the store
+ * identity is stable between merges (useSyncExternalStore-safe).
+ */
+export function usePresenceEntry(userId: string | null | undefined): PresenceEntry | undefined {
+  const stream = useRealtime()
+  useEffect(() => {
+    ensurePresenceWiring(stream)
+  }, [stream])
+  useEffect(() => {
+    if (userId === null || userId === undefined) {
+      return
+    }
+    registerSurfaces([userId])
+    return () => {
+      unregisterSurfaces([userId])
+    }
+  }, [userId])
+  return useSyncExternalStore(subscribeToPresenceStore, () => presenceStore.getEntry(userId ?? ''))
 }
 
 /**

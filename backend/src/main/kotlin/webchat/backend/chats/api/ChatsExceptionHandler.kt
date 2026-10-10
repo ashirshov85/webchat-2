@@ -30,7 +30,7 @@ import webchat.backend.chats.domain.service.YouAreBlockedException
  * `errors: map<string, string[]>` — codes and field names only, never
  * chat contents or participant details.
  */
-@Suppress("TooManyFunctions") // one @ExceptionHandler per contract failure code — the №11–№17 table is the size driver
+@Suppress("TooManyFunctions") // one @ExceptionHandler per contract failure code — the №11–№17/№41/№42 table drives it
 @RestControllerAdvice
 class ChatsExceptionHandler {
     /** 422 (api-contract.md №11): a dialog of the caller with themselves (FR-001). */
@@ -150,6 +150,70 @@ class ChatsExceptionHandler {
             .apply { setProperty(ERRORS_PROPERTY, mapOf(UP_TO_SEQ_FIELD to listOf(INVALID_UP_TO_SEQ_CODE))) }
 
     /**
+     * 400 (api-contract.md №41, T031): the path `chatId` is not a UUID —
+     * the raw-segment gate of the typing signal route, `errors:
+     * {chatId: [invalid_uuid]}` before any bucket or store leg.
+     */
+    @ExceptionHandler(InvalidChatIdException::class)
+    fun onInvalidChatId(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, INVALID_CHAT_ID_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(CHAT_ID_FIELD to listOf(INVALID_UUID_CODE))) }
+
+    /**
+     * 400 (api-contract.md №41, T031): `action` is absent or outside
+     * `start|stop` — the one body refusal of the typing signal.
+     */
+    @ExceptionHandler(InvalidTypingActionException::class)
+    fun onInvalidTypingAction(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, INVALID_TYPING_ACTION_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(ACTION_FIELD to listOf(INVALID_ACTION_CODE))) }
+
+    /**
+     * 429 (api-contract.md №41, FR-009, T031): the per-user typing
+     * bucket (60 signals/min) is exhausted — `Retry-After` carries the
+     * integral seconds to the next token; NOTHING was stored and
+     * NOTHING was published (the excess signals are not just deferred —
+     * the observers never see them).
+     */
+    @ExceptionHandler(TypingFloodException::class)
+    fun onTypingFlood(failure: TypingFloodException): ResponseEntity<ProblemDetail> =
+        ResponseEntity
+            .status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, failure.retryAfterSeconds.toString())
+            .body(
+                problem(HttpStatus.TOO_MANY_REQUESTS, TYPING_FLOOD_DETAIL)
+                    .apply { setProperty(ERRORS_PROPERTY, mapOf(ACTION_FIELD to listOf(FLOOD_LIMIT_CODE))) },
+            )
+
+    /**
+     * 400 (api-contract.md №42, T053): the body is absent, `enabled` is
+     * not set or is not a boolean — the one body refusal of the №42
+     * sound toggle, `errors: {enabled: [malformed_request]}` (the №38
+     * presence-settings shape verbatim).
+     */
+    @ExceptionHandler(ChatSoundMalformedException::class)
+    fun onChatSoundMalformed(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, CHAT_SOUND_MALFORMED_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(ENABLED_FIELD to listOf(MALFORMED_REQUEST_CODE))) }
+
+    /**
+     * 429 (api-contract.md №42, T053): the per-user №42 bucket
+     * (30 toggles/min, research.md D2) is exhausted — `Retry-After`
+     * carries the integral seconds to the next token; NOTHING was
+     * written and NOTHING was published (the refusal is the counted
+     * `rejected` verdict of `webchat_sound_settings_updated_total`).
+     */
+    @ExceptionHandler(ChatSoundFloodException::class)
+    fun onChatSoundFlood(failure: ChatSoundFloodException): ResponseEntity<ProblemDetail> =
+        ResponseEntity
+            .status(HttpStatus.TOO_MANY_REQUESTS)
+            .header(HttpHeaders.RETRY_AFTER, failure.retryAfterSeconds.toString())
+            .body(
+                problem(HttpStatus.TOO_MANY_REQUESTS, CHAT_SOUND_FLOOD_DETAIL)
+                    .apply { setProperty(ERRORS_PROPERTY, mapOf(ENABLED_FIELD to listOf(FLOOD_LIMIT_CODE))) },
+            )
+
+    /**
      * 429 (api-contract.md №16): the FR-011 send flood limit — the
      * per-user allowance is exhausted, `Retry-After` carries the integral
      * seconds to the next available token and NOTHING was written. The
@@ -201,6 +265,9 @@ class ChatsExceptionHandler {
         const val LIMIT_FIELD = "limit"
         const val AFTER_FIELD = "after"
         const val UP_TO_SEQ_FIELD = "upToSeq"
+        const val CHAT_ID_FIELD = "chatId"
+        const val ACTION_FIELD = "action"
+        const val ENABLED_FIELD = "enabled"
         const val SELF_FORBIDDEN_CODE = "self_forbidden"
         const val PEER_NOT_FOUND_CODE = "peer_not_found"
         const val CHAT_NOT_FOUND_CODE = "chat_not_found"
@@ -214,6 +281,8 @@ class ChatsExceptionHandler {
         const val LIMIT_OUT_OF_RANGE_CODE = "limit_out_of_range"
         const val MIXED_CURSORS_CODE = "mixed_cursors"
         const val INVALID_UP_TO_SEQ_CODE = "invalid_up_to_seq"
+        const val INVALID_ACTION_CODE = "invalid_action"
+        const val MALFORMED_REQUEST_CODE = "malformed_request"
         const val FLOOD_LIMIT_CODE = "flood_limit"
         const val SERVER_BUSY_CODE = "server_busy"
         const val SELF_FORBIDDEN_DETAIL = "A dialog requires two distinct users"
@@ -230,6 +299,13 @@ class ChatsExceptionHandler {
         const val LIMIT_OUT_OF_RANGE_DETAIL = "limit must be within 1..50"
         const val MIXED_CURSORS_DETAIL = "the after and before cursors are mutually exclusive"
         const val INVALID_UP_TO_SEQ_DETAIL = "upToSeq must be within 1..seq of the last message of the dialog"
+        const val INVALID_CHAT_ID_DETAIL = "chatId must be a UUID"
+        const val INVALID_TYPING_ACTION_DETAIL = "action must be one of: start, stop"
+        const val TYPING_FLOOD_DETAIL =
+            "The typing signal rate limit is exceeded; retry after the indicated interval"
+        const val CHAT_SOUND_MALFORMED_DETAIL = "enabled is required and must be a boolean"
+        const val CHAT_SOUND_FLOOD_DETAIL =
+            "The chat sound toggle rate limit is exceeded; retry after the indicated interval"
         const val FLOOD_LIMIT_DETAIL = "The message rate limit is exceeded; retry after the indicated interval"
         const val SERVER_BUSY_DETAIL =
             "The send path is temporarily overloaded; retry after the indicated interval (server_busy)"
