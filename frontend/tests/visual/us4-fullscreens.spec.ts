@@ -97,9 +97,11 @@ async function openPhoenix({ page, chatItems }: MessengerHarness): Promise<void>
   await expect(page.locator('.chat-name')).toHaveText('Project Phoenix')
 }
 
-/** Opens the chat gear menu over the currently open group (#btnGear ≙ .ch-btn). */
+/** Opens the chat gear menu over the currently open group (#btnGear ≙
+ *  .ch-btn[title="Настройки чата"] — 008a T057 added the bell .ch-btn
+ *  before it, so the bare class selector no longer resolves uniquely). */
 async function openGear(page: Page): Promise<void> {
-  await page.locator('.ch-btn').click()
+  await page.locator('.ch-btn[title="Настройки чата"]').click()
   await expect(page.locator('.ctx-menu.show')).toBeVisible()
 }
 

@@ -55,6 +55,13 @@
  *    of the us4 outbox precedent, so `lastSeenFormat` (T046) takes
  *    its «D месяца, HH:MM» branch deterministically on every run
  *    date, including a run on the demo day itself.
+ *  * the US4 bell (T060, ui-behavior §4.1/§5): the №42 click path —
+ *    the muted toast «Звуковые оповещения отключены — Alex Carter»,
+ *    the `.off` bell (opacity .45) in the header region and the
+ *    unmute toast — and the №18 `chat.sound.updated` e2e frame of the
+ *    caller's OWN channel (another device, SC-006): the parked-then-
+ *    one-shot SSE delivery of the US2 recipe flips the bell to «выкл»
+ *    WITHOUT №42 or a toast, the whole page quiescent around it.
  *
  * Determinism mirrors T026/T039: `animations: 'disabled'` cancels the
  * infinite lamps and fast-forwards the finite pop/transitions,
@@ -65,8 +72,8 @@
  * enters the shot.
  *
  * T050 appends the US3 scenarios — the «Был в сети — …» statuses of
- * the direct header and the «Контакты» previews — below; T060 will
- * append the US4 bell on/off states to this same file.
+ * the direct header and the «Контакты» previews; T060 appends the US4
+ * bell scenarios to the same file (see the coverage list above).
  */
 import { expect } from '@playwright/test'
 import type { Locator, Page, Route } from '@playwright/test'
@@ -156,6 +163,35 @@ function installAliasBackend(page: Page): void {
   })
 }
 
+/**
+ * The stateful №42 backend of the US4 bell scenario (the
+ * installAliasBackend recipe — registered AFTER the harness dataset,
+ * the later route wins): PUT /chats/{chatId}/sound is answered with
+ * the honest echo of the requested value (`ChatSoundResponse
+ * {chatId, soundEnabled}`), and every call is recorded so the spec
+ * can assert the page really sent №42 with the TARGET value of the
+ * button (T057: «вкл» → {enabled:false}, «выкл» → {enabled:true}).
+ * No №12/№13 override follows the PUT: the page converges from the
+ * №42 answer alone (the echo semantics of MessengerPage — no
+ * refetch), so the pixels stay fixture-stable.
+ */
+function installSoundBackend(page: Page): { sent: boolean[] } {
+  const sent: boolean[] = []
+  void page.route(/\/api\/v1\/chats\/[^/]+\/sound$/, async (route: Route) => {
+    const body = (await route.request().postDataJSON()) as { enabled?: boolean }
+    sent.push(body.enabled === true)
+    const chatId = decodeURIComponent(
+      new URL(route.request().url()).pathname.split('/').at(-2) ?? '',
+    )
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chatId, soundEnabled: body.enabled === true }),
+    })
+  })
+  return { sent }
+}
+
 /** The №18 opening frames every connect must answer (realtime-events.md §1). */
 function sseOpening(): string {
   return 'retry: 3000\n\nevent: connected\ndata: {"connectionId":"aethergram-typing-fixture"}\n\n'
@@ -167,14 +203,19 @@ function typingFrame(started: boolean, chatId: string, userId: string): string {
   return `event: ${event}\ndata: ${JSON.stringify({ chatId, userId })}\n\n`
 }
 
+/** A №18 chat.sound.updated frame (realtime-events.md §1.3 — the `{chatId, soundEnabled}` payload). */
+function soundFrame(chatId: string, soundEnabled: boolean): string {
+  return `event: chat.sound.updated\ndata: ${JSON.stringify({ chatId, soundEnabled })}\n\n`
+}
+
 /**
- * The №18 typing backend of the US2 scenario (the presence-e2e
- * recipe): the stream route PARKS the connect it takes over until
- * the spec publishes a frame (drain poll — no abort, so the client's
- * backoff stays cold and the delivery lands milliseconds after
- * `publish()` instead of on a jittery backoff boundary), answers it
- * ONCE with the opening frames + everything queued, then aborts
- * every later attempt.
+ * The №18 parked-then-one-shot backend of the US2/US4 scenarios (the
+ * presence-e2e recipe; T040 typing frames, T060 chat.sound.updated):
+ * the stream route PARKS the connect it takes over until the spec
+ * publishes a frame (drain poll — no abort, so the client's backoff
+ * stays cold and the delivery lands milliseconds after `publish()`
+ * instead of on a jittery backoff boundary), answers it ONCE with the
+ * opening frames + everything queued, then aborts every later attempt.
  *
  * The one-shot discipline is the point: a route-fulfilled SSE body
  * always ENDS, so the client would reconnect on its backoff within
@@ -182,7 +223,9 @@ function typingFrame(started: boolean, chatId: string, userId: string): string {
  * map (T038: the ephemeral state is never replayed — the row would
  * blink out mid-capture). Aborts never fire `onOpen`, so after the
  * delivery the row rides its full 10 s observer window
- * (TYPING_SAFETY_TIMEOUT_MS) — a stable capture target.
+ * (TYPING_SAFETY_TIMEOUT_MS) — a stable capture target. The US4 bell
+ * has no such window (the №18 frame state is durable in the page), so
+ * the same one-shot merely keeps the stream quiescent afterwards.
  */
 function installTypingStream(page: Page): { publish(frame: string): void } {
   const queued: string[] = []
@@ -518,4 +561,97 @@ visualTest.describe('T050 — 008a US3: the «Был в сети — …» statu
     await expect(previewOf('Maria Lopez')).toHaveText('В сети')
     await expect(page).toHaveScreenshot('008a-contacts-lastseen.png', SHOT)
   })
+})
+
+visualTest.describe('T060 — 008a US4: the bell on/off', () => {
+  /** Bell-колокол заголовка по title прототипа #btnBell (ui-behavior §4.1). */
+  function bellOf(page: Page): Locator {
+    return page.getByRole('button', { name: 'Звуковые оповещения' })
+  }
+
+  visualTest(
+    '№42 toggle — the muted toast and the `.off` bell, then back on',
+    async ({ messenger }) => {
+      onlyProject(DESKTOP)
+      const { page } = messenger
+      const sound = installSoundBackend(page)
+      await openAlexChat(messenger)
+
+      // §4.1: the pristine №12 answer carries no soundEnabled — the
+      // contract default renders the bell «вкл»: full opacity, pressed
+      // (aria-pressed — the first use in the project).
+      const bell = bellOf(page)
+      await expect(bell).toBeVisible()
+      await expect(bell).toHaveAttribute('aria-pressed', 'true')
+      await expect(bell).toHaveClass('ch-btn')
+
+      // Mute: №42 carries the TARGET value of the click (false); the
+      // echo answer converges the button (.off + aria-pressed) and the
+      // toast quotes the CHAIN name of the direct dialog (ui-behavior
+      // §5 — the demo set carries no alias/displayName → username).
+      await bell.click()
+      await expect(page.locator('.toast.show')).toHaveText(
+        'Звуковые оповещения отключены — Alex Carter',
+      )
+      // The toast already proves the №42 round-trip completed — the
+      // recorded target value is stable to read synchronously.
+      expect(sound.sent).toEqual([false])
+      await expect(bell).toHaveClass('ch-btn off')
+      await expect(bell).toHaveAttribute('aria-pressed', 'false')
+      await expect(page).toHaveScreenshot('008a-bell-off-toast.png', SHOT)
+
+      // The toast auto-hides on its 3000 ms timer — wait it out so no
+      // residue enters the header capture (the alias-scenario recipe).
+      await expect(page.locator('.toast.show')).toHaveCount(0)
+      await expect(page.locator('.chat-head')).toHaveScreenshot('008a-bell-off-head.png', SHOT)
+
+      // Unmute: the target flips to true — the bell returns to the
+      // full view and the toast quotes the chain again (§4.2's
+      // «динь-динь»/«щелчок» response sounds are WebAudio — no pixels).
+      await bell.click()
+      await expect(page.locator('.toast.show')).toHaveText(
+        'Звуковые оповещения включены — Alex Carter',
+      )
+      expect(sound.sent).toEqual([false, true])
+      await expect(bell).toHaveClass('ch-btn')
+      await expect(bell).toHaveAttribute('aria-pressed', 'true')
+      await expect(page).toHaveScreenshot('008a-bell-on-toast.png', SHOT)
+    },
+  )
+
+  visualTest(
+    '№18 chat.sound.updated of another device flips the bell without №42 or a toast (SC-006)',
+    async ({ messenger }) => {
+      onlyProject(DESKTOP)
+      const { page } = messenger
+      const alex = AETHERGRAM.userByUsername('Alex Carter')
+      const dialog = AETHERGRAM.chatList.find((item) => item.peer?.id === alex?.id)
+      if (alex === undefined || dialog === undefined) {
+        throw new Error('social-signals fixture: the Alex Carter dialog is missing')
+      }
+
+      // The parked №18 route of the US2 recipe, now carrying the US4
+      // frame: the own-channel chat.sound.updated is the ONLY muting
+      // source here — no №42 backend is installed (a PUT would 404 and
+      // toast an error), so the silent flip below also proves the
+      // frame path drove the state, not a request.
+      const stream = installTypingStream(page)
+      await openAlexChat(messenger)
+      const bell = bellOf(page)
+      await expect(bell).toHaveAttribute('aria-pressed', 'true')
+
+      stream.publish(soundFrame(dialog.chatId, false))
+
+      // §4.1/SC-006: the multidevice frame converges the bell ≤ 2 s —
+      // no toast (the switch happened on ANOTHER device), no №42. The
+      // delivering connect's `onOpen` re-runs the №12/№36/sync
+      // convergence refetches (all fixture-answered, pixel-neutral) —
+      // wait out the SyncIndicator strip before the shot.
+      await expect(bell).toHaveClass('ch-btn off')
+      await expect(bell).toHaveAttribute('aria-pressed', 'false')
+      await expect(page.locator('.sync-indicator')).toHaveCount(0)
+      await expect(page.locator('.toast.show')).toHaveCount(0)
+      await expect(page).toHaveScreenshot('008a-bell-frame-off.png', SHOT)
+    },
+  )
 })

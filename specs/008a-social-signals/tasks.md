@@ -164,7 +164,7 @@
 - [X] T057 [US4] Добавить bell-кнопку в `frontend/src/chats/components/ChatHeader.tsx`: `.ch-btn` SVG-колокол между поиском и шестернёнкой, состояние `выкл` — класс `.off {opacity:.45}`, `title="Звуковые оповещения"`, `aria-pressed`, focus-visible; действие №42, тосты `Звуковые оповещения включены/отключены — {имя чата}` (личный — peer по цепочке, группа — название), ошибка сети/429 — состояние не меняется; CSS в `frontend/src/chats/components/chat-header.css` (ui-behavior.md §4.1)
 - [X] T058 [US4] Проводка синхронизации: `onChatSoundUpdated(chatId, soundEnabled)` в `frontend/src/chats/hooks/useRealtime.ts`; в `frontend/src/chats/pages/MessengerPage.tsx` — звук-состояние из №12/№13 при (ре)подключении, per-chat подсчёт входящих sync-батчей 005 (звонок батча — только если среди пришедших есть неприглушённые чаты); визуальные уведомления не фильтруются (FR-014)
 - [X] T059 [P] [US4] Написать Vitest-тесты звук-гейта по мок-паттерну `MessengerPage.sound.test.tsx` (vi.hoisted + `installStream`): realtime-входящее в приглушённый/обычный чат, sync-батч только с приглушёнными — 0 звуков, bell aria-pressed/тосты — в `frontend/src/chats/__tests__/` / `frontend/src/chats/components/__tests__/`
-- [ ] T060 [US4] Дописать Playwright-сценарии bell вкл/выкл (снятки + e2e-фреймы) в `frontend/tests/visual/social-signals.spec.ts` + `pnpm --dir frontend test:visual`
+- [X] T060 [US4] Дописать Playwright-сценарии bell вкл/выкл (снятки + e2e-фреймы) в `frontend/tests/visual/social-signals.spec.ts` + `pnpm --dir frontend test:visual`
 
 **Checkpoint**: Все истории US1–US4 независимо функциональны
 
