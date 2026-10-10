@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatListItem, ContactView, Message } from '../../api/chats'
 import { MessengerPage } from '../pages/MessengerPage'
@@ -291,9 +291,7 @@ describe('MessengerPage псевдо-поиск (T068, 008a Phase 11)', () => {
     await enterSearchMode()
 
     fireEvent.change(chatSearchField(), { target: { value: 'привет' } })
-    act(() => {
-      fireEvent.keyDown(document, { key: 'Escape' })
-    })
+    fireEvent.keyDown(document, { key: 'Escape' })
 
     expect(screen.queryByLabelText('Поиск по чату…')).toBeNull()
     expect(searchButton()).not.toHaveClass('on')

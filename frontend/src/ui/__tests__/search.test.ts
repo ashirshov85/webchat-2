@@ -42,7 +42,7 @@ describe('snippetAround (T068: окно ~96 символов вокруг вхо
     const text = 'а'.repeat(120)
     const snippet = snippetAround(text, 0)
     expect(snippet).toBe(`${'а'.repeat(96)}…`)
-    expect(snippet.length).toBe(97)
+    expect(snippet).toHaveLength(97)
   })
 
   it('вхождение глубже 24 символов: старт за 24 до вхождения + ведущее многоточие', () => {
