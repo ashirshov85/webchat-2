@@ -238,9 +238,11 @@ import {
   deleteChat,
   getChat,
   listContacts,
+  setChatSound,
   unblockUser,
 } from '../../api/chats'
 import type { ChatListItem, ChatView, ContactView, Message } from '../../api/chats'
+import { problemMessage } from '../../auth/problem'
 import { getAckBatcher } from '../../sync/ack'
 import { advanceCursor } from '../../sync/cursors'
 import { useSync } from '../../sync/hooks/useSync'
@@ -276,7 +278,12 @@ import type { ConfirmVariant } from '../../ui/ConfirmDialog'
 import { FOCUSABLE_SELECTOR, ModalShell } from '../../ui/ModalShell'
 import type { ModalFormId } from '../../ui/ModalShell'
 import { ToastProvider, useToast } from '../../ui/Toast'
-import { chimeOnRealtimeIncoming, chimeOnSyncBatch } from '../../ui/sound'
+import {
+  chimeOnRealtimeIncoming,
+  chimeOnSyncBatch,
+  playBellTone,
+  playMuteTone,
+} from '../../ui/sound'
 import { resolveDisplayName } from '../../ui/names'
 import '../components/states.css'
 import './messenger.css'
@@ -1048,6 +1055,16 @@ function MessengerMachine() {
    * stack a second backdrop.
    */
   const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
+  /**
+   * Персональные звук-переключатели чатов вызывающего (008a US4,
+   * T057; FR-012): chatId → soundEnabled. Источники сходятся здесь:
+   * №12-строки (каждый рефетч/реконнект несут актуальное значение),
+   * ответ №42 (echo сохранённого); T058 добавит кадры
+   * `chat.sound.updated` собственного канала (мультидевайс ≤ 2 с).
+   * Отсутствие записи = «вкл» — умолчание контракта (отсутствие поля
+   * №12/№13 клиент трактует как true; обратная совместимость 008).
+   */
+  const [soundStates, setSoundStates] = useState<ReadonlyMap<string, boolean>>(() => new Map())
   const { narrowViewport, drawerOpen, setDrawerOpen, backdropRef, sidebarRef } = useSidebarDrawer(
     modalForm !== null || pendingAction !== null,
   )
@@ -1374,6 +1391,25 @@ function MessengerMachine() {
     }
   }, [chats, activeChat])
 
+  // 008a US4 (T057; FR-012, ui-behavior §4.1): №12-сходимость звук-
+  // переключателей — каждая строка списка несёт актуальное
+  // `soundEnabled` вызывающего (начальная загрузка + рефетчи
+  // действий/реконнекты), поэтому колокол и звук-гейт приёма (T058)
+  // стартуют с серверной правды, а не с умолчания «вкл».
+  useEffect(() => {
+    setSoundStates((previous) => {
+      let changed = false
+      const next = new Map(previous)
+      for (const item of chats) {
+        if (item.soundEnabled !== undefined && next.get(item.chatId) !== item.soundEnabled) {
+          next.set(item.chatId, item.soundEnabled)
+          changed = true
+        }
+      }
+      return changed ? next : previous
+    })
+  }, [chats])
+
   // FR-014 badge reset of the open dialog: rendering its incoming
   // messages is exactly when useChatMessages advances the read
   // watermark (T044), so the panel counter zeroes in step with it.
@@ -1612,6 +1648,59 @@ function MessengerMachine() {
   const handleGearDeleteChat = useCallback(() => {
     setPendingAction(activeChat?.kind === 'group' ? 'delete-group' : 'delete-chat')
   }, [activeChat])
+
+  /**
+   * Bell-колокол заголовка (008a US4, T057; FR-013, ui-behavior §4.1):
+   * №42 с ЦЕЛЕВЫМ значением кнопки. Успех — состояние сходится ОТВЕТОМ
+   * №42 (echo сохранённого, не локальным оптимизмом), один тост
+   * «Звуковые оповещения включены/отключены — {имя чата}» (личный —
+   * peer по цепочке FR-003, группа — название 006: живой №28-титул,
+   * иначе №12-базис) и звук отклика §4.2 («вкл» — playBellTone, «выкл»
+   * — глухой щелчок playMuteTone). Ошибка сети/429 — тост ошибки
+   * problemMessage, состояние НЕ меняется (офлайн-очереди нет — №42
+   * идемпотентен, повторный клик просто пошлёт то же значение).
+   */
+  const handleToggleChatSound = useCallback(
+    (next: boolean) => {
+      const target = activeChat
+      if (target === null) {
+        return
+      }
+      const liveGroupTitle =
+        activeGroup !== null && activeGroup.chatId === target.chatId && target.kind === 'group'
+          ? activeGroup.title
+          : null
+      const chatName =
+        target.kind === 'direct'
+          ? resolveDisplayName(
+              target.peerAlias ?? undefined,
+              target.peer.displayName,
+              target.peer.username,
+            )
+          : (liveGroupTitle ?? target.title)
+      void (async () => {
+        try {
+          const answer = await setChatSound(target.chatId, next)
+          setSoundStates((previous) => {
+            const updated = new Map(previous)
+            updated.set(target.chatId, answer.soundEnabled)
+            return updated
+          })
+          if (answer.soundEnabled) {
+            playBellTone()
+          } else {
+            playMuteTone()
+          }
+          showToast(
+            `Звуковые оповещения ${answer.soundEnabled ? 'включены' : 'отключены'} — ${chatName}`,
+          )
+        } catch (cause) {
+          showToast(problemMessage(cause))
+        }
+      })()
+    },
+    [activeChat, activeGroup, showToast],
+  )
 
   /**
    * «Добавить в контакты» строки модали «Участники» (T055/T057,
@@ -1996,6 +2085,8 @@ function MessengerMachine() {
               <>
                 <ChatHeader
                   chat={headerChatOf(activeChat, activeGroup, contacts, currentUserId, meUsername)}
+                  soundEnabled={soundStates.get(activeChat.chatId) ?? true}
+                  onToggleSound={handleToggleChatSound}
                   onAddContact={handleGearAddContact}
                   onToggleBlock={handleGearToggleBlock}
                   onDeleteChat={handleGearDeleteChat}

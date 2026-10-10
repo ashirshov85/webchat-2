@@ -44,6 +44,9 @@ const { mockGetCurrentUser, mockChats, mockGroups, mockSse, mockPresence, mockSo
       // 008a T038: машина №41-сигналов композера (useTyping) — best-effort;
       // контракт api-функции — Promise.
       sendTyping: vi.fn(() => Promise.resolve()),
+      // 008a T057: bell-колокол заголовка — №42 страницы (тосты/звук
+      // отклика — паттерн для T059).
+      setChatSound: vi.fn(),
       deliveryAck: vi.fn(),
       ensureChat: vi.fn(),
       listContacts: vi.fn(),
@@ -74,6 +77,9 @@ const { mockGetCurrentUser, mockChats, mockGroups, mockSse, mockPresence, mockSo
     mockSound: {
       chimeOnRealtimeIncoming: vi.fn(),
       chimeOnSyncBatch: vi.fn(),
+      // 008a T057: звуки отклика bell (§4.2) — «вкл»/«выкл».
+      playBellTone: vi.fn(),
+      playMuteTone: vi.fn(),
     },
   }),
 )

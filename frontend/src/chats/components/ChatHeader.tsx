@@ -40,14 +40,26 @@
  *    (mePresenceDot) is not carried: data-model 2.3 derives the tip
  *    from members + myRole only.
  *
- * US4 (T054): the ONLY right-side control is the «шестерёнка»
- * ChatGearMenu (ui-behavior §4) — direct: №21 add / №23-24 block
- * toggle / №14 delete (подтверждения — у страницы через форму confirm
- * оболочки T034); group: the №28 myRole matrix of 006 («Участники» /
- * «Редактировать чат» / «Удалить чат» vs «Выйти из чата»). While the
- * role is unknown (no live №28 and no basis) the group header carries
- * no gear — the menu matrix needs the role. The prototype search/sound
- * buttons never join the header (FR-016: 013/008a are out of scope).
+ * US4 (T054): the «шестерёнка» ChatGearMenu (ui-behavior §4) — direct:
+ * №21 add / №23-24 block toggle / №14 delete (подтверждения — у
+ * страницы через форму confirm оболочки T034); group: the №28 myRole
+ * matrix of 006 («Участники» / «Редактировать чат» / «Удалить чат» vs
+ * «Выйти из чата»). While the role is unknown (no live №28 and no
+ * basis) the group header carries no gear — the menu matrix needs the
+ * role. The prototype search button never joins the header (FR-016:
+ * 013 is out of scope).
+ *
+ * 008a US4 (T057; FR-012, ui-behavior §4.1): bell-колокол звука —
+ * `.ch-btn` SVG прототипа (#btnBell, chats.html:446) ПЕРЕД
+ * шестернёнкой (место поиска 013 не отображается — колокол между ним
+ * и шестернёнкой); живёт в ЛЮБОМ открытом чате (звук — персональная
+ * настройка участия, роли/вида чата не требует). Состояние «выкл» —
+ * только класс `.off` (opacity .45, chat-header.css — прототип :221),
+ * aria-pressed — первое применение в проекте (вкл = pressed, умолчание
+ * true — контракт №12/№13 «отсутствие поля клиент трактует как true»);
+ * focus-visible — конвенция 008 FR-035 (.ch-btn:focus-visible). Сама
+ * операция №42 (+ тосты, звук отклика, откат при ошибке) — у страницы
+ * (onToggleSound), заголовок — проекция.
  *
  * The avatar derives from the peer username (circle) or the group
  * title (octagon, FR-024) via ui/Avatar and recalculates on renames;
@@ -139,6 +151,19 @@ export type ChatHeaderChat =
 export interface ChatHeaderProps {
   /** The open dialog of either kind — drives avatar shape and status. */
   readonly chat: ChatHeaderChat
+  /**
+   * Персональный звук-переключатель открытого чата (008a US4, T057;
+   * FR-012, ui-behavior §4.1): №12/№13 `soundEnabled` (или локальный
+   * итог №42 у страницы); undefined/true — «вкл» (умолчание контракта:
+   * отсутствие поля трактуется как true), false — «выкл» (.off).
+   */
+  readonly soundEnabled?: boolean
+  /**
+   * Клик bell-колокола (008a T057): страница владеет №42 — получает
+   * ЦЕЛЕВОЕ значение (`!текущего`), по успеху сходится состояние, тост
+   * и звук отклика (§4.2); ошибка — состояние не меняется.
+   */
+  readonly onToggleSound?: (next: boolean) => void
   /** direct: «Добавить в контакты» — №21 belongs to the page (T054). */
   readonly onAddContact?: () => void
   /** direct: «Заблокировать/Разблокировать контакт» — №23/№24 of the page. */
@@ -355,6 +380,8 @@ function gearChatOf(chat: ChatHeaderChat): GearMenuChat | null {
 
 export function ChatHeader({
   chat,
+  soundEnabled,
+  onToggleSound,
   onAddContact,
   onToggleBlock,
   onDeleteChat,
@@ -469,11 +496,27 @@ export function ChatHeader({
           <DirectStatusRow entry={presenceEntry} blockedByMe={chat.blockedByMe} />
         )}
       </div>
-      {/* Единственная кнопка заголовка — «шестерёнка» (FR-016, T054):
-           direct — всегда; group — с известной ролью (живой №28 или
-           базис №12/№13/№27) — без роли матрица пунктов 006 не определена. */}
-      {gearChat !== null && (
-        <div className="ch-btns">
+      {/* Правые кнопки: bell-колокол звука (008a T057, ui-behavior §4.1)
+          — всегда, персональная настройка участия; «шестерёнка» (FR-016,
+          T054): direct — всегда, group — с известной ролью (живой №28 или
+          базис №12/№13/№27) — без роли матрица пунктов 006 не определена. */}
+      <div className="ch-btns">
+        <button
+          type="button"
+          className={soundEnabled === false ? 'ch-btn off' : 'ch-btn'}
+          title="Звуковые оповещения"
+          aria-pressed={soundEnabled !== false}
+          onClick={() => {
+            // ЦЕЛЕВОЕ значение: текущее «вкл» → выключить, «выкл» → включить.
+            onToggleSound?.(soundEnabled === false)
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M18 16v-5a6 6 0 0 0-12 0v5l-1.5 2.5h15L18 16z" />
+            <path d="M10 20a2 2 0 0 0 4 0" />
+          </svg>
+        </button>
+        {gearChat !== null && (
           <ChatGearMenu
             chat={gearChat}
             onAddContact={onAddContact}
@@ -483,8 +526,8 @@ export function ChatHeader({
             onOpenEdit={onOpenEdit}
             onLeaveChat={onLeaveChat}
           />
-        </div>
-      )}
+        )}
+      </div>
       {/* Подсказка состава (FR-017) — портал в body, как #membersTip
           прототипа: fixed-позиционирование относительно вьюпорта,
           поверх машины (z-56), pointer-events: none — чистый ховер. */}

@@ -30,13 +30,18 @@ import { ModalShell } from '../../../ui/ModalShell'
  * prototype demo data — its single «администратор» mark). The tip
  * closes on mouseleave/blur and Esc (the top layer of data-model 3.1).
  *
- * US4 (T054): the ONLY right-side control is the «шестерёнка»
- * ChatGearMenu — the per-kind item sets live in their own suite
+ * US4 (T054): the «шестерёнка» ChatGearMenu is the header menu
+ * control — the per-kind item sets live in their own suite
  * (ChatGearMenu.test.tsx); here the embedding is pinned: the direct
  * entries fire the page callbacks (№21/№23-24/№14 — the confirm shell
  * belongs to the page, T034), the group matrix follows myRole
  * (№33/№30/«Участники»/«Редактировать чат»), and a group without a
  * role (no №28, no basis) carries no gear at all.
+ *
+ * 008a US4 (T057; FR-012, ui-behavior §4.1): the bell-колокол звука
+ * joins .ch-btns ПЕРЕД шестернёнкой — проекция состояния страницы
+ * (soundEnabled, умолчание true) + wire onToggleSound(next); aria-
+ * pressed — первое применение в проекте; клик отдаёт ЦЕЛЕВОЕ значение.
  */
 
 /** Состояние presence-мока (008a T048): статус + раскрытая метка lastSeen. */
@@ -586,7 +591,7 @@ describe('ChatHeader members-tip: clamp at screen edges and the Esc top layer (T
   })
 })
 
-describe('ChatHeader embeds the ChatGearMenu — the ONLY header button (T054, FR-016, ui-behavior §4)', () => {
+describe('ChatHeader embeds the ChatGearMenu — the header menu control (T054, FR-016, ui-behavior §4)', () => {
   /** Прототип #btnGear: title «Настройки чата» — открывает меню чата. */
   function openGearMenu(): HTMLElement {
     fireEvent.click(screen.getByRole('button', { name: 'Настройки чата' }))
@@ -661,10 +666,76 @@ describe('ChatHeader embeds the ChatGearMenu — the ONLY header button (T054, F
     expect(props.onDeleteChat).not.toHaveBeenCalled()
   })
 
-  it('group without a role (no №28, no basis): no gear — the matrix needs the role', () => {
+  it('group without a role (no №28, no basis): no gear — the matrix needs the role; the bell stays (008a T057)', () => {
     const { container } = renderHeader(groupChat())
 
     expect(screen.queryByRole('button', { name: 'Настройки чата' })).toBeNull()
-    expect(container.querySelector('.chat-head .ch-btns')).toBeNull()
+    // 008a US4 (T057): bell-колокол не зависит от роли группы — звук
+    // персональная настройка участия; .ch-btns остаётся с одним колоколом.
+    expect(screen.getByRole('button', { name: 'Звуковые оповещения' })).toBeVisible()
+    expect(container.querySelector('.chat-head .ch-btns .ch-btn')).toBeInstanceOf(HTMLElement)
+  })
+})
+
+describe('ChatHeader bell-колокол звука (008a US4, T057; FR-012, ui-behavior §4.1)', () => {
+  /** Bell по title прототипа #btnBell («Звуковые оповещения»). */
+  function bell(): HTMLElement {
+    return screen.getByRole('button', { name: 'Звуковые оповещения' })
+  }
+
+  it('перед шестернёнкой: .ch-btn с SVG-колоколом прототипа (chats.html:446), всегда в .ch-btns', () => {
+    const { container } = renderHeader(directChat())
+
+    const buttons = container.querySelector('.chat-head .ch-btns')
+    expect(buttons).not.toBeNull()
+    // Колокол — ПЕРВЫМ (место поиска 013 не отображается — между ним и
+    // шестернёнкой), шестерёнка — за ним.
+    const children = Array.from(buttons?.children ?? [])
+    expect(children[0]).toBe(bell())
+    expect(children[1]).toBe(screen.getByRole('button', { name: 'Настройки чата' }))
+    expect(bell().querySelector('svg path')).toBeInstanceOf(SVGElement)
+  })
+
+  it('умолчание true (поле №12/№13 отсутствует = вкл): без .off, aria-pressed=true; клик отдаёт цель false', () => {
+    const props = headerProps()
+    const onToggleSound = vi.fn()
+    render(<ChatHeader chat={directChat()} {...props} onToggleSound={onToggleSound} />)
+
+    expect(bell()).not.toHaveClass('off')
+    expect(bell()).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(bell())
+    expect(onToggleSound).toHaveBeenCalledTimes(1)
+    expect(onToggleSound).toHaveBeenCalledWith(false)
+  })
+
+  it('выкл (soundEnabled=false): класс .off (opacity .45 прототипа :221), aria-pressed=false; клик отдаёт true', () => {
+    const onToggleSound = vi.fn()
+    render(<ChatHeader chat={directChat()} onToggleSound={onToggleSound} soundEnabled={false} />)
+
+    expect(bell()).toHaveClass('ch-btn', 'off')
+    expect(bell()).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(bell())
+    expect(onToggleSound).toHaveBeenCalledWith(true)
+  })
+
+  it('группа: колокол живёт и без роли — звук не требует матрицы 006', () => {
+    const onToggleSound = vi.fn()
+    render(<ChatHeader chat={groupChat()} onToggleSound={onToggleSound} soundEnabled={false} />)
+
+    expect(bell()).toHaveClass('off')
+    fireEvent.click(bell())
+    expect(onToggleSound).toHaveBeenCalledWith(true)
+  })
+
+  it('.off глушит только прозрачность — правило .ch-btn.off прототипа в chat-header.css', () => {
+    const headerCss = readFileSync(join(import.meta.dirname, '../chat-header.css'), 'utf8')
+    const match = headerCss.match(/\.chat-head \.ch-btn\.off\s*\{([^}]*)\}/)
+    expect(match).not.toBeNull()
+    expect(match?.[1]).toContain('opacity: 0.45')
+    // Только прозрачность: ни рамка, ни цвет штриха не переопределяются.
+    expect(match?.[1]).not.toContain('border')
+    expect(match?.[1]).not.toContain('color')
   })
 })
