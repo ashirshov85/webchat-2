@@ -2,7 +2,7 @@
  * T025 — 008a US1 visual regression (SC-004 in the US1 scope, 2% budget
  * of the shared config): the two 008a form surfaces — the «Имя» field of
  * «Мой профиль» (T021, ui-behavior §1.1) and the «Имя контакта» rename
- * form behind the contact kebab «Переименовать» (T022, ui-behavior §1.2)
+ * form behind the contact kebab «Редактировать» (T022, ui-behavior §1.2)
  * — plus the chain convergence they drive on the owner's surfaces.
  *
  * The scenarios ride the visual-suite harness (fixtures/app.ts) on the
@@ -20,7 +20,7 @@
  *
  * Coverage (desktop 1440×900 only — the reference viewport, the
  * us1-regions/us2-fullscreens convention):
- *  * the contact kebab menu with «Переименовать» FIRST (ui-behavior
+ *  * the contact kebab menu with «Редактировать» FIRST (ui-behavior
  *    §1.2) against the committed prototype baseline `us2-contact-menu`
  *    — the PNG had no app-side consumer yet;
  *  * the «Имя» field over the incognito row: placeholder = username,
@@ -302,7 +302,7 @@ function installLastSeenSnapshot(
 }
 
 visualTest.describe('T025 — 008a US1: profile «Имя» field and the rename form', () => {
-  visualTest('contact kebab menu carries «Переименовать» first', async ({ messenger }) => {
+  visualTest('contact kebab menu carries «Редактировать» first', async ({ messenger }) => {
     onlyProject(DESKTOP)
     await openAlexChat(messenger)
     await chooseMainMenu(messenger.page, 'Контакты')
@@ -310,9 +310,9 @@ visualTest.describe('T025 — 008a US1: profile «Имя» field and the rename 
     await messenger.page.locator('.ctc-row .c-menu').first().click()
     const menu = messenger.page.locator('.ctx-menu.show')
     await expect(menu).toBeVisible()
-    // ui-behavior §1.2: «Переименовать» is the FIRST item, before
+    // ui-behavior §1.2: «Редактировать» is the FIRST item, before
     // «Заблокировать»/«Удалить чат»/«Удалить контакт».
-    await expect(menu.locator('.ctx-item').first()).toHaveText('Переименовать')
+    await expect(menu.locator('.ctx-item').first()).toHaveText('Редактировать')
     await expect(messenger.page).toHaveScreenshot('us2-contact-menu.png', SHOT)
   })
 
