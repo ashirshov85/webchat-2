@@ -121,7 +121,7 @@
 
 ### Tests for User Story 3 (писать ПЕРВЫМИ)
 
-- [ ] T042 [P] [US3] Написать `backend/src/test/kotlin/webchat/backend/presence/PresenceLastSeenIT.kt` (по образцу `PresencePrivacyIT`/`PresenceTestSupport`): `lastSeenAt` в №36 только при offline ∧ аудитория ∧ не инкогнито ∧ ключ есть; инкогнито/блок-пара/посторонний — поле ОТСУТСТВУЕТ и неотличимо от «нет данных» (0 утечек, SC-002); точность ≤ TTL 90 с + гистерезис 45 с + poller 1 с (SC-005); offline-событие с `lastSeenAt`, FREEZE — без; schema-конформность №36; убедиться в FAIL
+- [X] T042 [P] [US3] Написать `backend/src/test/kotlin/webchat/backend/presence/PresenceLastSeenIT.kt` (по образцу `PresencePrivacyIT`/`PresenceTestSupport`): `lastSeenAt` в №36 только при offline ∧ аудитория ∧ не инкогнито ∧ ключ есть; инкогнито/блок-пара/посторонний — поле ОТСУТСТВУЕТ и неотличимо от «нет данных» (0 утечек, SC-002); точность ≤ TTL 90 с + гистерезис 45 с + poller 1 с (SC-005); offline-событие с `lastSeenAt`, FREEZE — без; schema-конформность №36; убедиться в FAIL
 
 ### Implementation for User Story 3 (backend)
 
