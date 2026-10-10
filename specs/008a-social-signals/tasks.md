@@ -155,7 +155,7 @@
 
 - [X] T052 [P] [US4] Прокинуть `sound_enabled` в чтение/запись `chat_participants` в `backend/src/main/kotlin/webchat/backend/chats/repository/` и поле `soundEnabled` в ChatView/ChatListItem проекциях (`backend/src/main/kotlin/webchat/backend/chats/api/dto/ChatDtos.kt`, `backend/src/main/kotlin/webchat/backend/chats/domain/service/ChatService.kt`); умолчание TRUE для новых участий (data-model.md §1.3)
 - [X] T053 [US4] Реализовать №42 `PUT /api/v1/chats/{chatId}/sound` в `backend/src/main/kotlin/webchat/backend/chats/api/ChatSoundController.kt` (НОВОЕ) + `ChatService.updateSound`: membership-гейт (коды №13/№16), идемпотентность (повтор значения — 200 без события), смена → событие `chat.sound.updated {chatId, soundEnabled}` только в собственный канал пользователя, флуд `rl:user:chat-sound:` 30/мин, метрика `webchat_sound_settings_updated_total{result=changed|unchanged|rejected}` (research.md D2)
-- [ ] T054 [US4] Зелёная проверка: `./gradlew test --tests 'webchat.backend.chats.ChatSoundIT'` — SC-006 подтверждён
+- [X] T054 [US4] Зелёная проверка: `./gradlew test --tests 'webchat.backend.chats.ChatSoundIT'` — SC-006 подтверждён
 
 ### Implementation for User Story 4 (frontend)
 
