@@ -95,6 +95,9 @@ async function openBootChat({ page, chatItems }: MessengerHarness): Promise<void
 async function openPhoenix({ page, chatItems }: MessengerHarness): Promise<void> {
   await chatItems.filter({ hasText: 'Project Phoenix' }).first().click()
   await expect(page.locator('.chat-name')).toHaveText('Project Phoenix')
+  // T066: the group opens with unread 1 — settle the №13 latch (the
+  // unread divider) so the page captures are deterministic.
+  await expect(page.locator('.message-list .unread-divider')).toBeVisible()
 }
 
 /** Opens the chat gear menu over the currently open group (#btnGear ≙

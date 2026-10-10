@@ -95,35 +95,47 @@
  * and an empty chat with a live typist keeps the real feed instead
  * of the empty state. The realtime state behind the prop is T038.
  *
- * Open seat (bug 2 T078 → bug 7 T085 → bug 13 T091 → bug 14 T092):
- * the first render of an open chat seats the feed with the TOP edge
- * of the FIRST unread INCOMING message at the TOP edge of the
- * viewport — the unread run is read from its first row, the read
- * history above stays a scroll-up away. The unread run is `senderId
- * ≠ me && seq > unreadFromSeq` (the open-time №13 `myReadUpToSeq`
- * latched by useChatMessages): own outgoing rows are read by the
- * author the moment they leave, so a chat whose tail is own sends
- * carries no unread incoming and the seat degenerates to the feed's
- * very last row with block:'end' — the open lands in the end with
- * the own tail in view (bug 13). When the window starts with the
- * unread incoming run, the chat's true first unread may sit above
- * the loaded window and the seat drives №14 `loadOlder` pages until
- * a loaded row precedes the window's first unread incoming (a
- * failed page never retries on its own); a wholly unread window
- * (watermark 0) keeps the natural top position — the №14 guard
- * never asks for a read boundary that does not exist. The seat is
- * one-shot per open (re-armed by the empty window of a chat
- * switch), waits for the watermark while №13 is in flight, and
- * never fires for an empty chat. The anchor row carries
- * `data-seat-anchor` whose value ('start'/'end') is the seat
- * alignment; the pagination anchor of prepended older pages
- * (anchorHeightRef, T053) is untouched — the two scrolls live in
- * separate effects and never act in the same commit. Bug 8а
- * (T086): the first `scrollIntoView` runs against a COLD layout
- * (content-visibility placeholders), so a post-paint rAF loop
- * re-checks the deviation of the ALIGNED edge in BOTH directions
- * (|gap| > tolerance — an undershoot AND a complete no-op with the
- * anchor past the edge) and corrects until the seat converges — a
+ * Open seat (bug 2 T078 → bug 7 T085 → bug 13 T091 → bug 14 T092 →
+ * 008a Phase 9 T066): the first render of an open chat with unread
+ * incoming renders the accented «Непрочитанные сообщения» divider
+ * EXACTLY ONCE above the FIRST unread INCOMING message (the same
+ * boundary the seat counts) and seats the feed by the SIZE of the
+ * unread block, measured by the actual DOM marks after the first
+ * layout: divider + ALL unread incoming fit the viewport →
+ * block:'end' on the LAST unread row (the whole block in view); they
+ * do NOT fit → block:'start' on the DIVIDER (the block is read from
+ * its beginning — the bug 14 intent with the divider as the anchor).
+ * The unread run is `senderId ≠ me && seq > unreadFromSeq` (the
+ * open-time №13 `myReadUpToSeq` latched by useChatMessages): own
+ * outgoing rows are read by the author the moment they leave, so a
+ * chat whose tail is own sends carries no unread incoming and the
+ * seat degenerates to the feed's very last row with block:'end' —
+ * the open lands in the end with the own tail in view (bug 13).
+ * When the window starts with the unread incoming run, the chat's
+ * true first unread may sit above the loaded window and the seat
+ * drives №14 `loadOlder` pages until a loaded row precedes the
+ * window's first unread incoming (a failed page never retries on
+ * its own); a wholly unread window (watermark 0) keeps the natural
+ * top position — the №14 guard never asks for a read boundary that
+ * does not exist. The seat is one-shot per open (re-armed by the
+ * empty window of a chat switch), waits for the watermark while №13
+ * is in flight, and never fires for an empty chat. The anchor
+ * elements carry `data-seat-anchor` whose value ('start'/'end') is
+ * the seat alignment — the two candidates of an unread window (the
+ * divider 'start' and the LAST unread row 'end') plus the degenerate
+ * 'end' row of a read window; the pagination anchor of prepended
+ * older pages (anchorHeightRef, T053) is untouched — the two scrolls
+ * live in separate effects and never act in the same commit. The
+ * divider is a STATIC snapshot of the open (the `unreadFromSeq`
+ * basis, frozen when the seat fires): realtime incoming in the
+ * already-open chat never moves or sprouts it, the scroll stays
+ * with the user, and the badge resets through the existing read
+ * path (FR-014). Bug 8а (T086): the first `scrollIntoView` runs
+ * against a COLD layout (content-visibility placeholders), so a
+ * post-paint rAF loop re-checks the deviation of the ALIGNED edge
+ * in BOTH directions (|gap| > tolerance — an undershoot AND a
+ * complete no-op with the anchor past the edge) AND re-decides the
+ * fit itself against the warmed marks until the seat converges — a
  * window without an unread run ends with its last row at the fold,
  * i.e. the bottom of the feed; bounded to SCROLL_SETTLE_FRAMES
  * frames.
@@ -299,18 +311,20 @@ export interface MessageListProps {
   readonly othersReadUpToSeq?: number
   /**
    * Open-time read watermark of the caller (bug 2 T078 → bug 7
-   * T085 → bug 13 T091 → bug 14 T092): the `myReadUpToSeq` latched
-   * from the first №13 ChatView answer of the current open
-   * (useChatMessages). The unread run is the INCOMING messages with
-   * `seq > unreadFromSeq` (own outgoing rows are read by the author
-   * the moment they leave) — the FIRST of them is the row the feed
-   * seats at on the first render of the open (its top edge at the
-   * viewport top; the read history above stays a scroll-up away,
-   * bug 14). A window with NO unread incoming degenerates to the
-   * feed's very last row — the open seats in the end (bug 13: the
-   * own-send tail lands in view). `null`/omitted — the watermark is
-   * not known yet (№13 in flight): the seat waits and never fires if
-   * it never arrives (a failed №13 keeps the current behaviour).
+   * T085 → bug 13 T091 → bug 14 T092 → 008a Phase 9 T066): the
+   * `myReadUpToSeq` latched from the first №13 ChatView answer of the
+   * current open (useChatMessages). The unread run is the INCOMING
+   * messages with `seq > unreadFromSeq` (own outgoing rows are read
+   * by the author the moment they leave) — its FIRST row carries the
+   * «Непрочитанные сообщения» divider above it, and the open seats
+   * the feed by the size of the divider + unread-run block: it fits
+   * the viewport → block:'end' at the LAST unread row; it does not →
+   * block:'start' at the divider (T066). A window with NO unread
+   * incoming degenerates to the feed's very last row — the open
+   * seats in the end (bug 13: the own-send tail lands in view).
+   * `null`/omitted — the watermark is not known yet (№13 in flight):
+   * the seat waits and never fires if it never arrives (a failed №13
+   * keeps the current behaviour).
    */
   readonly unreadFromSeq?: number | null
   /**
@@ -581,10 +595,21 @@ export function MessageList({
    * still retries through the standard handleScroll path.
    */
   const seatLoadedOldestRef = useRef<number | null>(null)
+  /**
+   * T066 snapshot of the unread-divider boundary: the seq of the
+   * FIRST unread incoming of the commit the seat fired at (`null` —
+   * this open carried no unread barrier at all), `undefined` — the
+   * seat has not fired yet and the divider follows the live boundary
+   * (№14 catch-up, wholly-unread natural top). Frozen once per open
+   * so realtime appends and later prepends never move or sprout the
+   * divider; reset by the chat-switch re-arm below.
+   */
+  const unreadBarrierSeqRef = useRef<number | null | undefined>(undefined)
   useEffect(() => {
     if (messages.length === 0) {
       seatArmedRef.current = true
       seatLoadedOldestRef.current = null
+      unreadBarrierSeqRef.current = undefined
     }
   }, [messages])
 
@@ -593,8 +618,14 @@ export function MessageList({
     if (list === null || !seatArmedRef.current || messages.length === 0 || unreadFromSeq === null) {
       return
     }
-    const seat = list.querySelector<HTMLElement>('[data-seat-anchor]')
-    if (seat === null) {
+    // T066 seat candidates: the divider ('start') and the LAST
+    // unread row ('end') of a window with unread incoming, or the
+    // single degenerate 'end' row of a window without any. A window
+    // that STARTS with the unread incoming run renders NEITHER — the
+    // catch-up branch below owns it.
+    const dividerSeat = list.querySelector<HTMLElement>('[data-seat-anchor="start"]')
+    const tailSeat = list.querySelector<HTMLElement>('[data-seat-anchor="end"]')
+    if (dividerSeat === null && tailSeat === null) {
       // The window STARTS with the unread incoming run — the chat's
       // true first unread incoming may sit ABOVE the loaded window
       // (the run itself reaches up out of sight; at watermark 0
@@ -623,30 +654,58 @@ export function MessageList({
       return
     }
     seatArmedRef.current = false
-    if (typeof seat.scrollIntoView === 'function') {
-      // The anchor row carries its alignment (T092, bug 14):
-      // block:'start' seats the FIRST unread incoming's top edge at
-      // the viewport top — the unread run is read from its first
-      // visible row, the read history above stays a scroll-up away;
-      // the degenerate seat of a window without unread incoming
-      // lands the feed's very last row at the bottom edge
-      // (block:'end', bug 13). jsdom ships no scrollIntoView — the
-      // guard keeps every non-visual suite at the current behaviour.
-      const block = (seat.dataset.seatAnchor as ScrollLogicalPosition | undefined) ?? 'end'
-      seat.scrollIntoView({ block })
+    // T066: freeze the divider snapshot at the fire commit — the seq
+    // of the FIRST unread incoming of THIS open (null — none). Later
+    // realtime appends and prepends render against the frozen value,
+    // so the divider never moves or sprouts after the open decided.
+    unreadBarrierSeqRef.current =
+      messages.find((message) => message.senderId !== currentUserId && message.seq > unreadFromSeq)
+        ?.seq ?? null
+    /**
+     * The seat target by the ACTUAL DOM marks (T066): the unread
+     * block (the divider top → the LAST unread bottom) against the
+     * list `clientHeight` — it fits → block:'end' on the LAST
+     * unread row (the whole block lands in view); it does not →
+     * block:'start' on the DIVIDER (the block is read from its
+     * beginning — bug 14 semantics with the divider as the anchor).
+     * The degenerate window (no unread incoming) keeps its very last
+     * row with block:'end' (bug 13). jsdom ships no scrollIntoView —
+     * the guard keeps every non-visual suite at the current
+     * behaviour, and its all-zero layout measures the block as
+     * fitting (0 ≤ 0).
+     */
+    const pickSeat = (): { element: HTMLElement; block: ScrollLogicalPosition } | null => {
+      if (dividerSeat === null || tailSeat === null) {
+        const degenerate = tailSeat ?? dividerSeat
+        return degenerate !== null && degenerate.isConnected
+          ? { element: degenerate, block: tailSeat !== null ? 'end' : 'start' }
+          : null
+      }
+      if (!dividerSeat.isConnected || !tailSeat.isConnected) {
+        return null
+      }
+      const fits =
+        tailSeat.getBoundingClientRect().bottom - dividerSeat.getBoundingClientRect().top <=
+        list.clientHeight
+      return fits ? { element: tailSeat, block: 'end' } : { element: dividerSeat, block: 'start' }
+    }
+    const seat = pickSeat()
+    if (seat !== null && typeof seat.element.scrollIntoView === 'function') {
+      seat.element.scrollIntoView({ block: seat.block })
       // content-visibility warm-up (research §G; bug 8а, T086): the
       // offscreen rows render lazily behind 64px placeholders, so the
       // first attempt runs against a COLD layout that underestimates
-      // the feed. The deviation of the ALIGNED edge goes BOTH ways:
-      // the layout may undervalue the content on the other side of
-      // the anchor (scrollIntoView undershoots — the anchor's edge
-      // stops short of the viewport edge, gap ≠ 0) or consider
-      // everything already in view (a complete no-op — after the
-      // warm-up the anchor hangs PAST the viewport edge, opposite
-      // gap sign). Re-check after every paint and correct while
-      // |gap| exceeds the trailing-aware tolerance — a fully read
-      // window converges with its last row at the fold and the
-      // scroll clamped to the maximum, i.e.
+      // the feed — and the FIT decision itself rides the same marks.
+      // The deviation of the ALIGNED edge goes BOTH ways: the layout
+      // may undervalue the content on the other side of the anchor
+      // (scrollIntoView undershoots — the anchor's edge stops short
+      // of the viewport edge, gap ≠ 0) or consider everything already
+      // in view (a complete no-op — after the warm-up the anchor
+      // hangs PAST the viewport edge, opposite gap sign). Re-check
+      // after every paint, RE-DECIDE the fit against the warmed
+      // marks and correct while |gap| exceeds the trailing-aware
+      // tolerance — a fully read window converges with its last row
+      // at the fold and the scroll clamped to the maximum, i.e.
       // `scrollHeight − scrollTop − clientHeight ≈ 0`. Late paints
       // keep rippling after the last correction (each scroll renders
       // newly relevant rows), so the loop ends only on SUSTAINED
@@ -656,19 +715,23 @@ export function MessageList({
       // sees a perfect seat and rests.
       if (typeof requestAnimationFrame === 'function') {
         const reseat = (framesLeft: number, stable: number) => {
-          if (listRef.current !== list || !seat.isConnected) {
+          if (listRef.current !== list) {
+            return
+          }
+          const target = pickSeat()
+          if (target === null) {
             return
           }
           const gap =
-            block === 'start'
-              ? seat.getBoundingClientRect().top - list.getBoundingClientRect().top
-              : list.getBoundingClientRect().bottom - seat.getBoundingClientRect().bottom
+            target.block === 'start'
+              ? target.element.getBoundingClientRect().top - list.getBoundingClientRect().top
+              : list.getBoundingClientRect().bottom - target.element.getBoundingClientRect().bottom
           if (Math.abs(gap) <= SCROLL_SETTLE_TOLERANCE_PX) {
             stable += 1
           } else {
             stable = 0
-            if (framesLeft > 0 && typeof seat.scrollIntoView === 'function') {
-              seat.scrollIntoView({ block })
+            if (framesLeft > 0 && typeof target.element.scrollIntoView === 'function') {
+              target.element.scrollIntoView({ block: target.block })
             }
           }
           if (stable < SCROLL_SETTLE_STABLE_FRAMES && framesLeft > 0) {
@@ -682,7 +745,7 @@ export function MessageList({
         })
       }
     }
-  }, [messages, unreadFromSeq, hasOlder, loadingOlder, onLoadOlder])
+  }, [messages, unreadFromSeq, hasOlder, loadingOlder, onLoadOlder, currentUserId])
 
   const confirmedIds = new Set(messages.map((message) => message.id))
   const activePending = pending.filter((entry) => !confirmedIds.has(entry.clientMessageId))
@@ -811,34 +874,58 @@ export function MessageList({
   const incomingAvatarSource = (senderId: string): string =>
     senderNames?.get(senderId) ?? peerUsername ?? senderId
 
-  // T092 (bug 14): the seat anchor — the FIRST unread INCOMING row
-  // of the window (`senderId ≠ me && seq > unreadFromSeq`; own
-  // outgoing rows are read by the author the moment they leave, so
-  // they never open the unread run). The scan runs through the
-  // window in ascending seq order:
-  //  • the first unread incoming sits INSIDE the window → IT is the
-  //    anchor and the seat lands its TOP edge at the viewport top
-  //    (block:'start' — the unread run is read from its first row,
-  //    the read history above stays a scroll-up away, bug 14);
-  //  • NO unread incoming in the window → the feed's very last row
-  //    with block:'end' (the seat lands in the end — a chat ending
-  //    with own sends opens at its own tail, bug 13);
-  //  • the window STARTS with the unread incoming run → the chat's
-  //    true first unread incoming may sit ABOVE the window: no
-  //    anchor renders here, and the seat effect above drives №14
-  //    pages down to it.
+  // T066: the unread barrier — the index the «Непрочитанные
+  // сообщения» divider renders above. Until the seat fires it
+  // follows the LIVE boundary (the FIRST unread INCOMING row of the
+  // window, `senderId ≠ me && seq > unreadFromSeq`; own outgoing rows
+  // are read by the author the moment they leave, so they never open
+  // the run) — №14 catch-up pages move it up with the run's head; the
+  // fire freezes the boundary seq (unreadBarrierSeqRef), and every
+  // later render of this open places the divider by the FROZEN value
+  // (−1 when the open carried no unread barrier at all): realtime
+  // appends and post-fire prepends never move or sprout it.
+  let barrierIndex = -1
+  if (unreadFromSeq !== null && messages.length > 0) {
+    const frozen = unreadBarrierSeqRef.current
+    barrierIndex =
+      frozen === null
+        ? -1
+        : frozen === undefined
+          ? messages.findIndex(
+              (message) => message.senderId !== currentUserId && message.seq > unreadFromSeq,
+            )
+          : messages.findIndex((message) => message.seq === frozen)
+  }
+
+  // T092/T066: the seat anchor candidates —
+  //  • a window WITH unread incoming inside it (barrierIndex > 0 —
+  //    a loaded row precedes the run's head): the divider carries
+  //    'start' and the LAST unread incoming row 'end'; the effect
+  //    measures the block and picks one (T066);
+  //  • NO unread incoming in the window (barrierIndex −1): the
+  //    feed's very last row with block:'end' — the degenerate seat
+  //    (the open lands in the end — a chat ending with own sends
+  //    opens at its own tail, bug 13);
+  //  • the window STARTS with the unread incoming run
+  //    (barrierIndex 0): NO candidates — the seat effect above
+  //    drives №14 pages down to the true boundary.
   let seatAnchorId: string | undefined
   let seatAnchorBlock: ScrollLogicalPosition | undefined
+  let seatDividerCandidate = false
+  let seatLastUnreadId: string | undefined
   if (unreadFromSeq !== null && messages.length > 0) {
-    const firstUnreadIncoming = messages.findIndex(
-      (message) => message.senderId !== currentUserId && message.seq > unreadFromSeq,
-    )
-    if (firstUnreadIncoming > 0) {
-      seatAnchorId = messages[firstUnreadIncoming]?.id
-      seatAnchorBlock = 'start'
-    } else if (firstUnreadIncoming === -1) {
+    if (barrierIndex === -1) {
       seatAnchorId = messages.at(-1)?.id
       seatAnchorBlock = 'end'
+    } else if (barrierIndex > 0) {
+      seatDividerCandidate = true
+      for (let index = messages.length - 1; index >= barrierIndex; index -= 1) {
+        const candidate = messages[index]
+        if (candidate !== undefined && candidate.senderId !== currentUserId) {
+          seatLastUnreadId = candidate.id
+          break
+        }
+      }
     }
   }
 
@@ -882,6 +969,23 @@ export function MessageList({
         return (
           <Fragment key={message.id}>
             {startsNewDay && <li className="date-divider">{formatDate(message.createdAt)}</li>}
+            {index === barrierIndex && (
+              // T066 (008a Phase 9): the unread-run divider — the
+              // `.date-divider` lexica accented by message-list.css
+              // (`.unread-divider`), a STATIC non-interactive
+              // separator whose accessible name names the run; the
+              // 'start' seat candidate while the boundary sits inside
+              // the window (barrierIndex > 0).
+              <li
+                className="date-divider unread-divider"
+                role="separator"
+                aria-label="Непрочитанные сообщения"
+                data-seat-anchor={seatDividerCandidate ? 'start' : undefined}
+              >
+                <span className="unread-dot" aria-hidden="true" />
+                Непрочитанные сообщения
+              </li>
+            )}
             <FeedRow
               message={message}
               outgoing={outgoing}
@@ -889,7 +993,13 @@ export function MessageList({
               sender={sender}
               avatarSource={outgoing ? meAvatarSource : incomingAvatarSource(message.senderId)}
               stampAnim={localIdsRef.current.has(message.id)}
-              seatAnchor={message.id === seatAnchorId ? seatAnchorBlock : undefined}
+              seatAnchor={
+                seatDividerCandidate && message.id === seatLastUnreadId
+                  ? 'end'
+                  : message.id === seatAnchorId
+                    ? seatAnchorBlock
+                    : undefined
+              }
             />
           </Fragment>
         )

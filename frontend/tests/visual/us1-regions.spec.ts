@@ -89,6 +89,9 @@ visualTest.describe('T026 — US1 regions against the T016(а) baselines', () =>
     onlyProject(DESKTOP)
     await messenger.openChat('Project Phoenix')
     await expect(messenger.page.locator('.chat-name')).toHaveText('Project Phoenix')
+    // T066: «Project Phoenix» opens with unread 1 — settle the №13
+    // latch (the unread divider) so the capture is deterministic.
+    await expect(messenger.page.locator('.message-list .unread-divider')).toBeVisible()
     await expect(messenger.page.locator('section.chat')).toHaveScreenshot(
       'us1-group-chat.png',
       SHOT,

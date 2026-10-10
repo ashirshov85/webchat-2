@@ -563,6 +563,69 @@ visualTest.describe('T050 — 008a US3: the «Был в сети — …» statu
   })
 })
 
+visualTest.describe(
+  'T066 — 008a Phase 9: the «Непрочитанные сообщения» divider and the conditional seat',
+  () => {
+    /**
+     * Opening a chat with unread incoming (008a Phase 9): the accented
+     * `.unread-divider` (role=separator, aria-label «Непрочитанные
+     * сообщения») rides above the FIRST unread incoming row — the same
+     * boundary the seat counts — and the open scroll is conditional on
+     * the size of the unread block (divider + all unread incoming
+     * against the fold): the Maria dialog answers the FITS branch (one
+     * unread bubble → block:'end' at the last unread), the wholly
+     * unread «The Aether Society» answers the natural-top rule (8):
+     * watermark 0 → the divider above the loaded window's first row,
+     * №14 never asked.
+     */
+    visualTest(
+      'a short unread block — the divider above the run, the seat at its end',
+      async ({ messenger }) => {
+        onlyProject(DESKTOP)
+        const { page } = messenger
+        // Maria's dialog: №12 unread 2, №13 myReadUpToSeq 1 — seq 2 is
+        // the user's OWN send (read by the author the moment it left),
+        // seq 3 is the single unread INCOMING row.
+        await messenger.openChat('workshop tomorrow')
+        const divider = page.locator('.message-list .unread-divider')
+        await expect(divider).toBeVisible()
+        await expect(divider).toHaveAttribute('role', 'separator')
+        await expect(divider).toHaveAccessibleName('Непрочитанные сообщения')
+        await expect(divider.locator('xpath=following-sibling::li[1]')).toContainText(
+          'Exactly! Come by the workshop tomorrow',
+        )
+        // The block (divider + one bubble) fits the fold — the seat
+        // lands the LAST unread at the bottom edge, the whole block
+        // and the read history above in view (rule 4).
+        await expect(page.locator('.message-list.chat-scroll')).toHaveScreenshot(
+          '008a-unread-divider.png',
+          SHOT,
+        )
+      },
+    )
+
+    visualTest(
+      'a wholly unread chat — the divider at the natural top, no №14 catch-up',
+      async ({ messenger }) => {
+        onlyProject(DESKTOP)
+        const { page } = messenger
+        // «The Aether Society»: №12 unread 3 of 3 — watermark 0, the
+        // whole feed IS the unread run (rule 8).
+        await messenger.openChat('The Aether Society')
+        const divider = page.locator('.message-list .unread-divider')
+        await expect(divider).toBeVisible()
+        await expect(divider.locator('xpath=following-sibling::li[1]')).toContainText(
+          "Tonight's lecture",
+        )
+        await expect(page.locator('.message-list.chat-scroll')).toHaveScreenshot(
+          '008a-unread-divider-top.png',
+          SHOT,
+        )
+      },
+    )
+  },
+)
+
 visualTest.describe('T060 — 008a US4: the bell on/off', () => {
   /** Bell-колокол заголовка по title прототипа #btnBell (ui-behavior §4.1). */
   function bellOf(page: Page): Locator {

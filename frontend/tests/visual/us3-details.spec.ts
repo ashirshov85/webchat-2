@@ -81,8 +81,16 @@ visualTest.describe('T047 — US3 details against the T016(б) baselines', () =>
     await expect(page.locator('.chat-item .av-dot.off')).toHaveCount(2)
 
     // US3 feed details (T044) of the open group window: the top date
-    // divider of the exhausted history and a ЧЧ:ММ footer per row.
-    await expect(page.locator('.message-list .date-divider')).toHaveText('19 сентября')
+    // divider of the exhausted history and a ЧЧ:ММ footer per row
+    // (the T066 unread divider also carries `.date-divider` — scope
+    // it out: «Project Phoenix» opens with unread 1 and renders the
+    // «Непрочитанные сообщения» separator above the run).
+    await expect(page.locator('.message-list .date-divider:not(.unread-divider)')).toHaveText(
+      '19 сентября',
+    )
+    await expect(page.locator('.message-list .unread-divider')).toHaveAccessibleName(
+      'Непрочитанные сообщения',
+    )
     await expect(page.locator('.message-list .b-time')).toHaveCount(3)
 
     // №28 must be live before the hover: only then the status row is
