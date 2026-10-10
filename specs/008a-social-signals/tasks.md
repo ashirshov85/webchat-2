@@ -149,7 +149,7 @@
 
 ### Tests for User Story 4 (писать ПЕРВЫМИ)
 
-- [ ] T051 [P] [US4] Написать `backend/src/test/kotlin/webchat/backend/chats/ChatSoundIT.kt`: №42 смена/повтор значения (идемпотентность — 200 без события), `chat.sound.updated` приходит только в собственный канал (другие участники не получают — приватность), №42 смена → SSE-кадр `chat.sound.updated` наблюдается в собственном канале ≤ 2 с (серверный прокси SC-006; 95% — ручная сверка T062; по образцу TypingIT start→typing.started ≤ 2 с), `soundEnabled` в №11/№12/№13 (ChatView/ChatListItem, api-contract.md §2), не-участник → 403/404, флуд > 30/мин → 429, schema-конформность; убедиться в FAIL
+- [X] T051 [P] [US4] Написать `backend/src/test/kotlin/webchat/backend/chats/ChatSoundIT.kt`: №42 смена/повтор значения (идемпотентность — 200 без события), `chat.sound.updated` приходит только в собственный канал (другие участники не получают — приватность), №42 смена → SSE-кадр `chat.sound.updated` наблюдается в собственном канале ≤ 2 с (серверный прокси SC-006; 95% — ручная сверка T062; по образцу TypingIT start→typing.started ≤ 2 с), `soundEnabled` в №11/№12/№13 (ChatView/ChatListItem, api-contract.md §2), не-участник → 403/404, флуд > 30/мин → 429, schema-конформность; убедиться в FAIL
 
 ### Implementation for User Story 4 (backend)
 
