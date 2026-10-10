@@ -127,7 +127,7 @@
 
 - [X] T043 [US3] Расширить `backend/src/main/kotlin/webchat/backend/presence/repository/RedisPresenceStore.kt`: запись `presence:lastseen:{userId}` (STRING, epoch ms из Redis TIME, TTL 30 дней) атомарно в Lua-ногах REGISTER/RENEW/UNREGISTER/CLEAR_SESSION; пакетное чтение в SNAPSHOT (№36) (research.md B1)
 - [X] T044 [US3] Реализовать фильтр раскрытия в `backend/src/main/kotlin/webchat/backend/presence/domain/PresenceService.kt`: `lastSeenAt` в №36-снапшоте и offline-событии `presence.updated` только при (status=offline ∧ наблюдатель в аудитории `JdbcVisibilityAudienceReader` ∧ субъект не в инкогнито — пакетное чтение `presence_hidden` через `JdbcPresenceSettingsStore` ∧ ключ существует); FREEZE-переход — событие без `lastSeenAt`; иначе поле отсутствует (нейтрально, research.md B2)
-- [ ] T045 [US3] Зелёная проверка: `./gradlew test --tests 'webchat.backend.presence.PresenceLastSeenIT'` — SC-002/SC-005 подтверждены
+- [X] T045 [US3] Зелёная проверка: `./gradlew test --tests 'webchat.backend.presence.PresenceLastSeenIT'` — SC-002/SC-005 подтверждены
 
 ### Implementation for User Story 3 (frontend)
 
