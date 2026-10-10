@@ -216,6 +216,21 @@
  * кормят TypingRow ленты (T037). Композер открытого чата ride'ит
  * машину №41-сигналов useTyping (T036, §2.1): изменения черновика и
  * каждая попытка отправки (любой исход) → best-effort start/stop.
+ *
+ * 008a US4 звук-синхронизация (T058; FR-012–FR-015, ui-behavior §4,
+ * realtime-events §1.3): per-chat карта звук-переключателей
+ * вызывающего сходится из ЧЕТЫРЁХ источников — №12-строки (рефетчи/
+ * реконнекты), №11/№13 ChatView (adoptChatViewSound: select-фолбэк и
+ * модальные пути), ответ №42 (echo, T057) и кадры `chat.sound.updated`
+ * СОБСТВЕННОГО канала №18 (onChatSoundUpdated — мультидевайс ≤ 2 с,
+ * SC-006; другие участники кадр не получают — приватность). Карта
+ * кормит колокол заголовка (T057) и ДВА звук-гейта приёма: реальное
+ * время передаёт per-chat состояние в chimeOnRealtimeIncoming
+ * (решение — в ui/sound: false → тишина, undefined → звучит),
+ * sync-батч 005 считает входящие PER-CHAT — звонок цикла звучит
+ * только если среди пришедших есть неприглушённые чаты (итог 0 —
+ * тишина самого sound). ВИЗУАЛЬНЫЕ уведомления (бейджи, лента,
+ * превью, тосты) гейтом не фильтруются вовсе (FR-014).
  */
 import {
   useCallback,
@@ -1057,14 +1072,23 @@ function MessengerMachine() {
   const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
   /**
    * Персональные звук-переключатели чатов вызывающего (008a US4,
-   * T057; FR-012): chatId → soundEnabled. Источники сходятся здесь:
+   * T057/T058; FR-012): chatId → soundEnabled. Источники сходятся здесь:
    * №12-строки (каждый рефетч/реконнект несут актуальное значение),
-   * ответ №42 (echo сохранённого); T058 добавит кадры
-   * `chat.sound.updated` собственного канала (мультидевайс ≤ 2 с).
-   * Отсутствие записи = «вкл» — умолчание контракта (отсутствие поля
-   * №12/№13 клиент трактует как true; обратная совместимость 008).
+   * №11/№13 ChatView (select-фолбэк и модальные пути — adoptChatViewSound),
+   * ответ №42 (echo сохранённого) и кадры `chat.sound.updated`
+   * собственного канала (мультидевайс ≤ 2 с, SC-006). Отсутствие записи
+   * = «вкл» — умолчание контракта (отсутствие поля №12/№13 клиент
+   * трактует как true; обратная совместимость 008).
    */
   const [soundStates, setSoundStates] = useState<ReadonlyMap<string, boolean>>(() => new Map())
+  /**
+   * Синхронное зеркало звук-состояния для слушателей реального времени
+   * (T058): гейт chimeOnRealtimeIncoming и per-chat подсчёт sync-батчей
+   * читают актуальное значение БЕЗ пересоздания подписок на каждый
+   * переключатель (паттерн chatsRef/currentUserIdRef useChatList).
+   */
+  const soundStatesRef = useRef(soundStates)
+  soundStatesRef.current = soundStates
   const { narrowViewport, drawerOpen, setDrawerOpen, backdropRef, sidebarRef } = useSidebarDrawer(
     modalForm !== null || pendingAction !== null,
   )
@@ -1277,10 +1301,22 @@ function MessengerMachine() {
   // композера страницы этим путём не идут вовсе, отправка звука не
   // имеет (Clarification); sync-цикл не тронут — только слушатель
   // страницы (research «Сводка без изменений»).
+  //
+  // 008a US4 (T058; FR-013, ui-behavior §4.2): подсчёт PER-CHAT —
+  // входящие приглушённого чата (soundEnabled === false) в счётчик не
+  // попадают: звонок батча звучит только если среди пришедших есть
+  // НЕприглушённые чаты (батч только с приглушёнными → итог 0 →
+  // тишина sound). ВИЗУАЛЬНАЯ доставка (бейджи/лента/позиции —
+  // эффект applyChatListSync/applyDialogSync выше) гейтом не
+  // фильтруется вовсе (FR-014); слушатель не пересоздаётся на каждое
+  // переключение — состояние читается через soundStatesRef.
   const syncIncomingRef = useRef(0)
   const syncCycleRanRef = useRef(false)
   useEffect(() => {
     return onChatUpdate((update) => {
+      if (soundStatesRef.current.get(update.chatId) === false) {
+        return
+      }
       for (const message of update.messages) {
         if (message.senderId !== currentUserId) {
           syncIncomingRef.current += 1
@@ -1324,12 +1360,19 @@ function MessengerMachine() {
   // подтверждается только визуально) и сам синтез живут в ui/sound
   // (T061/T063); сюда приходит каждое событие №18 потока, «двойного»
   // сигнала на событие нет — слушатель один.
+  //
+  // 008a US4 (T058; FR-013, ui-behavior §4.2): per-chat mute-гейт —
+  // странице принадлежит только ПЕРЕДАЧА состояния (soundStates:
+  // №12/№13/№42/chat.sound.updated), решение «звонить ли» — в самом
+  // sound (soundEnabled === false → тишина, undefined → звучит,
+  // обратная совместимость 008); визуальные поверхности события не
+  // фильтруются (FR-014).
   useEffect(() => {
     if (currentUserId === null) {
       return
     }
     return realtime.onMessageCreated(null, (event) => {
-      chimeOnRealtimeIncoming(event, currentUserId)
+      chimeOnRealtimeIncoming(event, currentUserId, soundStatesRef.current.get(event.chatId))
     })
   }, [currentUserId, realtime])
 
@@ -1410,6 +1453,26 @@ function MessengerMachine() {
     })
   }, [chats])
 
+  // 008a US4 (T058; FR-015, realtime-events §1.3): кадр
+  // `chat.sound.updated` приходит ТОЛЬКО в собственный канал — другой
+  // девайс того же пользователя переключил №42; состояние (колокол
+  // `aria-pressed`, звук-гейт приёма) сходится ≤ 2 с (SC-006).
+  // Дублей не бывает (сервер публикует только фактическую СМЕНУ), а
+  // (ре)подключение сходится №12/№13-ресурсами выше — кадр живого
+  // соединения не реплеится.
+  useEffect(() => {
+    return realtime.onChatSoundUpdated((chatId, soundEnabled) => {
+      setSoundStates((previous) => {
+        if (previous.get(chatId) === soundEnabled) {
+          return previous
+        }
+        const next = new Map(previous)
+        next.set(chatId, soundEnabled)
+        return next
+      })
+    })
+  }, [realtime])
+
   // FR-014 badge reset of the open dialog: rendering its incoming
   // messages is exactly when useChatMessages advances the read
   // watermark (T044), so the panel counter zeroes in step with it.
@@ -1424,6 +1487,29 @@ function MessengerMachine() {
 
   const openChatView = useCallback((view: ActiveChat) => {
     setActiveChat(view)
+  }, [])
+
+  /**
+   * 008a US4 (T058; FR-012, api-contract §1.3 №42): звук-состояние из
+   * №11/№13 ChatView — select-фолбэк №13 и модальные пути №11
+   * (ContactsModal/GroupMembersModal → ensureChat) несут актуальное
+   * `soundEnabled` вызывающего; (ре)подключение сходится тем же
+   * правилом через №12 (эффект сходимости выше). Отсутствие поля
+   * (старый сервер) — no-op: умолчание «вкл» живёт в потребителях.
+   */
+  const adoptChatViewSound = useCallback((view: ChatView) => {
+    const soundEnabled = view.soundEnabled
+    if (soundEnabled === undefined) {
+      return
+    }
+    setSoundStates((previous) => {
+      if (previous.get(view.chatId) === soundEnabled) {
+        return previous
+      }
+      const next = new Map(previous)
+      next.set(view.chatId, soundEnabled)
+      return next
+    })
   }, [])
 
   /** Shell closure (data-model 3.3): Esc / фон / «Отмена» / успех submit. */
@@ -1444,13 +1530,15 @@ function MessengerMachine() {
   const handleOpenChatFromModal = useCallback(
     (view: ChatView) => {
       closeShell()
+      // 008a T058: №11-ответ несёт звук-состояние чата вызывающего.
+      adoptChatViewSound(view)
       const next = activeChatOfView(view)
       if (next !== null) {
         openChatView(next)
       }
       reloadChatList()
     },
-    [closeShell, openChatView, reloadChatList],
+    [closeShell, openChatView, reloadChatList, adoptChatViewSound],
   )
 
   /**
@@ -1510,6 +1598,8 @@ function MessengerMachine() {
       void (async () => {
         try {
           const view = await getChat(chatId)
+          // 008a T058: №13-ответ несёт звук-состояние чата вызывающего.
+          adoptChatViewSound(view)
           if (view.type === 'group') {
             openChatView({
               kind: 'group',
@@ -1534,7 +1624,7 @@ function MessengerMachine() {
         }
       })()
     },
-    [chats, openChatView, setDrawerOpen],
+    [chats, openChatView, setDrawerOpen, adoptChatViewSound],
   )
 
   /** №14 DELETE /chats/{chatId} + outbox purge (FR-021, T060) — direct only. */

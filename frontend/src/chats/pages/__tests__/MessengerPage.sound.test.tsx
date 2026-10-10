@@ -254,9 +254,12 @@ describe('реальное время — один сигнал на входя�
     emitMessageCreated(stream, makeMessage(BOB_CHAT_ID, 3, BOB))
 
     expect(mockSound.chimeOnRealtimeIncoming).toHaveBeenCalledTimes(1)
+    // 008a T058: проводка передаёт per-chat звук-состояние третьим
+    // аргументом (undefined = неизвестно/legacy — звучит, ui/sound).
     expect(mockSound.chimeOnRealtimeIncoming).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: BOB_CHAT_ID }),
       ME,
+      undefined,
     )
   })
 
@@ -270,6 +273,7 @@ describe('реальное время — один сигнал на входя�
     expect(mockSound.chimeOnRealtimeIncoming).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: ALICE_CHAT_ID }),
       ME,
+      undefined,
     )
   })
 
@@ -303,6 +307,7 @@ describe('реальное время — один сигнал на входя�
     expect(mockSound.chimeOnRealtimeIncoming).toHaveBeenCalledWith(
       expect.objectContaining({ chatId: ALICE_CHAT_ID, message: own }),
       ME,
+      undefined,
     )
     expect(mockSound.chimeOnSyncBatch).not.toHaveBeenCalled()
   })

@@ -54,6 +54,18 @@
  * frames carry no sequence/dedup concerns — the consumer owns the
  * per-typist 10 s observer safety window and resets the state on
  * every (re)connect (the ephemeral state is never replayed, §1.1).
+ *
+ * Feature 008a US4 (T058, realtime-events.md §1.3): the stream also
+ * carries the `chat.sound.updated` frames of the `{chatId,
+ * soundEnabled}` shape — delivered ONLY to the user's own channel
+ * (the №42 multi-device sync ≤ 2 s, SC-006); they are handed to the
+ * sound listeners (`onChatSoundUpdated(chatId, soundEnabled)`,
+ * consumed by MessengerPage's per-chat sound-state map that drives
+ * the bell button and the chime gates). The frame is live-only
+ * state: (re)connecting clients read the current value from №12/№13
+ * — the RESOURCES own the reconnect convergence, the event never
+ * replays (§1.3); malformed frames never reach the listener (the
+ * №18 guard discipline).
  */
 import { useEffect, useRef } from 'react'
 import type { ChatReadEvent, MessageCreatedEvent } from '../../api/chats'
@@ -83,6 +95,15 @@ export type ConnectedListener = (connectionId: string) => void
  * `typing.stopped`).
  */
 export type TypingEventListener = (chatId: string, userId: string, started: boolean) => void
+
+/**
+ * `chat.sound.updated` frame listener (feature 008a US4,
+ * realtime-events.md §1.3): the frame's `{chatId, soundEnabled}`
+ * payload — the caller's personal sound toggle changed on ANOTHER
+ * device of the same user (the frame never reaches other
+ * participants, FR-012).
+ */
+export type ChatSoundUpdatedListener = (chatId: string, soundEnabled: boolean) => void
 
 export interface RealtimeStream {
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe
@@ -123,6 +144,16 @@ export interface RealtimeStream {
    */
   onTypingEvent(chatId: string | null, listener: TypingEventListener): Unsubscribe
   /**
+   * Subscribes to every №18 `chat.sound.updated` frame of the user's
+   * OWN stream (feature 008a US4): the listener adopts the frame's
+   * `{chatId, soundEnabled}` state (the №42 multi-device sync ≤ 2 s,
+   * SC-006) — duplicates cannot arrive (the server publishes only an
+   * actual CHANGE), and the (re)connect convergence stays with the
+   * №12/№13 resources, never with the live-only frame. Malformed
+   * frames never reach the listener (the №18 guard discipline).
+   */
+  onChatSoundUpdated(listener: ChatSoundUpdatedListener): Unsubscribe
+  /**
    * The №37 404 recovery (presence-api.md §2; 008 T076): the presence
    * registration of the current connectionId is dead — re-open the
    * transport immediately; the new `connected` frame restarts the
@@ -141,6 +172,7 @@ class UserEventStream implements RealtimeStream {
   private readonly groupListeners = new Set<GroupEventListener>()
   private readonly presenceListeners = new Set<PresenceUpdatedListener>()
   private readonly typingListeners = new Map<string | null, Set<TypingEventListener>>()
+  private readonly chatSoundListeners = new Set<ChatSoundUpdatedListener>()
   private lastConnectionId: string | null = null
 
   retain(): void {
@@ -176,6 +208,9 @@ class UserEventStream implements RealtimeStream {
     connection.subscribe('typing.stopped', (data) => {
       this.handleTypingEvent(data, false)
     })
+    connection.subscribe('chat.sound.updated', (data) => {
+      this.handleChatSoundUpdated(data)
+    })
     connection.subscribe('connected', (data) => {
       this.handleConnected(data)
     })
@@ -197,6 +232,7 @@ class UserEventStream implements RealtimeStream {
     this.groupListeners.clear()
     this.presenceListeners.clear()
     this.typingListeners.clear()
+    this.chatSoundListeners.clear()
   }
 
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe {
@@ -247,6 +283,13 @@ class UserEventStream implements RealtimeStream {
 
   onTypingEvent(chatId: string | null, listener: TypingEventListener): Unsubscribe {
     return this.addListener(this.typingListeners, chatId, listener)
+  }
+
+  onChatSoundUpdated(listener: ChatSoundUpdatedListener): Unsubscribe {
+    this.chatSoundListeners.add(listener)
+    return () => {
+      this.chatSoundListeners.delete(listener)
+    }
   }
 
   private addListener<T>(
@@ -320,6 +363,16 @@ class UserEventStream implements RealtimeStream {
       for (const listener of set) {
         listener(frame.chatId, frame.userId, started)
       }
+    }
+  }
+
+  private handleChatSoundUpdated(data: string): void {
+    const frame = parseChatSoundFrame(data)
+    if (frame === null) {
+      return
+    }
+    for (const listener of this.chatSoundListeners) {
+      listener(frame.chatId, frame.soundEnabled)
     }
   }
 
@@ -464,6 +517,27 @@ function parseTypingFrame(data: string): { chatId: string; userId: string } | nu
   const candidate = payload as { chatId?: unknown; userId?: unknown }
   return typeof candidate.chatId === 'string' && typeof candidate.userId === 'string'
     ? { chatId: candidate.chatId, userId: candidate.userId }
+    : null
+}
+
+/**
+ * №18 `chat.sound.updated` payload guard (feature 008a US4,
+ * realtime-events.md §1.3): the `ChatSoundUpdatedEvent` shape of the
+ * contract — `{chatId, soundEnabled}` with a strict boolean.
+ */
+function parseChatSoundFrame(data: string): { chatId: string; soundEnabled: boolean } | null {
+  let payload: unknown
+  try {
+    payload = JSON.parse(data)
+  } catch {
+    return null
+  }
+  if (typeof payload !== 'object' || payload === null) {
+    return null
+  }
+  const candidate = payload as { chatId?: unknown; soundEnabled?: unknown }
+  return typeof candidate.chatId === 'string' && typeof candidate.soundEnabled === 'boolean'
+    ? { chatId: candidate.chatId, soundEnabled: candidate.soundEnabled }
     : null
 }
 
