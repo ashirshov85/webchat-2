@@ -46,6 +46,15 @@
  *    US1 initials/colour split — delivered by a parked-then-one-shot
  *    SSE interception whose post-delivery aborts keep the T038
  *    reconnect-reset from eating the row mid-capture.
+ *  * the US3 lastSeen statuses (T050, ui-behavior §3): a №36 override
+ *    disclosing `lastSeenAt` drives BOTH US3 surfaces — the direct
+ *    header `.status-row` («Был в сети — 19 сентября, 18:55» over the
+ *    `.lamp.off` mark) and the «Контакты» `.c-prev` previews (the
+ *    disclosed James row, the neutral «Был в сети — давно» of the
+ *    no-field offline, «В сети» online) — over the frozen page clock
+ *    of the us4 outbox precedent, so `lastSeenFormat` (T046) takes
+ *    its «D месяца, HH:MM» branch deterministically on every run
+ *    date, including a run on the demo day itself.
  *
  * Determinism mirrors T026/T039: `animations: 'disabled'` cancels the
  * infinite lamps and fast-forwards the finite pop/transitions,
@@ -55,11 +64,12 @@
  * (ui/Toast) — the header capture waits it out, so no timing residue
  * enters the shot.
  *
- * T050/T060 will append the US3–US4 scenarios (lastSeen statuses,
- * bell on/off) to this same file.
+ * T050 appends the US3 scenarios — the «Был в сети — …» statuses of
+ * the direct header and the «Контакты» previews — below; T060 will
+ * append the US4 bell on/off states to this same file.
  */
 import { expect } from '@playwright/test'
-import type { Page, Route } from '@playwright/test'
+import type { Locator, Page, Route } from '@playwright/test'
 import { visualTest } from './fixtures/app'
 import { AETHERGRAM } from './fixtures/aethergram'
 import type { ChatListItem, ContactView } from '../../src/api/chats'
@@ -200,6 +210,52 @@ function installTypingStream(page: Page): { publish(frame: string): void } {
       queued.push(frame)
     },
   }
+}
+
+/**
+ * The frozen wall-clock of the US3 scenarios (the us4 outbox
+ * precedent): a fixed instant a week AFTER the demo day, so
+ * `lastSeenFormat` (T046) takes its «D месяца, HH:MM» branch for the
+ * demo-day `lastSeenAt` instants on EVERY run date — including a run
+ * on 19 сентября itself — and the rendered label stays byte-stable.
+ */
+const US3_FROZEN_MS = Date.parse('2026-09-26T12:00:00.000+03:00')
+
+/**
+ * The №36 backend of the US3 scenarios (the installAliasBackend
+ * recipe — registered AFTER the harness dataset, the later route wins
+ * every snapshot request): answers the demo truth PLUS the disclosed
+ * `lastSeenAt` entries of the map, the honest backend filter of
+ * research.md B2 modelled per-user (offline ∧ audience ∧ not
+ * incognito ∧ key exists → the field; otherwise the field is simply
+ * absent). Disclosed items carry rev 2 — the boot №36 of the harness
+ * already stored the demo statuses at rev 1, and the
+ * strictly-greater-rev merge of presenceStore (T047) must let the
+ * disclosed offline LAND; the untouched users keep rev 1 answers —
+ * idempotent no-ops against their stored entries.
+ */
+function installLastSeenSnapshot(
+  page: Page,
+  disclosures: ReadonlyMap<string, { status: 'online' | 'offline'; lastSeenAt: string }>,
+): void {
+  // The glob would miss the `?userIds=` query — №36 is matched by
+  // regex; the settings/heartbeat paths under /presence/ stay with
+  // the harness (the presence-e2e recipe).
+  void page.route(/\/api\/v1\/users\/me\/presence(\?|$)/, async (route: Route) => {
+    const url = new URL(route.request().url())
+    const requested = (url.searchParams.get('userIds') ?? '').split(',').filter(Boolean)
+    const items = requested.map((userId) => {
+      const disclosed = disclosures.get(userId)
+      return disclosed === undefined
+        ? { userId, status: AETHERGRAM.presenceOf(userId), rev: 1 }
+        : { userId, rev: 2, status: disclosed.status, lastSeenAt: disclosed.lastSeenAt }
+    })
+    await route.fulfill({
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ items }),
+    })
+  })
 }
 
 visualTest.describe('T025 — 008a US1: profile «Имя» field and the rename form', () => {
@@ -395,4 +451,71 @@ visualTest.describe('T040 — 008a US2: the typing row', () => {
       )
     },
   )
+})
+
+visualTest.describe('T050 — 008a US3: the «Был в сети — …» statuses', () => {
+  visualTest(
+    '№36-disclosed lastSeen renders «Был в сети — {дата, время}» in the direct header',
+    async ({ messenger }) => {
+      onlyProject(DESKTOP)
+      const { page } = messenger
+      // The frozen clock pins the `lastSeenFormat` date branch; the
+      // №36 override turns the ONLINE demo peer into the honest
+      // offline+disclosure answer the moment the open dialog
+      // registers its presence surface (usePresenceEntry T047 → the
+      // batched №36 heal of every displayed surface, T075).
+      await page.clock.setFixedTime(US3_FROZEN_MS)
+      const alex = AETHERGRAM.userByUsername('Alex Carter')
+      if (alex === undefined) {
+        throw new Error('social-signals fixture: Alex Carter is not in the demo book')
+      }
+      // 18:55 — five minutes after his last demo message (18:50): the
+      // disclosed activity time stays consistent with the feed.
+      installLastSeenSnapshot(
+        page,
+        new Map([[alex.id, { status: 'offline', lastSeenAt: '2026-09-19T18:55:00.000+03:00' }]]),
+      )
+      await openAlexChat(messenger)
+
+      // §3/§5: the header row keeps the prototype lamp — now `.off` —
+      // and the label quotes the disclosed time (ui-behavior §3.1:
+      // not today → «19 сентября, 18:55»).
+      await expect(page.locator('.chat-head .status-row .status-txt')).toHaveText(
+        'Был в сети — 19 сентября, 18:55',
+      )
+      await expect(page.locator('.chat-head .status-row .lamp.off')).toBeVisible()
+      await expect(page.locator('.chat-head')).toHaveScreenshot(
+        '008a-direct-chat-head-lastseen.png',
+        SHOT,
+      )
+    },
+  )
+
+  visualTest('«Контакты» previews carry the full lastSeen projection', async ({ messenger }) => {
+    onlyProject(DESKTOP)
+    const { page } = messenger
+    await page.clock.setFixedTime(US3_FROZEN_MS)
+    // James — an offline catalogue contact — gets the disclosure
+    // (14:06, his own last demo message); Thomas stays a plain
+    // offline (no field → the neutral «давно» of SC-002); Maria is
+    // online — the three §3 label variants share one frame.
+    const james = AETHERGRAM.userByUsername('James Whitmore')
+    if (james === undefined) {
+      throw new Error('social-signals fixture: James Whitmore is not in the demo book')
+    }
+    installLastSeenSnapshot(
+      page,
+      new Map([[james.id, { status: 'offline', lastSeenAt: '2026-09-19T14:06:00.000+03:00' }]]),
+    )
+    await openAlexChat(messenger)
+    await chooseMainMenu(page, 'Контакты')
+    await expect(page.locator('.ctc-row')).toHaveCount(10)
+
+    const previewOf = (name: string): Locator =>
+      page.locator('.ctc-row', { hasText: name }).locator('.c-prev')
+    await expect(previewOf('James Whitmore')).toHaveText('Был в сети — 19 сентября, 14:06')
+    await expect(previewOf('Thomas Reed')).toHaveText('Был в сети — давно')
+    await expect(previewOf('Maria Lopez')).toHaveText('В сети')
+    await expect(page).toHaveScreenshot('008a-contacts-lastseen.png', SHOT)
+  })
 })

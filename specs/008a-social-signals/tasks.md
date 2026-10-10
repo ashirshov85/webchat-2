@@ -135,7 +135,7 @@
 - [X] T047 [P] [US3] Расширить `frontend/src/presence/presenceStore.ts` (PresenceEntry + `lastSeenAt?`, merge из №36 и `presence.updated` по строго большему rev, как 007) и `frontend/src/presence/usePresence.ts` (+ `usePresenceEntry` со status + lastSeenAt)
 - [X] T048 [US3] Отобразить статусы: «Был в сети — {время}» / «Был в сети — давно» (offline без поля) / «В сети» (без изменений) в заголовке личного чата (`.status-txt`) `frontend/src/chats/components/ChatHeader.tsx` и превью строк «Контактов» (`.c-prev`, кроме флагов заблокирован/чат удалён) `frontend/src/chats/components/ContactsModal.tsx`; в сайдбар-списке чатов текст статуса не показывается (использует `lastSeenFormat` T046 и `usePresenceEntry` T047 — выполнять после них; ui-behavior.md §3)
 - [X] T049 [P] [US3] Написать Vitest-тесты: `lastSeenFormat` в `frontend/src/ui/__tests__/time.test.ts` (сегодня/полная дата/другой год/граница суток/фолбэк), merge `lastSeenAt` в `frontend/src/presence/__tests__/presenceStore.test.ts` (№36-снапшот + `presence.updated` по строго большему rev; обновление и скрытие поля — ui-behavior.md §3.1) и статусы ChatHeader в `frontend/src/chats/components/__tests__/`
-- [ ] T050 [US3] Дописать Playwright-сценарий «Был в сети — …» в заголовке и превью контакта в `frontend/tests/visual/social-signals.spec.ts` + `pnpm --dir frontend test:visual`
+- [X] T050 [US3] Дописать Playwright-сценарий «Был в сети — …» в заголовке и превью контакта в `frontend/tests/visual/social-signals.spec.ts` + `pnpm --dir frontend test:visual`
 
 **Checkpoint**: US1–US3 работают независимо; lastSeen приватен (0 утечек) и неотличим в скрытых случаях
 
