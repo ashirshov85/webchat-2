@@ -16,6 +16,7 @@ import org.springframework.data.redis.listener.RedisMessageListenerContainer
 import org.springframework.stereotype.Component
 import webchat.backend.chats.api.dto.MessageView
 import webchat.backend.chats.domain.port.ChatReadEvent
+import webchat.backend.chats.domain.port.ChatSoundUpdatedEvent
 import webchat.backend.chats.domain.port.GroupDeletedEvent
 import webchat.backend.chats.domain.port.GroupEvent
 import webchat.backend.chats.domain.port.GroupMemberAddedEvent
@@ -251,6 +252,26 @@ class RedisRealtimePublisher(
     }
 
     /**
+     * T053 (realtime-events.md 008a §1.3, FR-012/FR-015, SC-006): the
+     * №42 own-channel sync frame — ONE envelope to the toggler himself
+     * on his own `rt:user:{userId}` channel, the SAME at-most-once
+     * discipline as every other №18 frame; the audience of exactly one
+     * is the caller's (T053 ChatService.updateSound) decision — this
+     * transport never widens it (another participant's channel must
+     * never carry the toggle). The envelope rides the SAME [pushTimer]
+     * pipeline, so the frame is observed in `webchat_realtime_push_seconds`
+     * with `event=chat.sound.updated` on the publish leg here and the
+     * dispatch leg in [handleFrame] (FR-017; the dispatch stage is the
+     * SC-006/SC-008 norm).
+     */
+    override fun publishChatSoundUpdated(
+        toUserId: UUID,
+        event: ChatSoundUpdatedEvent,
+    ) {
+        publishEnvelope(toUserId, EVENT_CHAT_SOUND_UPDATED, chatSoundPayload(event))
+    }
+
+    /**
      * T017 (presence-events.md 007 §2): ONE `presence.updated` envelope
      * per VISIBILITY-AUDIENCE observer on their own `rt:user:{id}`
      * channel — exactly one frame per observer per transition regardless
@@ -401,6 +422,17 @@ class RedisRealtimePublisher(
         )
 
     /**
+     * realtime-events.md 008a §1.3: the exact contract payload of the
+     * №42 sync frame — `chatId` + the NEW `soundEnabled`
+     * (`additionalProperties: false`).
+     */
+    private fun chatSoundPayload(event: ChatSoundUpdatedEvent): Map<String, Any> =
+        mapOf(
+            FIELD_CHAT_ID to event.chatId,
+            FIELD_SOUND_ENABLED to event.soundEnabled,
+        )
+
+    /**
      * The outbound half: one compact JSON envelope to the user channel.
      * Isolation (the port contract): a lost or failed at-most-once
      * delivery must NOT fail the already-durable request — the failure
@@ -507,6 +539,9 @@ class RedisRealtimePublisher(
         const val EVENT_TYPING_STARTED = "typing.started"
         const val EVENT_TYPING_STOPPED = "typing.stopped"
 
+        /** realtime-events.md 008a §1.3: the №42 own-channel sync `event:` value (T053). */
+        const val EVENT_CHAT_SOUND_UPDATED = "chat.sound.updated"
+
         /** The internal wire envelope fields (transport detail, NOT the public SSE framing). */
         const val FIELD_EVENT = "event"
         const val FIELD_DATA = "data"
@@ -524,6 +559,9 @@ class RedisRealtimePublisher(
         const val FIELD_USER_ID = "userId"
         const val FIELD_ROLE = "role"
         const val FIELD_REASON = "reason"
+
+        /** realtime-events.md 008a §1.3: the №42 sync-frame payload fields (T053). */
+        const val FIELD_SOUND_ENABLED = "soundEnabled"
 
         /** research.md 004 §11 observability contract name (SC-005). */
         const val PUSH_SECONDS = "webchat_realtime_push_seconds"

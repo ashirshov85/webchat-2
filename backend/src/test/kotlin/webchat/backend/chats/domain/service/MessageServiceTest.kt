@@ -15,6 +15,7 @@ import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.backpressure.NoopSendAdmissionGate
 import webchat.backend.chats.NoopContactRepository
 import webchat.backend.chats.NoopProfileStore
+import webchat.backend.chats.ChatSoundMetrics
 import webchat.backend.chats.TypingMetrics
 import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.model.ChatParticipant
@@ -27,6 +28,7 @@ import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.ChatSoundUpdatedEvent
 import webchat.backend.chats.domain.port.GroupEvent
 import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
@@ -468,6 +470,8 @@ class MessageServiceTest {
             GroupMembershipGate(NoopParticipantRepository, GroupMetrics(SimpleMeterRegistry())),
             NoopProfileStore,
             NoopContactRepository,
+            publisher,
+            ChatSoundMetrics(SimpleMeterRegistry()),
         )
 
     /**
@@ -652,6 +656,12 @@ class MessageServiceTest {
         override fun fanoutTypingEvent(
             toUserIds: List<UUID>,
             event: TypingEvent,
+        ) = Unit
+
+        /** The 008a №42 own-channel sync frame belongs to ChatService — a silent sink here (T053). */
+        override fun publishChatSoundUpdated(
+            toUserId: UUID,
+            event: ChatSoundUpdatedEvent,
         ) = Unit
     }
 

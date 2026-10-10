@@ -183,6 +183,21 @@ data class TypingStoppedEvent(
 ) : TypingEvent
 
 /**
+ * `chat.sound.updated` (realtime-events.md 008a §1.3; FR-012/FR-015):
+ * the toggler's OWN per-chat sound switch genuinely CHANGED through №42
+ * (a repeat of the stored value is the idempotent no-op that publishes
+ * NOTHING) — the frame names the toggled dialog [chatId] and the NEW
+ * [soundEnabled]. It is the ONLY 008a frame with an audience of exactly
+ * one: the toggler himself (the multi-device sync of SC-006), never
+ * another participant — the value and the very fact of the setting are
+ * the row owner's alone (the privacy ban of FR-012).
+ */
+data class ChatSoundUpdatedEvent(
+    val chatId: UUID,
+    val soundEnabled: Boolean,
+)
+
+/**
  * Outbound realtime fan-out port (research.md 004 §2; DIP: the Redis
  * adapter lives outside the domain in
  * `webchat.backend.realtime.RedisRealtimePublisher`, T019).
@@ -207,6 +222,12 @@ data class TypingStoppedEvent(
  * at-most-once discipline — the state behind them lives in the
  * [TypingStore] and never touches PG, so a lost frame is compensated
  * by the observer's 10 s safety timeout, never by re-sending.
+ *
+ * Since 008a (T053) it also carries the №42 own-channel sound frame
+ * `chat.sound.updated` (realtime-events.md 008a §1.3): the durable
+ * `chat_participants.sound_enabled` change is already committed when
+ * the caller hands the frame over, and a lost frame is compensated by
+ * the №12/№13 refetch of a (re)connecting device — never by re-sending.
  */
 interface RealtimeEventPublisher {
     /**
@@ -283,5 +304,23 @@ interface RealtimeEventPublisher {
     fun fanoutTypingEvent(
         toUserIds: List<UUID>,
         event: TypingEvent,
+    )
+
+    /**
+     * T053 (realtime-events.md 008a §1.3, FR-012/FR-015, SC-006): the
+     * №42 multi-device sync frame — ONE envelope to the toggler's OWN
+     * `rt:user:{userId}` channel and NOBODY else: the caller (T053
+     * [ChatService.updateSound]) has already resolved the membership
+     * gate, committed the durable change and judged the idempotency
+     * rule (only a genuine CHANGE reaches this leg — a repeat of the
+     * stored value never does), and the frame is the toggler's own
+     * business exclusively: another participant's channel must never
+     * carry it (privacy FR-012). At-most-once like every №18 frame: a
+     * lost frame is compensated by the №12/№13 `soundEnabled` refetch
+     * of a (re)connecting device, never by a re-send.
+     */
+    fun publishChatSoundUpdated(
+        toUserId: UUID,
+        event: ChatSoundUpdatedEvent,
     )
 }

@@ -1,14 +1,20 @@
 package webchat.backend.chats.domain.service
 
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.chats.ChatSoundMetrics
+import webchat.backend.chats.SoundUpdateResult
 import webchat.backend.chats.domain.model.Chat
 import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.ChatSoundUpdatedEvent
 import webchat.backend.chats.domain.port.ParticipantRepository
+import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.contacts.domain.port.BlockRepository
 import webchat.backend.contacts.domain.port.ContactRepository
 import webchat.backend.groups.domain.model.MemberRole
@@ -156,13 +162,15 @@ data class PeerNames(
  * [groupProjection] (the ACTIVE membership row) — while №12 carries it
  * inside the single aggregate query (`ChatListEntry.soundEnabled`);
  * zero extra round trips, and the slot is always set (the V16 default
- * `true` of a fresh participation). The №42 write leg (T053) flips the
- * column through [ParticipantRepository.updateSoundEnabled].
+ * `true` of a fresh participation). The №42 write leg (T053,
+ * [updateSound]) flips the column through
+ * [ParticipantRepository.updateSoundEnabled] — its ONLY writer.
  */
 @Service
 // The №11/№12/№13 collaborators, one port per leg (DIP, plan.md VIII;
-// the T015 name pair grew the last two).
-@Suppress("LongParameterList")
+// the T015 name pair grew the last two; T053 added the №42 write leg's
+// publisher and metrics).
+@Suppress("LongParameterList", "TooManyFunctions") // one function per chats surface (№11–№14/№42)
 class ChatService(
     private val userRepository: UserRepository,
     private val chatRepository: ChatRepository,
@@ -172,7 +180,10 @@ class ChatService(
     private val groupMembershipGate: GroupMembershipGate,
     private val profileStore: ProfileStore,
     private val contactRepository: ContactRepository,
+    private val realtimeEventPublisher: RealtimeEventPublisher,
+    private val chatSoundMetrics: ChatSoundMetrics,
 ) {
+    private val log: Logger = LoggerFactory.getLogger(ChatService::class.java)
     fun ensure(
         callerId: UUID,
         peerId: UUID,
@@ -371,6 +382,82 @@ class ChatService(
             memberCount = participantRepository.activeMembers(chat.id).size.toLong(),
             soundEnabled = membership.soundEnabled,
         )
+    }
+
+    /**
+     * T053 (008a, api-contract.md §1 №42, FR-012–FR-015, SC-006): the
+     * caller's PERSONAL per-chat sound switch write leg — the whole №42
+     * service semantics in one method:
+     *
+     *  * the membership gate of every chats resource FIRST — [get]
+     *   answers the №13/№16 refusal order `404 chat_not_found` → `403
+     *   not_participant` (a group resolves through the ACTIVE membership
+     *   row, a REMOVED former member is refused like a stranger), so
+     *   neither the stored value nor the toggle itself is ever judged
+     *   for a stranger;
+     *  * the IDEMPOTENCY rule — the read happens BEFORE the write in
+     *   this same leg: a repeat of the ALREADY STORED value (the fresh
+     *   default `true` included) answers the stored value and performs
+     *   NO write and NO event (api-contract.md №42 «повтор того же
+     *   значения — 200 без события»), counted as the `unchanged` leg of
+     *   `webchat_sound_settings_updated_total`;
+     *  * a genuine CHANGE — the single-row [ParticipantRepository
+     *   .updateSoundEnabled] flip of the CALLER's own row (the peer's
+     *   row is never touched, FR-012) and the `chat.sound.updated`
+     *   frame to the toggler's OWN channel ONLY (the multi-device sync
+     *   of SC-006 — another participant's channel never carries it,
+     *   privacy FR-012), counted as the `changed` leg.
+     *
+     * Returns the STORED value for the `ChatSoundResponse` echo. The
+     * frame is fire-and-forget over the at-most-once №18 pipe
+     * ([publishOwnSoundUpdated] isolation): the durable change is
+     * already committed, so a lost frame converges via the №12/№13
+     * `soundEnabled` refetch of a (re)connecting device — never by a
+     * re-send.
+     */
+    fun updateSound(
+        chatId: UUID,
+        callerId: UUID,
+        enabled: Boolean,
+    ): Boolean {
+        val chat = get(chatId, callerId)
+        val stored = participantRepository.find(chat.id, callerId)?.soundEnabled ?: DEFAULT_SOUND_ENABLED
+        if (stored == enabled) {
+            chatSoundMetrics.countUpdate(SoundUpdateResult.UNCHANGED)
+            return stored
+        }
+        val updated =
+            checkNotNull(participantRepository.updateSoundEnabled(chat.id, callerId, enabled)) {
+                "chat ${chat.id} passed the membership gate, so the caller's participant row must exist"
+            }
+        chatSoundMetrics.countUpdate(SoundUpdateResult.CHANGED)
+        publishOwnSoundUpdated(callerId, ChatSoundUpdatedEvent(chatId = chat.id, soundEnabled = updated.soundEnabled))
+        return updated.soundEnabled
+    }
+
+    /**
+     * At-most-once isolation (the port contract, constitution II/III;
+     * the [TypingService.publishToAudience] discipline): the switch is
+     * already durable when this runs, so a failed frame delivery must
+     * NOT fail the answered `200` — the toggler's other devices
+     * converge on the №12/№13 refetch. Warn logs carry ids ONLY
+     * (constitution V).
+     */
+    @Suppress("TooGenericExceptionCaught") // the transport adapter signals any delivery failure by throwing
+    private fun publishOwnSoundUpdated(
+        callerId: UUID,
+        event: ChatSoundUpdatedEvent,
+    ) {
+        try {
+            realtimeEventPublisher.publishChatSoundUpdated(callerId, event)
+        } catch (failure: Exception) {
+            log.warn(
+                "realtime publish of a chat.sound.updated frame to the toggler <{}> failed; " +
+                    "the change is durable and devices converge on the refetch (FR-012): {}",
+                callerId,
+                failure.message,
+            )
+        }
     }
 
     private companion object {

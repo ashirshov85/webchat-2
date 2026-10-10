@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.chats.ChatSoundMetrics
 import webchat.backend.chats.NoopContactRepository
 import webchat.backend.chats.NoopProfileStore
 import webchat.backend.chats.domain.model.Chat
@@ -15,11 +16,17 @@ import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.model.UndeliveredChatPage
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
+import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.ChatRepository
+import webchat.backend.chats.domain.port.ChatSoundUpdatedEvent
+import webchat.backend.chats.domain.port.GroupEvent
+import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
+import webchat.backend.chats.domain.port.RealtimeEventPublisher
+import webchat.backend.chats.domain.port.TypingEvent
 import webchat.backend.config.ChatsProperties
 import webchat.backend.contacts.domain.model.UserBlock
 import webchat.backend.contacts.domain.port.BlockRepository
@@ -211,10 +218,50 @@ class HistoryServiceTest {
                     GroupMembershipGate(NoopParticipantRepository, GroupMetrics(SimpleMeterRegistry())),
                     NoopProfileStore,
                     NoopContactRepository,
+                    SilentRealtimePublisher,
+                    ChatSoundMetrics(SimpleMeterRegistry()),
                 ),
             messageRepository = repository,
             chatsProperties = TEST_PROPERTIES,
         )
+
+    /** The 008a №42 write leg's transport — a silent sink (this unit scope never toggles sound). */
+    private object SilentRealtimePublisher : RealtimeEventPublisher {
+        override fun publishMessageCreated(
+            toUserId: UUID,
+            event: MessageCreatedEvent,
+        ) = Unit
+
+        override fun publishChatRead(
+            toUserId: UUID,
+            event: ChatReadEvent,
+        ) = Unit
+
+        override fun fanoutGroupEvent(
+            toUserIds: List<UUID>,
+            event: GroupEvent,
+        ) = Unit
+
+        override fun fanoutMessageCreated(
+            toUserIds: List<UUID>,
+            event: MessageCreatedEvent,
+        ) = Unit
+
+        override fun fanoutChatRead(
+            toUserIds: List<UUID>,
+            event: ChatReadEvent,
+        ) = Unit
+
+        override fun fanoutTypingEvent(
+            toUserIds: List<UUID>,
+            event: TypingEvent,
+        ) = Unit
+
+        override fun publishChatSoundUpdated(
+            toUserId: UUID,
+            event: ChatSoundUpdatedEvent,
+        ) = Unit
+    }
 
     private fun message(seq: Long): Message =
         Message(
