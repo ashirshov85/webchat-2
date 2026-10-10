@@ -26,13 +26,31 @@
  *    (пузырь в ленте и штампы доставки, Clarification) — путей триггера
  *    для этих путей модуль не выставляет.
  *
- * Контракт закреплён тестами __tests__/sound.test.ts (T061, TDD-красные
- * до реализации); подключение к событиям 005 — T064.
+ * 008a US4 per-chat звук (FR-012–FR-015, research §D3, ui-behavior §4.2):
+ *  - приём гейтится mute-состоянием чата — chimeOnRealtimeIncoming(event,
+ *    me, soundEnabled?) звонит только при soundEnabled !== false (false =
+ *    приглушён №42/№12/№13; undefined — состояние неизвестно/legacy-поверхность
+ *    без поля — звучит, обратная совместимость 008); состояние передаёт
+ *    вызывающий (проводка MessengerPage — T058), сам модуль чат-сторами
+ *    не владеет;
+ *  - sync-батч: per-chat подсчёт входящих тоже ведёт вызывающий (T058) —
+ *    сигнал батча звучит только если среди пришедших есть неприглушённые
+ *    чаты, контракт «≥1 → сигнал» не меняется;
+ *  - отклики переключателя bell: «вкл» — существующий playBellTone,
+ *    «выкл» — «глухой щелчок» playMuteTone (300 Гц, 0.3 с, 0.05 —
+ *    bellTone(300,t,.3,.05) прототипа chats.html:779);
+ *  - запрет автозвука браузером на любом сигнале — молчаливый пропуск,
+ *    состояние настройки не меняется (edge-кейс); визуальные уведомления
+ *    (бейджи, лента, тосты) гейтом не фильтруются (FR-014).
+ *
+ * Контракт закреплён тестами __tests__/sound.test.ts (T061/T056, TDD-красные
+ * до реализации); подключение к событиям 005 — T064, звук-гейт страницы — T058.
  */
 
 /** Минимальная структура события message.created (№18), достаточная звуку. */
 export interface IncomingMessageEvent {
-  /** Чат события: звуку не фильтруется — сигнал звучит и для фоновых чатов. */
+  /** Чат события: звуку не фильтруется — сигнал звучит и для фоновых чатов
+   * (per-chat mute — отдельный параметр soundEnabled, 008a US4). */
   readonly chatId: string
   readonly message: {
     /** Отправитель: собственные сообщения (senderId === me) сигналом не сопровождаются. */
@@ -52,6 +70,11 @@ const NOTES: ReadonlyArray<readonly [number, number, number, number]> = [
   [1050, 0, 0.9, 0.06],
   [1400, 0.1, 1.1, 0.045],
 ]
+
+/** «Глухой щелчок» отклика «выкл»: 300 Гц, 0.3 с, 0.05 (прототип chats.html:779, 008a §4.2). */
+const MUTE_CLICK_HZ = 300
+const MUTE_CLICK_DUR_S = 0.3
+const MUTE_CLICK_VOLUME = 0.05
 
 /** Экспоненциальный «пол» затухания парциала и хвост после него (прототип). */
 const DECAY_FLOOR = 0.0008
@@ -90,30 +113,57 @@ const bellTone = (
   }
 }
 
-/** Сыграть «динь-динь» — чистый WebAudio-синтез; все ошибки молчаливы (FR-028). */
-export const playBellTone = (): void => {
+/** Каркас сигнала: ленивый контекст, будильник suspended, все ошибки молчаливы (FR-028). */
+const playOnContext = (play: (ctx: AudioContext, nowS: number) => void): void => {
   try {
     audioCtx ??= createAudioContext()
     if (audioCtx === null) return
     if (audioCtx.state === 'suspended') {
       void audioCtx.resume().catch(() => undefined)
     }
-    const now = audioCtx.currentTime
-    for (const [freqHz, delayS, durS, volume] of NOTES) {
-      bellTone(audioCtx, freqHz, now + delayS, durS, volume)
-    }
+    play(audioCtx, audioCtx.currentTime)
   } catch {
     /* запрет автозвука / сбой WebAudio-узла — молчаливый пропуск (FR-028) */
   }
 }
 
-/** Реальное время: ровно один сигнал на входящее событие любого чата (FR-028). */
-export const chimeOnRealtimeIncoming = (event: IncomingMessageEvent, meUserId: string): void => {
+/** Сыграть «динь-динь» — чистый WebAudio-синтез; все ошибки молчаливы (FR-028). */
+export const playBellTone = (): void => {
+  playOnContext((ctx, now) => {
+    for (const [freqHz, delayS, durS, volume] of NOTES) {
+      bellTone(ctx, freqHz, now + delayS, durS, volume)
+    }
+  })
+}
+
+/** Отклик bell «выкл» — «глухой щелчок» 300 Гц; все ошибки молчаливы (008a US4, §4.2). */
+export const playMuteTone = (): void => {
+  playOnContext((ctx, now) => {
+    bellTone(ctx, MUTE_CLICK_HZ, now, MUTE_CLICK_DUR_S, MUTE_CLICK_VOLUME)
+  })
+}
+
+/**
+ * Реальное время: ровно один сигнал на входящее событие любого чата (FR-028);
+ * per-chat mute-гейт 008a (FR-013, ui-behavior §4.2) — звонок только при
+ * soundEnabled !== false: false — чат приглушён (№42/№12/№13), отсутствует/
+ * undefined — состояние неизвестно, звучит (обратная совместимость 008).
+ */
+export const chimeOnRealtimeIncoming = (
+  event: IncomingMessageEvent,
+  meUserId: string,
+  soundEnabled?: boolean,
+): void => {
   if (event.message.senderId === meUserId) return
+  if (soundEnabled === false) return
   playBellTone()
 }
 
-/** Массовая доставка: ровно один сигнал на пакет при incomingCount ≥ 1 (FR-028). */
+/**
+ * Массовая доставка: ровно один сигнал на пакет при incomingCount ≥ 1 (FR-028);
+ * per-chat подсчёт ведёт вызывающий (T058) — звонок батча только если среди
+ * пришедших есть неприглушённые чаты (008a FR-014, ui-behavior §4.2).
+ */
 export const chimeOnSyncBatch = (incomingCount: number): void => {
   if (incomingCount < 1) return
   playBellTone()
