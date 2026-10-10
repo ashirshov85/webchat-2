@@ -1,5 +1,6 @@
 package webchat.backend.presence.domain.port
 
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -11,11 +12,24 @@ import java.util.UUID
  * apply only a strictly greater revision per user; a duplicate or stale
  * frame is a no-op). Nothing here is ever stored anywhere (FR-001 forbids
  * presence history): the frame is the only artifact of a transition.
+ *
+ * [lastSeenAt] (008a T044, US3; research 008a §B2): the OPTIONAL
+ * RFC 3339 stamp of the subject's last presence-channel activity — the
+ * raw `presence:lastseen:{userId}` value the store's Lua legs refresh.
+ * The field rides ONLY an `offline` frame AND only when the subject is
+ * NOT «невидимка» AND the stamp exists: the FREEZE offline (the №38
+ * enable of a live subject) deliberately goes out BARE — «не время
+ * включения инкогнито», the mode hides the time ENTIRELY — and an
+ * `online` frame never carries it. The disclosure verdict is resolved by
+ * the caller (PresenceService/discipline twins); `null` serializes as an
+ * ABSENT field, never an explicit `null` — «скрыто» must stay
+ * indistinguishable from «нет данных» on the wire (SC-002).
  */
 data class PresenceUpdatedEvent(
     val userId: UUID,
     val status: PresencePublishedStatus,
     val rev: Long,
+    val lastSeenAt: Instant? = null,
 )
 
 /**

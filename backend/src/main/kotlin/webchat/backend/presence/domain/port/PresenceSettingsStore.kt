@@ -29,6 +29,19 @@ interface PresenceSettingsStore {
     fun incognitoOf(userId: UUID): Boolean
 
     /**
+     * T044 (tasks.md 008a, US3; research 008a §B2): the BATCH read of the
+     * same V15 mode over the №36 snapshot's candidate targets — ONE
+     * `SELECT … WHERE id IN (…)` per snapshot (≤ 200 after the API-layer
+     * dedup, so the IN-list stays bounded), the incognito half of the
+     * lastSeen disclosure conjunction. A userId absent from the answer
+     * simply has no row — the caller only consults this leg for targets
+     * the visibility policy already deemed visible (a nonexistent or
+     * outsider target resolved to `unknown` long before), so a missing
+     * entry may safely default to «not hidden».
+     */
+    fun incognitoBatch(userIds: Collection<UUID>): Map<UUID, Boolean>
+
+    /**
      * №38 PUT (T032): persist [incognito] ATOMICALLY-IF-CHANGED — one
      * conditional `UPDATE … WHERE presence_hidden <> ?` whose affected
      * row count IS the change verdict, so a concurrent repeat of the

@@ -5,6 +5,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.scheduling.annotation.Scheduled
 import org.springframework.stereotype.Component
 import webchat.backend.presence.PresenceMetrics
+import webchat.backend.presence.domain.PresenceService
 import webchat.backend.presence.domain.port.OfflineDueOutcome
 import webchat.backend.presence.domain.port.PresenceEventPublisher
 import webchat.backend.presence.domain.port.PresencePublishedStatus
@@ -79,6 +80,7 @@ import java.util.UUID
 @Component
 class PresenceTransitionScheduler(
     private val presenceStore: PresenceStore,
+    private val presenceService: PresenceService,
     private val visibilityAudienceReader: VisibilityAudienceReader,
     private val presenceEventPublisher: ObjectProvider<PresenceEventPublisher>,
     private val presenceMetrics: PresenceMetrics,
@@ -147,6 +149,14 @@ class PresenceTransitionScheduler(
      * resolve the audience LIVE and hand ONE `offline` frame per observer
      * to the publisher — the transition itself is already durable, so a
      * degraded publisher must not (and cannot) roll anything back.
+     *
+     * T044 (008a US3): the frame carries the disclosed `lastSeenAt` —
+     * the VERY [PresenceService.discloseOfflineLastSeen] verdict the
+     * service's own offline publications resolve through, so the
+     * graceful-close/TTL-reap frame and the №36 snapshot can never
+     * disagree about the stamp (SC-004 discipline). The verdict runs
+     * AFTER the audience guard: a subject nobody may observe resolves
+     * no disclosure SQL at all.
      */
     private fun publishOfflineToAudience(
         userId: UUID,
@@ -161,6 +171,7 @@ class PresenceTransitionScheduler(
                 userId = userId,
                 status = PresencePublishedStatus.OFFLINE,
                 rev = rev,
+                lastSeenAt = presenceService.discloseOfflineLastSeen(userId),
             ),
         )
     }

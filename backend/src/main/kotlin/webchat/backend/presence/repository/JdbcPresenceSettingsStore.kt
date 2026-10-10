@@ -29,6 +29,27 @@ class JdbcPresenceSettingsStore(
             ).firstOrNull() ?: false
 
     /**
+     * T044 (research 008a §B2): ONE round trip over the whole №36
+     * candidate batch — `SELECT id, presence_hidden … WHERE id IN (…)`
+     * with a placeholder per DISTINCT id (the snapshot's ≤ 200 cap keeps
+     * the IN-list bounded). A row the table does not have is simply
+     * absent from the answer: the caller consults this leg only for
+     * targets the visibility policy already resolved as visible, so a
+     * missing entry defaults to «not hidden» upstream.
+     */
+    override fun incognitoBatch(userIds: Collection<UUID>): Map<UUID, Boolean> {
+        val distinct = userIds.distinct()
+        if (distinct.isEmpty()) return emptyMap()
+        val sql = "$FIND_INCOGNITO_BATCH_SQL_PREFIX${distinct.joinToString(COMMA) { PLACEHOLDER }})"
+        return jdbcTemplate
+            .query(
+                sql,
+                { rs, _ -> UUID.fromString(rs.getString(ID_COLUMN)) to rs.getBoolean(PRESENCE_HIDDEN_COLUMN) },
+                *distinct.toTypedArray(),
+            ).toMap()
+    }
+
+    /**
      * №38 PUT: the conditional write whose affected-row count IS the
      * change verdict — `0` resolves the IDEMPOTENT repeat of the very
      * same value as a no-op (presence-api.md §3: «повтор той же
@@ -49,12 +70,17 @@ class JdbcPresenceSettingsStore(
             ) > 0
 
     private companion object {
+        const val ID_COLUMN = "id"
         const val PRESENCE_HIDDEN_COLUMN = "presence_hidden"
+        const val COMMA = ","
+        const val PLACEHOLDER = "?"
 
         val FIND_INCOGNITO_SQL =
             """
             SELECT presence_hidden FROM users WHERE id = ?
             """.trimIndent()
+
+        val FIND_INCOGNITO_BATCH_SQL_PREFIX = "SELECT id, presence_hidden FROM users WHERE id IN ("
 
         val STORE_IF_CHANGED_SQL =
             """
