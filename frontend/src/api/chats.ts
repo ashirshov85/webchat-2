@@ -38,6 +38,10 @@ export type TypingRequest = components['schemas']['TypingRequest']
 /** №41 `action` discriminator: start = begin/renew typing, stop = finish. */
 export type TypingAction = TypingRequest['action']
 
+export type ChatSoundRequest = components['schemas']['ChatSoundRequest']
+
+export type ChatSoundResponse = components['schemas']['ChatSoundResponse']
+
 /**
  * Пользователь с персональным alias вызывающего (008a, T023): PublicUser +
  * `alias?` — результат №19 и `GroupMember.user` №28; источник цепочки
@@ -50,6 +54,14 @@ export type ReadRequest = components['schemas']['ReadRequest']
 export type MessageCreatedEvent = components['schemas']['MessageCreatedEvent']
 
 export type ChatReadEvent = components['schemas']['ChatReadEvent']
+
+/**
+ * №18 `chat.sound.updated` frame (008a, FR-015): the caller's personal
+ * sound toggle for a chat changed — delivered ONLY to the user's own
+ * realtime channel (multi-device sync ≤ 2 s, SC-006); other
+ * participants never receive it (privacy FR-012).
+ */
+export type ChatSoundUpdatedEvent = components['schemas']['ChatSoundUpdatedEvent']
 
 async function authedRequest(path: string, method: string, body?: unknown): Promise<Response> {
   const response = await apiFetch(path, {
@@ -114,6 +126,27 @@ export async function sendMessage(chatId: string, body: SendMessageRequest): Pro
 export async function sendTyping(chatId: string, action: TypingAction): Promise<void> {
   const body: TypingRequest = { action }
   await authedRequest(`/chats/${encodeURIComponent(chatId)}/typing`, 'POST', body)
+}
+
+/**
+ * №42 `PUT /chats/{chatId}/sound`: toggles the caller's personal
+ * (per-user-per-chat) sound notifications (FR-012–FR-015) — `enabled`
+ * is required, the `200` answer echoes the stored value (default
+ * `true` for fresh memberships). Idempotent: repeating the same value
+ * is a plain `200` with NO event; only an actual change publishes
+ * `chat.sound.updated` to the caller's own №18 channel (multi-device
+ * ≤ 2 s, SC-006) — other participants never learn the value or the
+ * fact of the setting (privacy FR-012). (Re)connecting clients read
+ * the current state from `soundEnabled` of №12/№13 — the event is for
+ * live connections only. No offline queue: a network error leaves the
+ * setting unchanged. Errors: `400 malformed_request`/`invalid_uuid`,
+ * `403/404` chat codes as №13/№16, `429 flood_limit` + Retry-After
+ * (30/min per user).
+ */
+export async function setChatSound(chatId: string, enabled: boolean): Promise<ChatSoundResponse> {
+  const body: ChatSoundRequest = { enabled }
+  const response = await authedRequest(`/chats/${encodeURIComponent(chatId)}/sound`, 'PUT', body)
+  return (await response.json()) as ChatSoundResponse
 }
 
 /**

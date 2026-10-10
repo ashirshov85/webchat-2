@@ -159,7 +159,7 @@
 
 ### Implementation for User Story 4 (frontend)
 
-- [ ] T055 [P] [US4] Добавить API-функцию `setChatSound` (№42) и тип события `chat.sound.updated` в `frontend/src/api/chats.ts`
+- [X] T055 [P] [US4] Добавить API-функцию `setChatSound` (№42) и тип события `chat.sound.updated` в `frontend/src/api/chats.ts`
 - [ ] T056 [P] [US4] Расширить `frontend/src/ui/sound.ts`: per-chat mute-гейт в `chimeOnRealtimeIncoming` (звонок только если `soundEnabled !== false`), отклик «выкл» — «глухой щелчок» `bellTone(300 Hz)` прототипа, отклик «вкл» — существующий playBellTone; запрет автозвука — молчаливый пропуск (research.md D3, ui-behavior.md §4.2)
 - [ ] T057 [US4] Добавить bell-кнопку в `frontend/src/chats/components/ChatHeader.tsx`: `.ch-btn` SVG-колокол между поиском и шестернёнкой, состояние `выкл` — класс `.off {opacity:.45}`, `title="Звуковые оповещения"`, `aria-pressed`, focus-visible; действие №42, тосты `Звуковые оповещения включены/отключены — {имя чата}` (личный — peer по цепочке, группа — название), ошибка сети/429 — состояние не меняется; CSS в `frontend/src/chats/components/chat-header.css` (ui-behavior.md §4.1)
 - [ ] T058 [US4] Проводка синхронизации: `onChatSoundUpdated(chatId, soundEnabled)` в `frontend/src/chats/hooks/useRealtime.ts`; в `frontend/src/chats/pages/MessengerPage.tsx` — звук-состояние из №12/№13 при (ре)подключении, per-chat подсчёт входящих sync-батчей 005 (звонок батча — только если среди пришедших есть неприглушённые чаты); визуальные уведомления не фильтруются (FR-014)
