@@ -238,6 +238,35 @@ describe('ChatHeader direct status: the prototype lamp (T043, FR-016, data-model
     }
   })
 
+  it('008a T049: offline + lastSeenAt не сегодня → «Был в сети — {D месяца, HH:MM}» (формат T046)', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 9, 10, 12, 0, 0))
+    try {
+      presence.status = 'offline'
+      presence.lastSeenAt = new Date(2026, 8, 24, 16, 20).toISOString()
+      const { container } = renderHeader(directChat())
+
+      expect(container.querySelector('.status-row .lamp')?.className).toBe('lamp off')
+      expect(screen.getByText('Был в сети — 24 сентября, 16:20')).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('008a T049: offline + lastSeenAt другой год → «Был в сети — {D месяца YYYY, HH:MM}»', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 9, 10, 12, 0, 0))
+    try {
+      presence.status = 'offline'
+      presence.lastSeenAt = new Date(2024, 8, 24, 16, 20).toISOString()
+      renderHeader(directChat())
+
+      expect(screen.getByText('Был в сети — 24 сентября 2024 г., 16:20')).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('pluralizes the group status «N участников» (pluralRu boundaries)', () => {
     renderHeader(groupChat({ memberCount: 3 }))
     expect(screen.getByText('3 участника')).toHaveClass('status-txt')

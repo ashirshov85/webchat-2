@@ -24,16 +24,21 @@ function onlineEvent(userId: string, rev: number): PresenceUpdatedEvent {
   return { userId, status: 'online', rev }
 }
 
-function offlineEvent(userId: string, rev: number): PresenceUpdatedEvent {
-  return { userId, status: 'offline', rev }
+function offlineEvent(userId: string, rev: number, lastSeenAt?: string): PresenceUpdatedEvent {
+  // lastSeenAt присутствует только в применённых offline-кадрах с
+  // раскрытием (008a) — ключ не добавляется при undefined.
+  return lastSeenAt === undefined
+    ? { userId, status: 'offline', rev }
+    : { userId, status: 'offline', rev, lastSeenAt }
 }
 
 function snapshotItem(
   userId: string,
   status: PresenceStatusItem['status'],
   rev: number,
+  lastSeenAt?: string,
 ): PresenceStatusItem {
-  return { userId, status, rev }
+  return lastSeenAt === undefined ? { userId, status, rev } : { userId, status, rev, lastSeenAt }
 }
 
 describe('presenceStore (T012/T018)', () => {
@@ -138,6 +143,85 @@ describe('presenceStore (T012/T018)', () => {
     unsubscribe()
     store.applyEvent(onlineEvent(ALICE, 2))
     expect(listener).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('presenceStore lastSeenAt (008a US3, T047/T049; ui-behavior §3.1, SC-002)', () => {
+  const SEEN = '2026-10-08T16:20:03.000Z'
+  const SEEN_LATER = '2026-10-09T09:15:00.000Z'
+
+  it('применяет lastSeenAt из №36-снапшота вместе с offline-элементом', () => {
+    const store = createPresenceStore()
+
+    const applied = store.applySnapshot([snapshotItem(ALICE, 'offline', 5, SEEN)])
+
+    expect(applied).toBe(1)
+    expect(store.getEntry(ALICE)).toEqual({ status: 'offline', rev: 5, lastSeenAt: SEEN })
+  })
+
+  it('применяет lastSeenAt из presence.updated по строго большему rev', () => {
+    const store = createPresenceStore()
+    store.applyEvent(onlineEvent(ALICE, 5))
+
+    expect(store.applyEvent(offlineEvent(ALICE, 6, SEEN))).toBe(true)
+    expect(store.getEntry(ALICE)).toEqual({ status: 'offline', rev: 6, lastSeenAt: SEEN })
+  })
+
+  it('дубль/устаревший кадр с lastSeenAt не перезаписывает применённую метку', () => {
+    const store = createPresenceStore()
+    store.applyEvent(offlineEvent(ALICE, 6, SEEN))
+
+    // дубль №18 (тот же rev) и задержавшийся кадр (меньший rev) — no-op
+    expect(store.applyEvent(offlineEvent(ALICE, 6, SEEN_LATER))).toBe(false)
+    expect(store.applyEvent(offlineEvent(ALICE, 5, SEEN_LATER))).toBe(false)
+    expect(store.getEntry(ALICE)).toEqual({ status: 'offline', rev: 6, lastSeenAt: SEEN })
+
+    // устаревший элемент №36 — тот же запрет (снимок не затирает кадр)
+    expect(store.applySnapshot([snapshotItem(ALICE, 'offline', 4, SEEN_LATER)])).toBe(0)
+    expect(store.getEntry(ALICE)).toEqual({ status: 'offline', rev: 6, lastSeenAt: SEEN })
+  })
+
+  it('обновление поля: более свежий offline-кадр замещает метку новой (ui-behavior §3.1)', () => {
+    const store = createPresenceStore()
+    store.applySnapshot([snapshotItem(ALICE, 'offline', 5, SEEN)])
+
+    expect(store.applyEvent(offlineEvent(ALICE, 6, SEEN_LATER))).toBe(true)
+    expect(store.getEntry(ALICE)).toEqual({ status: 'offline', rev: 6, lastSeenAt: SEEN_LATER })
+  })
+
+  it('скрытие поля: применённый online-кадр сбрасывает метку (возврат в сеть)', () => {
+    const store = createPresenceStore()
+    store.applyEvent(offlineEvent(ALICE, 6, SEEN))
+
+    expect(store.applyEvent(onlineEvent(ALICE, 7))).toBe(true)
+    expect(store.getEntry(ALICE)).toEqual({ status: 'online', rev: 7 })
+    expect(store.getEntry(ALICE)?.lastSeenAt).toBeUndefined()
+  })
+
+  it('скрытие поля: более новый offline БЕЗ метки сбрасывает её — инкогнито/нет данных неотличимы (SC-002)', () => {
+    const store = createPresenceStore()
+    store.applyEvent(offlineEvent(ALICE, 6, SEEN))
+
+    // субъект включил инкогнито (FREEZE публикует offline без lastSeenAt)
+    // либо метка исчезла по «нет данных» — старая не протекает в новый статус
+    expect(store.applyEvent(offlineEvent(ALICE, 7))).toBe(true)
+    expect(store.getEntry(ALICE)).toEqual({ status: 'offline', rev: 7 })
+    expect(store.getEntry(ALICE)?.lastSeenAt).toBeUndefined()
+
+    // «нет доступа» (unknown) с большим rev — тот же нейтральный сброс
+    expect(store.applySnapshot([snapshotItem(ALICE, 'unknown', 8)])).toBe(1)
+    expect(store.getEntry(ALICE)).toEqual({ status: 'unknown', rev: 8 })
+    expect(store.getEntry(ALICE)?.lastSeenAt).toBeUndefined()
+  })
+
+  it('устаревший кадр без поля НЕ скрывает применённую метку — сброс только вместе с применённым кадром', () => {
+    const store = createPresenceStore()
+    store.applyEvent(offlineEvent(ALICE, 6, SEEN))
+
+    // задержавшийся online (меньший rev) не имеет права убрать раскрытую метку
+    expect(store.applyEvent(onlineEvent(ALICE, 5))).toBe(false)
+    expect(store.applySnapshot([snapshotItem(ALICE, 'online', 6)])).toBe(0)
+    expect(store.getEntry(ALICE)).toEqual({ status: 'offline', rev: 6, lastSeenAt: SEEN })
   })
 })
 
