@@ -57,10 +57,16 @@ class NotParticipantException : RuntimeException("the caller is not a participan
  * (T043, openapi 0.4.0 №11/№13): [myReadUpToSeq] is the caller's own
  * mark, [peerReadUpToSeq] the peer's mark the sender's ✓✓ renders from
  * (research.md 004 §5) — per-user state, never a chat-wide value.
+ *
+ * 008a (T052, data-model §1.3): [soundEnabled] — the CALLER's own
+ * per-chat sound switch riding the SAME single `findForChat` read (the
+ * №11/№13 `soundEnabled` slot, FR-012; a missing row reads as the V16
+ * column default `true` exactly like the fresh-participation anchor).
  */
 data class ReadWatermarks(
     val myReadUpToSeq: Long,
     val peerReadUpToSeq: Long,
+    val soundEnabled: Boolean = true,
 )
 
 /**
@@ -70,12 +76,17 @@ data class ReadWatermarks(
  * (`MAX(last_read_seq)` of the other active members — ✓✓ once any one
  * of them has read) and the ACTIVE
  * [memberCount] — the group-side counterpart of [ReadWatermarks].
+ *
+ * 008a (T052, data-model §1.3): [soundEnabled] — the caller's own
+ * per-chat sound switch off the SAME ACTIVE membership row (the №13
+ * `soundEnabled` slot, FR-012; the №42 write leg T053 flips it).
  */
 data class GroupChatProjection(
     val myRole: MemberRole,
     val myReadUpToSeq: Long,
     val othersReadUpToSeq: Long,
     val memberCount: Long,
+    val soundEnabled: Boolean,
 )
 
 /**
@@ -137,6 +148,16 @@ data class PeerNames(
  * serves the whole №12 panel in ONE batched read; the №12 displayName
  * itself rides the single aggregate query of [ChatListRepository]
  * (`ChatPeerSnapshot.displayName`).
+ *
+ * The 008a per-chat sound switch (T052, api-contract.md §2,
+ * data-model §1.3, FR-012): the caller's PERSONAL `soundEnabled` rides
+ * the per-user row projections already serving №11/№13 —
+ * [readWatermarks] (the direct `findForChat` read) and
+ * [groupProjection] (the ACTIVE membership row) — while №12 carries it
+ * inside the single aggregate query (`ChatListEntry.soundEnabled`);
+ * zero extra round trips, and the slot is always set (the V16 default
+ * `true` of a fresh participation). The №42 write leg (T053) flips the
+ * column through [ParticipantRepository.updateSoundEnabled].
  */
 @Service
 // The №11/№12/№13 collaborators, one port per leg (DIP, plan.md VIII;
@@ -237,6 +258,10 @@ class ChatService(
      * не прочитано»), matching the `minimum: 0` of openapi 0.4.0. Monotone
      * by construction: the values mirror the GREATEST-watermark rows and
      * are never derived.
+     *
+     * 008a (T052): the caller's `soundEnabled` rides the SAME read — the
+     * №11/№13 slot is always set (a missing row keeps the V16 default
+     * `true`, the fresh-participation anchor of data-model §1.3).
      */
     fun readWatermarks(
         chat: Chat,
@@ -249,6 +274,7 @@ class ChatService(
         return ReadWatermarks(
             myReadUpToSeq = marks[callerId]?.lastReadSeq ?: DEFAULT_READ_UP_TO_SEQ,
             peerReadUpToSeq = marks[peerId]?.lastReadSeq ?: DEFAULT_READ_UP_TO_SEQ,
+            soundEnabled = marks[callerId]?.soundEnabled ?: DEFAULT_SOUND_ENABLED,
         )
     }
 
@@ -321,6 +347,10 @@ class ChatService(
      * roster size (1–200, the `ix_chat_participants_chat_active` scan of
      * [ParticipantRepository.activeMembers] — no `FOR UPDATE` lock of a
      * plain read). A pure read: nothing here mutates dialog state.
+     *
+     * 008a (T052): the caller's `soundEnabled` rides the SAME membership
+     * row — the №13 slot of both kinds answers from the participant row
+     * the view has already resolved, never a separate round trip.
      */
     fun groupProjection(
         chat: Chat,
@@ -339,11 +369,15 @@ class ChatService(
             myReadUpToSeq = membership.lastReadSeq,
             othersReadUpToSeq = participantRepository.maxOtherReadUpToSeq(chat.id, callerId),
             memberCount = participantRepository.activeMembers(chat.id).size.toLong(),
+            soundEnabled = membership.soundEnabled,
         )
     }
 
     private companion object {
         /** Openapi 0.4.0 `peerReadUpToSeq`/`myReadUpToSeq`: 0 — nothing read yet. */
         const val DEFAULT_READ_UP_TO_SEQ = 0L
+
+        /** 008a (V16, data-model §1.3): a fresh participation sounds — the column default. */
+        const val DEFAULT_SOUND_ENABLED = true
     }
 }

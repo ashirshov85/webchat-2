@@ -603,7 +603,9 @@ class ChatListIT(
         const val GROUP_OWN_MESSAGES = 1
         const val INDEX_ONE = 1
 
-        val CHAT_LIST_ITEM_FIELDS = listOf("chatId", "peer", "lastMessage", "unreadCount", "blockedByMe")
+        /** openapi 0.9.0 (008a T052): `soundEnabled` is always set by the server — pinned with the rest. */
+        val CHAT_LIST_ITEM_FIELDS =
+            listOf("chatId", "peer", "lastMessage", "unreadCount", "blockedByMe", "soundEnabled")
         val GROUP_CHAT_LIST_ITEM_FIELDS =
             listOf(
                 "chatId",
@@ -615,6 +617,7 @@ class ChatListIT(
                 "lastMessage",
                 "unreadCount",
                 "blockedByMe",
+                "soundEnabled",
             )
         val PUBLIC_USER_FIELDS = listOf("id", "username", "email", "status", "createdAt")
         val MESSAGE_FIELDS = listOf("id", "chatId", "senderId", "text", "seq", "createdAt")

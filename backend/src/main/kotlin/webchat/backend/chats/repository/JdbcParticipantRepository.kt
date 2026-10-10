@@ -40,6 +40,12 @@ import java.util.UUID
  * kick×leave race by rowcount, [reactivate] preserves BOTH watermarks
  * (FR-002) and [addMember] anchors them at the chat head in the INSERT
  * itself (FR-013).
+ *
+ * Since V16 (008a, T052) the same rows carry the PERSONAL sound switch
+ * `sound_enabled` (data-model 008a §1.3, FR-012): every projection maps
+ * it (the column joins [PARTICIPANT_COLUMNS], default TRUE of a new
+ * participation — the V16 column DEFAULT, no INSERT names it) and the
+ * single №42 leg [updateSoundEnabled] is its ONLY writer.
  */
 @Repository
 @Suppress("TooManyFunctions") // one member per port rule: 004/005 dialog legs + the 006 roster extension (T008/T011)
@@ -256,6 +262,25 @@ class JdbcParticipantRepository(
         userId: UUID,
     ): Long = jdbcTemplate.queryForObject(MAX_OTHER_READ_SQL, Long::class.java, chatId, userId) ?: 0L
 
+    /**
+     * T052 (№42, data-model 008a §1.3): the single-row UPDATE of the
+     * caller's own `sound_enabled` — the ONLY writer of the column. The
+     * service (T053) has already resolved the membership gate and the
+     * idempotency rule (only a genuine CHANGE reaches this statement),
+     * so the per-PK UPDATE carries no condition beyond the key itself —
+     * the same unconditional-by-key discipline as [deleteUpTo]. Returns
+     * the updated row, or `null` on rowcount 0 (no participant row — a
+     * broken invariant after the gate, not a client answer).
+     */
+    override fun updateSoundEnabled(
+        chatId: UUID,
+        userId: UUID,
+        enabled: Boolean,
+    ): ChatParticipant? =
+        jdbcTemplate
+            .query(UPDATE_SOUND_SQL, ROW_MAPPER, enabled, chatId, userId)
+            .firstOrNull()
+
     private companion object {
         val ROW_MAPPER =
             RowMapper { rs: ResultSet, _: Int ->
@@ -270,6 +295,9 @@ class JdbcParticipantRepository(
                     // read role=NULL and never leave state='active'.
                     role = rs.getString("role")?.let { MemberRole.valueOf(it.uppercase()) },
                     state = MembershipState.valueOf(rs.getString("state").uppercase()),
+                    // V16 (008a): the personal per-chat sound switch — the
+                    // №11/№12/№13 `soundEnabled` slot of the row owner.
+                    soundEnabled = rs.getBoolean("sound_enabled"),
                     createdAt = rs.getTimestamp("created_at").toInstant(),
                 )
             }
@@ -295,7 +323,7 @@ class JdbcParticipantRepository(
         /** Every roster projection selects the same column set as [ROW_MAPPER] maps. */
         const val PARTICIPANT_COLUMNS =
             "chat_id, user_id, last_read_seq, deleted_up_to_seq, " +
-                "delivered_up_to_seq, hidden, role, state, created_at"
+                "delivered_up_to_seq, hidden, role, state, sound_enabled, created_at"
 
         val FIND_SQL =
             """
@@ -382,6 +410,15 @@ class JdbcParticipantRepository(
             SELECT COALESCE(MAX(last_read_seq), 0)
             FROM chat_participants
             WHERE chat_id = ? AND user_id <> ? AND state = 'active'
+            """.trimIndent()
+
+        /** T052 (№42, 008a): the ONLY writer of the personal sound switch — a per-PK single-row UPDATE. */
+        val UPDATE_SOUND_SQL =
+            """
+            UPDATE chat_participants
+            SET sound_enabled = ?
+            WHERE chat_id = ? AND user_id = ?
+            RETURNING $PARTICIPANT_COLUMNS
             """.trimIndent()
 
         val ADVANCE_READ_SQL =

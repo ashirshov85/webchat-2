@@ -76,6 +76,16 @@ data class ChatPeerView(
  * the peer is not a contact of the caller» → the client renders the
  * chain `displayName`/`username`; stays ABSENT on the GROUP variant
  * (NON_NULL — a group has no peer, the same 006 convention).
+ *
+ * 008a (api-contract.md §2, T052, FR-012): [soundEnabled] — the
+ * caller's PERSONAL per-chat sound switch (`chat_participants.
+ * sound_enabled` of the V16 migration). Non-null and ALWAYS serialized:
+ * the contract keeps the field OPTIONAL for old-server tolerance, but
+ * this server sets it on every answer (a fresh participation anchors at
+ * the column default `true`, data-model §1.3) — the same value on both
+ * the DIRECT and the GROUP variant. Strictly the caller's own
+ * projection: the value and the fact of the setting never reach the
+ * peer or any third party.
  */
 data class ChatView(
     val chatId: UUID,
@@ -90,6 +100,7 @@ data class ChatView(
     val peerReadUpToSeq: Long? = null,
     val myReadUpToSeq: Long = 0,
     @JsonInclude(JsonInclude.Include.NON_NULL) val peerAlias: String? = null,
+    val soundEnabled: Boolean,
 )
 
 /**
@@ -123,6 +134,13 @@ data class ChatView(
  * = «not set or the peer is not a contact» → the client renders the
  * chain `displayName`/`username`; stays ABSENT on GROUP rows (NON_NULL
  * — a group element has no peer, the same 006 convention).
+ *
+ * 008a (api-contract.md §2, T052, FR-012): [soundEnabled] — the №12
+ * counterpart of [ChatView.soundEnabled], carried by the single
+ * aggregate query for BOTH kinds and ALWAYS serialized (the contract
+ * keeps the field OPTIONAL for old-server tolerance; this server sets
+ * it on every element — a fresh participation anchors at `true`). The
+ * caller's own switch only: no other panel ever learns of it.
  */
 data class ChatListItemView(
     val chatId: UUID,
@@ -135,6 +153,7 @@ data class ChatListItemView(
     val unreadCount: Long,
     val blockedByMe: Boolean?,
     @JsonInclude(JsonInclude.Include.NON_NULL) val peerAlias: String? = null,
+    val soundEnabled: Boolean,
 )
 
 /**

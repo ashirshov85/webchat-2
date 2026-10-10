@@ -457,6 +457,13 @@ class MessageControllerTest {
             chatId: UUID,
             userId: UUID,
         ): Long = 0L
+
+        /** 008a №42 write leg is outside the messaging surface — inert default (T053). */
+        override fun updateSoundEnabled(
+            chatId: UUID,
+            userId: UUID,
+            enabled: Boolean,
+        ): ChatParticipant? = null
     }
 
     /** The realtime leg is irrelevant to the HTTP mapping — a silent sink keeps the unit surface narrow. */

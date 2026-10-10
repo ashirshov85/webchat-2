@@ -21,6 +21,13 @@ import java.util.UUID
  * watermarks survive a removal for the re-add semantics (FR-002) — the
  * group-roster legs below (T008, adapter T011) evolve this port instead
  * of introducing a separate membership table (constitution VII).
+ *
+ * Since V16 (008a, T052) the rows also carry the PERSONAL sound switch
+ * `sound_enabled` (data-model 008a §1.3, FR-012): read by every
+ * [ChatParticipant] projection (the №11/№12/№13 `soundEnabled` slots)
+ * and written ONLY by №42 through [updateSoundEnabled] — the value and
+ * the very fact of the setting are the row owner's alone, never another
+ * participant's business.
  */
 @Suppress("TooManyFunctions") // one member per port rule: 004/005 dialog legs + the 006 roster extension (T008)
 interface ParticipantRepository {
@@ -269,4 +276,28 @@ interface ParticipantRepository {
         chatId: UUID,
         userId: UUID,
     ): Long
+
+    /**
+     * №42 `PUT /chats/{chatId}/sound` (008a, T052 — the ONLY writer of
+     * `sound_enabled`, FR-012): the single-row UPDATE of the CALLER's
+     * own `chat_participants` switch,
+     * `UPDATE … SET sound_enabled = :enabled
+     *  WHERE chat_id = :chatId AND user_id = :userId RETURNING …`
+     * — the peer's row is NEVER touched and no state/membership
+     * condition applies: the service (T053) has ALREADY resolved the
+     * membership gate (`404 chat_not_found` → `403 not_participant`,
+     * the №13/№16 semantics) and the idempotency rule (a repeat of the
+     * stored value → `200` WITHOUT an event — the read happens before
+     * the write in the same service leg), so only a genuine CHANGE
+     * reaches this method. `null` on rowcount 0 — no participant row
+     * (a broken invariant after the gate, not a client answer); the
+     * switch survives the №14 hide/delete verbatim (the row survives,
+     * 008 FR-013) and every NEW participation anchors at the V16
+     * column DEFAULT `true` (data-model 008a §1.3).
+     */
+    fun updateSoundEnabled(
+        chatId: UUID,
+        userId: UUID,
+        enabled: Boolean,
+    ): ChatParticipant?
 }

@@ -293,6 +293,13 @@ class GroupMembershipGateTest {
             chatId: UUID,
             userId: UUID,
         ): Long = error("the gate never projects the MIN watermark")
+
+        /** 008a №42 write leg is outside the gate — never called (T053). */
+        override fun updateSoundEnabled(
+            chatId: UUID,
+            userId: UUID,
+            enabled: Boolean,
+        ): ChatParticipant? = error("the gate never toggles the sound switch")
     }
 
     private companion object {

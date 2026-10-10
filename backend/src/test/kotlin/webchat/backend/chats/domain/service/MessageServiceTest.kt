@@ -737,6 +737,13 @@ class MessageServiceTest {
             chatId: UUID,
             userId: UUID,
         ): Long = 0L
+
+        /** 008a №42 write leg is outside the send path — inert default (T053). */
+        override fun updateSoundEnabled(
+            chatId: UUID,
+            userId: UUID,
+            enabled: Boolean,
+        ): ChatParticipant? = null
     }
 
     /**

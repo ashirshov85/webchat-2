@@ -56,6 +56,13 @@ data class ChatPeerSnapshot(
  *
  * The entry is a READ model: every field is derived in the single list
  * query of the repository adapter; nothing here mutates dialog state.
+ *
+ * 008a (data-model §1.3, T052): [soundEnabled] — the caller's PERSONAL
+ * per-chat sound switch (`chat_participants.sound_enabled`, FR-012)
+ * rides the SAME aggregate query for BOTH kinds (the server sets the
+ * №12 slot always; `true` for a fresh participation by the V16 column
+ * default). Strictly the row owner's own projection: the value and the
+ * very fact of the setting never reach another participant's panel.
  */
 data class ChatListEntry(
     val chatId: UUID,
@@ -67,6 +74,10 @@ data class ChatListEntry(
     val lastMessage: Message?,
     val unreadCount: Long,
     val blockedByMe: Boolean? = null,
+    // 008a (V16, data-model §1.3): the personal sound switch of the
+    // CALLER's own row — default TRUE mirrors the column DEFAULT of a
+    // fresh participation.
+    val soundEnabled: Boolean = true,
 ) {
     init {
         // The kind discrimination of the unified №12 row (api-contract.md

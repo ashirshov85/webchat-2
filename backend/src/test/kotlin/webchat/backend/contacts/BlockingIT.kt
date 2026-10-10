@@ -726,9 +726,9 @@ class BlockingIT(
         /** Bounded quiet window proving the suppressed publishes deliver nothing. */
         val quietPeriod: Duration = Duration.ofMillis(1_500)
 
-        /** ChatView (openapi 0.4.0): additionalProperties false, blockedByMe is the only block field. */
+        /** ChatView (openapi 0.9.0, 008a T052): additionalProperties false, blockedByMe is the only block field. */
         val CHAT_VIEW_FIELDS: List<String> =
-            listOf("chatId", "peer", BLOCKED_BY_ME_FIELD, "peerReadUpToSeq", "myReadUpToSeq")
+            listOf("chatId", "peer", BLOCKED_BY_ME_FIELD, "peerReadUpToSeq", "myReadUpToSeq", "soundEnabled")
 
         /** ContactView (openapi 0.8.0, T097): additionalProperties false, blockedByMe added additively. */
         val CONTACT_VIEW_FIELDS: List<String> = listOf("user", "createdAt", BLOCKED_BY_ME_FIELD)

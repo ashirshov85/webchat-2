@@ -468,6 +468,13 @@ class ChatControllerTest {
             chatId: UUID,
             userId: UUID,
         ): Long = 0L
+
+        /** 008a №42 write leg is outside the view surface — inert default (T053 lands the service). */
+        override fun updateSoundEnabled(
+            chatId: UUID,
+            userId: UUID,
+            enabled: Boolean,
+        ): ChatParticipant? = null
     }
 
     /** The T054 fixture: point lookups against the scripted [blockedPairs] (empty — no blocks). */

@@ -387,6 +387,13 @@ class TypingServiceTest {
             chatId: UUID,
             userId: UUID,
         ): Long = 0L
+
+        /** 008a №42 write leg is outside the typing path — inert default (T053). */
+        override fun updateSoundEnabled(
+            chatId: UUID,
+            userId: UUID,
+            enabled: Boolean,
+        ): ChatParticipant? = null
     }
 
     /** Records the typing fan-out legs; [failFanout] simulates a dead channel. */

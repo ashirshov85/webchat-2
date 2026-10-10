@@ -2019,7 +2019,7 @@ class GroupLifecycleIT(
 
         fun placeholders(count: Int): String = List(count) { "?" }.joinToString(", ")
 
-        /** openapi.yaml 0.6.0 shapes — every group answer is pinned field-by-field. */
+        /** openapi.yaml 0.9.0 shapes — pinned field-by-field (008a T052: soundEnabled always set). */
         val GROUP_VIEW_FIELDS = listOf("chatId", "title", "description", "myRole", "members")
         val GROUP_MEMBER_FIELDS = listOf("user", "role", "joinedAt")
         val PUBLIC_USER_FIELDS = listOf("id", "username", "email", "status", "createdAt")
@@ -2039,6 +2039,7 @@ class GroupLifecycleIT(
                 "lastMessage",
                 "unreadCount",
                 "blockedByMe",
+                "soundEnabled",
             )
         val GROUP_CHAT_VIEW_FIELDS =
             listOf(
@@ -2053,6 +2054,7 @@ class GroupLifecycleIT(
                 "blockedByMe",
                 "peerReadUpToSeq",
                 "myReadUpToSeq",
+                "soundEnabled",
             )
     }
 }

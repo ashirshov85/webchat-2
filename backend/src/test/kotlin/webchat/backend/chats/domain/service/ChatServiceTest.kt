@@ -371,6 +371,13 @@ class ChatServiceTest {
             chatId: UUID,
             userId: UUID,
         ): Long = 0L
+
+        /** 008a №42 write leg is outside the №11–№14 surface — inert default (T053 lands the service). */
+        override fun updateSoundEnabled(
+            chatId: UUID,
+            userId: UUID,
+            enabled: Boolean,
+        ): ChatParticipant? = null
     }
 
     /** The auth port reused across features (sso does the same); existence only — the users table is the source. */

@@ -18,7 +18,11 @@ import java.util.UUID
  * role is meaningless) and [state] — membership in a group ⟺ an ACTIVE
  * row (FR-008); a REMOVED row preserves the 004/005 watermarks for
  * re-adding (FR-002) and reactivation resets the role to `member`
- * (data-model 006 §Сущность 2). Mirrors the `chat_participants` table
+ * (data-model 006 §Сущность 2). Since V16 (008a) the row also carries
+ * the PERSONAL sound switch [soundEnabled] (FR-012): the per-chat
+ * «звонок» toggle of the row owner only — the value and the very fact
+ * of the setting never reach another participant (data-model 008a
+ * §1.3). Mirrors the `chat_participants` table
  * (non-negative CHECKs, `ck_chat_participants_role`/`_state`).
  *
  * Derived visibility rules (data-model 004 §2 + 005 сущности 1–3):
@@ -37,6 +41,11 @@ data class ChatParticipant(
     val hidden: Boolean = false,
     val role: MemberRole? = null,
     val state: MembershipState = MembershipState.ACTIVE,
+    // 008a (V16, data-model §1.3): the personal per-chat sound switch —
+    // default TRUE is the column DEFAULT of every new participation
+    // (data-model 008a §1.3 «умолчание TRUE — паритет 008»); survives
+    // the №14 hide/delete (the row survives, 008 FR-013).
+    val soundEnabled: Boolean = true,
     val createdAt: Instant,
 ) {
     init {

@@ -161,6 +161,11 @@ class ChatController(
      * `peerAlias` — both from the one [ChatService.peerNames] join
      * (FR-001/FR-003; NULL renders the slots ABSENT — 008 clients fall
      * back to `username`, SC-007).
+     *
+     * 008a (T052, api-contract.md §2, FR-012): `soundEnabled` — the
+     * caller's own per-chat sound switch off the SAME watermark read
+     * (`ReadWatermarks.soundEnabled`, zero extra round trips); always
+     * serialized, `true` for a fresh participation.
      */
     private fun directView(
         chat: Chat,
@@ -189,6 +194,7 @@ class ChatController(
             peerReadUpToSeq = watermarks.peerReadUpToSeq,
             myReadUpToSeq = watermarks.myReadUpToSeq,
             peerAlias = names.alias,
+            soundEnabled = watermarks.soundEnabled,
         )
     }
 
@@ -205,6 +211,10 @@ class ChatController(
      * the contract enum. The membership row exists ([ChatService.get]
      * has just proven it) — a miss is a broken invariant, not a client
      * answer.
+     *
+     * 008a (T052, FR-012): `soundEnabled` rides the SAME membership row
+     * of the projection — the №13 slot of the group variant answers
+     * exactly like the direct one.
      */
     private fun groupView(
         chat: Chat,
@@ -223,6 +233,7 @@ class ChatController(
             blockedByMe = null,
             peerReadUpToSeq = null,
             myReadUpToSeq = projection.myReadUpToSeq,
+            soundEnabled = projection.soundEnabled,
         )
     }
 
@@ -246,6 +257,10 @@ class ChatController(
      * `peerAlias` from the batched [peerAliases][ChatService.peerAliases]
      * map (FR-001/FR-003; NULL/ABSENT keeps the 0.8.0 shape verbatim,
      * SC-007; a GROUP row has no peer and no alias slot).
+     *
+     * 008a (T052, api-contract.md §2, FR-012): `soundEnabled` rides the
+     * SAME aggregate row for BOTH kinds — the №12 slot is always
+     * serialized, never a separate per-item lookup.
      */
     private fun listItemView(
         entry: ChatListEntry,
@@ -282,6 +297,7 @@ class ChatController(
             unreadCount = entry.unreadCount,
             blockedByMe = entry.blockedByMe,
             peerAlias = entry.peer?.let { peer -> peerAliases[peer.id] },
+            soundEnabled = entry.soundEnabled,
         )
 }
 
