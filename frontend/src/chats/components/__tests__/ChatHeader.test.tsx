@@ -39,10 +39,22 @@ import { ModalShell } from '../../../ui/ModalShell'
  * role (no №28, no basis) carries no gear at all.
  */
 
-const presence = vi.hoisted(() => ({ status: 'unknown' }))
+/** Состояние presence-мока (008a T048): статус + раскрытая метка lastSeen. */
+type PresenceMockState = {
+  status: 'online' | 'offline' | 'unknown'
+  lastSeenAt: string | undefined
+}
+
+const presence = vi.hoisted((): PresenceMockState => ({ status: 'unknown', lastSeenAt: undefined }))
 
 vi.mock('../../../presence/usePresence', () => ({
   usePresenceStatus: () => presence.status,
+  // 008a T048: заголовок читает полную запись (status + lastSeenAt?);
+  // undefined = нет записи в store («unknown» до первого №36).
+  usePresenceEntry: () =>
+    presence.status === 'unknown'
+      ? undefined
+      : { status: presence.status, rev: 1, lastSeenAt: presence.lastSeenAt },
 }))
 
 const ALICE = '22222222-2222-2222-2222-222222222222'
@@ -138,6 +150,7 @@ function renderHeader(
 afterEach(() => {
   cleanup()
   presence.status = 'unknown'
+  presence.lastSeenAt = undefined
 })
 
 describe('ChatHeader prototype block (T021, FR-016 base, data-model 2.3)', () => {
@@ -176,7 +189,8 @@ describe('ChatHeader direct status: the prototype lamp (T043, FR-016, data-model
     const { container } = renderHeader(directChat())
 
     expect(screen.queryByText('неизвестно')).toBeNull()
-    expect(screen.queryByText('офлайн')).toBeNull()
+    expect(screen.queryByText(/Был в сети/)).toBeNull()
+    expect(screen.queryByText('В сети')).toBeNull()
     expect(container.querySelector('.chat-head .status-row .lamp')).toBeNull()
     expect(container.querySelector('.chat-head .status-row .status-txt')).toBeNull()
     // Строка остаётся — якорь высоты (min-height в chat-header.css):
@@ -184,7 +198,7 @@ describe('ChatHeader direct status: the prototype lamp (T043, FR-016, data-model
     expect(container.querySelector('.chat-head .status-row')).not.toBeNull()
   })
 
-  it('online: lamp without .off + «В сети»; offline: .lamp.off + «офлайн» (store truth)', () => {
+  it('online: lamp without .off + «В сети»; offline: .lamp.off + «Был в сети — давно» (008a T048)', () => {
     presence.status = 'online'
     const online = renderHeader(directChat())
     expect(online.container.querySelector('.status-row .lamp')?.classList.contains('off')).toBe(
@@ -193,10 +207,35 @@ describe('ChatHeader direct status: the prototype lamp (T043, FR-016, data-model
     expect(online.getByText('В сети')).toBeVisible()
     online.unmount()
 
+    // 008a US3 (T048, ui-behavior §3): offline без раскрытого lastSeenAt
+    // (нет данных / инкогнито / блок-пара — неотличимы, SC-002) —
+    // нейтральный фолбэк «Был в сети — давно», НЕ «офлайн».
     presence.status = 'offline'
     const offline = renderHeader(directChat())
     expect(offline.container.querySelector('.status-row .lamp')?.className).toBe('lamp off')
-    expect(offline.getByText('офлайн')).toBeVisible()
+    expect(offline.getByText('Был в сети — давно')).toBeVisible()
+  })
+
+  it('008a T048: offline + lastSeenAt → «Был в сети — {время}» (формат T046 — сегодня ЧЧ:ММ)', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-10T12:00:00'))
+    try {
+      // Фикстура «минуту назад» от подменённых часов: в любом поясе это
+      // тот же локальный день → ветка «сегодня» lastSeenFormat (T046).
+      const seen = new Date(Date.now() - 60_000)
+      presence.status = 'offline'
+      presence.lastSeenAt = seen.toISOString()
+      const { container } = renderHeader(directChat())
+
+      expect(container.querySelector('.status-row .lamp')?.className).toBe('lamp off')
+      const expected = new Intl.DateTimeFormat('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(seen)
+      expect(screen.getByText(`Был в сети — ${expected}`)).toBeVisible()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('pluralizes the group status «N участников» (pluralRu boundaries)', () => {

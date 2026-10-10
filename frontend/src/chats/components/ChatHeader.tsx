@@ -9,10 +9,16 @@
  *
  * The status row is the FULL US3 projection (T043):
  *  * direct — the prototype presence-лампа `.lamp` + `.status-txt`
- *    label «В сети»/«офлайн» driven by the 007 presenceStore through
- *    `usePresenceStatus(peerId)` (the T040 contract: `.off` ONLY for a
- *    true store offline — a missing №36 snapshot and №36 `unknown`
- *    never yield a false «офлайн»); bug 12 (T090): `unknown` renders
+ *    label driven by the 007 presenceStore; 008a US3 (T048, ui-behavior
+ *    §3, FR-011) widens the label through `usePresenceEntry(peerId)`
+ *    (T047: status + lastSeenAt?): online — «В сети» (без изменений
+ *    007), offline с раскрытым `lastSeenAt` — «Был в сети — {время}»
+ *    (`lastSeenFormat` T046: локаль ru-RU, пояс наблюдателя), offline
+ *    без поля — единый нейтральный фолбэк «Был в сети — давно» (нет
+ *    данных/инкогнито/блок-пара неотличимы, SC-002). The T040
+ *    contract holds: `.off` ONLY for a true store offline — a missing
+ *    №36 snapshot and №36 `unknown` never yield a false «офлайн»);
+ *    bug 12 (T090): `unknown` renders
  *    NO indicator at all — the empty `.status-row` keeps the height
  *    (chat-header.css min-height) until №36 converges; the blocker-side
  *    «заблокирован» mark follows (FR-020);
@@ -65,9 +71,9 @@ import type { GroupMember } from '../../api/groups'
 import { Avatar } from '../../ui/Avatar'
 import { initialsOf } from '../../ui/avatar'
 import { resolveDisplayName } from '../../ui/names'
-import { pluralRu } from '../../ui/time'
-import { usePresenceStatus } from '../../presence/usePresence'
-import type { PresenceStatus } from '../../presence/presenceStore'
+import { pluralRu, lastSeenFormat } from '../../ui/time'
+import { usePresenceEntry } from '../../presence/usePresence'
+import type { PresenceEntry } from '../../presence/presenceStore'
 import { ChatGearMenu } from './ChatGearMenu'
 import type { GearMenuChat } from './ChatGearMenu'
 import './chat-header.css'
@@ -152,11 +158,19 @@ function membersStatus(count: number): string {
   return `${count} ${pluralRu(count, 'участник', 'участника', 'участников')}`
 }
 
-/** `.status-txt` of the direct row (T040 «В сети»/«офлайн»; bug 12/T090:
- *  «неизвестно» не выводится — unknown рендерит пустую строку статуса). */
-const DIRECT_STATUS_TEXT: Readonly<Record<'online' | 'offline', string>> = {
-  online: 'В сети',
-  offline: 'офлайн',
+/**
+ * `.status-txt` личного чата (008a US3, T048; ui-behavior §3, FR-011):
+ * online — «В сети» (007, без изменений); offline с раскрытым
+ * `lastSeenAt` — «Был в сети — {время}» (`lastSeenFormat` T046 —
+ * сегодня ЧЧ:ММ, иначе дата+время, год при отличии); offline без
+ * поля — единый нейтральный фолбэк «Был в сети — давно» (нет данных /
+ * инкогнито / блок-пара неотличимы для наблюдателя, SC-002).
+ */
+function directStatusText(entry: PresenceEntry): string {
+  if (entry.status === 'online') {
+    return 'В сети'
+  }
+  return `Был в сети — ${entry.lastSeenAt !== undefined ? lastSeenFormat(entry.lastSeenAt) : 'давно'}`
 }
 
 /** The tip rows (FR-017): the live №28 members minus me ([] until №28 is live). */
@@ -168,22 +182,27 @@ function tipMembersOf(chat: ChatHeaderChat): readonly GroupMember[] {
 }
 
 interface DirectStatusRowProps {
-  /** The merged 007 status of the peer (T040). */
-  readonly presence: PresenceStatus
+  /**
+   * The merged 007 entry of the peer (008a T047/T048): status +
+   * disclosed `lastSeenAt?`; undefined — no store entry yet («unknown»,
+   * до первого №36/кадра №18).
+   */
+  readonly entry: PresenceEntry | undefined
   /** The blocker-side mark «заблокирован» (№12 projection, FR-020). */
   readonly blockedByMe: boolean
 }
 
 /**
  * The direct `.status-row` — the prototype presence lamp + label (US3
- * T043). Bug 12 (T090): the neutral «unknown» is NOT displayed — no
- * lamp, no `.status-txt` — only the empty row stays (its min-height in
- * chat-header.css holds the header height) so the header does not jump
- * when №36 converges; the «заблокирован» mark (FR-020) is not a
- * presence indicator and stays.
+ * T043; 008a T048 — «Был в сети — …» при offline). Bug 12 (T090): the
+ * neutral «unknown» is NOT displayed — no lamp, no `.status-txt` —
+ * only the empty row stays (its min-height in chat-header.css holds
+ * the header height) so the header does not jump when №36 converges;
+ * the «заблокирован» mark (FR-020) is not a presence indicator and
+ * stays.
  */
-function DirectStatusRow({ presence, blockedByMe }: DirectStatusRowProps) {
-  if (presence === 'unknown') {
+function DirectStatusRow({ entry, blockedByMe }: DirectStatusRowProps) {
+  if (entry === undefined || entry.status === 'unknown') {
     return (
       <div className="status-row">
         {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
@@ -192,8 +211,8 @@ function DirectStatusRow({ presence, blockedByMe }: DirectStatusRowProps) {
   }
   return (
     <div className="status-row">
-      <span className={presence === 'offline' ? 'lamp off' : 'lamp'} aria-hidden="true" />
-      <span className="status-txt">{DIRECT_STATUS_TEXT[presence]}</span>
+      <span className={entry.status === 'offline' ? 'lamp off' : 'lamp'} aria-hidden="true" />
+      <span className="status-txt">{directStatusText(entry)}</span>
       {blockedByMe && <span className="chat-item-blocked">заблокирован</span>}
     </div>
   )
@@ -355,7 +374,9 @@ export function ChatHeader({
 
   // The 007 surface of the open 1:1 dialog (T040): the status comes
   // ONLY from the presenceStore — a group header registers nothing.
-  const presence = usePresenceStatus(!isGroup ? chat.peerId : null)
+  // 008a US3 (T048): полная запись (status + lastSeenAt?) ведёт
+  // «Был в сети — …» проекцию строки статуса.
+  const presenceEntry = usePresenceEntry(!isGroup ? chat.peerId : null)
 
   // The members-tip anchor (the ContextMenu pattern): the status row
   // rect captured at open — null keeps the tip out of the DOM.
@@ -445,7 +466,7 @@ export function ChatHeader({
             closeTip={closeTip}
           />
         ) : (
-          <DirectStatusRow presence={presence} blockedByMe={chat.blockedByMe} />
+          <DirectStatusRow entry={presenceEntry} blockedByMe={chat.blockedByMe} />
         )}
       </div>
       {/* Единственная кнопка заголовка — «шестерёнка» (FR-016, T054):

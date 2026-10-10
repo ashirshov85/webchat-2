@@ -101,6 +101,16 @@
  * монтирование списка): online — зелёная мерцающая, offline — тусклая;
  * bug 12 (T090): unknown точки НЕ выводит — до первого №36 строка без
  * индикатора, ложный «офлайн» запрещён (семантика 007).
+ *
+ * Превью-статус `.c-prev` (feature 008a, US3, T048; FR-011, ui-behavior
+ * §3, прототип renderContactsModal — `flags.length ? capFirst(…) :
+ * presenceOf(c)`): пометки «заблокирован»/«чат удалён» приоритетнее —
+ * при них превью остаётся прежним; иначе `.c-prev` несёт presence-текст
+ * через `usePresenceEntry` (T047): online — «В сети», offline с
+ * раскрытым `lastSeenAt` — «Был в сети — {время}» (`lastSeenFormat`
+ * T046), offline без поля — нейтральный фолбэк «Был в сети — давно»
+ * (нет данных/инкогнито/блок-пара неотличимы, SC-002); `unknown`
+ * превью не выводит (bug 12 — ложный «офлайн» запрещён).
  */
 import {
   useCallback,
@@ -124,13 +134,15 @@ import {
 } from '../../api/chats'
 import type { ChatListItem, ChatView, ContactView, UserWithAlias } from '../../api/chats'
 import { problemMessage } from '../../auth/problem'
-import { usePresenceStatus } from '../../presence/usePresence'
+import { usePresenceEntry, usePresenceStatus } from '../../presence/usePresence'
+import type { PresenceEntry } from '../../presence/presenceStore'
 import { Avatar } from '../../ui/Avatar'
 import { initialsOf } from '../../ui/avatar'
 import { ConfirmDialog, type ConfirmVariant } from '../../ui/ConfirmDialog'
 import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
 import { useToast } from '../../ui/Toast'
 import { resolveDisplayName } from '../../ui/names'
+import { lastSeenFormat } from '../../ui/time'
 import './contacts-modal.css'
 
 export interface ContactsModalProps {
@@ -285,6 +297,38 @@ function ContactAvatar({ contact }: { readonly contact: ContactView }) {
       presenceDot={status === 'unknown' ? null : status}
     />
   )
+}
+
+/**
+ * Текст presence-статуса строки (008a US3, T048; ui-behavior §3,
+ * FR-011): online — «В сети»; offline с раскрытым `lastSeenAt` —
+ * «Был в сети — {время}» (`lastSeenFormat` T046); offline без поля —
+ * нейтральный фолбэк «Был в сети — давно» (скрытые случаи и «нет
+ * данных» неотличимы для наблюдателя, SC-002).
+ */
+function contactStatusText(entry: PresenceEntry): string {
+  if (entry.status === 'online') {
+    return 'В сети'
+  }
+  return `Был в сети — ${entry.lastSeenAt !== undefined ? lastSeenFormat(entry.lastSeenAt) : 'давно'}`
+}
+
+/**
+ * Превью-статус строки «Контактов» (008a T048; прототип
+ * renderContactsModal — flags.length ? capFirst(…) : presenceOf(c)):
+ * вызывается ТОЛЬКО без пометок «заблокирован»/«чат удалён» — они
+ * приоритетнее статуса. Отдельный компонент — хук записи нужен СТРОКЕ
+ * (`usePresenceEntry` T047: та же регистрация поверхности и №36-
+ * бэкфилл, что у точки аватара), а строки выводятся циклом. Bug 12
+ * (T090): `unknown` (нет записи в store) превью НЕ выводит — до
+ * сходимости №36 строка без строки статуса, ложный «офлайн» запрещён.
+ */
+function ContactPresencePreview({ userId }: { readonly userId: string }) {
+  const entry = usePresenceEntry(userId)
+  if (entry === undefined || entry.status === 'unknown') {
+    return null
+  }
+  return <div className="c-prev">{contactStatusText(entry)}</div>
 }
 
 export function ContactsModal({
@@ -901,7 +945,14 @@ export function ContactsModal({
                   <div className="c-top">
                     <span className="c-name">{displayName}</span>
                   </div>
-                  {flags.length > 0 && <div className="c-prev">{capFirst(flags.join(', '))}</div>}
+                  {/* 008a T048 (ui-behavior §3): пометки «заблокирован»/
+                      «чат удалён» приоритетнее; иначе превью-строка —
+                      presence-статус «В сети»/«Был в сети — …». */}
+                  {flags.length > 0 ? (
+                    <div className="c-prev">{capFirst(flags.join(', '))}</div>
+                  ) : (
+                    <ContactPresencePreview userId={contact.user.id} />
+                  )}
                 </div>
                 <button
                   type="button"

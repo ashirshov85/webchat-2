@@ -35,7 +35,9 @@ import { ContactsModal } from '../ContactsModal'
  *   «офлайн» отображается (не «ложный»);
  * - текст статуса заголовка (прототип §7 statusRow): «В сети» /
  *   «офлайн» в `.status-txt` рядом с лампой — видимый лейбл 007
- *   (a11y-clarify: точка + подпись);
+ *   (a11y-clarify: точка + подпись); 008a US3 (T048, ui-behavior §3)
+ *   расширяет офлайн-лейбл: «Был в сети — {время}» по lastSeenAt
+ *   (формат T046) либо нейтральное «Был в сети — давно» без поля;
  * - группы присутствия не несут (006/007): presence-точки на аватаре
  *   групповой строки нет.
  *
@@ -45,12 +47,17 @@ import { ContactsModal } from '../ContactsModal'
 
 const presence = vi.hoisted(() => ({
   statuses: new Map<string, 'online' | 'offline' | 'unknown'>(),
+  // 008a T048: полные записи (status + lastSeenAt?) для usePresenceEntry
+  // (заголовок/превью статусов); undefined = нет записи («unknown»).
+  entries: new Map<string, { status: 'online' | 'offline'; rev: number; lastSeenAt?: string }>(),
 }))
 
 vi.mock('../../../presence/usePresence', () => ({
   usePresenceStatus: (userId: string | null | undefined) =>
     (userId === null || userId === undefined ? undefined : presence.statuses.get(userId)) ??
     'unknown',
+  usePresenceEntry: (userId: string | null | undefined) =>
+    userId === null || userId === undefined ? undefined : presence.entries.get(userId),
   usePresenceSurfaces: () => {},
 }))
 
@@ -165,6 +172,7 @@ function dotOf(row: HTMLElement): HTMLElement {
 afterEach(() => {
   cleanup()
   presence.statuses.clear()
+  presence.entries.clear()
   mockedListContacts.mockReset()
 })
 
@@ -282,9 +290,63 @@ describe('ContactsModal presence dots (T040 → T042, US3-AS2, FR-024, data-mode
     }
     expect(container.querySelectorAll('.ctc-row .avatar .av-dot')).toHaveLength(0)
   })
+
+  it('008a T048: превью-строка `.c-prev` несёт статус — «В сети»/«Был в сети — давно»; unknown — превью НЕТ', async () => {
+    presence.entries.set(ALICE, { status: 'online', rev: 1 })
+    presence.entries.set(BOB, { status: 'offline', rev: 1 })
+    // CAROL — unknown (нет записи): превью не выводится (bug 12/T090).
+    // Всем троим — связанные чаты: флаги пусты, превью несёт статус.
+    const view = render(
+      <ToastProvider>
+        <ContactsModal
+          chats={[
+            directItem({ chatId: 'chat-alice' }),
+            directItem({ chatId: 'chat-bob', peer: peer(BOB, 'bob') }),
+            directItem({ chatId: 'chat-carol', peer: peer(CAROL, 'carol') }),
+          ]}
+          onOpenChat={vi.fn()}
+        />
+      </ToastProvider>,
+    )
+    await waitFor(() => {
+      expect(view.container.querySelectorAll('.ctc-row')).toHaveLength(CONTACTS.length)
+    })
+    const container = view.container
+
+    expect(contactRowOf(container, 'alice').querySelector('.c-prev')?.textContent).toBe('В сети')
+    expect(contactRowOf(container, 'Борис').querySelector('.c-prev')?.textContent).toBe(
+      'Был в сети — давно',
+    )
+    expect(contactRowOf(container, 'анна').querySelector('.c-prev')).toBeNull()
+  })
+
+  it('008a T048: пометки «заблокирован»/«чат удалён» приоритетнее presence-статуса в `.c-prev`', async () => {
+    mockedListContacts.mockResolvedValue([contactView(ALICE, 'alice'), contactView(BOB, 'Борис')])
+    presence.entries.set(ALICE, { status: 'online', rev: 1 })
+    presence.entries.set(BOB, { status: 'online', rev: 1 })
+    const view = render(
+      <ToastProvider>
+        {/* alice — связанный заблокированный чат; Борис — без чата. */}
+        <ContactsModal
+          chats={[directItem({ chatId: 'chat-alice', blockedByMe: true })]}
+          onOpenChat={vi.fn()}
+        />
+      </ToastProvider>,
+    )
+    await waitFor(() => {
+      expect(view.container.querySelectorAll('.ctc-row')).toHaveLength(2)
+    })
+
+    expect(contactRowOf(view.container, 'alice').querySelector('.c-prev')?.textContent).toBe(
+      'Заблокирован',
+    )
+    expect(contactRowOf(view.container, 'Борис').querySelector('.c-prev')?.textContent).toBe(
+      'Чат удалён',
+    )
+  })
 })
 
-describe('ChatHeader direct status (T040 → T043, US3-AS2, FR-016, data-model 2.3)', () => {
+describe('ChatHeader direct status (T040 → T043, US3-AS2, FR-016, data-model 2.3; 008a T048)', () => {
   function renderDirectHeader(peerId: string = ALICE) {
     return render(
       <ChatHeader
@@ -308,7 +370,7 @@ describe('ChatHeader direct status (T040 → T043, US3-AS2, FR-016, data-model 2
   }
 
   it('online: прототипная лампа без .off + статус «В сети» (.status-txt)', () => {
-    presence.statuses.set(ALICE, 'online')
+    presence.entries.set(ALICE, { status: 'online', rev: 1 })
     const { container } = renderDirectHeader()
 
     expect(lampOf(container).classList.contains('off')).toBe(false)
@@ -317,14 +379,35 @@ describe('ChatHeader direct status (T040 → T043, US3-AS2, FR-016, data-model 2
     )
   })
 
-  it('offline: тусклая лампа .off + статус «офлайн» (настоящий offline из store 007)', () => {
-    presence.statuses.set(ALICE, 'offline')
+  it('offline без lastSeenAt: тусклая лампа .off + «Был в сети — давно» (008a T048, SC-002)', () => {
+    presence.entries.set(ALICE, { status: 'offline', rev: 1 })
     const { container } = renderDirectHeader()
 
     expect(lampOf(container).classList.contains('off')).toBe(true)
     expect(container.querySelector('.chat-head .status-row .status-txt')?.textContent).toBe(
-      'офлайн',
+      'Был в сети — давно',
     )
+  })
+
+  it('offline + lastSeenAt: «Был в сети — {ЧЧ:ММ}» сегодняшней метки (формат T046)', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-10T12:00:00'))
+    try {
+      const seen = new Date(Date.now() - 60_000)
+      presence.entries.set(ALICE, { status: 'offline', rev: 1, lastSeenAt: seen.toISOString() })
+      const { container } = renderDirectHeader()
+
+      expect(lampOf(container).classList.contains('off')).toBe(true)
+      const expected = new Intl.DateTimeFormat('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }).format(seen)
+      expect(container.querySelector('.chat-head .status-row .status-txt')?.textContent).toBe(
+        `Был в сети — ${expected}`,
+      )
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('unknown: НИ лампы, НИ текста «неизвестно» — пустая .status-row держит высоту (bug 12/T090)', () => {
@@ -334,7 +417,7 @@ describe('ChatHeader direct status (T040 → T043, US3-AS2, FR-016, data-model 2
     expect(container.querySelector('.chat-head .status-row .lamp')).toBeNull()
     expect(container.querySelector('.chat-head .status-row .status-txt')).toBeNull()
     expect(screen.queryByText('неизвестно')).toBeNull()
-    expect(screen.queryByText('офлайн')).toBeNull()
+    expect(screen.queryByText(/Был в сети/)).toBeNull()
     // Пустая строка статуса остаётся в DOM — якорь высоты заголовка
     // (min-height в chat-header.css): при сходимости №36 заголовок не прыгает.
     expect(container.querySelector('.chat-head .status-row')).not.toBeNull()
