@@ -40,6 +40,23 @@ export function formatDate(value: DateInput, now: Date = new Date()): string {
 }
 
 /**
+ * Формат lastSeen «Был в сети — {время}» (008a US3, FR-011, ui-behavior §3.1,
+ * research B3): сегодня по локальному времени наблюдателя → «16:20»; иначе
+ * «24 сентября, 16:20»; другой год — дата с годом (через formatDate).
+ * Невалидное/пустое значение — нейтральный фолбэк «давно».
+ */
+export function lastSeenFormat(v: string, now: Date = new Date()): string {
+  const date = toDate(v)
+  if (Number.isNaN(date.getTime())) return 'давно'
+  const time = formatTime(date)
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  return sameDay ? time : `${formatDate(date, now)}, ${time}`
+}
+
+/**
  * Русская плюрализация (алгоритм прототипа):
  * pluralRu(2, 'участник', 'участника', 'участников') → 'участника'.
  */
