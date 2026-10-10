@@ -7,6 +7,7 @@ import { formatDate, formatTime } from '../../../ui/time'
 import { useChatMessages } from '../../hooks/useChatMessages'
 import type { SyncPageUpdate } from '../../hooks/useChatMessages'
 import type { OutboxRecord } from '../../outbox'
+import type { TypingParticipant } from '../TypingRow'
 import { MessageList } from '../MessageList'
 
 const sse = vi.hoisted(() => ({ streamUserEvents: vi.fn() }))
@@ -2207,5 +2208,287 @@ describe('MessageList unread divider and conditional seat (008a Phase 9, T066)',
     const rows = Array.from(container.querySelectorAll('.message-list > li'))
     expect(rows[0]).toBe(dividerOf(container))
     expect(rows[1]?.textContent).toContain('прочитанное 1')
+  })
+})
+
+describe('MessageList typing-row bottom scroll (008a Phase 10, T067)', () => {
+  /**
+   * T067: the TypingRow is the feed's LAST element — its appearance
+   * or composition change («{имя} и ещё N печатают…») grows the
+   * content below the last message WITHOUT touching the T079 append
+   * keys (no new server/local row), so the row used to mount below
+   * the fold and stay invisible until a manual scroll. The fix is
+   * the THIRD bottom key of the append detection — the
+   * fact/composition of the typing row: while the user rides the
+   * bottom edge (bottomRef — everything read, scrolled to the end),
+   * an appearance or composition change re-drives
+   * `scrollTop = scrollHeight` with the same T086 cold-layout
+   * catch-up loop; a reader up in history is never yanked (the T079
+   * «не дёргать» rule), the row's DISAPPEARANCE only shrinks the
+   * content (no scroll), and the open seat (T085/T066) stays the
+   * sole owner of the open scroll — a typist already active at the
+   * open never hijacks it.
+   *
+   * jsdom ships no layout: per-test metrics drive the scroll
+   * container (the T079 suite pattern — `clientHeight` included, the
+   * bottom latch needs it), the typing frames ride plain rerenders
+   * (the realtime wiring is T038), and `scrollIntoView`/rAF follow
+   * the landing-suite mocks for the seat-guard and convergence
+   * cases.
+   */
+
+  let scrolled: Array<{ element: Element; block?: string }>
+  let rafQueue: Array<() => void>
+
+  const flushRaf = (): void => {
+    const frame = rafQueue
+    rafQueue = []
+    for (const callback of frame) {
+      callback()
+    }
+  }
+
+  beforeEach(() => {
+    scrolled = []
+    rafQueue = []
+    Element.prototype.scrollIntoView = function (
+      this: Element,
+      options?: boolean | ScrollIntoViewOptions,
+    ): void {
+      scrolled.push({
+        element: this,
+        block: typeof options === 'object' && options !== null ? options.block : undefined,
+      })
+    }
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void): number => {
+      rafQueue.push(callback)
+      return rafQueue.length
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    // jsdom declares no own scrollIntoView — the mock is all there ever was.
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
+  interface ScrollMetrics {
+    scrollTop: number
+    scrollHeight: number
+    clientHeight: number
+  }
+
+  function installScrollMetrics(element: HTMLElement, metrics: ScrollMetrics): void {
+    Object.defineProperty(element, 'scrollTop', {
+      configurable: true,
+      get: () => metrics.scrollTop,
+      set: (value: number) => {
+        metrics.scrollTop = value
+      },
+    })
+    Object.defineProperty(element, 'scrollHeight', {
+      configurable: true,
+      get: () => metrics.scrollHeight,
+    })
+    Object.defineProperty(element, 'clientHeight', {
+      configurable: true,
+      get: () => metrics.clientHeight,
+    })
+  }
+
+  const WINDOW: Message[] = [
+    dialogMessage('ty-in-1', 1, PEER, 'история 1'),
+    dialogMessage('ty-out-2', 2, ME, 'история 2'),
+    dialogMessage('ty-in-3', 3, PEER, 'история 3'),
+  ]
+
+  const UNREAD_WINDOW: Message[] = [
+    dialogMessage('ty-r-in-1', 1, PEER, 'прочитанное'),
+    dialogMessage('ty-r-out-2', 2, ME, 'прочитанное своё'),
+    dialogMessage('ty-u-in-3', 3, PEER, 'первое непрочитанное'),
+    dialogMessage('ty-u-in-4', 4, PEER, 'второе непрочитанное'),
+  ]
+
+  const TYPIST: TypingParticipant = { userId: PEER, name: 'Боб' }
+  const SECOND_TYPIST: TypingParticipant = {
+    userId: '33333333-3333-3333-3333-333333333333',
+    name: 'Эрин',
+  }
+
+  /** 600−560−400 < 0 — the user rides the bottom edge. */
+  const AT_BOTTOM: ScrollMetrics = { scrollTop: 560, scrollHeight: 600, clientHeight: 400 }
+
+  /** 600−100−400 = 100px from the bottom — the user reads history. */
+  const READING_HISTORY: ScrollMetrics = { scrollTop: 100, scrollHeight: 600, clientHeight: 400 }
+
+  const typingProps = (typing: readonly TypingParticipant[], outbox?: readonly OutboxRecord[]) => (
+    <MessageList messages={WINDOW} currentUserId={ME} typing={typing} outbox={outbox} />
+  )
+
+  it('scrolls the appearing typing row into view while the user rides the bottom edge', () => {
+    const { container, rerender } = render(typingProps([]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...AT_BOTTOM }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(typingProps([TYPIST]))
+
+    expect(container.querySelector('.typing-row')).not.toBeNull()
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('never yanks a reader in history: the appearing typing row does not scroll', () => {
+    const { container, rerender } = render(typingProps([]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(typingProps([TYPIST]))
+
+    expect(container.querySelector('.typing-row')).not.toBeNull()
+    expect(metrics.scrollTop).toBe(100)
+  })
+
+  it('does not jerk the scroll when the typing row disappears (content only shrinks)', () => {
+    const { container, rerender } = render(typingProps([TYPIST]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...AT_BOTTOM }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(typingProps([]))
+
+    expect(container.querySelector('.typing-row')).toBeNull()
+    expect(metrics.scrollTop).toBe(560)
+  })
+
+  it('keeps the typing row visible when a second typist joins (the composition grows)', () => {
+    const { container, rerender } = render(typingProps([TYPIST]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...AT_BOTTOM }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(typingProps([TYPIST, SECOND_TYPIST]))
+
+    expect(container.querySelector('.typing-row')?.textContent).toContain('Боб и ещё 1 печатают…')
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('keeps the open seat: a typing row appearing with the watermark commit never overrides it', () => {
+    const props = (unreadFromSeq?: number, typing: readonly TypingParticipant[] = []) => (
+      <MessageList
+        messages={UNREAD_WINDOW}
+        currentUserId={ME}
+        unreadFromSeq={unreadFromSeq}
+        typing={typing}
+      />
+    )
+    const { container, rerender } = render(props())
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+
+    // The №13 watermark and the typist land in ONE commit: the seat
+    // owns the open scroll (scrollIntoView on the last unread row —
+    // the zero-layout fit), the fresh typing row must not write
+    // `scrollTop` over it: the fresh open has latched no bottom edge
+    // yet (bottomRef is armed by real scroll events only).
+    rerender(props(2, [TYPIST]))
+
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.textContent).toContain('второе непрочитанное')
+    expect(scrolled[0]?.block).toBe('end')
+    expect(metrics.scrollTop).toBe(100)
+  })
+
+  it('arms the typing key at the open: a typist already active at the first paint never scrolls', () => {
+    const props = (typing: readonly TypingParticipant[]) => (
+      <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={2} typing={typing} />
+    )
+    const { container, rerender } = render(props([TYPIST]))
+
+    // The seat fires once (the zero-layout fit lands the last unread
+    // row at the fold) and the typing row rides the same first paint
+    // WITHOUT hijacking the open scroll — the key only ARMS.
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.block).toBe('end')
+    expect(container.querySelector('.typing-row')).not.toBeNull()
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+
+    // The composition grows while the open has latched no bottom
+    // edge — no scroll, the seat's position stands.
+    rerender(props([TYPIST, SECOND_TYPIST]))
+    expect(metrics.scrollTop).toBe(100)
+    expect(scrolled).toHaveLength(1)
+  })
+
+  it('keeps the T079 own-send autoscroll intact while the typing row is mounted', () => {
+    const { container, rerender } = render(typingProps([TYPIST]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    const sending: OutboxRecord = {
+      clientMessageId: 'cm-typing-1',
+      chatId: 'chat-1',
+      text: 'исходящее при печатающем',
+      state: 'sending',
+    }
+    rerender(typingProps([TYPIST], [sending]))
+
+    // Own send stays unconditional (T079) — the typing row neither
+    // blocks nor doubles it.
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('re-drives the typing scroll to the true bottom when the warmed layout grows (bug 8б parity)', () => {
+    const { container, rerender } = render(typingProps([]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { scrollTop: 560, scrollHeight: 600, clientHeight: 400, writes: 0 }
+    Object.defineProperty(list, 'scrollTop', {
+      configurable: true,
+      get: () => metrics.scrollTop,
+      set: (value: number) => {
+        metrics.writes += 1
+        metrics.scrollTop = Math.max(
+          0,
+          Math.min(value, metrics.scrollHeight - metrics.clientHeight),
+        )
+      },
+    })
+    Object.defineProperty(list, 'scrollHeight', {
+      configurable: true,
+      get: () => metrics.scrollHeight,
+    })
+    Object.defineProperty(list, 'clientHeight', {
+      configurable: true,
+      get: () => metrics.clientHeight,
+    })
+    fireEvent.scroll(list)
+
+    rerender(typingProps([TYPIST]))
+    // The cold write scrollTop=scrollHeight(600) CLAMPS to the cold
+    // maximum 200 — the real browser's content-visibility undershoot.
+    expect(metrics.scrollTop).toBe(200)
+
+    // The paint warms the layout (placeholders become the real typing
+    // row) and the scrollHeight grows to 1000 — the post-paint loop
+    // must catch the 400px gap and re-drive the scroll to the WARM
+    // bottom.
+    metrics.scrollHeight = 1000
+    flushRaf()
+    expect(metrics.scrollTop).toBe(600)
+
+    // Converged: further frames never touch the scroll again.
+    flushRaf()
+    flushRaf()
+    expect(metrics.scrollTop).toBe(600)
+    expect(metrics.writes).toBe(2)
   })
 })

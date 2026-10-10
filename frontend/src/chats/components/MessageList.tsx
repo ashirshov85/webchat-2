@@ -94,6 +94,9 @@
  * client-cache lookups: unresolved `userId`s drop out (TypingRow),
  * and an empty chat with a live typist keeps the real feed instead
  * of the empty state. The realtime state behind the prop is T038.
+ * T067 (008a Phase 10): the row never mounts out of sight — its
+ * appearance/composition is the THIRD bottom key of the append
+ * detection (see the autoscroll paragraph below).
  *
  * Open seat (bug 2 T078 → bug 7 T085 → bug 13 T091 → bug 14 T092 →
  * 008a Phase 9 T066): the first render of an open chat with unread
@@ -160,6 +163,20 @@
  * so a post-paint rAF loop re-drives it until the distance to the
  * real bottom converges — the same bounded SCROLL_SETTLE_FRAMES
  * budget as the seat.
+ *
+ * Typing-row follow (008a Phase 10, T067): the TypingRow is the
+ * feed's LAST element — its appearance or composition change
+ * («{имя} и ещё N печатают…») grows the content below the bottom
+ * message WITHOUT touching the two append keys above, so it carries
+ * a THIRD bottom key of its own (the sorted participant ids, ''
+ * when absent). An appearance/composition change while the user
+ * rides the bottom edge re-drives `scrollTop = scrollHeight` with
+ * the same bug 8б correction loop — the notification «X печатает…»
+ * never mounts below the fold of an all-read, bottom-scrolled chat;
+ * a reader up in history is never yanked (the T079 rule), and the
+ * row's disappearance only shrinks the content — no scroll. A fresh
+ * open only ARMS the key: the open seat (T085/T066) stays the sole
+ * owner of the open scroll.
  *
  * Delivery-stamp animation (US1, T023, FR-018 edge case): the
  * engraved tick plays the prototype `tickStamp` (.32s,
@@ -540,6 +557,11 @@ export function MessageList({
   const lastServerIdRef = useRef<string | undefined>(undefined)
   /** Bottom-most local row of the previous commit (T079). */
   const lastLocalKeyRef = useRef<string | undefined>(undefined)
+  /**
+   * Bottom typing-row key of the previous commit (T067): `undefined` —
+   * never observed (fresh open, the tracking is armed only).
+   */
+  const typingKeyRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
     const list = listRef.current
@@ -610,6 +632,7 @@ export function MessageList({
       seatArmedRef.current = true
       seatLoadedOldestRef.current = null
       unreadBarrierSeqRef.current = undefined
+      typingKeyRef.current = undefined
     }
   }, [messages])
 
@@ -751,6 +774,11 @@ export function MessageList({
   const activePending = pending.filter((entry) => !confirmedIds.has(entry.clientMessageId))
   const activeOutbox = outbox.filter((entry) => !confirmedIds.has(entry.clientMessageId))
 
+  // Typing row gate (T037): the row renders only when at least one
+  // participant resolved — and an empty chat with somebody typing
+  // keeps the real feed (the empty state steps aside).
+  const knownTyping = renderableTyping(typing)
+
   // T079 append detection: the bottom-most SERVER row and the
   // bottom-most LOCAL row of the window. An older-page prepend keeps
   // both keys (the newest content does not move), an append changes
@@ -762,6 +790,22 @@ export function MessageList({
   } else if (activeOutbox.length > 0) {
     lastLocalKey = `outbox:${activeOutbox.at(-1)?.clientMessageId}`
   }
+
+  /**
+   * T067: the THIRD bottom key — the fact/composition of the typing
+   * row ('' — absent; otherwise the sorted participant ids, so an
+   * appearance, a disappearance or a «{имя} и ещё N печатают…»
+   * composition change re-keys it). The row is the feed's LAST
+   * element: it grows/shrinks the content below the bottom message
+   * WITHOUT touching the two keys above.
+   */
+  const typingKey =
+    knownTyping.length > 0
+      ? `typing:${knownTyping
+          .map((p) => p.userId)
+          .sort()
+          .join(',')}`
+      : ''
 
   /**
    * T023 ack tracking: ids rendered as LOCAL rows in the previous
@@ -859,6 +903,73 @@ export function MessageList({
     )
   })
 
+  /**
+   * T067 typing-row bottom follow: the row is the feed's LAST element
+   * — it appears/changes below the bottom message without touching
+   * the T079 append keys, so its own key drives the follow. The gate
+   * mirrors T079: ONLY a user riding the bottom edge
+   * (BOTTOM_STICKY_THRESHOLD, latched by real scroll events — all
+   * messages read, the chat scrolled to the end) is followed; a
+   * reader up in history is never yanked. An APPEARANCE or a
+   * COMPOSITION change (a second typist grows «{имя} и ещё N
+   * печатают…») re-drives `scrollTop = scrollHeight`; a DISAPPEARANCE
+   * only shrinks the content — no scroll, nothing new to reveal. A
+   * fresh open (mount, or the re-armed empty window of a chat
+   * switch) only ARMS the key (`undefined` → observed): the open seat
+   * (T085/T066) owns the open scroll, and a typist already active at
+   * the open never hijacks it — which is also why empty-window
+   * commits are skipped entirely (the re-arm marker must survive
+   * them). Own sends stay the T079 effect's business alone.
+   */
+  useEffect(() => {
+    if (messages.length === 0) {
+      return
+    }
+    const previousTypingKey = typingKeyRef.current
+    typingKeyRef.current = typingKey
+    if (previousTypingKey === undefined || previousTypingKey === typingKey || typingKey === '') {
+      return
+    }
+    if (!bottomRef.current) {
+      return
+    }
+    const list = listRef.current
+    if (list === null) {
+      return
+    }
+    list.scrollTop = list.scrollHeight
+    // Cold-layout correction (bug 8б, T086): the typing row mounts
+    // behind a content-visibility placeholder, so the write above
+    // lands against an underestimated scrollHeight and clamps ABOVE
+    // the real bottom. Re-check after every paint and re-drive until
+    // the distance to the real bottom stays within the
+    // trailing-aware tolerance for SUSTAINED frames — bounded to the
+    // SCROLL_SETTLE_FRAMES budget. jsdom's zero layout rests quickly.
+    if (typeof requestAnimationFrame === 'function') {
+      const settle = (framesLeft: number, stable: number) => {
+        if (listRef.current !== list) {
+          return
+        }
+        if (list.scrollHeight - list.scrollTop - list.clientHeight <= SCROLL_SETTLE_TOLERANCE_PX) {
+          stable += 1
+        } else {
+          stable = 0
+          if (framesLeft > 0) {
+            list.scrollTop = list.scrollHeight
+          }
+        }
+        if (stable < SCROLL_SETTLE_STABLE_FRAMES && framesLeft > 0) {
+          requestAnimationFrame(() => {
+            settle(framesLeft - 1, stable)
+          })
+        }
+      }
+      requestAnimationFrame(() => {
+        settle(SCROLL_SETTLE_FRAMES, 0)
+      })
+    }
+  })
+
   // Group variant (T038): the roster presence discriminates; sender
   // attribution resolves through it, and ✓✓ follows the group
   // watermark instead of the direct-chat `peerReadUpToSeq`.
@@ -928,11 +1039,6 @@ export function MessageList({
       }
     }
   }
-
-  // Typing row gate (T037): the row renders only when at least one
-  // participant resolved — and an empty chat with somebody typing
-  // keeps the real feed (the empty state steps aside).
-  const knownTyping = renderableTyping(typing)
 
   if (messages.length === 0 && activePending.length === 0 && activeOutbox.length === 0) {
     if (knownTyping.length === 0) {
