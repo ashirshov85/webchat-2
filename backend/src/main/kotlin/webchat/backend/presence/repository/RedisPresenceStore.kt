@@ -244,18 +244,19 @@ class RedisPresenceStore(
         val flat = evalList(SNAPSHOT_SCRIPT, keys)
         return distinct
             .mapIndexed { index, userId ->
+                val base = SNAPSHOT_STRIDE * index
                 userId to
                     PublishedPresence(
                         userId = userId,
                         status =
-                            if (flag(flat.getOrElse(3 * index) { null }) == 1) {
+                            if (flag(flat.getOrElse(base) { null }) == 1) {
                                 PresencePublishedStatus.ONLINE
                             } else {
                                 PresencePublishedStatus.OFFLINE
                             },
-                        rev = number(flat.getOrElse(3 * index + 1) { null }),
+                        rev = number(flat.getOrElse(base + 1) { null }),
                         lastSeenAt =
-                            flat.getOrElse(3 * index + 2) { null }?.let { stamp ->
+                            flat.getOrElse(base + 2) { null }?.let { stamp ->
                                 Instant.ofEpochMilli(number(stamp))
                             },
                     )
@@ -327,6 +328,9 @@ class RedisPresenceStore(
         /** data-model 007 §3: the `presence:online:count` Lua outcome codes of the offq execution. */
         const val SUPPRESSED = 1
         const val WENT_OFFLINE = 2
+
+        /** The SNAPSHOT Lua triple per user: {pub, rev, lastSeen} (readPublishedBatch). */
+        const val SNAPSHOT_STRIDE = 3
 
         /** data-model 007 §3 key families (+ data-model 008a §2.2 — lastSeen). */
         const val ALIVE_KEY_PREFIX = "presence:alive:"
@@ -442,7 +446,8 @@ class RedisPresenceStore(
                 Long::class.java,
             )
 
-        // KEYS: alive, conn, pub, rev, offq, count, watch, lastseen; ARGV: sessionId, userId → {switched, statusOnline, rev}
+        // KEYS: alive, conn, pub, rev, offq, count, watch, lastseen;
+        // ARGV: sessionId, userId → {switched, statusOnline, rev}
         // (watch = the unregister-leg discipline of T027: the removed top scorer must LOWER the deadline to the
         //  MAX of the REMAINING registrations — or a surviving device's silent lapse would be reaped up to one
         //  TTL late, outside the SC-003 budget; none left → ZREM, the immediate publish below replaces the offq;

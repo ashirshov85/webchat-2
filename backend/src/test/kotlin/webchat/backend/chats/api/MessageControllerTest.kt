@@ -15,9 +15,9 @@ import org.springframework.security.oauth2.jwt.Jwt
 import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.backpressure.NoopSendAdmissionGate
+import webchat.backend.chats.ChatSoundMetrics
 import webchat.backend.chats.NoopContactRepository
 import webchat.backend.chats.NoopProfileStore
-import webchat.backend.chats.ChatSoundMetrics
 import webchat.backend.chats.TypingMetrics
 import webchat.backend.chats.api.dto.ReadRequest
 import webchat.backend.chats.api.dto.SendMessageRequest
@@ -509,7 +509,8 @@ class MessageControllerTest {
         ) = Unit
     }
 
-    /** The T033 leg stays inert here — no active typing state ever resolves, so the extinguish is a silent claim miss. */
+    /** The T033 leg stays inert here — no active typing state ever resolves,
+     *  so the extinguish is a silent claim miss. */
     private object NoopTypingStore : TypingStore {
         override fun start(
             chatId: UUID,

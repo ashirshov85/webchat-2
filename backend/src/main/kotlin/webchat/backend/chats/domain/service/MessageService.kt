@@ -185,7 +185,8 @@ sealed interface MessageSendResult {
  * the racing winner of the very row has already claimed.
  */
 @Service
-// the №16 path collaborators, one per leg (T041 the admission gate; T035 the 006 roster/metrics pair; T033 the 008a typing extinguish)
+// the №16 path collaborators, one per leg
+// (T041 the admission gate; T035 the 006 roster/metrics pair; T033 the 008a typing extinguish)
 @Suppress("LongParameterList")
 class MessageService(
     private val chatService: ChatService,

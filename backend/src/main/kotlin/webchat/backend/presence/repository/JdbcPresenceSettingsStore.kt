@@ -36,7 +36,11 @@ class JdbcPresenceSettingsStore(
      * absent from the answer: the caller consults this leg only for
      * targets the visibility policy already resolved as visible, so a
      * missing entry defaults to «not hidden» upstream.
+     *
+     * (The spread of the argument array is the dynamic IN-list's per-id
+     * bind list — a tiny one-off copy of ≤ 200 ids, the №36 batch cap.)
      */
+    @Suppress("SpreadOperator")
     override fun incognitoBatch(userIds: Collection<UUID>): Map<UUID, Boolean> {
         val distinct = userIds.distinct()
         if (distinct.isEmpty()) return emptyMap()
@@ -80,7 +84,7 @@ class JdbcPresenceSettingsStore(
             SELECT presence_hidden FROM users WHERE id = ?
             """.trimIndent()
 
-        val FIND_INCOGNITO_BATCH_SQL_PREFIX = "SELECT id, presence_hidden FROM users WHERE id IN ("
+        const val FIND_INCOGNITO_BATCH_SQL_PREFIX = "SELECT id, presence_hidden FROM users WHERE id IN ("
 
         val STORE_IF_CHANGED_SQL =
             """

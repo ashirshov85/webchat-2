@@ -184,6 +184,7 @@ class ChatService(
     private val chatSoundMetrics: ChatSoundMetrics,
 ) {
     private val log: Logger = LoggerFactory.getLogger(ChatService::class.java)
+
     fun ensure(
         callerId: UUID,
         peerId: UUID,

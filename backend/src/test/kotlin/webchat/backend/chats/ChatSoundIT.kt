@@ -123,7 +123,8 @@ class ChatSoundIT(
                 val deliveryTook = Duration.ofNanos(System.nanoTime() - sentAt)
                 assertThat(deliveryTook)
                     .overridingErrorMessage(
-                        "SC-006: chat.sound.updated must reach the toggler's own channel within 2 s of the №42 PUT, took <%s>",
+                        "SC-006: chat.sound.updated must reach the toggler's own channel " +
+                            "within 2 s of the №42 PUT, took <%s>",
                         deliveryTook,
                     ).isLessThanOrEqualTo(SC006_BUDGET)
                 assertSoundUpdatedPayload(mutedFrame, chatId, expectedSoundEnabled = false)
@@ -489,7 +490,8 @@ class ChatSoundIT(
         }
     }
 
-    /** The exact №42 429 of api-contract.md: problem+json with `errors.enabled=[flood_limit]` + integral `Retry-After` ≥ 1s. */
+    /** The exact №42 429 of api-contract.md: problem+json with
+     *  `errors.enabled=[flood_limit]` + integral `Retry-After` ≥ 1s. */
     private fun assertFloodRejection(rejection: ResponseEntity<String>) {
         assertThat(rejection.statusCode)
             .overridingErrorMessage(
