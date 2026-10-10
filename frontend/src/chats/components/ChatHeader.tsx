@@ -61,6 +61,14 @@
  * операция №42 (+ тосты, звук отклика, откат при ошибке) — у страницы
  * (onToggleSound), заголовок — проекция.
  *
+ * 008a Phase 11 (T068; прототип #btnSearch chats.html:443): кнопка-
+ * лупа псевдо-поиска — ПЕРВОЙ в .ch-btns, перед bell-колоколом. Клики
+ * переключают режим поиска сайдбара: активный режим — класс `.on`
+ * (золотая рамка прототипа :156) + aria-pressed; повторный клик
+ * выключает и возвращает фокус композеру (прототип :1571 — фокус
+ * принадлежит странице, onToggleSearch — провод). Активна только при
+ * открытом чате — заголовок существует лишь у открытого окна.
+ *
  * The avatar derives from the peer username (circle) or the group
  * title (octagon, FR-024) via ui/Avatar and recalculates on renames;
  * the title itself is resolved by the page — the live №28 title
@@ -164,6 +172,14 @@ export interface ChatHeaderProps {
    * и звук отклика (§4.2); ошибка — состояние не меняется.
    */
   readonly onToggleSound?: (next: boolean) => void
+  /**
+   * 008a Phase 11 (T068): режим псевдо-поиска открытого чата — кнопка-
+   * лупа #btnSearch прототипа несёт класс `.on` пока режим активен;
+   * клики ушли странице (включение/выключение + фокус композера).
+   */
+  readonly searchActive?: boolean
+  /** Клик лупы (T068): страница переключает режим поиска сайдбара. */
+  readonly onToggleSearch?: () => void
   /** direct: «Добавить в контакты» — №21 belongs to the page (T054). */
   readonly onAddContact?: () => void
   /** direct: «Заблокировать/Разблокировать контакт» — №23/№24 of the page. */
@@ -382,6 +398,8 @@ export function ChatHeader({
   chat,
   soundEnabled,
   onToggleSound,
+  searchActive = false,
+  onToggleSearch,
   onAddContact,
   onToggleBlock,
   onDeleteChat,
@@ -496,11 +514,27 @@ export function ChatHeader({
           <DirectStatusRow entry={presenceEntry} blockedByMe={chat.blockedByMe} />
         )}
       </div>
-      {/* Правые кнопки: bell-колокол звука (008a T057, ui-behavior §4.1)
-          — всегда, персональная настройка участия; «шестерёнка» (FR-016,
-          T054): direct — всегда, group — с известной ролью (живой №28 или
-          базис №12/№13/№27) — без роли матрица пунктов 006 не определена. */}
+      {/* Правые кнопки: лупа псевдо-поиска (008a Phase 11 T068,
+          прототип #btnSearch) — первой; bell-колокол звука (008a T057,
+          ui-behavior §4.1) — всегда, персональная настройка участия;
+          «шестерёнка» (FR-016, T054): direct — всегда, group — с
+          известной ролью (живой №28 или базис №12/№13/№27) — без роли
+          матрица пунктов 006 не определена. */}
       <div className="ch-btns">
+        <button
+          type="button"
+          className={searchActive ? 'ch-btn on' : 'ch-btn'}
+          title="Поиск"
+          aria-pressed={searchActive}
+          onClick={() => {
+            onToggleSearch?.()
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="10.5" cy="10.5" r="6.5" />
+            <path d="M15.5 15.5 21 21" />
+          </svg>
+        </button>
         <button
           type="button"
           className={soundEnabled === false ? 'ch-btn off' : 'ch-btn'}

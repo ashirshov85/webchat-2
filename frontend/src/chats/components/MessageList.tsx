@@ -363,6 +363,17 @@ export interface MessageListProps {
    * list itself is T038 (MessengerPage).
    */
   readonly typing?: readonly TypingParticipant[]
+  /**
+   * Запрос прыжка к найденному сообщению (008a Phase 11, T068; прототип
+   * jumpToMessage chats.html:1563): клик строки-результата псевдо-поиска
+   * создаёт НОВЫЙ объект ({messageId, requestId}) — эффект прокручивает
+   * ленту к строке `li[data-mid]` (scrollIntoView block:'center',
+   * smooth прототипа) и запускает золотую вспышку пузыря `.flash`
+   * (srFlash 1.8s) с перезапуском на повторный клик. null/отсутствие —
+   * прыжка нет; не найденный id (сообщение за пределами окна) — тихий
+   * no-op.
+   */
+  readonly jumpTo?: { readonly messageId: string; readonly requestId: number } | null
 }
 
 /**
@@ -446,6 +457,7 @@ const FeedRow = memo(function FeedRow({
   return (
     <li
       className={outgoing ? 'message outgoing msg me' : 'message incoming msg them'}
+      data-mid={message.id}
       data-seat-anchor={seatAnchor}
     >
       <Avatar source={avatarSource} size={FEED_AVATAR_SIZE} />
@@ -539,6 +551,7 @@ export function MessageList({
   unreadFromSeq = null,
   ownAckIds,
   typing = [],
+  jumpTo = null,
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
@@ -969,6 +982,46 @@ export function MessageList({
       })
     }
   })
+
+  /**
+   * 008a Phase 11 (T068; прототип jumpToMessage :1563): прыжок к
+   * найденному сообщению псевдо-поиска — ключен на объекте запроса
+   * (страница создаёт НОВЫЙ объект на каждый клик, requestId
+   * монотонен): `scrollIntoView({block:'center', behavior:'smooth'})`
+   * строки `li[data-mid]` + золотая вспышка `.flash` пузыря с
+   * перезапуском анимации (remove → reflow → add — повторный клик по
+   * той же строке вспыхивает снова). Прыжок к ДРУГОЙ строке гасит
+   * вспышку предыдущей — подсветка всегда одна. Класс пишется
+   * императивно: React-проп className строк не меняется, ререндеры
+   * вспышку не стирают. jsdom без scrollIntoView — тихо без
+   * прокрутки; id вне окна (сообщение не загружено) — no-op.
+   */
+  const lastFlashRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (jumpTo === null) {
+      return
+    }
+    const list = listRef.current
+    if (list === null) {
+      return
+    }
+    const row = list.querySelector<HTMLElement>(
+      `li[data-mid="${typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(jumpTo.messageId) : jumpTo.messageId}"]`,
+    )
+    if (row === null) {
+      return
+    }
+    if (typeof row.scrollIntoView === 'function') {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+    if (lastFlashRef.current !== null && lastFlashRef.current !== row) {
+      lastFlashRef.current.classList.remove('flash')
+    }
+    row.classList.remove('flash')
+    void row.offsetWidth
+    row.classList.add('flash')
+    lastFlashRef.current = row
+  }, [jumpTo])
 
   // Group variant (T038): the roster presence discriminates; sender
   // attribution resolves through it, and ✓✓ follows the group

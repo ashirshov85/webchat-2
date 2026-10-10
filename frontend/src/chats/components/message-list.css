@@ -166,6 +166,26 @@
   background: linear-gradient(90deg, var(--gold), transparent);
 }
 
+/* ============ ВСПЫШКА НАЙДЕННОГО (008a Phase 11, T068; прототип :153-154) ============ */
+
+/* Прыжок псевдо-поиска подсвечивает пузырь строки: золотое свечение
+   srFlash ~1.8 с (класс .flash ставит MessageList по jumpTo,
+   перезапуск — remove → reflow → add). prefers-reduced-motion глушит
+   глобально machine.css (конвенция 008 FR-004). */
+.message-list .msg.flash .bubble {
+  animation: srFlash 1.8s ease-out;
+}
+
+@keyframes srFlash {
+  0%,
+  25% {
+    box-shadow: 0 0 0 3px rgba(232, 200, 119, 0.65);
+  }
+  100% {
+    box-shadow: 0 0 0 3px rgba(232, 200, 119, 0);
+  }
+}
+
 /* ============ ПУЗЫРИ (design-tokens §5) ============ */
 
 /* Входящие — тёмная панель, как поля auth-формы */

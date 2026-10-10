@@ -74,6 +74,15 @@
  * T050 appends the US3 scenarios — the «Был в сети — …» statuses of
  * the direct header and the «Контакты» previews; T060 appends the US4
  * bell scenarios to the same file (see the coverage list above).
+ *
+ * T068 appends the Phase 11 pseudo-search scenarios: the #btnSearch
+ * toggle of the open dialog header swaps the sidebar into the results
+ * mode (the field «Поиск по чату…», the `.sr-head` chat name, the
+ * empty-query hint, `.sr-row` result rows with «Вы»/peer names and
+ * ~96-char snippets), and a row click jumps the feed to the message
+ * with the `.flash` glow (srFlash; `animations: 'disabled'`
+ * fast-forwards the finite glow, so the shot pins the seated feed —
+ * the smooth scrollIntoView is waited out first).
  */
 import { expect } from '@playwright/test'
 import type { Locator, Page, Route } from '@playwright/test'
@@ -717,4 +726,85 @@ visualTest.describe('T060 — 008a US4: the bell on/off', () => {
       await expect(page).toHaveScreenshot('008a-bell-frame-off.png', SHOT)
     },
   )
+})
+
+visualTest.describe('T068 — 008a Phase 11: the chat pseudo-search mode', () => {
+  /** Лупа #btnSearch заголовка открытого чата (title прототипа). */
+  function searchButtonOf(page: Page): Locator {
+    return page.getByRole('button', { name: 'Поиск' })
+  }
+
+  visualTest(
+    'results mode: field, sr-head with the chat name, hints and rows',
+    async ({ messenger }) => {
+      onlyProject(DESKTOP)
+      const { page } = messenger
+      await openAlexChat(messenger)
+
+      // Toggle on: the button carries .on, the sidebar field swaps to
+      // «Поиск по чату…» and takes focus (prototype :1571-1573), the
+      // list opens with the chat-name head + empty-query hint.
+      await searchButtonOf(page).click()
+      const field = page.getByLabel('Поиск по чату…')
+      await expect(field).toBeFocused()
+      await expect(searchButtonOf(page)).toHaveClass('ch-btn on')
+      await expect(page.locator('.chat-panel .sr-head')).toHaveText('Поиск по чату — Alex Carter')
+      await expect(page.locator('.chat-panel .sr-hint')).toHaveText(
+        'Введите запрос — результаты появятся здесь',
+      )
+
+      // 'observatory' matches BOTH the peer's invite and the own reply
+      // of the demo dialog — rows ride the feed's seq order (the peer's
+      // message first), the own row renders «Вы», the snippet carries
+      // the ~96-char window around the first occurrence.
+      await field.fill('observatory')
+      await expect(page.locator('.chat-panel .sr-row')).toHaveCount(2)
+      const names = page.locator('.chat-panel .sr-row .c-name')
+      await expect(names.nth(0)).toHaveText('Alex Carter')
+      await expect(names.nth(1)).toHaveText('Вы')
+      await expect(page.locator('.chat-panel .sr-row').nth(1).locator('.c-prev')).toContainText(
+        'The old observatory? Sounds intriguing!',
+      )
+      await expect(page).toHaveScreenshot('008a-search-results.png', SHOT)
+
+      // No matches — the prototype hint «Ничего не найдено».
+      await field.fill('zzz-нет-такого')
+      await expect(page.locator('.chat-panel .sr-hint')).toHaveText('Ничего не найдено')
+    },
+  )
+
+  visualTest('result click jumps the feed to the message with the flash', async ({ messenger }) => {
+    onlyProject(DESKTOP)
+    const { page } = messenger
+    await openAlexChat(messenger)
+
+    await searchButtonOf(page).click()
+    await page.getByLabel('Поиск по чату…').fill('night to remember')
+    await expect(page.locator('.chat-panel .sr-row')).toHaveCount(1)
+    await page.locator('.chat-panel .sr-row').first().click()
+
+    // The jump seats the found row (scrollIntoView block:'center') and
+    // carries the .flash glow — the class stays on the row (its CSS
+    // animation is fast-forwarded by animations:'disabled'), and the
+    // smooth scroll is waited out before the capture.
+    const flashed = page.locator('.message-list li.flash')
+    await expect(flashed).toContainText('night to remember')
+    await page.waitForTimeout(1500)
+    await expect(page.locator('.message-list.chat-scroll')).toHaveScreenshot(
+      '008a-search-jump.png',
+      SHOT,
+    )
+
+    // A repeat click of the SAME row re-triggers the jump (requestId
+    // grows) — the flash re-runs; the escape hatch below just proves
+    // the mode still holds (the pixels are pinned by the shot above).
+    await page.locator('.chat-panel .sr-row').first().click()
+    await expect(page.locator('.chat-panel .sr-head')).toHaveText('Поиск по чату — Alex Carter')
+
+    // Escape exits the mode with the query reset — the sidebar returns
+    // to the «Чаты» list (field aria-label back to «Поиск чатов»).
+    await page.keyboard.press('Escape')
+    await expect(page.getByLabel('Поиск чатов')).toBeVisible()
+    await expect(searchButtonOf(page)).toHaveClass('ch-btn')
+  })
 })

@@ -688,11 +688,13 @@ describe('ChatHeader bell-колокол звука (008a US4, T057; FR-012, ui-
 
     const buttons = container.querySelector('.chat-head .ch-btns')
     expect(buttons).not.toBeNull()
-    // Колокол — ПЕРВЫМ (место поиска 013 не отображается — между ним и
-    // шестернёнкой), шестерёнка — за ним.
+    // 008a Phase 11 (T068, ревизия FR-016): лупа псевдо-поиска —
+    // ПЕРВОЙ (#btnSearch прототипа), колокол — за ней, шестерёнка —
+    // последней.
     const children = Array.from(buttons?.children ?? [])
-    expect(children[0]).toBe(bell())
-    expect(children[1]).toBe(screen.getByRole('button', { name: 'Настройки чата' }))
+    expect(children[0]).toBe(screen.getByRole('button', { name: 'Поиск' }))
+    expect(children[1]).toBe(bell())
+    expect(children[2]).toBe(screen.getByRole('button', { name: 'Настройки чата' }))
     expect(bell().querySelector('svg path')).toBeInstanceOf(SVGElement)
   })
 
