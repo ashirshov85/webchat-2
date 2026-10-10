@@ -247,7 +247,7 @@
 }
 
 /* Бейдж непрочитанных — дословно из §5 прототипа (тёмно-латунная
-   пластина, err-цифры Cormorant SC); «99+» — рендер компонента. */
+    пластина, err-цифры Cormorant SC); «99+» — рендер компонента. */
 .chat-panel .c-badge {
   flex: none;
   min-width: 20px;
@@ -261,6 +261,29 @@
   color: var(--err);
   font: 700 11px var(--font-heading);
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.5);
+}
+
+/* ============ РЕЗУЛЬТАТЫ ПСЕВДО-ПОИСКА (008a Phase 11, T068; прототип :150-152) ============ */
+
+/* Шапка блока результатов «Поиск по чату — {имя}» (renderSearchResults):
+   золотой заголовочный регистр прототипа — Cormorant SC 600, разрядка,
+   верхний регистр, --gold-light. */
+.chat-panel .sr-head {
+  padding: 2px 10px 8px;
+  font: 600 12px var(--font-heading);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--gold-light);
+}
+
+/* Подсказки режима: пустой запрос «Введите запрос — результаты
+   появятся здесь» и отсутствие совпадений «Ничего не найдено» —
+   курсив Old Standard TT приглушённой третьей ступени. */
+.chat-panel .sr-hint {
+  padding: 10px;
+  text-align: center;
+  font: italic 12.5px var(--font-body);
+  color: var(--muted-3);
 }
 
 /* ============ СОСТОЯНИЯ: ОШИБКА + ПОВТОР ============ */

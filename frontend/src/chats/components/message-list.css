@@ -129,6 +129,63 @@
   background: linear-gradient(90deg, var(--gold-dark), transparent);
 }
 
+/* ============ РАЗДЕЛИТЕЛЬ «НЕПРОЧИТАННЫЕ» (008a Phase 9, T066) ============ */
+
+/* Акцентированная разновидность .date-divider: та же механика
+   расходящихся линий, но золотой машинный акцент палитры 008 —
+   цвет --gold-light, гравированная жирность var(--font-heading)
+   верхним регистром и латунная точка слева от подписи. Линии ярче
+   датовых (--gold вместо --gold-dark). Элемент статичен и не
+   интерактивен: доступное имя несёт aria-label разметки
+   (role="separator"), смена положения после открытия чата
+   исключена (снимок границы непрочитанных момента открытия). */
+.message-list .unread-divider {
+  font: 700 11px var(--font-heading);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--gold-light);
+  margin: 6px 0 14px;
+}
+
+.message-list .unread-divider .unread-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow:
+    0 0 6px rgba(232, 200, 119, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+
+.message-list .unread-divider::before {
+  background: linear-gradient(90deg, transparent, var(--gold));
+}
+
+.message-list .unread-divider::after {
+  background: linear-gradient(90deg, var(--gold), transparent);
+}
+
+/* ============ ВСПЫШКА НАЙДЕННОГО (008a Phase 11, T068; прототип :153-154) ============ */
+
+/* Прыжок псевдо-поиска подсвечивает пузырь строки: золотое свечение
+   srFlash ~1.8 с (класс .flash ставит MessageList по jumpTo,
+   перезапуск — remove → reflow → add). prefers-reduced-motion глушит
+   глобально machine.css (конвенция 008 FR-004). */
+.message-list .msg.flash .bubble {
+  animation: srFlash 1.8s ease-out;
+}
+
+@keyframes srFlash {
+  0%,
+  25% {
+    box-shadow: 0 0 0 3px rgba(232, 200, 119, 0.65);
+  }
+  100% {
+    box-shadow: 0 0 0 3px rgba(232, 200, 119, 0);
+  }
+}
+
 /* ============ ПУЗЫРИ (design-tokens §5) ============ */
 
 /* Входящие — тёмная панель, как поля auth-формы */

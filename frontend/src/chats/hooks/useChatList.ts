@@ -135,6 +135,18 @@ export interface UseChatListResult {
   readonly chats: ChatListItem[]
   readonly status: ChatListStatus
   readonly error: unknown
+  /**
+   * Монотонная ревизия №12-базиса (008a T065): растёт ТОЛЬКО на факте
+   * завершения успешного №12-фетча — момент, когда строки списка стали
+   * серверной правдой. Локальные инкрементальные обновления
+   * (message.created / chat.read / sync-дельты) пересобирают строки
+   * spread'ом и потому НЕСУТ просроченные №12-поля последнего фетча —
+   * потребители, сходящиеся к серверным полям строк (например,
+   * звук-переключатели 008a US4 во MessengerPage), обязаны ключиться
+   * на эту ревизию, а не на сам массив `chats`: сходимость по локальным
+   * пересборкам откатывала бы свежие значения просроченными.
+   */
+  readonly listRevision: number
   /** Re-runs the №12 fetch (error retry, panel refresh actions). */
   readonly reload: () => void
   /**
@@ -396,6 +408,13 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
   const [error, setError] = useState<unknown>(null)
   const [refreshCount, setRefreshCount] = useState(0)
   /**
+   * Ревизия №12-базиса (008a T065): инкремент в том же коммите, что и
+   * применение свежего агрегата (см. эффект фетча ниже) — потребители
+   * ключатся на неё, чтобы отличить «сервер ответил» от «список
+   * пересобран локально со старыми №12-полями».
+   */
+  const [listRevision, setListRevision] = useState(0)
+  /**
    * Synchronous mirror of the list for the realtime listeners (the
    * unknown-`chatId` check of FR-019 must not wait for a commit); a
    * stale read at worst triggers an extra refetch — always safe, the
@@ -460,6 +479,9 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
         setError(null)
         setStatus('ready')
         applyChats((previous) => mergeRefetchedChats(items, previous))
+        // T065: тот же коммит несёт и строки, и ревизию базиса —
+        // потребители №12-полей строк сходятся строго по этому факту.
+        setListRevision((revision) => revision + 1)
       } catch (cause) {
         if (cancelled) {
           return
@@ -592,6 +614,7 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
     chats,
     status,
     error,
+    listRevision,
     reload,
     markChatReadLocally,
     applySyncUpdate,

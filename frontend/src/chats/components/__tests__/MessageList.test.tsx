@@ -7,6 +7,7 @@ import { formatDate, formatTime } from '../../../ui/time'
 import { useChatMessages } from '../../hooks/useChatMessages'
 import type { SyncPageUpdate } from '../../hooks/useChatMessages'
 import type { OutboxRecord } from '../../outbox'
+import type { TypingParticipant } from '../TypingRow'
 import { MessageList } from '../MessageList'
 
 const sse = vi.hoisted(() => ({ streamUserEvents: vi.fn() }))
@@ -801,25 +802,29 @@ describe('MessageList open seat: the first unread incoming row (bug 2/7/13/14, T
     dialogMessage('u-in-6', 6, PEER, 'второе непрочитанное'),
   ]
 
-  it('seats the open chat at the first unread incoming, its top edge at the viewport top', () => {
+  it('seats the open chat at the end of the unread run when the block fits (T066)', () => {
     const { container } = render(
       <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
     )
 
-    // The first unread incoming row is marked for the scroll and
-    // stays in the DOM — the unread run u-in-5…u-in-6 starts AT the
-    // top of the viewport, the read history above (r-in-1…u-out-4)
-    // stays reachable by scrolling up (bug 14). The anchor value
-    // carries the seat alignment for the effect.
-    const anchor = container.querySelector('[data-seat-anchor]')
-    expect(anchor).not.toBeNull()
-    expect(anchor?.textContent).toContain('первое непрочитанное')
-    expect(anchor?.getAttribute('data-seat-anchor')).toBe('start')
-    expect(container.querySelectorAll('[data-seat-anchor]')).toHaveLength(1)
+    // T066 re-targets the unread seat: the divider «Непрочитанные
+    // сообщения» rides above the FIRST unread incoming (u-in-5) and
+    // the seat lands the LAST unread row at the fold (block:'end')
+    // whenever the divider + the whole unread run fit the viewport —
+    // jsdom's zero layout always «fits», so this suite observes the
+    // fits branch; the T066 block pins the not-fits one via rect
+    // mocks. The read history above (r-in-1…u-out-4) stays a
+    // scroll-up away (bug 14 intent, kept by the divider anchor).
+    const divider = container.querySelector('.unread-divider')
+    expect(divider).not.toBeNull()
+    expect(container.querySelectorAll('[data-seat-anchor]')).toHaveLength(2)
+    expect(container.querySelector('[data-seat-anchor="start"]')).toBe(divider)
+    const anchor = container.querySelector('[data-seat-anchor="end"]')
+    expect(anchor?.textContent).toContain('второе непрочитанное')
 
     expect(scrolled).toHaveLength(1)
     expect(scrolled[0]?.element).toBe(anchor)
-    expect(scrolled[0]?.block).toBe('start')
+    expect(scrolled[0]?.block).toBe('end')
   })
 
   it('seats a window with no unread incoming at the end of the feed', () => {
@@ -863,13 +868,11 @@ describe('MessageList open seat: the first unread incoming row (bug 2/7/13/14, T
     expect(scrolled[0]?.block).toBe('end')
   })
 
-  it('keeps the anchor on the unread incoming when an own send stands right above it (interleave)', () => {
+  it('keeps the unread boundary on the incoming row when an own send stands right above it (interleave)', () => {
     // Watermark 2: seq 1–2 are read (the seq 2 row is an OWN send),
-    // seq 3 is the first unread incoming — the anchor is the seq 3
-    // INCOMING row itself, whatever the own send above it says about
-    // the watermark (T092 interleave: the unread run is read from
-    // its first row — the T091 anchor used to sit at the own row
-    // above it).
+    // seq 3 is the first — and only, hence also the LAST — unread
+    // incoming: the T066 divider rides above it and the zero-layout
+    // fit seats its end at the fold (block:'end').
     const INTERLEAVE: Message[] = [
       dialogMessage('i-in-1', 1, PEER, 'прочитанное входящее'),
       dialogMessage('i-out-2', 2, ME, 'своё над непрочитанным'),
@@ -879,11 +882,15 @@ describe('MessageList open seat: the first unread incoming row (bug 2/7/13/14, T
       <MessageList messages={INTERLEAVE} currentUserId={ME} unreadFromSeq={2} />,
     )
 
-    const anchor = container.querySelector('[data-seat-anchor]')
-    expect(anchor?.textContent).toContain('непрочитанное входящее')
+    const divider = container.querySelector('.unread-divider')
+    expect(divider).not.toBeNull()
+    const rows = Array.from(container.querySelectorAll('.message-list > li'))
+    expect(rows[rows.indexOf(divider as Element) + 1]?.textContent).toContain(
+      'непрочитанное входящее',
+    )
     expect(scrolled).toHaveLength(1)
-    expect(scrolled[0]?.element).toBe(anchor)
-    expect(scrolled[0]?.block).toBe('start')
+    expect(scrolled[0]?.element.textContent).toContain('непрочитанное входящее')
+    expect(scrolled[0]?.block).toBe('end')
   })
 
   it('does not scroll an empty chat', () => {
@@ -903,11 +910,12 @@ describe('MessageList open seat: the first unread incoming row (bug 2/7/13/14, T
     expect(container.querySelectorAll('.message')).toHaveLength(6)
     expect(scrolled).toHaveLength(0)
 
-    // The №13 answer lands with the open-time watermark — the seat fires.
+    // The №13 answer lands with the open-time watermark — the seat fires
+    // at the LAST unread incoming (the zero-layout fit branch).
     rerender(props(3))
     expect(scrolled).toHaveLength(1)
-    expect(scrolled[0]?.element.textContent).toContain('первое непрочитанное')
-    expect(scrolled[0]?.block).toBe('start')
+    expect(scrolled[0]?.element.textContent).toContain('второе непрочитанное')
+    expect(scrolled[0]?.block).toBe('end')
   })
 
   it('scrolls once per open: realtime appends after the open never re-scroll', () => {
@@ -969,7 +977,7 @@ describe('MessageList open seat: the first unread incoming row (bug 2/7/13/14, T
     ),
   )
 
-  it('loads №14 pages until the read row precedes the run, then seats at the first unread incoming', () => {
+  it('loads №14 pages until the read row precedes the run, then seats by the unread-block rules', () => {
     const onLoadOlder = vi.fn()
     const props = (messages: readonly Message[], loadingOlder: boolean) => (
       <MessageList
@@ -997,13 +1005,18 @@ describe('MessageList open seat: the first unread incoming row (bug 2/7/13/14, T
 
     // The page (21–40) prepends — the window's first unread
     // incoming (seq 41) is preceded by the loaded seq 40 row now:
-    // seq 41 IS the chat's first unread, the seat fires at its top
-    // edge (block:'start').
+    // seq 41 IS the chat's first unread, the T066 divider rides
+    // above it and the zero-layout fit seats the LAST unread
+    // incoming (seq 59, PEER) at the fold.
     rerender(props([...OLDER_PAGE, ...HIGH_WINDOW], false))
     expect(onLoadOlder).toHaveBeenCalledTimes(1)
+    const divider = container.querySelector('.unread-divider')
+    expect(divider).not.toBeNull()
+    const rows = Array.from(container.querySelectorAll('.message-list > li'))
+    expect(rows[rows.indexOf(divider as Element) + 1]?.textContent).toContain('окно 41')
     expect(scrolled).toHaveLength(1)
-    expect(scrolled[0]?.element.textContent).toContain('окно 41')
-    expect(scrolled[0]?.block).toBe('start')
+    expect(scrolled[0]?.element.textContent).toContain('окно 59')
+    expect(scrolled[0]?.block).toBe('end')
 
     // The seat is spent — later appends never re-scroll.
     rerender(
@@ -1128,8 +1141,8 @@ describe('MessageList open seat: the first unread incoming row (bug 2/7/13/14, T
     await waitFor(() => {
       expect(scrolled).toHaveLength(1)
     })
-    expect(scrolled[0]?.element.textContent).toContain('первое непрочитанное')
-    expect(scrolled[0]?.block).toBe('start')
+    expect(scrolled[0]?.element.textContent).toContain('второе непрочитанное')
+    expect(scrolled[0]?.block).toBe('end')
   })
 
   it('drives the №14 catch-up through the live wiring until the read row arrives', async () => {
@@ -1172,12 +1185,14 @@ describe('MessageList open seat: the first unread incoming row (bug 2/7/13/14, T
     // The №16 window is 51–60 and starts with the unread incoming
     // run (seq 51) — the chat's first unread incoming (seq 41, the
     // head of the same run) is two №14 pages above; the seat
-    // paginates down to it and fires at its top edge.
+    // paginates down to it, the T066 divider rides above the found
+    // boundary and the zero-layout fit seats the LAST unread
+    // incoming (seq 59) at the fold.
     await waitFor(() => {
       expect(scrolled).toHaveLength(1)
     })
-    expect(scrolled[0]?.element.textContent).toContain('средняя 41')
-    expect(scrolled[0]?.block).toBe('start')
+    expect(scrolled[0]?.element.textContent).toContain('верх 59')
+    expect(scrolled[0]?.block).toBe('end')
     expect(container.querySelectorAll('.message')).toHaveLength(30)
     expect(mockedListMessages).toHaveBeenNthCalledWith(2, 'chat-1', { before: 50 })
     expect(mockedListMessages).toHaveBeenNthCalledWith(3, 'chat-1', { before: 40 })
@@ -1508,23 +1523,32 @@ describe('MessageList seat convergence after the cold layout (bug 8а, T086)', (
     element.getBoundingClientRect = () => ({ top: top() }) as DOMRect
   }
 
-  it('re-scrolls a start seat that undershot the viewport top (T092)', () => {
+  it('re-scrolls a start seat that undershot the viewport top (T092 seat on the T066 divider)', () => {
     const { container } = render(
       <MessageList messages={UNREAD_RUN_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
     )
-    const anchor = container.querySelector('[data-seat-anchor]') as Element
-    expect(anchor?.getAttribute('data-seat-anchor')).toBe('start')
+    const divider = container.querySelector('.unread-divider') as Element
+    const lastUnread = container.querySelector('[data-seat-anchor="end"]') as Element
+    expect(divider.getAttribute('data-seat-anchor')).toBe('start')
     let seatTop = 420
-    mockTop(container.querySelector('.message-list') as Element, () => 100)
-    mockTop(anchor, () => seatTop)
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    mockTop(list, () => 100)
+    mockTop(divider, () => seatTop)
+    mockBottom(lastUnread, () => 900)
+    Object.defineProperty(list, 'clientHeight', {
+      configurable: true,
+      get: () => 400,
+    })
 
     flushRaf()
-    // The warmed layout left the first unread incoming 320px BELOW
-    // the viewport top — the start-block correction must fire.
+    // The warmed layout left the divider 320px BELOW the viewport top
+    // with an 800px unread block against a 400px fold — the start-block
+    // correction must fire on the DIVIDER.
     expect(scrolled).toHaveLength(2)
+    expect(scrolled[1]?.element).toBe(divider)
     expect(scrolled[1]?.block).toBe('start')
 
-    // The corrective scroll lifted the anchor's top to the viewport
+    // The corrective scroll lifted the divider's top to the viewport
     // top — the loop rests, no further scrollIntoView calls.
     seatTop = 100
     flushRaf()
@@ -1807,5 +1831,664 @@ describe('MessageList send autoscroll convergence and ack race (bug 8б/8в, T08
       props([...WINDOW, dialogMessage('other-device', 4, ME, 'с другого устройства')], new Set()),
     )
     expect(metrics.scrollTop).toBe(100)
+  })
+})
+
+describe('MessageList unread divider and conditional seat (008a Phase 9, T066)', () => {
+  /**
+   * T066: opening a chat with unread incoming renders the accented
+   * «Непрочитанные сообщения» divider EXACTLY ONCE above the FIRST
+   * unread incoming row (the same boundary the seat counts) and makes
+   * the open seat conditional on the SIZE of the unread block,
+   * measured by the actual DOM marks after the first layout:
+   *  * divider + ALL unread incoming fit the viewport → block:'end'
+   *    on the LAST unread row — the whole block lands in view;
+   *  * they do NOT fit → block:'start' on the DIVIDER — the block is
+   *    read from its beginning (the T092 bug-14 intent with the
+   *    divider as the anchor instead of the first message).
+   * The divider is a STATIC snapshot of the open (the `unreadFromSeq`
+   * basis): realtime appends never move or sprout it, pagination
+   * junctions inside the unread run never grow a second one, and a
+   * wholly unread window (watermark 0) keeps it at the natural top of
+   * the loaded window with the №14 catch-up never asked (rule 8).
+   *
+   * jsdom ships no layout: the scrollIntoView mock records the seat
+   * choice, and the fit measurement rides the T086 post-paint rAF
+   * loop — the fire itself sees the all-zero layout (block height 0 ≤
+   * clientHeight 0 → «fits» → 'end'), then per-test rect/clientHeight
+   * mocks re-decide the target exactly the way the warmed browser
+   * layout would.
+   */
+
+  let scrolled: Array<{ element: Element; block?: string }>
+  let rafQueue: Array<() => void>
+
+  const flushRaf = (): void => {
+    const frame = rafQueue
+    rafQueue = []
+    for (const callback of frame) {
+      callback()
+    }
+  }
+
+  beforeEach(() => {
+    scrolled = []
+    rafQueue = []
+    Element.prototype.scrollIntoView = function (
+      this: Element,
+      options?: boolean | ScrollIntoViewOptions,
+    ): void {
+      scrolled.push({
+        element: this,
+        block: typeof options === 'object' && options !== null ? options.block : undefined,
+      })
+    }
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void): number => {
+      rafQueue.push(callback)
+      return rafQueue.length
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    // jsdom declares no own scrollIntoView — the mock is all there ever was.
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
+  /** Instance-level rect mock: only the `top` edge drives the fit/gap. */
+  function mockTop(element: Element, top: () => number): void {
+    element.getBoundingClientRect = () => ({ top: top() }) as DOMRect
+  }
+
+  /** Instance-level rect mock: only the `bottom` edge drives the fit/gap. */
+  function mockBottom(element: Element, bottom: () => number): void {
+    element.getBoundingClientRect = () => ({ bottom: bottom() }) as DOMRect
+  }
+
+  /** Instance-level viewport mock: the list `clientHeight` drives the fit. */
+  function mockClientHeight(element: HTMLElement, clientHeight: () => number): void {
+    Object.defineProperty(element, 'clientHeight', { configurable: true, get: clientHeight })
+  }
+
+  function dividerOf(container: HTMLElement): Element {
+    const divider = container.querySelector('.unread-divider')
+    if (divider === null) {
+      throw new Error('the unread divider is not rendered')
+    }
+    return divider
+  }
+
+  /** Ordered feed sketch: 'unread-divider' | 'divider' | 'message'. */
+  function rowSketch(container: HTMLElement): string[] {
+    return Array.from(container.querySelectorAll('.message-list > li')).map((row) =>
+      row.classList.contains('unread-divider')
+        ? 'unread-divider'
+        : row.classList.contains('date-divider')
+          ? 'divider'
+          : 'message',
+    )
+  }
+
+  const UNREAD_WINDOW: Message[] = [
+    dialogMessage('r-in-1', 1, PEER, 'прочитанное 1'),
+    dialogMessage('r-out-2', 2, ME, 'прочитанное 2'),
+    dialogMessage('r-in-3', 3, PEER, 'прочитанное 3'),
+    dialogMessage('u-out-4', 4, ME, 'непрочитанный исходящий'),
+    dialogMessage('u-in-5', 5, PEER, 'первое непрочитанное'),
+    dialogMessage('u-in-6', 6, PEER, 'второе непрочитанное'),
+  ]
+
+  /** The №14 catch-up fixtures of the T092 suite (window 41–60, older page 21–40). */
+  const HIGH_WINDOW: Message[] = Array.from({ length: 20 }, (_, index) =>
+    dialogMessage(`w-${index + 41}`, index + 41, index % 2 === 0 ? PEER : ME, `окно ${index + 41}`),
+  )
+  const OLDER_PAGE: Message[] = Array.from({ length: 20 }, (_, index) =>
+    dialogMessage(
+      `o-${index + 21}`,
+      index + 21,
+      index % 2 === 0 ? PEER : ME,
+      `старая ${index + 21}`,
+    ),
+  )
+
+  it('renders exactly one divider above the first unread incoming, with its accessible name', () => {
+    const { container } = render(
+      <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
+    )
+
+    const divider = dividerOf(container)
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    expect(divider.getAttribute('role')).toBe('separator')
+    expect(divider.getAttribute('aria-label')).toBe('Непрочитанные сообщения')
+    expect(divider.textContent).toContain('Непрочитанные сообщения')
+    // The boundary reuses the seat computation: the divider sits right
+    // above the FIRST unread incoming (u-in-5), below the read own row
+    // (the leading 'divider' is the exhausted-history date divider).
+    expect(rowSketch(container)).toEqual([
+      'divider',
+      'message',
+      'message',
+      'message',
+      'message',
+      'unread-divider',
+      'message',
+      'message',
+    ])
+    const rows = Array.from(container.querySelectorAll('.message-list > li'))
+    const dividerAt = rows.indexOf(divider)
+    expect(rows[dividerAt + 1]?.textContent).toContain('первое непрочитанное')
+    expect(rows[dividerAt - 1]?.textContent).toContain('непрочитанный исходящий')
+    // The seat candidates ride the same boundary — the divider
+    // ('start') and the LAST unread row ('end') — and jsdom's zero
+    // layout measures the block as fitting: rule (4) fires.
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.textContent).toContain('второе непрочитанное')
+    expect(scrolled[0]?.block).toBe('end')
+  })
+
+  it('renders no divider at zero unread and keeps the degenerate tail seat', () => {
+    const { container } = render(
+      <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={6} />,
+    )
+
+    expect(container.querySelector('.unread-divider')).toBeNull()
+    expect(container.querySelectorAll('[data-seat-anchor]')).toHaveLength(1)
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.textContent).toContain('второе непрочитанное')
+    expect(scrolled[0]?.block).toBe('end')
+  })
+
+  it('renders no divider while the №13 watermark is unknown and never seats', () => {
+    const { container } = render(<MessageList messages={UNREAD_WINDOW} currentUserId={ME} />)
+
+    expect(container.querySelector('.unread-divider')).toBeNull()
+    expect(scrolled).toHaveLength(0)
+  })
+
+  it('seats the DIVIDER top at the viewport top when the unread block does not fit (rule 3)', () => {
+    const { container } = render(
+      <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
+    )
+    const divider = dividerOf(container)
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const lastUnread = container.querySelector('[data-seat-anchor="end"]') as Element
+
+    // The warmed layout: the zero-layout 'end' fire left the divider
+    // ABOVE the fold (top 40 < list top 100) and the last unread
+    // bottom 560 below — the 400px viewport cannot hold divider + the
+    // whole unread run (520px): the post-paint loop must re-decide the
+    // target to the divider and align its top with the fold.
+    let dividerTop = 40
+    mockTop(list, () => 100)
+    mockTop(divider, () => dividerTop)
+    mockBottom(lastUnread, () => 560)
+    mockClientHeight(list, () => 400)
+
+    flushRaf()
+    expect(scrolled.at(-1)?.element).toBe(divider)
+    expect(scrolled.at(-1)?.block).toBe('start')
+
+    // The corrective scroll lifted the divider's top to the viewport
+    // top — the loop rests, no further scrollIntoView calls.
+    dividerTop = 100
+    flushRaf()
+    flushRaf()
+    flushRaf()
+    expect(scrolled).toHaveLength(2)
+  })
+
+  it('seats the LAST unread at the fold when the block fits (rule 4)', () => {
+    const { container } = render(
+      <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={3} />,
+    )
+    const divider = dividerOf(container)
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const lastUnread = container.querySelector('[data-seat-anchor="end"]') as Element
+
+    // jsdom's zero layout: the block height (0) fits the viewport
+    // (0) — the FIRE itself lands the LAST unread row at the fold.
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element).toBe(lastUnread)
+    expect(scrolled[0]?.block).toBe('end')
+
+    // The warmed fits-layout (block 330px inside the 400px fold, the
+    // last unread's bottom 20px above it) keeps the same target — the
+    // re-decide loop rests without a single correction.
+    mockTop(list, () => 100)
+    mockTop(divider, () => 150)
+    mockBottom(lastUnread, () => 480)
+    list.getBoundingClientRect = () => ({ top: 100, bottom: 500 }) as DOMRect
+    mockClientHeight(list, () => 400)
+    flushRaf()
+    flushRaf()
+    flushRaf()
+    flushRaf()
+    expect(scrolled).toHaveLength(1)
+  })
+
+  it('drives the №14 catch-up of a window starting with the unread run, then seats per the rules (rule 5)', () => {
+    const onLoadOlder = vi.fn()
+    const props = (messages: readonly Message[]) => (
+      <MessageList
+        messages={messages}
+        currentUserId={ME}
+        unreadFromSeq={40}
+        hasOlder
+        loadingOlder={false}
+        onLoadOlder={onLoadOlder}
+      />
+    )
+
+    // The window (41–60) STARTS with the unread incoming run — the
+    // divider already marks the run's head at the window top while
+    // the seat asks №14 for the page above instead of firing.
+    const { container, rerender } = render(props(HIGH_WINDOW))
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+    expect(scrolled).toHaveLength(0)
+    expect(rowSketch(container)[0]).toBe('unread-divider')
+
+    // The read page (21–40) prepends: seq 41 IS the chat's first
+    // unread — the single divider sits right above it and the
+    // zero-layout fit lands the LAST unread incoming at the fold.
+    rerender(props([...OLDER_PAGE, ...HIGH_WINDOW]))
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+    const divider = dividerOf(container)
+    const rows = Array.from(container.querySelectorAll('.message-list > li'))
+    const dividerAt = rows.indexOf(divider)
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    expect(dividerAt).toBe(OLDER_PAGE.length)
+    expect(rows[dividerAt + 1]?.textContent).toContain('окно 41')
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.textContent).toContain('окно 59')
+    expect(scrolled[0]?.block).toBe('end')
+  })
+
+  it('keeps the divider at its open-time boundary when realtime incoming lands in the open chat (rule 6)', () => {
+    const props = (messages: readonly Message[]) => (
+      <MessageList messages={messages} currentUserId={ME} unreadFromSeq={3} />
+    )
+    const { container, rerender } = render(props(UNREAD_WINDOW))
+    expect(scrolled).toHaveLength(1)
+
+    // A realtime `message.created` appends at the tail — the divider
+    // stays glued above the SAME first unread incoming of the open
+    // snapshot, exactly one, and the spent seat never re-scrolls.
+    rerender(props([...UNREAD_WINDOW, dialogMessage('new-in-7', 7, PEER, 'новое входящее')]))
+    const divider = dividerOf(container)
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    const rows = Array.from(container.querySelectorAll('.message-list > li'))
+    expect(rows[rows.indexOf(divider) + 1]?.textContent).toContain('первое непрочитанное')
+    expect(scrolled).toHaveLength(1)
+  })
+
+  it('never sprouts a divider after the open: a realtime arrival in a read chat stays undivided', () => {
+    const props = (messages: readonly Message[]) => (
+      <MessageList messages={messages} currentUserId={ME} unreadFromSeq={6} />
+    )
+    const { container, rerender } = render(props(UNREAD_WINDOW))
+    expect(container.querySelector('.unread-divider')).toBeNull()
+
+    rerender(props([...UNREAD_WINDOW, dialogMessage('new-in-7', 7, PEER, 'новое входящее')]))
+    expect(container.querySelector('.unread-divider')).toBeNull()
+  })
+
+  it('grows no second divider at a pagination junction inside the unread run (rule 7)', () => {
+    const onLoadOlder = vi.fn()
+    const props = (messages: readonly Message[]) => (
+      <MessageList
+        messages={messages}
+        currentUserId={ME}
+        unreadFromSeq={4}
+        hasOlder
+        loadingOlder={false}
+        onLoadOlder={onLoadOlder}
+      />
+    )
+    const run = [
+      dialogMessage('u-in-6', 6, PEER, 'середина хода'),
+      dialogMessage('u-in-7', 7, PEER, 'хвост хода'),
+    ]
+
+    // The window starts INSIDE the unread run (watermark 4, seqs 6–7
+    // incoming): one divider at the window top, the seat drives №14.
+    const { container, rerender } = render(props(run))
+    expect(onLoadOlder).toHaveBeenCalledTimes(1)
+    expect(scrolled).toHaveLength(0)
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    expect(rowSketch(container)[0]).toBe('unread-divider')
+
+    // The prepended page lands INSIDE the run (seq 5 is unread too) —
+    // the boundary moves up with the run's head, still ONE divider.
+    rerender(props([dialogMessage('u-in-5', 5, PEER, 'голова хода'), ...run]))
+    expect(onLoadOlder).toHaveBeenCalledTimes(2)
+    expect(scrolled).toHaveLength(0)
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    expect(rowSketch(container)[0]).toBe('unread-divider')
+
+    // The read boundary lands on top (seq 4 ≤ watermark): the single
+    // divider settles above the run's true head and the seat fires by
+    // the zero-layout fit — the LAST unread at the fold.
+    rerender(
+      props([
+        dialogMessage('r-in-4', 4, PEER, 'прочитанная граница'),
+        dialogMessage('u-in-5', 5, PEER, 'голова хода'),
+        ...run,
+      ]),
+    )
+    expect(onLoadOlder).toHaveBeenCalledTimes(2)
+    const divider = dividerOf(container)
+    const rows = Array.from(container.querySelectorAll('.message-list > li'))
+    expect(rows[rows.indexOf(divider) + 1]?.textContent).toContain('голова хода')
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.textContent).toContain('хвост хода')
+    expect(scrolled[0]?.block).toBe('end')
+  })
+
+  it('keeps a wholly unread window at its natural top: divider above the first row, no №14 (rule 8)', () => {
+    const onLoadOlder = vi.fn()
+    const { container } = render(
+      <MessageList
+        messages={UNREAD_WINDOW}
+        currentUserId={ME}
+        unreadFromSeq={0}
+        hasOlder
+        loadingOlder={false}
+        onLoadOlder={onLoadOlder}
+      />,
+    )
+
+    // Watermark 0 — nothing incoming is read anywhere: the whole feed
+    // IS the unread run, the divider rides the loaded window's
+    // natural top and the №14 catch-up is never asked (the
+    // T085/T091 guard, kept by T066).
+    expect(onLoadOlder).not.toHaveBeenCalled()
+    expect(scrolled).toHaveLength(0)
+    expect(container.querySelector('[data-seat-anchor]')).toBeNull()
+    const rows = Array.from(container.querySelectorAll('.message-list > li'))
+    expect(rows[0]).toBe(dividerOf(container))
+    expect(rows[1]?.textContent).toContain('прочитанное 1')
+  })
+})
+
+describe('MessageList typing-row bottom scroll (008a Phase 10, T067)', () => {
+  /**
+   * T067: the TypingRow is the feed's LAST element — its appearance
+   * or composition change («{имя} и ещё N печатают…») grows the
+   * content below the last message WITHOUT touching the T079 append
+   * keys (no new server/local row), so the row used to mount below
+   * the fold and stay invisible until a manual scroll. The fix is
+   * the THIRD bottom key of the append detection — the
+   * fact/composition of the typing row: while the user rides the
+   * bottom edge (bottomRef — everything read, scrolled to the end),
+   * an appearance or composition change re-drives
+   * `scrollTop = scrollHeight` with the same T086 cold-layout
+   * catch-up loop; a reader up in history is never yanked (the T079
+   * «не дёргать» rule), the row's DISAPPEARANCE only shrinks the
+   * content (no scroll), and the open seat (T085/T066) stays the
+   * sole owner of the open scroll — a typist already active at the
+   * open never hijacks it.
+   *
+   * jsdom ships no layout: per-test metrics drive the scroll
+   * container (the T079 suite pattern — `clientHeight` included, the
+   * bottom latch needs it), the typing frames ride plain rerenders
+   * (the realtime wiring is T038), and `scrollIntoView`/rAF follow
+   * the landing-suite mocks for the seat-guard and convergence
+   * cases.
+   */
+
+  let scrolled: Array<{ element: Element; block?: string }>
+  let rafQueue: Array<() => void>
+
+  const flushRaf = (): void => {
+    const frame = rafQueue
+    rafQueue = []
+    for (const callback of frame) {
+      callback()
+    }
+  }
+
+  beforeEach(() => {
+    scrolled = []
+    rafQueue = []
+    Element.prototype.scrollIntoView = function (
+      this: Element,
+      options?: boolean | ScrollIntoViewOptions,
+    ): void {
+      scrolled.push({
+        element: this,
+        block: typeof options === 'object' && options !== null ? options.block : undefined,
+      })
+    }
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void): number => {
+      rafQueue.push(callback)
+      return rafQueue.length
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    // jsdom declares no own scrollIntoView — the mock is all there ever was.
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
+  interface ScrollMetrics {
+    scrollTop: number
+    scrollHeight: number
+    clientHeight: number
+  }
+
+  function installScrollMetrics(element: HTMLElement, metrics: ScrollMetrics): void {
+    Object.defineProperty(element, 'scrollTop', {
+      configurable: true,
+      get: () => metrics.scrollTop,
+      set: (value: number) => {
+        metrics.scrollTop = value
+      },
+    })
+    Object.defineProperty(element, 'scrollHeight', {
+      configurable: true,
+      get: () => metrics.scrollHeight,
+    })
+    Object.defineProperty(element, 'clientHeight', {
+      configurable: true,
+      get: () => metrics.clientHeight,
+    })
+  }
+
+  const WINDOW: Message[] = [
+    dialogMessage('ty-in-1', 1, PEER, 'история 1'),
+    dialogMessage('ty-out-2', 2, ME, 'история 2'),
+    dialogMessage('ty-in-3', 3, PEER, 'история 3'),
+  ]
+
+  const UNREAD_WINDOW: Message[] = [
+    dialogMessage('ty-r-in-1', 1, PEER, 'прочитанное'),
+    dialogMessage('ty-r-out-2', 2, ME, 'прочитанное своё'),
+    dialogMessage('ty-u-in-3', 3, PEER, 'первое непрочитанное'),
+    dialogMessage('ty-u-in-4', 4, PEER, 'второе непрочитанное'),
+  ]
+
+  const TYPIST: TypingParticipant = { userId: PEER, name: 'Боб' }
+  const SECOND_TYPIST: TypingParticipant = {
+    userId: '33333333-3333-3333-3333-333333333333',
+    name: 'Эрин',
+  }
+
+  /** 600−560−400 < 0 — the user rides the bottom edge. */
+  const AT_BOTTOM: ScrollMetrics = { scrollTop: 560, scrollHeight: 600, clientHeight: 400 }
+
+  /** 600−100−400 = 100px from the bottom — the user reads history. */
+  const READING_HISTORY: ScrollMetrics = { scrollTop: 100, scrollHeight: 600, clientHeight: 400 }
+
+  const typingProps = (typing: readonly TypingParticipant[], outbox?: readonly OutboxRecord[]) => (
+    <MessageList messages={WINDOW} currentUserId={ME} typing={typing} outbox={outbox} />
+  )
+
+  it('scrolls the appearing typing row into view while the user rides the bottom edge', () => {
+    const { container, rerender } = render(typingProps([]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...AT_BOTTOM }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(typingProps([TYPIST]))
+
+    expect(container.querySelector('.typing-row')).not.toBeNull()
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('never yanks a reader in history: the appearing typing row does not scroll', () => {
+    const { container, rerender } = render(typingProps([]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(typingProps([TYPIST]))
+
+    expect(container.querySelector('.typing-row')).not.toBeNull()
+    expect(metrics.scrollTop).toBe(100)
+  })
+
+  it('does not jerk the scroll when the typing row disappears (content only shrinks)', () => {
+    const { container, rerender } = render(typingProps([TYPIST]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...AT_BOTTOM }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(typingProps([]))
+
+    expect(container.querySelector('.typing-row')).toBeNull()
+    expect(metrics.scrollTop).toBe(560)
+  })
+
+  it('keeps the typing row visible when a second typist joins (the composition grows)', () => {
+    const { container, rerender } = render(typingProps([TYPIST]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...AT_BOTTOM }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    rerender(typingProps([TYPIST, SECOND_TYPIST]))
+
+    expect(container.querySelector('.typing-row')?.textContent).toContain('Боб и ещё 1 печатают…')
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('keeps the open seat: a typing row appearing with the watermark commit never overrides it', () => {
+    const props = (unreadFromSeq?: number, typing: readonly TypingParticipant[] = []) => (
+      <MessageList
+        messages={UNREAD_WINDOW}
+        currentUserId={ME}
+        unreadFromSeq={unreadFromSeq}
+        typing={typing}
+      />
+    )
+    const { container, rerender } = render(props())
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+
+    // The №13 watermark and the typist land in ONE commit: the seat
+    // owns the open scroll (scrollIntoView on the last unread row —
+    // the zero-layout fit), the fresh typing row must not write
+    // `scrollTop` over it: the fresh open has latched no bottom edge
+    // yet (bottomRef is armed by real scroll events only).
+    rerender(props(2, [TYPIST]))
+
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.textContent).toContain('второе непрочитанное')
+    expect(scrolled[0]?.block).toBe('end')
+    expect(metrics.scrollTop).toBe(100)
+  })
+
+  it('arms the typing key at the open: a typist already active at the first paint never scrolls', () => {
+    const props = (typing: readonly TypingParticipant[]) => (
+      <MessageList messages={UNREAD_WINDOW} currentUserId={ME} unreadFromSeq={2} typing={typing} />
+    )
+    const { container, rerender } = render(props([TYPIST]))
+
+    // The seat fires once (the zero-layout fit lands the last unread
+    // row at the fold) and the typing row rides the same first paint
+    // WITHOUT hijacking the open scroll — the key only ARMS.
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.block).toBe('end')
+    expect(container.querySelector('.typing-row')).not.toBeNull()
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+
+    // The composition grows while the open has latched no bottom
+    // edge — no scroll, the seat's position stands.
+    rerender(props([TYPIST, SECOND_TYPIST]))
+    expect(metrics.scrollTop).toBe(100)
+    expect(scrolled).toHaveLength(1)
+  })
+
+  it('keeps the T079 own-send autoscroll intact while the typing row is mounted', () => {
+    const { container, rerender } = render(typingProps([TYPIST]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { ...READING_HISTORY }
+    installScrollMetrics(list, metrics)
+    fireEvent.scroll(list)
+
+    const sending: OutboxRecord = {
+      clientMessageId: 'cm-typing-1',
+      chatId: 'chat-1',
+      text: 'исходящее при печатающем',
+      state: 'sending',
+    }
+    rerender(typingProps([TYPIST], [sending]))
+
+    // Own send stays unconditional (T079) — the typing row neither
+    // blocks nor doubles it.
+    expect(metrics.scrollTop).toBe(600)
+  })
+
+  it('re-drives the typing scroll to the true bottom when the warmed layout grows (bug 8б parity)', () => {
+    const { container, rerender } = render(typingProps([]))
+    const list = container.querySelector('.message-list') as HTMLOListElement
+    const metrics = { scrollTop: 560, scrollHeight: 600, clientHeight: 400, writes: 0 }
+    Object.defineProperty(list, 'scrollTop', {
+      configurable: true,
+      get: () => metrics.scrollTop,
+      set: (value: number) => {
+        metrics.writes += 1
+        metrics.scrollTop = Math.max(
+          0,
+          Math.min(value, metrics.scrollHeight - metrics.clientHeight),
+        )
+      },
+    })
+    Object.defineProperty(list, 'scrollHeight', {
+      configurable: true,
+      get: () => metrics.scrollHeight,
+    })
+    Object.defineProperty(list, 'clientHeight', {
+      configurable: true,
+      get: () => metrics.clientHeight,
+    })
+    fireEvent.scroll(list)
+
+    rerender(typingProps([TYPIST]))
+    // The cold write scrollTop=scrollHeight(600) CLAMPS to the cold
+    // maximum 200 — the real browser's content-visibility undershoot.
+    expect(metrics.scrollTop).toBe(200)
+
+    // The paint warms the layout (placeholders become the real typing
+    // row) and the scrollHeight grows to 1000 — the post-paint loop
+    // must catch the 400px gap and re-drive the scroll to the WARM
+    // bottom.
+    metrics.scrollHeight = 1000
+    flushRaf()
+    expect(metrics.scrollTop).toBe(600)
+
+    // Converged: further frames never touch the scroll again.
+    flushRaf()
+    flushRaf()
+    expect(metrics.scrollTop).toBe(600)
+    expect(metrics.writes).toBe(2)
   })
 })

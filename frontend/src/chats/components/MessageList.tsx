@@ -94,36 +94,51 @@
  * client-cache lookups: unresolved `userId`s drop out (TypingRow),
  * and an empty chat with a live typist keeps the real feed instead
  * of the empty state. The realtime state behind the prop is T038.
+ * T067 (008a Phase 10): the row never mounts out of sight — its
+ * appearance/composition is the THIRD bottom key of the append
+ * detection (see the autoscroll paragraph below).
  *
- * Open seat (bug 2 T078 → bug 7 T085 → bug 13 T091 → bug 14 T092):
- * the first render of an open chat seats the feed with the TOP edge
- * of the FIRST unread INCOMING message at the TOP edge of the
- * viewport — the unread run is read from its first row, the read
- * history above stays a scroll-up away. The unread run is `senderId
- * ≠ me && seq > unreadFromSeq` (the open-time №13 `myReadUpToSeq`
- * latched by useChatMessages): own outgoing rows are read by the
- * author the moment they leave, so a chat whose tail is own sends
- * carries no unread incoming and the seat degenerates to the feed's
- * very last row with block:'end' — the open lands in the end with
- * the own tail in view (bug 13). When the window starts with the
- * unread incoming run, the chat's true first unread may sit above
- * the loaded window and the seat drives №14 `loadOlder` pages until
- * a loaded row precedes the window's first unread incoming (a
- * failed page never retries on its own); a wholly unread window
- * (watermark 0) keeps the natural top position — the №14 guard
- * never asks for a read boundary that does not exist. The seat is
- * one-shot per open (re-armed by the empty window of a chat
- * switch), waits for the watermark while №13 is in flight, and
- * never fires for an empty chat. The anchor row carries
- * `data-seat-anchor` whose value ('start'/'end') is the seat
- * alignment; the pagination anchor of prepended older pages
- * (anchorHeightRef, T053) is untouched — the two scrolls live in
- * separate effects and never act in the same commit. Bug 8а
- * (T086): the first `scrollIntoView` runs against a COLD layout
- * (content-visibility placeholders), so a post-paint rAF loop
- * re-checks the deviation of the ALIGNED edge in BOTH directions
- * (|gap| > tolerance — an undershoot AND a complete no-op with the
- * anchor past the edge) and corrects until the seat converges — a
+ * Open seat (bug 2 T078 → bug 7 T085 → bug 13 T091 → bug 14 T092 →
+ * 008a Phase 9 T066): the first render of an open chat with unread
+ * incoming renders the accented «Непрочитанные сообщения» divider
+ * EXACTLY ONCE above the FIRST unread INCOMING message (the same
+ * boundary the seat counts) and seats the feed by the SIZE of the
+ * unread block, measured by the actual DOM marks after the first
+ * layout: divider + ALL unread incoming fit the viewport →
+ * block:'end' on the LAST unread row (the whole block in view); they
+ * do NOT fit → block:'start' on the DIVIDER (the block is read from
+ * its beginning — the bug 14 intent with the divider as the anchor).
+ * The unread run is `senderId ≠ me && seq > unreadFromSeq` (the
+ * open-time №13 `myReadUpToSeq` latched by useChatMessages): own
+ * outgoing rows are read by the author the moment they leave, so a
+ * chat whose tail is own sends carries no unread incoming and the
+ * seat degenerates to the feed's very last row with block:'end' —
+ * the open lands in the end with the own tail in view (bug 13).
+ * When the window starts with the unread incoming run, the chat's
+ * true first unread may sit above the loaded window and the seat
+ * drives №14 `loadOlder` pages until a loaded row precedes the
+ * window's first unread incoming (a failed page never retries on
+ * its own); a wholly unread window (watermark 0) keeps the natural
+ * top position — the №14 guard never asks for a read boundary that
+ * does not exist. The seat is one-shot per open (re-armed by the
+ * empty window of a chat switch), waits for the watermark while №13
+ * is in flight, and never fires for an empty chat. The anchor
+ * elements carry `data-seat-anchor` whose value ('start'/'end') is
+ * the seat alignment — the two candidates of an unread window (the
+ * divider 'start' and the LAST unread row 'end') plus the degenerate
+ * 'end' row of a read window; the pagination anchor of prepended
+ * older pages (anchorHeightRef, T053) is untouched — the two scrolls
+ * live in separate effects and never act in the same commit. The
+ * divider is a STATIC snapshot of the open (the `unreadFromSeq`
+ * basis, frozen when the seat fires): realtime incoming in the
+ * already-open chat never moves or sprouts it, the scroll stays
+ * with the user, and the badge resets through the existing read
+ * path (FR-014). Bug 8а (T086): the first `scrollIntoView` runs
+ * against a COLD layout (content-visibility placeholders), so a
+ * post-paint rAF loop re-checks the deviation of the ALIGNED edge
+ * in BOTH directions (|gap| > tolerance — an undershoot AND a
+ * complete no-op with the anchor past the edge) AND re-decides the
+ * fit itself against the warmed marks until the seat converges — a
  * window without an unread run ends with its last row at the fold,
  * i.e. the bottom of the feed; bounded to SCROLL_SETTLE_FRAMES
  * frames.
@@ -148,6 +163,20 @@
  * so a post-paint rAF loop re-drives it until the distance to the
  * real bottom converges — the same bounded SCROLL_SETTLE_FRAMES
  * budget as the seat.
+ *
+ * Typing-row follow (008a Phase 10, T067): the TypingRow is the
+ * feed's LAST element — its appearance or composition change
+ * («{имя} и ещё N печатают…») grows the content below the bottom
+ * message WITHOUT touching the two append keys above, so it carries
+ * a THIRD bottom key of its own (the sorted participant ids, ''
+ * when absent). An appearance/composition change while the user
+ * rides the bottom edge re-drives `scrollTop = scrollHeight` with
+ * the same bug 8б correction loop — the notification «X печатает…»
+ * never mounts below the fold of an all-read, bottom-scrolled chat;
+ * a reader up in history is never yanked (the T079 rule), and the
+ * row's disappearance only shrinks the content — no scroll. A fresh
+ * open only ARMS the key: the open seat (T085/T066) stays the sole
+ * owner of the open scroll.
  *
  * Delivery-stamp animation (US1, T023, FR-018 edge case): the
  * engraved tick plays the prototype `tickStamp` (.32s,
@@ -174,6 +203,7 @@
  * the animation never replays on unrelated re-renders.
  */
 import { Fragment, memo, useEffect, useRef } from 'react'
+import type { RefObject } from 'react'
 import type { Message } from '../../api/chats'
 import type { GroupMember } from '../../api/groups'
 import { QUEUE_OVERFLOW_ERROR_CODE } from '../outbox'
@@ -239,6 +269,608 @@ function dayKeyOf(iso: string): string {
   return new Date(iso).toDateString()
 }
 
+/**
+ * Forced layout read (prototype jumpToMessage chats.html): reading a
+ * layout property flushes pending style changes, so re-adding the
+ * `.flash` class after it restarts the CSS animation even on a
+ * repeated jump to the same row. Was `void row.offsetWidth` — the
+ * wrapped read keeps the exact mechanism without the `void` operator.
+ */
+function forceReflow(element: HTMLElement): number {
+  return element.offsetWidth
+}
+
+/**
+ * T053 prepend anchor: only a prepend (the oldest rendered message
+ * changed) shifts the viewport by the grown content; appends at the
+ * bottom keep the scroll untouched.
+ */
+function keepPrependViewport(
+  list: HTMLOListElement | null,
+  messages: readonly Message[],
+  anchorHeightRef: RefObject<number | null>,
+  firstMessageIdRef: RefObject<string | undefined>,
+): void {
+  const first = messages[0]
+  if (list !== null && first !== undefined && anchorHeightRef.current !== null) {
+    if (first.id !== firstMessageIdRef.current) {
+      const grown = list.scrollHeight - anchorHeightRef.current
+      if (grown > 0) {
+        list.scrollTop += grown
+      }
+    }
+  }
+  anchorHeightRef.current = null
+  firstMessageIdRef.current = first?.id
+}
+
+/**
+ * Scroll handler body: refreshes the bottom-edge latch on EVERY
+ * scroll (T079) — the append effect reads «was the user at the
+ * bottom BEFORE the new row landed», and this handler is the only
+ * witness of that — then fires the older-page request near the top.
+ */
+function handleFeedScroll(
+  list: HTMLOListElement | null,
+  triggers: {
+    readonly loadingOlder: boolean
+    readonly hasOlder: boolean
+    readonly onLoadOlder: (() => void) | undefined
+  },
+  bottomRef: RefObject<boolean>,
+  anchorHeightRef: RefObject<number | null>,
+): void {
+  if (list === null) {
+    return
+  }
+  bottomRef.current =
+    list.scrollHeight - list.scrollTop - list.clientHeight <= BOTTOM_STICKY_THRESHOLD
+  const onLoadOlder = triggers.onLoadOlder
+  if (triggers.loadingOlder || !triggers.hasOlder || onLoadOlder === undefined) {
+    return
+  }
+  if (list.scrollTop <= TOP_LOAD_THRESHOLD) {
+    anchorHeightRef.current = list.scrollHeight
+    onLoadOlder()
+  }
+}
+
+/** The measured seat target — the anchor element and its alignment. */
+interface SeatTarget {
+  readonly element: HTMLElement
+  readonly block: ScrollLogicalPosition
+}
+
+/** Deviation of the ALIGNED edge of the seat target (bug 8а, T086). */
+function seatGap(target: SeatTarget, list: HTMLOListElement): number {
+  return target.block === 'start'
+    ? target.element.getBoundingClientRect().top - list.getBoundingClientRect().top
+    : list.getBoundingClientRect().bottom - target.element.getBoundingClientRect().bottom
+}
+
+/**
+ * The seat target by the ACTUAL DOM marks (T066): the unread block
+ * (the divider top → the LAST unread bottom) against the list
+ * `clientHeight` — it fits → block:'end' on the LAST unread row (the
+ * whole block lands in view); it does not → block:'start' on the
+ * DIVIDER (the block is read from its beginning — bug 14 semantics
+ * with the divider as the anchor). The degenerate window (no unread
+ * incoming) keeps its very last row with block:'end' (bug 13). jsdom
+ * ships no scrollIntoView — the guard keeps every non-visual suite at
+ * the current behaviour, and its all-zero layout measures the block
+ * as fitting (0 ≤ 0).
+ */
+function pickSeat(
+  dividerSeat: HTMLElement | null,
+  tailSeat: HTMLElement | null,
+  list: HTMLOListElement,
+): SeatTarget | null {
+  if (dividerSeat === null || tailSeat === null) {
+    const degenerate = tailSeat ?? dividerSeat
+    if (!degenerate?.isConnected) {
+      return null
+    }
+    return { element: degenerate, block: tailSeat !== null ? 'end' : 'start' }
+  }
+  if (!dividerSeat.isConnected || !tailSeat.isConnected) {
+    return null
+  }
+  const fits =
+    tailSeat.getBoundingClientRect().bottom - dividerSeat.getBoundingClientRect().top <=
+    list.clientHeight
+  return fits ? { element: tailSeat, block: 'end' } : { element: dividerSeat, block: 'start' }
+}
+
+/**
+ * Seat correction loop (bug 8а, T086): the first `scrollIntoView` ran
+ * against a COLD layout (content-visibility placeholders), so a
+ * post-paint rAF loop re-checks the deviation of the ALIGNED edge in
+ * BOTH directions (|gap| > tolerance — an undershoot AND a complete
+ * no-op with the anchor past the edge) AND re-decides the fit itself
+ * against the warmed marks until the seat converges — a window
+ * without an unread run ends with its last row at the fold, i.e. the
+ * bottom of the feed; bounded to SCROLL_SETTLE_FRAMES frames.
+ */
+function reseatUntilStable(
+  list: HTMLOListElement,
+  isLive: () => boolean,
+  pickTarget: () => SeatTarget | null,
+): void {
+  const reseat = (framesLeft: number, stable: number): void => {
+    if (!isLive()) {
+      return
+    }
+    const target = pickTarget()
+    if (target === null) {
+      return
+    }
+    const gap = seatGap(target, list)
+    if (Math.abs(gap) <= SCROLL_SETTLE_TOLERANCE_PX) {
+      stable += 1
+    } else {
+      stable = 0
+      if (framesLeft > 0 && typeof target.element.scrollIntoView === 'function') {
+        target.element.scrollIntoView({ block: target.block })
+      }
+    }
+    if (stable < SCROLL_SETTLE_STABLE_FRAMES && framesLeft > 0) {
+      requestAnimationFrame(() => {
+        reseat(framesLeft - 1, stable)
+      })
+    }
+  }
+  requestAnimationFrame(() => {
+    reseat(SCROLL_SETTLE_FRAMES, 0)
+  })
+}
+
+/** Open-seat application inputs — the T085/T066 effect body arguments. */
+interface OpenSeatDeps {
+  readonly listRef: RefObject<HTMLOListElement | null>
+  readonly messages: readonly Message[]
+  readonly currentUserId: string
+  readonly unreadFromSeq: number | null
+  readonly hasOlder: boolean
+  readonly loadingOlder: boolean
+  readonly onLoadOlder: (() => void) | undefined
+  readonly seatArmedRef: RefObject<boolean>
+  readonly seatLoadedOldestRef: RefObject<number | null>
+  readonly unreadBarrierSeqRef: RefObject<number | null | undefined>
+}
+
+/**
+ * The window STARTS with the unread incoming run (neither seat
+ * candidate rendered) — the chat's true first unread incoming may sit
+ * ABOVE the loaded window (the run itself reaches up out of sight;
+ * at watermark 0 everything incoming is unread). While older history
+ * may still carry an earlier head of the run, the seat drives №14
+ * pages until a loaded row precedes the window's first unread
+ * incoming — that row IS then the chat's first unread
+ * (T085/T091/T092); the memo keeps one request per window state. A
+ * watermark of 0 means no read incoming exists anywhere — the whole
+ * feed IS the unread run, its first loaded row already opens it at
+ * the natural top, and the catch-up would walk the entire history
+ * for a boundary that does not exist: №14 is never asked (the
+ * T085/T091 guard).
+ */
+function requestSeatCatchUp(deps: OpenSeatDeps): void {
+  const { messages, unreadFromSeq } = deps
+  const onLoadOlder = deps.onLoadOlder
+  const oldest = messages[0]
+  if (
+    oldest !== undefined &&
+    unreadFromSeq !== null &&
+    unreadFromSeq > 0 &&
+    deps.hasOlder &&
+    !deps.loadingOlder &&
+    onLoadOlder !== undefined &&
+    deps.seatLoadedOldestRef.current !== oldest.seq
+  ) {
+    deps.seatLoadedOldestRef.current = oldest.seq
+    onLoadOlder()
+  }
+}
+
+/**
+ * T078/T085 → T092/T066 open-seat application: seats the feed exactly
+ * once per open by the SIZE of the unread block (see the component
+ * doc above) and freezes the unread-divider snapshot at the fire
+ * commit (T066) — the seq of the FIRST unread incoming of THIS open
+ * (`null` — none). Later realtime appends and prepends render against
+ * the frozen value, so the divider never moves or sprouts after the
+ * open decided.
+ */
+function applyOpenSeat(deps: OpenSeatDeps): void {
+  const { messages, unreadFromSeq } = deps
+  const list = deps.listRef.current
+  if (
+    list === null ||
+    !deps.seatArmedRef.current ||
+    messages.length === 0 ||
+    unreadFromSeq === null
+  ) {
+    return
+  }
+  // T066 seat candidates: the divider ('start') and the LAST unread
+  // row ('end') of a window with unread incoming, or the single
+  // degenerate 'end' row of a window without any. A window that
+  // STARTS with the unread incoming run renders NEITHER — the
+  // catch-up branch below owns it.
+  const dividerSeat = list.querySelector<HTMLElement>('[data-seat-anchor="start"]')
+  const tailSeat = list.querySelector<HTMLElement>('[data-seat-anchor="end"]')
+  if (dividerSeat === null && tailSeat === null) {
+    requestSeatCatchUp(deps)
+    return
+  }
+  deps.seatArmedRef.current = false
+  deps.unreadBarrierSeqRef.current =
+    messages.find(
+      (message) => message.senderId !== deps.currentUserId && message.seq > unreadFromSeq,
+    )?.seq ?? null
+  const seat = pickSeat(dividerSeat, tailSeat, list)
+  if (seat === null || typeof seat.element.scrollIntoView !== 'function') {
+    return
+  }
+  seat.element.scrollIntoView({ block: seat.block })
+  if (typeof requestAnimationFrame === 'function') {
+    reseatUntilStable(
+      list,
+      () => deps.listRef.current === list,
+      () => pickSeat(dividerSeat, tailSeat, list),
+    )
+  }
+}
+
+/** T079: does the append carry an own send (always lands in view)? */
+function isOwnAppend(
+  localAppended: boolean,
+  serverAppended: boolean,
+  lastServerId: string | undefined,
+  localIds: ReadonlySet<string>,
+  ownAckIds: ReadonlySet<string> | undefined,
+): boolean {
+  return (
+    localAppended ||
+    (serverAppended &&
+      lastServerId !== undefined &&
+      (localIds.has(lastServerId) || (ownAckIds?.has(lastServerId) ?? false)))
+  )
+}
+
+/**
+ * T079 bottom-autoscroll effect body: an own send always lands in
+ * view — the optimistic outbox row AND the server ack that replaces
+ * it (the id was displayed locally one commit ago — `localIdsRef`
+ * still holds the pre-commit set when this effect runs first; an ack
+ * that RACED the optimistic row's first render is vouched for by the
+ * wiring-level `ownAckIds` set instead — bug 8в, T086). Any OTHER
+ * append (a new incoming `message.created`, an own message from
+ * another device) scrolls only while the user rides the bottom edge —
+ * reading history is never yanked. Prepends never reach here (both
+ * keys unchanged), which keeps the T053 anchor the only writer of
+ * prepend scrolls.
+ */
+function applyBottomAutoscroll(deps: {
+  readonly listRef: RefObject<HTMLOListElement | null>
+  readonly lastServerId: string | undefined
+  readonly lastLocalKey: string | undefined
+  readonly ownAckIds: ReadonlySet<string> | undefined
+  readonly lastServerIdRef: RefObject<string | undefined>
+  readonly lastLocalKeyRef: RefObject<string | undefined>
+  readonly localIdsRef: RefObject<ReadonlySet<string>>
+  readonly bottomRef: RefObject<boolean>
+}): void {
+  const previousServerId = deps.lastServerIdRef.current
+  const previousLocalKey = deps.lastLocalKeyRef.current
+  deps.lastServerIdRef.current = deps.lastServerId
+  deps.lastLocalKeyRef.current = deps.lastLocalKey
+  const list = deps.listRef.current
+  if (list === null) {
+    return
+  }
+  const serverAppended =
+    deps.lastServerId !== undefined &&
+    previousServerId !== undefined &&
+    deps.lastServerId !== previousServerId
+  const localAppended = deps.lastLocalKey !== undefined && deps.lastLocalKey !== previousLocalKey
+  if (!serverAppended && !localAppended) {
+    return
+  }
+  const ownAppend = isOwnAppend(
+    localAppended,
+    serverAppended,
+    deps.lastServerId,
+    deps.localIdsRef.current,
+    deps.ownAckIds,
+  )
+  if (!ownAppend && !deps.bottomRef.current) {
+    return
+  }
+  list.scrollTop = list.scrollHeight
+  // Cold-layout correction (bug 8б, T086): the write above lands
+  // against placeholders — `content-visibility: auto` keeps 64px
+  // stubs until the first paint, the scrollHeight is underestimated
+  // and the clamped write stops ABOVE the real bottom.
+  if (typeof requestAnimationFrame === 'function') {
+    settleBottomScroll(list, () => deps.listRef.current === list)
+  }
+}
+
+/**
+ * T067 typing-row bottom-follow effect body: the row is the feed's
+ * LAST element — it appears/changes below the bottom message without
+ * touching the T079 append keys, so its own key drives the follow.
+ * The gate mirrors T079: ONLY a user riding the bottom edge
+ * (BOTTOM_STICKY_THRESHOLD, latched by real scroll events — all
+ * messages read, the chat scrolled to the end) is followed; a reader
+ * up in history is never yanked. An APPEARANCE or a COMPOSITION
+ * change (a second typist grows «{имя} и ещё N печатают…») re-drives
+ * `scrollTop = scrollHeight`; a DISAPPEARANCE only shrinks the
+ * content — no scroll, nothing new to reveal. A fresh open (mount,
+ * or the re-armed empty window of a chat switch) only ARMS the key
+ * (`undefined` → observed): the open seat (T085/T066) owns the open
+ * scroll, and a typist already active at the open never hijacks it —
+ * which is also why empty-window commits are skipped entirely (the
+ * re-arm marker must survive them). Own sends stay the T079 effect's
+ * business alone.
+ */
+function applyTypingFollow(deps: {
+  readonly listRef: RefObject<HTMLOListElement | null>
+  readonly messages: readonly Message[]
+  readonly typingKey: string
+  readonly typingKeyRef: RefObject<string | undefined>
+  readonly bottomRef: RefObject<boolean>
+}): void {
+  if (deps.messages.length === 0) {
+    return
+  }
+  const previousTypingKey = deps.typingKeyRef.current
+  deps.typingKeyRef.current = deps.typingKey
+  if (
+    previousTypingKey === undefined ||
+    previousTypingKey === deps.typingKey ||
+    deps.typingKey === ''
+  ) {
+    return
+  }
+  if (!deps.bottomRef.current) {
+    return
+  }
+  const list = deps.listRef.current
+  if (list === null) {
+    return
+  }
+  list.scrollTop = list.scrollHeight
+  // Cold-layout correction (bug 8б, T086): the typing row mounts
+  // behind a content-visibility placeholder, so the write above
+  // lands against an underestimated scrollHeight — the shared
+  // post-paint correction loop re-drives it (settleBottomScroll).
+  if (typeof requestAnimationFrame === 'function') {
+    settleBottomScroll(list, () => deps.listRef.current === list)
+  }
+}
+
+/**
+ * Post-paint bottom-scroll correction loop shared by the T079 send
+ * autoscroll and the T067 typing-row follow (bug 8б, T086): the
+ * `scrollTop = scrollHeight` write lands against a COLD layout
+ * (content-visibility placeholders keep the scrollHeight low), so
+ * after every paint the distance to the real bottom is re-checked
+ * and the scroll re-driven until it stays within the trailing-aware
+ * tolerance for SUSTAINED frames (late renders keep rippling after
+ * the last correction) — bounded to the SCROLL_SETTLE_FRAMES budget.
+ * jsdom's zero layout (and any settled bottom) rests quickly.
+ */
+function settleBottomScroll(list: HTMLOListElement, isLive: () => boolean): void {
+  const settle = (framesLeft: number, stable: number): void => {
+    if (!isLive()) {
+      return
+    }
+    if (list.scrollHeight - list.scrollTop - list.clientHeight <= SCROLL_SETTLE_TOLERANCE_PX) {
+      stable += 1
+    } else {
+      stable = 0
+      if (framesLeft > 0) {
+        list.scrollTop = list.scrollHeight
+      }
+    }
+    if (stable < SCROLL_SETTLE_STABLE_FRAMES && framesLeft > 0) {
+      requestAnimationFrame(() => {
+        settle(framesLeft - 1, stable)
+      })
+    }
+  }
+  requestAnimationFrame(() => {
+    settle(SCROLL_SETTLE_FRAMES, 0)
+  })
+}
+
+/**
+ * 008a Phase 11 (T068; прототип jumpToMessage :1563): прыжок к
+ * найденному сообщению — `scrollIntoView({block:'center',
+ * behavior:'smooth'})` строки `li[data-mid]` + золотая вспышка
+ * `.flash` пузыря с перезапуском анимации (remove → reflow → add —
+ * повторный клик по той же строке вспыхивает снова). Прыжок к
+ * ДРУГОЙ строке гасит вспышку предыдущей — подсветка всегда одна.
+ * Класс пишется императивно: React-проп className строк не меняется,
+ * ререндеры вспышку не стирают. jsdom без scrollIntoView — тихо без
+ * прокрутки; id вне окна (сообщение не загружено) — no-op.
+ */
+function jumpToRow(
+  list: HTMLOListElement | null,
+  messageId: string,
+  lastFlashRef: RefObject<HTMLElement | null>,
+): void {
+  if (list === null) {
+    return
+  }
+  const escaped =
+    typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+      ? CSS.escape(messageId)
+      : messageId
+  const row = list.querySelector<HTMLElement>(`li[data-mid="${escaped}"]`)
+  if (row === null) {
+    return
+  }
+  if (typeof row.scrollIntoView === 'function') {
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }
+  if (lastFlashRef.current !== null && lastFlashRef.current !== row) {
+    lastFlashRef.current.classList.remove('flash')
+  }
+  row.classList.remove('flash')
+  forceReflow(row)
+  row.classList.add('flash')
+  lastFlashRef.current = row
+}
+
+/**
+ * T067: the THIRD bottom key — the fact/composition of the typing
+ * row ('' — absent; otherwise the participant ids sorted
+ * alphabetically, so an appearance, a disappearance or a «{имя} и
+ * ещё N печатают…» composition change re-keys it).
+ */
+function typingKeyOf(typing: readonly TypingParticipant[]): string {
+  if (typing.length === 0) {
+    return ''
+  }
+  return `typing:${typing
+    .map((participant) => participant.userId)
+    .sort((a, b) => a.localeCompare(b))
+    .join(',')}`
+}
+
+/**
+ * T079 append detection: the bottom-most LOCAL row of the window —
+ * optimistic `pending` first, outbox records second. An older-page
+ * prepend keeps the key (the newest content does not move), an
+ * append changes it.
+ */
+function lastLocalKeyOf(
+  pending: readonly PendingMessage[],
+  outbox: readonly OutboxRecord[],
+): string | undefined {
+  if (pending.length > 0) {
+    return `pending:${pending.at(-1)?.clientMessageId}`
+  }
+  if (outbox.length > 0) {
+    return `outbox:${outbox.at(-1)?.clientMessageId}`
+  }
+  return undefined
+}
+
+/**
+ * T066: the unread barrier — the index the «Непрочитанные
+ * сообщения» divider renders above. Until the seat fires it follows
+ * the LIVE boundary (the FIRST unread INCOMING row of the window,
+ * `senderId ≠ me && seq > unreadFromSeq`); the fire freezes the
+ * boundary seq, and every later render of this open places the
+ * divider by the FROZEN value (−1 when the open carried no unread
+ * barrier at all).
+ */
+function findBarrierIndex(
+  messages: readonly Message[],
+  currentUserId: string,
+  unreadFromSeq: number,
+  frozen: number | null | undefined,
+): number {
+  if (frozen === null) {
+    return -1
+  }
+  if (frozen === undefined) {
+    return messages.findIndex(
+      (message) => message.senderId !== currentUserId && message.seq > unreadFromSeq,
+    )
+  }
+  return messages.findIndex((message) => message.seq === frozen)
+}
+
+/** T092/T066: the seat anchor candidates of the rendered window. */
+interface SeatCandidates {
+  readonly anchorId: string | undefined
+  readonly anchorBlock: ScrollLogicalPosition | undefined
+  readonly dividerCandidate: boolean
+  readonly lastUnreadId: string | undefined
+}
+
+const NO_SEAT_CANDIDATES: SeatCandidates = {
+  anchorId: undefined,
+  anchorBlock: undefined,
+  dividerCandidate: false,
+  lastUnreadId: undefined,
+}
+
+/**
+ * T092/T066 seat-candidate resolution —
+ *  • a window WITH unread incoming inside it (barrierIndex > 0 — a
+ *    loaded row precedes the run's head): the divider carries
+ *    'start' and the LAST unread incoming row 'end'; the seat effect
+ *    measures the block and picks one (T066);
+ *  • NO unread incoming in the window (barrierIndex −1): the feed's
+ *    very last row with block:'end' — the degenerate seat (the open
+ *    lands in the end — a chat ending with own sends opens at its
+ *    own tail, bug 13);
+ *  • the window STARTS with the unread incoming run (barrierIndex
+ *    0): NO candidates — the seat effect drives №14 pages down to
+ *    the true boundary.
+ */
+function seatCandidatesOf(
+  messages: readonly Message[],
+  currentUserId: string,
+  unreadFromSeq: number | null,
+  barrierIndex: number,
+): SeatCandidates {
+  if (unreadFromSeq === null || messages.length === 0) {
+    return NO_SEAT_CANDIDATES
+  }
+  if (barrierIndex === -1) {
+    return { ...NO_SEAT_CANDIDATES, anchorId: messages.at(-1)?.id, anchorBlock: 'end' }
+  }
+  if (barrierIndex === 0) {
+    return NO_SEAT_CANDIDATES
+  }
+  let lastUnreadId: string | undefined
+  for (let index = messages.length - 1; index >= barrierIndex; index -= 1) {
+    const candidate = messages[index]
+    if (candidate !== undefined && candidate.senderId !== currentUserId) {
+      lastUnreadId = candidate.id
+      break
+    }
+  }
+  return { ...NO_SEAT_CANDIDATES, dividerCandidate: true, lastUnreadId }
+}
+
+/** The FeedRow seat-anchor prop of one message row (T092/T066). */
+function rowSeatAnchor(
+  messageId: string,
+  candidates: SeatCandidates,
+): ScrollLogicalPosition | undefined {
+  if (candidates.dividerCandidate && messageId === candidates.lastUnreadId) {
+    return 'end'
+  }
+  if (messageId === candidates.anchorId) {
+    return candidates.anchorBlock
+  }
+  return undefined
+}
+
+/** Terminal-failure reason label (the plain or queue-overflow one). */
+function failedReasonOf(entry: OutboxRecord): string {
+  return entry.errorCode === QUEUE_OVERFLOW_ERROR_CODE
+    ? 'не отправлено (переполнение очереди)'
+    : 'не отправлено'
+}
+
+/** The feed renders the plain empty state only with nobody typing. */
+function isFeedEmpty(
+  messages: readonly Message[],
+  pending: readonly PendingMessage[],
+  outbox: readonly OutboxRecord[],
+  typing: readonly TypingParticipant[],
+): boolean {
+  return messages.length === 0 && pending.length === 0 && outbox.length === 0 && typing.length === 0
+}
+
 export interface PendingMessage {
   /** Client-generated UUID (FR-004) — becomes message.id on the server. */
   readonly clientMessageId: string
@@ -299,18 +931,20 @@ export interface MessageListProps {
   readonly othersReadUpToSeq?: number
   /**
    * Open-time read watermark of the caller (bug 2 T078 → bug 7
-   * T085 → bug 13 T091 → bug 14 T092): the `myReadUpToSeq` latched
-   * from the first №13 ChatView answer of the current open
-   * (useChatMessages). The unread run is the INCOMING messages with
-   * `seq > unreadFromSeq` (own outgoing rows are read by the author
-   * the moment they leave) — the FIRST of them is the row the feed
-   * seats at on the first render of the open (its top edge at the
-   * viewport top; the read history above stays a scroll-up away,
-   * bug 14). A window with NO unread incoming degenerates to the
-   * feed's very last row — the open seats in the end (bug 13: the
-   * own-send tail lands in view). `null`/omitted — the watermark is
-   * not known yet (№13 in flight): the seat waits and never fires if
-   * it never arrives (a failed №13 keeps the current behaviour).
+   * T085 → bug 13 T091 → bug 14 T092 → 008a Phase 9 T066): the
+   * `myReadUpToSeq` latched from the first №13 ChatView answer of the
+   * current open (useChatMessages). The unread run is the INCOMING
+   * messages with `seq > unreadFromSeq` (own outgoing rows are read
+   * by the author the moment they leave) — its FIRST row carries the
+   * «Непрочитанные сообщения» divider above it, and the open seats
+   * the feed by the size of the divider + unread-run block: it fits
+   * the viewport → block:'end' at the LAST unread row; it does not →
+   * block:'start' at the divider (T066). A window with NO unread
+   * incoming degenerates to the feed's very last row — the open
+   * seats in the end (bug 13: the own-send tail lands in view).
+   * `null`/omitted — the watermark is not known yet (№13 in flight):
+   * the seat waits and never fires if it never arrives (a failed №13
+   * keeps the current behaviour).
    */
   readonly unreadFromSeq?: number | null
   /**
@@ -332,6 +966,17 @@ export interface MessageListProps {
    * list itself is T038 (MessengerPage).
    */
   readonly typing?: readonly TypingParticipant[]
+  /**
+   * Запрос прыжка к найденному сообщению (008a Phase 11, T068; прототип
+   * jumpToMessage chats.html:1563): клик строки-результата псевдо-поиска
+   * создаёт НОВЫЙ объект ({messageId, requestId}) — эффект прокручивает
+   * ленту к строке `li[data-mid]` (scrollIntoView block:'center',
+   * smooth прототипа) и запускает золотую вспышку пузыря `.flash`
+   * (srFlash 1.8s) с перезапуском на повторный клик. null/отсутствие —
+   * прыжка нет; не найденный id (сообщение за пределами окна) — тихий
+   * no-op.
+   */
+  readonly jumpTo?: { readonly messageId: string; readonly requestId: number } | null
 }
 
 /**
@@ -415,6 +1060,7 @@ const FeedRow = memo(function FeedRow({
   return (
     <li
       className={outgoing ? 'message outgoing msg me' : 'message incoming msg them'}
+      data-mid={message.id}
       data-seat-anchor={seatAnchor}
     >
       <Avatar source={avatarSource} size={FEED_AVATAR_SIZE} />
@@ -490,6 +1136,77 @@ const LocalRow = memo(function LocalRow({
   )
 })
 
+/** Per-render row-rendering context (pure — no hooks inside). */
+interface FeedRowContext {
+  readonly messages: readonly Message[]
+  readonly currentUserId: string
+  readonly hasOlder: boolean
+  readonly barrierIndex: number
+  readonly readUpToSeq: number
+  readonly senderNames: Map<string, string> | undefined
+  readonly meAvatarSource: string
+  readonly peerUsername: string | undefined
+  readonly seat: SeatCandidates
+  readonly localIds: ReadonlySet<string>
+}
+
+/**
+ * Avatar source of an incoming row (T022, FR-024): usernames
+ * wherever the surface knows them (the №28 roster first, the direct
+ * peer second), the stable user id as the deterministic fallback.
+ */
+function incomingAvatarSource(ctx: FeedRowContext, senderId: string): string {
+  return ctx.senderNames?.get(senderId) ?? ctx.peerUsername ?? senderId
+}
+
+/** One server-message map entry: date divider, unread divider, row. */
+function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) {
+  const outgoing = message.senderId === ctx.currentUserId
+  const read = outgoing && message.seq <= ctx.readUpToSeq
+  const sender = outgoing ? undefined : ctx.senderNames?.get(message.senderId)
+  // Date divider (FR-019): one per local calendar-day run — before
+  // a message whose day differs from its predecessor's, and above
+  // the oldest row once the history is known complete (`hasOlder`
+  // false); a same-day pagination junction never grows a second
+  // one (data-model 1.3).
+  const previous = index > 0 ? ctx.messages[index - 1] : undefined
+  const startsNewDay =
+    previous === undefined
+      ? !ctx.hasOlder
+      : dayKeyOf(message.createdAt) !== dayKeyOf(previous.createdAt)
+  return (
+    <Fragment key={message.id}>
+      {startsNewDay && <li className="date-divider">{formatDate(message.createdAt)}</li>}
+      {index === ctx.barrierIndex && (
+        // T066 (008a Phase 9): the unread-run divider — the
+        // `.date-divider` lexica accented by message-list.css
+        // (`.unread-divider`), a STATIC non-interactive
+        // separator whose accessible name names the run; the
+        // 'start' seat candidate while the boundary sits inside
+        // the window (barrierIndex > 0).
+        <li
+          className="date-divider unread-divider"
+          role="separator"
+          aria-label="Непрочитанные сообщения"
+          data-seat-anchor={ctx.seat.dividerCandidate ? 'start' : undefined}
+        >
+          <span className="unread-dot" aria-hidden="true" />
+          {'Непрочитанные сообщения'}
+        </li>
+      )}
+      <FeedRow
+        message={message}
+        outgoing={outgoing}
+        read={read}
+        sender={sender}
+        avatarSource={outgoing ? ctx.meAvatarSource : incomingAvatarSource(ctx, message.senderId)}
+        stampAnim={ctx.localIds.has(message.id)}
+        seatAnchor={rowSeatAnchor(message.id, ctx.seat)}
+      />
+    </Fragment>
+  )
+}
+
 export function MessageList({
   messages,
   currentUserId,
@@ -508,6 +1225,7 @@ export function MessageList({
   unreadFromSeq = null,
   ownAckIds,
   typing = [],
+  jumpTo = null,
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
@@ -526,41 +1244,23 @@ export function MessageList({
   const lastServerIdRef = useRef<string | undefined>(undefined)
   /** Bottom-most local row of the previous commit (T079). */
   const lastLocalKeyRef = useRef<string | undefined>(undefined)
+  /**
+   * Bottom typing-row key of the previous commit (T067): `undefined` —
+   * never observed (fresh open, the tracking is armed only).
+   */
+  const typingKeyRef = useRef<string | undefined>(undefined)
 
   useEffect(() => {
-    const list = listRef.current
-    const first = messages[0]
-    if (list !== null && first !== undefined && anchorHeightRef.current !== null) {
-      // Only a prepend (the oldest rendered message changed) shifts the
-      // viewport; appends at the bottom keep the scroll untouched.
-      if (first.id !== firstMessageIdRef.current) {
-        const grown = list.scrollHeight - anchorHeightRef.current
-        if (grown > 0) {
-          list.scrollTop += grown
-        }
-      }
-    }
-    anchorHeightRef.current = null
-    firstMessageIdRef.current = first?.id
+    keepPrependViewport(listRef.current, messages, anchorHeightRef, firstMessageIdRef)
   }, [messages])
 
   const handleScroll = () => {
-    const list = listRef.current
-    if (list === null) {
-      return
-    }
-    // T079: refresh the bottom-edge latch on EVERY scroll — the
-    // append effect reads «was the user at the bottom BEFORE the new
-    // row landed», and this handler is the only witness of that.
-    bottomRef.current =
-      list.scrollHeight - list.scrollTop - list.clientHeight <= BOTTOM_STICKY_THRESHOLD
-    if (loadingOlder || !hasOlder || onLoadOlder === undefined) {
-      return
-    }
-    if (list.scrollTop <= TOP_LOAD_THRESHOLD) {
-      anchorHeightRef.current = list.scrollHeight
-      onLoadOlder()
-    }
+    handleFeedScroll(
+      listRef.current,
+      { loadingOlder, hasOlder, onLoadOlder },
+      bottomRef,
+      anchorHeightRef,
+    )
   }
 
   /**
@@ -581,124 +1281,56 @@ export function MessageList({
    * still retries through the standard handleScroll path.
    */
   const seatLoadedOldestRef = useRef<number | null>(null)
+  /**
+   * T066 snapshot of the unread-divider boundary: the seq of the
+   * FIRST unread incoming of the commit the seat fired at (`null` —
+   * this open carried no unread barrier at all), `undefined` — the
+   * seat has not fired yet and the divider follows the live boundary
+   * (№14 catch-up, wholly-unread natural top). Frozen once per open
+   * so realtime appends and later prepends never move or sprout the
+   * divider; reset by the chat-switch re-arm below.
+   */
+  const unreadBarrierSeqRef = useRef<number | null | undefined>(undefined)
   useEffect(() => {
     if (messages.length === 0) {
       seatArmedRef.current = true
       seatLoadedOldestRef.current = null
+      unreadBarrierSeqRef.current = undefined
+      typingKeyRef.current = undefined
     }
   }, [messages])
 
   useEffect(() => {
-    const list = listRef.current
-    if (list === null || !seatArmedRef.current || messages.length === 0 || unreadFromSeq === null) {
-      return
-    }
-    const seat = list.querySelector<HTMLElement>('[data-seat-anchor]')
-    if (seat === null) {
-      // The window STARTS with the unread incoming run — the chat's
-      // true first unread incoming may sit ABOVE the loaded window
-      // (the run itself reaches up out of sight; at watermark 0
-      // everything incoming is unread). While older history may
-      // still carry an earlier head of the run, the seat drives №14
-      // pages until a loaded row precedes the window's first unread
-      // incoming — that row IS then the chat's first unread
-      // (T085/T091/T092); the memo keeps one request per window
-      // state. A watermark of 0 means no read incoming exists
-      // anywhere — the whole feed IS the unread run, its first
-      // loaded row already opens it at the natural top, and the
-      // catch-up would walk the entire history for a boundary that
-      // does not exist: №14 is never asked (the T085/T091 guard).
-      const oldest = messages[0]
-      if (
-        oldest !== undefined &&
-        unreadFromSeq > 0 &&
-        hasOlder &&
-        !loadingOlder &&
-        onLoadOlder !== undefined &&
-        seatLoadedOldestRef.current !== oldest.seq
-      ) {
-        seatLoadedOldestRef.current = oldest.seq
-        onLoadOlder()
-      }
-      return
-    }
-    seatArmedRef.current = false
-    if (typeof seat.scrollIntoView === 'function') {
-      // The anchor row carries its alignment (T092, bug 14):
-      // block:'start' seats the FIRST unread incoming's top edge at
-      // the viewport top — the unread run is read from its first
-      // visible row, the read history above stays a scroll-up away;
-      // the degenerate seat of a window without unread incoming
-      // lands the feed's very last row at the bottom edge
-      // (block:'end', bug 13). jsdom ships no scrollIntoView — the
-      // guard keeps every non-visual suite at the current behaviour.
-      const block = (seat.dataset.seatAnchor as ScrollLogicalPosition | undefined) ?? 'end'
-      seat.scrollIntoView({ block })
-      // content-visibility warm-up (research §G; bug 8а, T086): the
-      // offscreen rows render lazily behind 64px placeholders, so the
-      // first attempt runs against a COLD layout that underestimates
-      // the feed. The deviation of the ALIGNED edge goes BOTH ways:
-      // the layout may undervalue the content on the other side of
-      // the anchor (scrollIntoView undershoots — the anchor's edge
-      // stops short of the viewport edge, gap ≠ 0) or consider
-      // everything already in view (a complete no-op — after the
-      // warm-up the anchor hangs PAST the viewport edge, opposite
-      // gap sign). Re-check after every paint and correct while
-      // |gap| exceeds the trailing-aware tolerance — a fully read
-      // window converges with its last row at the fold and the
-      // scroll clamped to the maximum, i.e.
-      // `scrollHeight − scrollTop − clientHeight ≈ 0`. Late paints
-      // keep rippling after the last correction (each scroll renders
-      // newly relevant rows), so the loop ends only on SUSTAINED
-      // convergence — SCROLL_SETTLE_STABLE_FRAMES quiet frames in a
-      // row — or the SCROLL_SETTLE_FRAMES budget; the latch stays
-      // spent either way. jsdom layout is all zeros — the re-check
-      // sees a perfect seat and rests.
-      if (typeof requestAnimationFrame === 'function') {
-        const reseat = (framesLeft: number, stable: number) => {
-          if (listRef.current !== list || !seat.isConnected) {
-            return
-          }
-          const gap =
-            block === 'start'
-              ? seat.getBoundingClientRect().top - list.getBoundingClientRect().top
-              : list.getBoundingClientRect().bottom - seat.getBoundingClientRect().bottom
-          if (Math.abs(gap) <= SCROLL_SETTLE_TOLERANCE_PX) {
-            stable += 1
-          } else {
-            stable = 0
-            if (framesLeft > 0 && typeof seat.scrollIntoView === 'function') {
-              seat.scrollIntoView({ block })
-            }
-          }
-          if (stable < SCROLL_SETTLE_STABLE_FRAMES && framesLeft > 0) {
-            requestAnimationFrame(() => {
-              reseat(framesLeft - 1, stable)
-            })
-          }
-        }
-        requestAnimationFrame(() => {
-          reseat(SCROLL_SETTLE_FRAMES, 0)
-        })
-      }
-    }
-  }, [messages, unreadFromSeq, hasOlder, loadingOlder, onLoadOlder])
+    applyOpenSeat({
+      listRef,
+      messages,
+      currentUserId,
+      unreadFromSeq,
+      hasOlder,
+      loadingOlder,
+      onLoadOlder,
+      seatArmedRef,
+      seatLoadedOldestRef,
+      unreadBarrierSeqRef,
+    })
+  }, [messages, unreadFromSeq, hasOlder, loadingOlder, onLoadOlder, currentUserId])
 
   const confirmedIds = new Set(messages.map((message) => message.id))
   const activePending = pending.filter((entry) => !confirmedIds.has(entry.clientMessageId))
   const activeOutbox = outbox.filter((entry) => !confirmedIds.has(entry.clientMessageId))
+
+  // Typing row gate (T037): the row renders only when at least one
+  // participant resolved — and an empty chat with somebody typing
+  // keeps the real feed (the empty state steps aside).
+  const knownTyping = renderableTyping(typing)
 
   // T079 append detection: the bottom-most SERVER row and the
   // bottom-most LOCAL row of the window. An older-page prepend keeps
   // both keys (the newest content does not move), an append changes
   // exactly one of them.
   const lastServerId = messages.at(-1)?.id
-  let lastLocalKey: string | undefined
-  if (activePending.length > 0) {
-    lastLocalKey = `pending:${activePending.at(-1)?.clientMessageId}`
-  } else if (activeOutbox.length > 0) {
-    lastLocalKey = `outbox:${activeOutbox.at(-1)?.clientMessageId}`
-  }
+  const lastLocalKey = lastLocalKeyOf(activePending, activeOutbox)
+  const typingKey = typingKeyOf(knownTyping)
 
   /**
    * T023 ack tracking: ids rendered as LOCAL rows in the previous
@@ -715,79 +1347,17 @@ export function MessageList({
    */
   const localIdsRef = useRef<ReadonlySet<string>>(new Set())
 
-  /**
-   * T079 bottom autoscroll: an own send always lands in view — the
-   * optimistic outbox row AND the server ack that replaces it (the
-   * id was displayed locally one commit ago — `localIdsRef` still
-   * holds the pre-commit set when this effect runs first; an ack that
-   * RACED the optimistic row's first render is vouched for by the
-   * wiring-level `ownAckIds` set instead — bug 8в, T086). Any OTHER
-   * append (a new incoming `message.created`, an own message from
-   * another device) scrolls only while the user rides the bottom
-   * edge — reading history is never yanked. A fresh open (mount, or
-   * the empty window of a chat switch resetting both keys) only ARMS
-   * the tracking: the open seat (T085) owns the open scroll.
-   * Prepends never reach here (both keys unchanged), which keeps the
-   * T053 anchor the only writer of prepend scrolls.
-   */
   useEffect(() => {
-    const previousServerId = lastServerIdRef.current
-    const previousLocalKey = lastLocalKeyRef.current
-    lastServerIdRef.current = lastServerId
-    lastLocalKeyRef.current = lastLocalKey
-    const list = listRef.current
-    if (list === null) {
-      return
-    }
-    const serverAppended =
-      lastServerId !== undefined &&
-      previousServerId !== undefined &&
-      lastServerId !== previousServerId
-    const localAppended = lastLocalKey !== undefined && lastLocalKey !== previousLocalKey
-    if (!serverAppended && !localAppended) {
-      return
-    }
-    const ownAppend =
-      localAppended ||
-      (serverAppended &&
-        lastServerId !== undefined &&
-        (localIdsRef.current.has(lastServerId) || (ownAckIds?.has(lastServerId) ?? false)))
-    if (!ownAppend && !bottomRef.current) {
-      return
-    }
-    list.scrollTop = list.scrollHeight
-    // Cold-layout correction (bug 8б, T086): the write above lands
-    // against placeholders — `content-visibility: auto` keeps 64px
-    // stubs until the first paint, the scrollHeight is underestimated
-    // and the clamped write stops ABOVE the real bottom. Re-check
-    // after every paint and re-drive the scroll until the distance to
-    // the real bottom stays within the trailing-aware tolerance for
-    // SUSTAINED frames (late renders keep rippling after the last
-    // correction) — bounded to the SCROLL_SETTLE_FRAMES budget.
-    // jsdom's zero layout (and any settled bottom) rests quickly.
-    if (typeof requestAnimationFrame === 'function') {
-      const settle = (framesLeft: number, stable: number) => {
-        if (listRef.current !== list) {
-          return
-        }
-        if (list.scrollHeight - list.scrollTop - list.clientHeight <= SCROLL_SETTLE_TOLERANCE_PX) {
-          stable += 1
-        } else {
-          stable = 0
-          if (framesLeft > 0) {
-            list.scrollTop = list.scrollHeight
-          }
-        }
-        if (stable < SCROLL_SETTLE_STABLE_FRAMES && framesLeft > 0) {
-          requestAnimationFrame(() => {
-            settle(framesLeft - 1, stable)
-          })
-        }
-      }
-      requestAnimationFrame(() => {
-        settle(SCROLL_SETTLE_FRAMES, 0)
-      })
-    }
+    applyBottomAutoscroll({
+      listRef,
+      lastServerId,
+      lastLocalKey,
+      ownAckIds,
+      lastServerIdRef,
+      lastLocalKeyRef,
+      localIdsRef,
+      bottomRef,
+    })
   })
 
   useEffect(() => {
@@ -795,6 +1365,18 @@ export function MessageList({
       [...activePending, ...activeOutbox].map((entry) => entry.clientMessageId),
     )
   })
+
+  useEffect(() => {
+    applyTypingFollow({ listRef, messages, typingKey, typingKeyRef, bottomRef })
+  })
+
+  const lastFlashRef = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (jumpTo === null) {
+      return
+    }
+    jumpToRow(listRef.current, jumpTo.messageId, lastFlashRef)
+  }, [jumpTo])
 
   // Group variant (T038): the roster presence discriminates; sender
   // attribution resolves through it, and ✓✓ follows the group
@@ -808,49 +1390,35 @@ export function MessageList({
   // Avatar sources (T022, FR-024): usernames wherever the surface
   // knows them, the stable user id as the deterministic fallback.
   const meAvatarSource = meUsername ?? currentUserId
-  const incomingAvatarSource = (senderId: string): string =>
-    senderNames?.get(senderId) ?? peerUsername ?? senderId
 
-  // T092 (bug 14): the seat anchor — the FIRST unread INCOMING row
-  // of the window (`senderId ≠ me && seq > unreadFromSeq`; own
-  // outgoing rows are read by the author the moment they leave, so
-  // they never open the unread run). The scan runs through the
-  // window in ascending seq order:
-  //  • the first unread incoming sits INSIDE the window → IT is the
-  //    anchor and the seat lands its TOP edge at the viewport top
-  //    (block:'start' — the unread run is read from its first row,
-  //    the read history above stays a scroll-up away, bug 14);
-  //  • NO unread incoming in the window → the feed's very last row
-  //    with block:'end' (the seat lands in the end — a chat ending
-  //    with own sends opens at its own tail, bug 13);
-  //  • the window STARTS with the unread incoming run → the chat's
-  //    true first unread incoming may sit ABOVE the window: no
-  //    anchor renders here, and the seat effect above drives №14
-  //    pages down to it.
-  let seatAnchorId: string | undefined
-  let seatAnchorBlock: ScrollLogicalPosition | undefined
+  // T066: the unread barrier and the seat candidates (the frozen
+  // snapshot semantics live in findBarrierIndex/seatCandidatesOf).
+  let barrierIndex = -1
   if (unreadFromSeq !== null && messages.length > 0) {
-    const firstUnreadIncoming = messages.findIndex(
-      (message) => message.senderId !== currentUserId && message.seq > unreadFromSeq,
+    barrierIndex = findBarrierIndex(
+      messages,
+      currentUserId,
+      unreadFromSeq,
+      unreadBarrierSeqRef.current,
     )
-    if (firstUnreadIncoming > 0) {
-      seatAnchorId = messages[firstUnreadIncoming]?.id
-      seatAnchorBlock = 'start'
-    } else if (firstUnreadIncoming === -1) {
-      seatAnchorId = messages.at(-1)?.id
-      seatAnchorBlock = 'end'
-    }
+  }
+  const seat = seatCandidatesOf(messages, currentUserId, unreadFromSeq, barrierIndex)
+
+  if (isFeedEmpty(messages, activePending, activeOutbox, knownTyping)) {
+    return <p className="messenger-empty">Сообщений пока нет</p>
   }
 
-  // Typing row gate (T037): the row renders only when at least one
-  // participant resolved — and an empty chat with somebody typing
-  // keeps the real feed (the empty state steps aside).
-  const knownTyping = renderableTyping(typing)
-
-  if (messages.length === 0 && activePending.length === 0 && activeOutbox.length === 0) {
-    if (knownTyping.length === 0) {
-      return <p className="messenger-empty">Сообщений пока нет</p>
-    }
+  const feedCtx: FeedRowContext = {
+    messages,
+    currentUserId,
+    hasOlder,
+    barrierIndex,
+    readUpToSeq,
+    senderNames,
+    meAvatarSource,
+    peerUsername,
+    seat,
+    localIds: localIdsRef.current,
   }
 
   return (
@@ -865,35 +1433,7 @@ export function MessageList({
           Загрузка истории…
         </li>
       )}
-      {messages.map((message, index) => {
-        const outgoing = message.senderId === currentUserId
-        const read = outgoing && message.seq <= readUpToSeq
-        const sender = outgoing ? undefined : senderNames?.get(message.senderId)
-        // Date divider (FR-019): one per local calendar-day run — before
-        // a message whose day differs from its predecessor's, and above
-        // the oldest row once the history is known complete (`hasOlder`
-        // false); a same-day pagination junction never grows a second
-        // one (data-model 1.3).
-        const previous = index > 0 ? messages[index - 1] : undefined
-        const startsNewDay =
-          previous === undefined
-            ? !hasOlder
-            : dayKeyOf(message.createdAt) !== dayKeyOf(previous.createdAt)
-        return (
-          <Fragment key={message.id}>
-            {startsNewDay && <li className="date-divider">{formatDate(message.createdAt)}</li>}
-            <FeedRow
-              message={message}
-              outgoing={outgoing}
-              read={read}
-              sender={sender}
-              avatarSource={outgoing ? meAvatarSource : incomingAvatarSource(message.senderId)}
-              stampAnim={localIdsRef.current.has(message.id)}
-              seatAnchor={message.id === seatAnchorId ? seatAnchorBlock : undefined}
-            />
-          </Fragment>
-        )
-      })}
+      {messages.map((message, index) => renderMessageRow(message, index, feedCtx))}
       {activePending.map((entry) => (
         <LocalRow
           key={`pending:${entry.clientMessageId}`}
@@ -910,11 +1450,7 @@ export function MessageList({
           clientMessageId={entry.clientMessageId}
           text={entry.text}
           failed={entry.state === 'failed'}
-          failedReason={
-            entry.errorCode === QUEUE_OVERFLOW_ERROR_CODE
-              ? 'не отправлено (переполнение очереди)'
-              : 'не отправлено'
-          }
+          failedReason={failedReasonOf(entry)}
           avatarSource={meAvatarSource}
           onRetry={onRetry}
           onRemove={onRemove}

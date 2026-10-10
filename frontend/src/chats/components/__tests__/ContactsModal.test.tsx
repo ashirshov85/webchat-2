@@ -42,7 +42,7 @@ import { ContactsModal } from '../ContactsModal'
  * «Создать чат»); «⋯»-меню (ContextMenu) с подтверждениями
  * (ConfirmDialog, SC-007) и тостами (ToastProvider, FR-025); форма
  * «Добавить контакт» (T032) — внутри той же модали. 008a T022
- * добавляет пункт «Переименовать» (№40) ПЕРВЫМ в «⋯»-меню —
+ * добавляет пункт «Редактировать» (№40) ПЕРВЫМ в «⋯»-меню —
  * глубокие тесты формы переименования/цепочки пишет T024.
  *
  * Тесты написаны ДО реализации (конституция VI): красные до T031/T032,
@@ -326,7 +326,7 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
     const menu = openContactMenu(container, 'alice')
 
     expect(menuLabels()).toEqual([
-      'Переименовать',
+      'Редактировать',
       'Заблокировать',
       'Удалить чат',
       'Удалить контакт',
@@ -343,7 +343,7 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
 
     openContactMenu(container, 'анна')
     expect(menuLabels()).toEqual([
-      'Переименовать',
+      'Редактировать',
       'Разблокировать',
       'Удалить чат',
       'Удалить контакт',
@@ -352,7 +352,7 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
 
     openContactMenu(container, 'Борис')
     expect(menuLabels()).toEqual([
-      'Переименовать',
+      'Редактировать',
       'Заблокировать',
       'Создать чат',
       'Удалить контакт',
@@ -391,7 +391,7 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
     )
     openContactMenu(container, 'alice')
     expect(menuLabels()).toEqual([
-      'Переименовать',
+      'Редактировать',
       'Разблокировать',
       'Удалить чат',
       'Удалить контакт',
@@ -442,7 +442,7 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
     )
     openContactMenu(container, 'alice')
     expect(menuLabels()).toEqual([
-      'Переименовать',
+      'Редактировать',
       'Заблокировать',
       'Создать чат',
       'Удалить контакт',
@@ -628,7 +628,7 @@ describe('ContactsModal блокировка контакта с удалённ�
 
     openContactMenu(container, 'dave')
     expect(menuLabels()).toEqual([
-      'Переименовать',
+      'Редактировать',
       'Разблокировать',
       'Создать чат',
       'Удалить контакт',
@@ -645,7 +645,7 @@ describe('ContactsModal блокировка контакта с удалённ�
 
     openContactMenu(container, 'dave')
     expect(menuLabels()).toEqual([
-      'Переименовать',
+      'Редактировать',
       'Заблокировать',
       'Создать чат',
       'Удалить контакт',
@@ -664,7 +664,7 @@ describe('ContactsModal блокировка контакта с удалённ�
     expect(row.querySelector('.c-prev')?.textContent ?? '').toMatch(/заблокирован/i)
     openContactMenu(container, 'dave')
     expect(menuLabels()).toEqual([
-      'Переименовать',
+      'Редактировать',
       'Разблокировать',
       'Создать чат',
       'Удалить контакт',
@@ -689,7 +689,7 @@ describe('ContactsModal блокировка контакта с удалённ�
     expect(rowOf(container, 'dave').className).not.toMatch(/\bblocked\b/)
     openContactMenu(container, 'dave')
     expect(menuLabels()).toEqual([
-      'Переименовать',
+      'Редактировать',
       'Заблокировать',
       'Создать чат',
       'Удалить контакт',
@@ -848,7 +848,7 @@ describe('ContactsModal форма «Добавить контакт» (FR-012)'
 })
 
 /**
- * Цепочка имён, форма «Переименовать» и экранирование (feature 008a, US1,
+ * Цепочка имён, форма «Редактировать» и экранирование (feature 008a, US1,
  * T024; FR-003/FR-005, US1 AC5/008 FR-033; ui-behavior §1/§1.2): глубокие
  * тесты поверх T022 — сортировка/фильтр живут по ЕДИНОЙ цепочке
  * `resolveDisplayName(alias, displayName, username)` (locale ru прототипа,
@@ -911,13 +911,13 @@ function rowByUsername(container: HTMLElement, username: string): HTMLElement {
   return row
 }
 
-/** Открывает форму «Имя контакта» через «⋯» → «Переименовать» и возвращает поле. */
+/** Открывает форму «Имя контакта» через «⋯» → «Редактировать» и возвращает поле. */
 async function openRenameForm(
   container: HTMLElement,
   chainName: string,
 ): Promise<HTMLInputElement> {
   openContactMenu(container, chainName)
-  fireEvent.click(screen.getByRole('menuitem', { name: 'Переименовать' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Редактировать' }))
   return screen.findByLabelText<HTMLInputElement>('Имя контакта')
 }
 
@@ -975,8 +975,8 @@ describe('ContactsModal цепочка имён: сортировка и фил�
   })
 })
 
-describe('ContactsModal форма «Переименовать» (008a T024, ui-behavior §1.2)', () => {
-  it('«⋯» → «Переименовать»: поле предзаполнено цепочкой (alias), maxlength 64, username/email readonly', async () => {
+describe('ContactsModal форма «Редактировать» (008a T024, ui-behavior §1.2)', () => {
+  it('«⋯» → «Редактировать»: поле предзаполнено цепочкой (alias), maxlength 64, username/email readonly', async () => {
     mockedListContacts.mockResolvedValue([VALYA])
     const { container } = renderModal([])
     await screen.findByText('Валя')

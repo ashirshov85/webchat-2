@@ -2,7 +2,7 @@
  * T025 — 008a US1 visual regression (SC-004 in the US1 scope, 2% budget
  * of the shared config): the two 008a form surfaces — the «Имя» field of
  * «Мой профиль» (T021, ui-behavior §1.1) and the «Имя контакта» rename
- * form behind the contact kebab «Переименовать» (T022, ui-behavior §1.2)
+ * form behind the contact kebab «Редактировать» (T022, ui-behavior §1.2)
  * — plus the chain convergence they drive on the owner's surfaces.
  *
  * The scenarios ride the visual-suite harness (fixtures/app.ts) on the
@@ -20,7 +20,7 @@
  *
  * Coverage (desktop 1440×900 only — the reference viewport, the
  * us1-regions/us2-fullscreens convention):
- *  * the contact kebab menu with «Переименовать» FIRST (ui-behavior
+ *  * the contact kebab menu with «Редактировать» FIRST (ui-behavior
  *    §1.2) against the committed prototype baseline `us2-contact-menu`
  *    — the PNG had no app-side consumer yet;
  *  * the «Имя» field over the incognito row: placeholder = username,
@@ -74,6 +74,15 @@
  * T050 appends the US3 scenarios — the «Был в сети — …» statuses of
  * the direct header and the «Контакты» previews; T060 appends the US4
  * bell scenarios to the same file (see the coverage list above).
+ *
+ * T068 appends the Phase 11 pseudo-search scenarios: the #btnSearch
+ * toggle of the open dialog header swaps the sidebar into the results
+ * mode (the field «Поиск по чату…», the `.sr-head` chat name, the
+ * empty-query hint, `.sr-row` result rows with «Вы»/peer names and
+ * ~96-char snippets), and a row click jumps the feed to the message
+ * with the `.flash` glow (srFlash; `animations: 'disabled'`
+ * fast-forwards the finite glow, so the shot pins the seated feed —
+ * the smooth scrollIntoView is waited out first).
  */
 import { expect } from '@playwright/test'
 import type { Locator, Page, Route } from '@playwright/test'
@@ -302,7 +311,7 @@ function installLastSeenSnapshot(
 }
 
 visualTest.describe('T025 — 008a US1: profile «Имя» field and the rename form', () => {
-  visualTest('contact kebab menu carries «Переименовать» first', async ({ messenger }) => {
+  visualTest('contact kebab menu carries «Редактировать» first', async ({ messenger }) => {
     onlyProject(DESKTOP)
     await openAlexChat(messenger)
     await chooseMainMenu(messenger.page, 'Контакты')
@@ -310,9 +319,9 @@ visualTest.describe('T025 — 008a US1: profile «Имя» field and the rename 
     await messenger.page.locator('.ctc-row .c-menu').first().click()
     const menu = messenger.page.locator('.ctx-menu.show')
     await expect(menu).toBeVisible()
-    // ui-behavior §1.2: «Переименовать» is the FIRST item, before
+    // ui-behavior §1.2: «Редактировать» is the FIRST item, before
     // «Заблокировать»/«Удалить чат»/«Удалить контакт».
-    await expect(menu.locator('.ctx-item').first()).toHaveText('Переименовать')
+    await expect(menu.locator('.ctx-item').first()).toHaveText('Редактировать')
     await expect(messenger.page).toHaveScreenshot('us2-contact-menu.png', SHOT)
   })
 
@@ -563,6 +572,69 @@ visualTest.describe('T050 — 008a US3: the «Был в сети — …» statu
   })
 })
 
+visualTest.describe(
+  'T066 — 008a Phase 9: the «Непрочитанные сообщения» divider and the conditional seat',
+  () => {
+    /**
+     * Opening a chat with unread incoming (008a Phase 9): the accented
+     * `.unread-divider` (role=separator, aria-label «Непрочитанные
+     * сообщения») rides above the FIRST unread incoming row — the same
+     * boundary the seat counts — and the open scroll is conditional on
+     * the size of the unread block (divider + all unread incoming
+     * against the fold): the Maria dialog answers the FITS branch (one
+     * unread bubble → block:'end' at the last unread), the wholly
+     * unread «The Aether Society» answers the natural-top rule (8):
+     * watermark 0 → the divider above the loaded window's first row,
+     * №14 never asked.
+     */
+    visualTest(
+      'a short unread block — the divider above the run, the seat at its end',
+      async ({ messenger }) => {
+        onlyProject(DESKTOP)
+        const { page } = messenger
+        // Maria's dialog: №12 unread 2, №13 myReadUpToSeq 1 — seq 2 is
+        // the user's OWN send (read by the author the moment it left),
+        // seq 3 is the single unread INCOMING row.
+        await messenger.openChat('workshop tomorrow')
+        const divider = page.locator('.message-list .unread-divider')
+        await expect(divider).toBeVisible()
+        await expect(divider).toHaveAttribute('role', 'separator')
+        await expect(divider).toHaveAccessibleName('Непрочитанные сообщения')
+        await expect(divider.locator('xpath=following-sibling::li[1]')).toContainText(
+          'Exactly! Come by the workshop tomorrow',
+        )
+        // The block (divider + one bubble) fits the fold — the seat
+        // lands the LAST unread at the bottom edge, the whole block
+        // and the read history above in view (rule 4).
+        await expect(page.locator('.message-list.chat-scroll')).toHaveScreenshot(
+          '008a-unread-divider.png',
+          SHOT,
+        )
+      },
+    )
+
+    visualTest(
+      'a wholly unread chat — the divider at the natural top, no №14 catch-up',
+      async ({ messenger }) => {
+        onlyProject(DESKTOP)
+        const { page } = messenger
+        // «The Aether Society»: №12 unread 3 of 3 — watermark 0, the
+        // whole feed IS the unread run (rule 8).
+        await messenger.openChat('The Aether Society')
+        const divider = page.locator('.message-list .unread-divider')
+        await expect(divider).toBeVisible()
+        await expect(divider.locator('xpath=following-sibling::li[1]')).toContainText(
+          "Tonight's lecture",
+        )
+        await expect(page.locator('.message-list.chat-scroll')).toHaveScreenshot(
+          '008a-unread-divider-top.png',
+          SHOT,
+        )
+      },
+    )
+  },
+)
+
 visualTest.describe('T060 — 008a US4: the bell on/off', () => {
   /** Bell-колокол заголовка по title прототипа #btnBell (ui-behavior §4.1). */
   function bellOf(page: Page): Locator {
@@ -654,4 +726,85 @@ visualTest.describe('T060 — 008a US4: the bell on/off', () => {
       await expect(page).toHaveScreenshot('008a-bell-frame-off.png', SHOT)
     },
   )
+})
+
+visualTest.describe('T068 — 008a Phase 11: the chat pseudo-search mode', () => {
+  /** Лупа #btnSearch заголовка открытого чата (title прототипа). */
+  function searchButtonOf(page: Page): Locator {
+    return page.getByRole('button', { name: 'Поиск' })
+  }
+
+  visualTest(
+    'results mode: field, sr-head with the chat name, hints and rows',
+    async ({ messenger }) => {
+      onlyProject(DESKTOP)
+      const { page } = messenger
+      await openAlexChat(messenger)
+
+      // Toggle on: the button carries .on, the sidebar field swaps to
+      // «Поиск по чату…» and takes focus (prototype :1571-1573), the
+      // list opens with the chat-name head + empty-query hint.
+      await searchButtonOf(page).click()
+      const field = page.getByLabel('Поиск по чату…')
+      await expect(field).toBeFocused()
+      await expect(searchButtonOf(page)).toHaveClass('ch-btn on')
+      await expect(page.locator('.chat-panel .sr-head')).toHaveText('Поиск по чату — Alex Carter')
+      await expect(page.locator('.chat-panel .sr-hint')).toHaveText(
+        'Введите запрос — результаты появятся здесь',
+      )
+
+      // 'observatory' matches BOTH the peer's invite and the own reply
+      // of the demo dialog — rows ride the feed's seq order (the peer's
+      // message first), the own row renders «Вы», the snippet carries
+      // the ~96-char window around the first occurrence.
+      await field.fill('observatory')
+      await expect(page.locator('.chat-panel .sr-row')).toHaveCount(2)
+      const names = page.locator('.chat-panel .sr-row .c-name')
+      await expect(names.nth(0)).toHaveText('Alex Carter')
+      await expect(names.nth(1)).toHaveText('Вы')
+      await expect(page.locator('.chat-panel .sr-row').nth(1).locator('.c-prev')).toContainText(
+        'The old observatory? Sounds intriguing!',
+      )
+      await expect(page).toHaveScreenshot('008a-search-results.png', SHOT)
+
+      // No matches — the prototype hint «Ничего не найдено».
+      await field.fill('zzz-нет-такого')
+      await expect(page.locator('.chat-panel .sr-hint')).toHaveText('Ничего не найдено')
+    },
+  )
+
+  visualTest('result click jumps the feed to the message with the flash', async ({ messenger }) => {
+    onlyProject(DESKTOP)
+    const { page } = messenger
+    await openAlexChat(messenger)
+
+    await searchButtonOf(page).click()
+    await page.getByLabel('Поиск по чату…').fill('night to remember')
+    await expect(page.locator('.chat-panel .sr-row')).toHaveCount(1)
+    await page.locator('.chat-panel .sr-row').first().click()
+
+    // The jump seats the found row (scrollIntoView block:'center') and
+    // carries the .flash glow — the class stays on the row (its CSS
+    // animation is fast-forwarded by animations:'disabled'), and the
+    // smooth scroll is waited out before the capture.
+    const flashed = page.locator('.message-list li.flash')
+    await expect(flashed).toContainText('night to remember')
+    await page.waitForTimeout(1500)
+    await expect(page.locator('.message-list.chat-scroll')).toHaveScreenshot(
+      '008a-search-jump.png',
+      SHOT,
+    )
+
+    // A repeat click of the SAME row re-triggers the jump (requestId
+    // grows) — the flash re-runs; the escape hatch below just proves
+    // the mode still holds (the pixels are pinned by the shot above).
+    await page.locator('.chat-panel .sr-row').first().click()
+    await expect(page.locator('.chat-panel .sr-head')).toHaveText('Поиск по чату — Alex Carter')
+
+    // Escape exits the mode with the query reset — the sidebar returns
+    // to the «Чаты» list (field aria-label back to «Поиск чатов»).
+    await page.keyboard.press('Escape')
+    await expect(page.getByLabel('Поиск чатов')).toBeVisible()
+    await expect(searchButtonOf(page)).toHaveClass('ch-btn')
+  })
 })

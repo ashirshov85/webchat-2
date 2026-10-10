@@ -217,10 +217,12 @@
  * машину №41-сигналов useTyping (T036, §2.1): изменения черновика и
  * каждая попытка отправки (любой исход) → best-effort start/stop.
  *
- * 008a US4 звук-синхронизация (T058; FR-012–FR-015, ui-behavior §4,
- * realtime-events §1.3): per-chat карта звук-переключателей
- * вызывающего сходится из ЧЕТЫРЁХ источников — №12-строки (рефетчи/
- * реконнекты), №11/№13 ChatView (adoptChatViewSound: select-фолбэк и
+ * 008a US4 звук-синхронизация (T058 → T065; FR-012–FR-015,
+ * ui-behavior §4, realtime-events §1.3): per-chat карта звук-
+ * переключателей вызывающего сходится из ЧЕТЫРЁХ источников — №12-строки
+ * (по факту завершения фетча — рефетчи/реконнекты; локальные
+ * инкрементальные пересборки списка звук-состояние не трогают, T065),
+ * №11/№13 ChatView (adoptChatViewSound: select-фолбэк и
  * модальные пути), ответ №42 (echo, T057) и кадры `chat.sound.updated`
  * СОБСТВЕННОГО канала №18 (onChatSoundUpdated — мультидевайс ≤ 2 с,
  * SC-006; другие участники кадр не получают — приватность). Карта
@@ -231,6 +233,21 @@
  * только если среди пришедших есть неприглушённые чаты (итог 0 —
  * тишина самого sound). ВИЗУАЛЬНЫЕ уведомления (бейджи, лента,
  * превью, тосты) гейтом не фильтруются вовсе (FR-014).
+ *
+ * 008a Phase 11 псевдо-поиск (T068; прототип #btnSearch/
+ * renderSearchResults/jumpToMessage): состояние режима и запроса —
+ * у СТРАНИЦЫ: лупа заголовка переключает режим (повторный клик
+ * выключает и возвращает фокус композеру; на узком экране включение
+ * открывает drawer сайдбара), Escape выключает со сбросом запроса
+ * (модаль/drawer выше — их Esc), смена чата сбрасывает режим.
+ * Результаты строятся ТОЛЬКО по загруженному окну ленты
+ * (useChatMessages — №13-страница + подгруженные №14) живым вводом
+ * (подстрока без регистра, ui/search): совпадение за пределами окна
+ * не находится — догрузкой №14 поиск не управляет (принятое
+ * ограничение). Клик строки-результата прыгает к сообщению ленты
+ * (scrollIntoView center + вспышка .flash, MessageList jumpTo); на
+ * узком экране сайдбар закрывается. Контракт не меняется — операции
+ * №12–№16/№18 не затрагиваются.
  */
 import {
   useCallback,
@@ -264,6 +281,7 @@ import { useSync } from '../../sync/hooks/useSync'
 import { ChatHeader } from '../components/ChatHeader'
 import type { ChatHeaderChat } from '../components/ChatHeader'
 import { ChatListPanel } from '../components/ChatListPanel'
+import type { ChatSearchResultRow } from '../components/ChatListPanel'
 import { ContactsModal } from '../components/ContactsModal'
 import type { ModalForm } from '../components/ContactsModal'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -300,6 +318,9 @@ import {
   playMuteTone,
 } from '../../ui/sound'
 import { resolveDisplayName } from '../../ui/names'
+import { initialsOf } from '../../ui/avatar'
+import { findMatch, snippetAround } from '../../ui/search'
+import { formatTime } from '../../ui/time'
 import '../components/states.css'
 import './messenger.css'
 
@@ -1072,15 +1093,36 @@ function MessengerMachine() {
   const [modalForm, setModalForm] = useState<ModalFormId | null>(null)
   /**
    * Персональные звук-переключатели чатов вызывающего (008a US4,
-   * T057/T058; FR-012): chatId → soundEnabled. Источники сходятся здесь:
-   * №12-строки (каждый рефетч/реконнект несут актуальное значение),
-   * №11/№13 ChatView (select-фолбэк и модальные пути — adoptChatViewSound),
-   * ответ №42 (echo сохранённого) и кадры `chat.sound.updated`
-   * собственного канала (мультидевайс ≤ 2 с, SC-006). Отсутствие записи
-   * = «вкл» — умолчание контракта (отсутствие поля №12/№13 клиент
-   * трактует как true; обратная совместимость 008).
+   * T057/T058 → T065; FR-012): chatId → soundEnabled. Источники
+   * сходятся здесь: №12-строки — ТОЛЬКО по факту завершения №12-фетча
+   * (chatListRevision; локальные пересборки списка несут просроченное
+   * значение последнего фетча и звук-состояние не трогают вовсе),
+   * №11/№13 ChatView (select-фолбэк и модальные пути —
+   * adoptChatViewSound), ответ №42 (echo сохранённого) и кадры
+   * `chat.sound.updated` собственного канала (мультидевайс ≤ 2 с,
+   * SC-006). Отсутствие записи = «вкл» — умолчание контракта
+   * (отсутствие поля №12/№13 клиент трактует как true; обратная
+   * совместимость 008).
    */
   const [soundStates, setSoundStates] = useState<ReadonlyMap<string, boolean>>(() => new Map())
+  /**
+   * 008a Phase 11 (T068): режим псевдо-поиска и его запрос — состояние
+   * страницы (прототип sideMode/#search): true — сайдбар рендерит
+   * результаты по сообщениям ОТКРЫТОГО чата вместо списка «Чаты».
+   * Выключение (повторный клик лупы/Escape/смена чата) сбрасывает и
+   * запрос (прототип exitSearchMode).
+   */
+  const [searchMode, setSearchMode] = useState(false)
+  /** Текущий запрос псевдо-поиска (живой ввод сайдбара). */
+  const [searchQuery, setSearchQuery] = useState('')
+  /**
+   * Запрос прыжка к найденному сообщению (T068): каждый клик строки-
+   * результата создаёт НОВЫЙ объект с монотонным requestId —
+   * MessageList перезапускает и прокрутку, и вспышку.
+   */
+  const [searchJump, setSearchJump] = useState<{ messageId: string; requestId: number } | null>(
+    null,
+  )
   /**
    * Синхронное зеркало звук-состояния для слушателей реального времени
    * (T058): гейт chimeOnRealtimeIncoming и per-chat подсчёт sync-батчей
@@ -1151,7 +1193,17 @@ function MessengerMachine() {
     reload: reloadChatList,
     markChatReadLocally,
     applySyncUpdate: applyChatListSync,
+    listRevision: chatListRevision,
   } = useChatList(currentUserId)
+
+  /**
+   * Синхронное зеркало строк №12 для эффектов, ключеных на ревизию
+   * базиса (008a T065): в коммите завершённого фетча реф уже несёт
+   * свежие строки (ревизия и строки сходят в одном апдейте useChatList),
+   * а локальные пересборки массива его не трогают вовсе.
+   */
+  const chatsRef = useRef(chats)
+  chatsRef.current = chats
 
   const activeChatId = activeChat?.chatId ?? null
 
@@ -1273,9 +1325,15 @@ function MessengerMachine() {
   // чат» form — the form never outlives its window. Menu-opened forms
   // do not see this path: every modal → chat transition closes the
   // shell first (handleOpenChatFromModal).
+  //
+  // 008a Phase 11 (T068): смена чата (вкл. закрытие окна) сбрасывает и
+  // режим псевдо-поиска с запросом — результаты привязаны к открытому
+  // чату (прототип: sideMode следует за activeId).
   useEffect(() => {
     setPendingAction(null)
     setModalForm(null)
+    setSearchMode(false)
+    setSearchQuery('')
   }, [activeChatId])
 
   // Applied catch-up pages (feature 005, T023): the list adopts
@@ -1434,16 +1492,23 @@ function MessengerMachine() {
     }
   }, [chats, activeChat])
 
-  // 008a US4 (T057; FR-012, ui-behavior §4.1): №12-сходимость звук-
-  // переключателей — каждая строка списка несёт актуальное
-  // `soundEnabled` вызывающего (начальная загрузка + рефетчи
-  // действий/реконнекты), поэтому колокол и звук-гейт приёма (T058)
-  // стартуют с серверной правды, а не с умолчания «вкл».
+  // 008a US4 (T057 → T065; FR-012, ui-behavior §4.1): №12-сходимость
+  // звук-переключателей — ТОЛЬКО по факту завершения №12-фетча
+  // (chatListRevision useChatList): строки доставленного сервером
+  // агрегата несут актуальное `soundEnabled` вызывающего, поэтому
+  // колокол и звук-гейт приёма (T058) стартуют с серверной правды
+  // каждой загрузки/рефетча/реконнекта. Локальные инкрементальные
+  // обновления списка (входящие/прочтения/sync-дельты) пересобирают
+  // строки spread'ом со СТАРЫМ значением последнего фетча — сходимость
+  // по ним откатывала бы свежие №42-echo и кадры chat.sound.updated
+  // просроченным значением (Phase 8, дефекты 1/2: mute «жил» одно
+  // входящее, unmute откатывался сам, переключения чатов влияли друг
+  // на друга), поэтому на `[chats]` эффект не ключится вовсе.
   useEffect(() => {
     setSoundStates((previous) => {
       let changed = false
       const next = new Map(previous)
-      for (const item of chats) {
+      for (const item of chatsRef.current) {
         if (item.soundEnabled !== undefined && next.get(item.chatId) !== item.soundEnabled) {
           next.set(item.chatId, item.soundEnabled)
           changed = true
@@ -1451,7 +1516,7 @@ function MessengerMachine() {
       }
       return changed ? next : previous
     })
-  }, [chats])
+  }, [chatListRevision])
 
   // 008a US4 (T058; FR-015, realtime-events §1.3): кадр
   // `chat.sound.updated` приходит ТОЛЬКО в собственный канал — другой
@@ -2033,6 +2098,162 @@ function MessengerMachine() {
     })()
   }, [activeChat, actionPending, handleDeletedGroup])
 
+  /**
+   * 008a Phase 11 (T068; прототип #btnSearch click :1571): переключение
+   * режима псевдо-поиска. Включение стартует с чистого поля и на узком
+   * экране открывает drawer сайдбара (openSidebar прототипа); повторный
+   * клик выключает режим (сброс запроса) и возвращает фокус композеру
+   * ($('#msgInput').focus() прототипа — композер идентифицируется
+   * штатным id поля MessageInput).
+   */
+  const handleToggleSearch = useCallback(() => {
+    if (searchMode) {
+      setSearchMode(false)
+      setSearchQuery('')
+      document.getElementById('message-composer')?.focus()
+      return
+    }
+    setSearchQuery('')
+    setSearchMode(true)
+    if (narrowViewport) {
+      setDrawerOpen(true)
+    }
+  }, [searchMode, narrowViewport, setDrawerOpen])
+
+  /**
+   * T068: клик строки-результата — переход к сообщению ленты: новый
+   * requestId перезапускает прокрутку/вспышку даже той же строки; на
+   * узком экране сайдбар закрывается (closeSidebar прототипа :1539).
+   */
+  const searchJumpSeqRef = useRef(0)
+  const handleJumpToMessage = useCallback(
+    (messageId: string) => {
+      searchJumpSeqRef.current += 1
+      setSearchJump({ messageId, requestId: searchJumpSeqRef.current })
+      if (narrowViewport) {
+        setDrawerOpen(false)
+      }
+    },
+    [narrowViewport, setDrawerOpen],
+  )
+
+  // T068: Escape выключает режим со сбросом запроса (прототип :1621
+  // exitSearchMode) — СТРОГО не выше модали/drawer: их Esc-владельцы
+  // слушают тот же document (паттерн drawer T065), поиск режим ниже
+  // гасит только когда слоёв над ним нет.
+  useEffect(() => {
+    if (!searchMode) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      if (modalForm !== null || pendingAction !== null || drawerOpen) {
+        return
+      }
+      setSearchMode(false)
+      setSearchQuery('')
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [searchMode, modalForm, pendingAction, drawerOpen])
+
+  /**
+   * T068: имя открытого чата для шапки результатов — цепочка US1
+   * (direct — peer, группа — живой №28-титул, иначе №12-базис).
+   */
+  const searchChatName = useMemo(() => {
+    if (activeChat === null) {
+      return null
+    }
+    if (activeChat.kind === 'direct') {
+      return resolveDisplayName(
+        activeChat.peerAlias,
+        activeChat.peer.displayName,
+        activeChat.peer.username,
+      )
+    }
+    const live = activeGroup !== null && activeGroup.chatId === activeChat.chatId
+    return live ? activeGroup.title : activeChat.title
+  }, [activeChat, activeGroup])
+
+  /**
+   * T068: строки-результаты псевдо-поиска — ТОЛЬКО по загруженному
+   * окну ленты (№13-страница + подгруженные №14 useChatMessages):
+   * подстрока без регистра по message.text (ui/search), сниппет ~96
+   * символов вокруг первого вхождения. Имена: свои — «Вы», direct —
+   * peer по цепочке US1, группа — участник №28-ростра (неизвестный
+   * отправитель строку не даёт — паттерн TypingRow, YAGNI); инициалы —
+   * из имени, цвет аватара — от username (FR-004).
+   */
+  const searchResults = useMemo<readonly ChatSearchResultRow[]>(() => {
+    if (!searchMode || activeChat === null || currentUserId === null) {
+      return []
+    }
+    const normalized = searchQuery.trim().toLowerCase()
+    if (normalized === '') {
+      return []
+    }
+    const results: ChatSearchResultRow[] = []
+    for (const message of messages) {
+      const matchIndex = findMatch(message.text, normalized)
+      if (matchIndex === -1) {
+        continue
+      }
+      if (message.senderId === currentUserId) {
+        results.push({
+          messageId: message.id,
+          senderName: 'Вы',
+          avatarSource: meUsername ?? currentUserId,
+          avatarInitials: initialsOf(meUsername ?? ''),
+          time: formatTime(message.createdAt),
+          snippet: snippetAround(message.text, matchIndex),
+        })
+        continue
+      }
+      if (activeChat.kind === 'direct') {
+        if (message.senderId !== activeChat.peer.id) {
+          continue
+        }
+        const name = resolveDisplayName(
+          activeChat.peerAlias,
+          activeChat.peer.displayName,
+          activeChat.peer.username,
+        )
+        results.push({
+          messageId: message.id,
+          senderName: name,
+          avatarSource: activeChat.peer.username,
+          avatarInitials: initialsOf(name),
+          time: formatTime(message.createdAt),
+          snippet: snippetAround(message.text, matchIndex),
+        })
+        continue
+      }
+      const member = activeGroupMembers?.find((entry) => entry.user.id === message.senderId)
+      if (member === undefined) {
+        continue
+      }
+      const name = resolveDisplayName(
+        member.user.alias,
+        member.user.displayName,
+        member.user.username,
+      )
+      results.push({
+        messageId: message.id,
+        senderName: name,
+        avatarSource: member.user.username,
+        avatarInitials: initialsOf(name),
+        time: formatTime(message.createdAt),
+        snippet: snippetAround(message.text, matchIndex),
+      })
+    }
+    return results
+  }, [searchMode, searchQuery, messages, activeChat, activeGroupMembers, currentUserId, meUsername])
+
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
   const dialogOpen = activeChat !== null
@@ -2159,6 +2380,12 @@ function MessengerMachine() {
               activeChatId={activeChatId}
               onSelectChat={handleSelectChat}
               currentUserId={currentUserId}
+              searchMode={searchMode}
+              searchQuery={searchQuery}
+              searchChatName={searchChatName}
+              searchResults={searchResults}
+              onSearchQueryChange={setSearchQuery}
+              onJumpToMessage={handleJumpToMessage}
               onOpenProfile={() => {
                 setModalForm('profile')
               }}
@@ -2177,6 +2404,8 @@ function MessengerMachine() {
                   chat={headerChatOf(activeChat, activeGroup, contacts, currentUserId, meUsername)}
                   soundEnabled={soundStates.get(activeChat.chatId) ?? true}
                   onToggleSound={handleToggleChatSound}
+                  searchActive={searchMode}
+                  onToggleSearch={handleToggleSearch}
                   onAddContact={handleGearAddContact}
                   onToggleBlock={handleGearToggleBlock}
                   onDeleteChat={handleGearDeleteChat}
@@ -2220,6 +2449,7 @@ function MessengerMachine() {
                   unreadFromSeq={unreadFromSeq}
                   ownAckIds={ownAckIds}
                   typing={typingParticipants}
+                  jumpTo={searchJump}
                 />
                 <MessageInput
                   onSend={handleSend}

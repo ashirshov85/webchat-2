@@ -41,10 +41,25 @@
  * search row (T030), so the panel carries no contacts content prop
  * anymore. The 004 reachability of every contact operation is
  * preserved — only the entry point moves (FR-034, SC-004).
+ *
+ * 008a Phase 11 (T068; прототип renderSearchResults chats.html:858):
+ * режим ПСЕВДО-ПОИСКА по сообщениям открытого чата — кнопка-лупа
+ * заголовка (#btnSearch) переключает список «Чаты» ↔ «Поиск по
+ * чату»: поле несёт placeholder/aria-label «Поиск по чату…» и
+ * управляется СТРАНИЦЕЙ (запрос — её состояние, поиск живой по
+ * вводу), список рендерит шапку .sr-head «Поиск по чату — {имя}»,
+ * подсказки .sr-hint пустого запроса/отсутствия совпадений и
+ * строки-результаты .sr-row.contact (аватар отправителя, имя —
+ * свои «Вы», время, сниппет ~96 символов вокруг вхождения); клик по
+ * строке уходит странице (переход к сообщению ленты). Результаты
+ * строит страница по загруженному окну ленты — панель только
+ * проекция, без собственных запросов. Включение режима фокусирует
+ * поле (прототип :1572 $('#search').focus()).
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
 import type { ChatListStatus } from '../hooks/useChatList'
+import { Avatar } from '../../ui/Avatar'
 import { ErrorBanner } from './ErrorBanner'
 import { ChatListItem } from './ChatListItem'
 import { MainMenuButton } from './MainMenuButton'
@@ -63,6 +78,28 @@ function chatMatchesQuery(item: ChatListItemData, normalizedQuery: string): bool
   }
   const label = item.type === 'group' ? item.title : item.peer?.username
   return label !== undefined && label.toLowerCase().includes(normalizedQuery)
+}
+
+/**
+ * Строка-результат псевдо-поиска (T068): проекция сообщения открытого
+ * чата, собранная страницей (имя отправителя по цепочке US1 — свои
+ * «Вы», группа — участник №28, direct — peer; аватар: инициалы из
+ * имени, цвет — от username, FR-004; сниппет — ui/search). message не
+ * проходит сюда типом — паналь остаётся свободной от API-типов ленты.
+ */
+export interface ChatSearchResultRow {
+  /** id сообщения ленты — якорь перехода (jumpToMessage). */
+  readonly messageId: string
+  /** Отображаемое имя отправителя («Вы» — свои). */
+  readonly senderName: string
+  /** Источник цвета аватара (username отправителя). */
+  readonly avatarSource: string
+  /** Инициалы — из отображаемого имени отправителя. */
+  readonly avatarInitials: string
+  /** Время сообщения (formatTime). */
+  readonly time: string
+  /** Сниппет ~96 символов вокруг вхождения (ui/search). */
+  readonly snippet: string
 }
 
 export interface ChatListPanelProps {
@@ -90,6 +127,21 @@ export interface ChatListPanelProps {
   readonly onOpenProfile?: () => void
   readonly onOpenContacts?: () => void
   readonly onCreateGroup?: () => void
+  /**
+   * 008a Phase 11 (T068): режим псевдо-поиска — сайдбар рендерит
+   * результаты вместо чатов (запрос и фильтрация — у страницы).
+   */
+  readonly searchMode?: boolean
+  /** Текущий запрос режима поиска (управляемое поле). */
+  readonly searchQuery?: string
+  /** Имя открытого чата для шапки (цепочка US1); null — окно не открыто. */
+  readonly searchChatName?: string | null
+  /** Строки-результаты по текущему запросу (собраны страницей). */
+  readonly searchResults?: readonly ChatSearchResultRow[]
+  /** Ввод запроса (живой поиск). */
+  readonly onSearchQueryChange?: (query: string) => void
+  /** Клик по строке-результату — переход к сообщению ленты. */
+  readonly onJumpToMessage?: (messageId: string) => void
 }
 
 export function ChatListPanel({
@@ -103,11 +155,28 @@ export function ChatListPanel({
   onOpenProfile,
   onOpenContacts,
   onCreateGroup,
+  searchMode = false,
+  searchQuery = '',
+  searchChatName = null,
+  searchResults = [],
+  onSearchQueryChange,
+  onJumpToMessage,
 }: ChatListPanelProps) {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const visibleChats =
     normalizedQuery === '' ? chats : chats.filter((item) => chatMatchesQuery(item, normalizedQuery))
+  const searchFieldRef = useRef<HTMLInputElement>(null)
+  const trimmedSearchQuery = searchQuery.trim()
+
+  // Включение режима фокусирует поле и чистит локальный запрос обычного
+  // режима (прототип :1571 — value='' + focus; выход тоже чистит).
+  useEffect(() => {
+    if (searchMode) {
+      setQuery('')
+      searchFieldRef.current?.focus()
+    }
+  }, [searchMode])
 
   return (
     <div className="chat-panel">
@@ -125,51 +194,99 @@ export function ChatListPanel({
           <input
             type="search"
             className="chat-panel-search"
-            aria-label="Поиск чатов"
-            placeholder="Поиск…"
+            aria-label={searchMode ? 'Поиск по чату…' : 'Поиск чатов'}
+            placeholder={searchMode ? 'Поиск по чату…' : 'Поиск…'}
             autoComplete="off"
-            value={query}
+            ref={searchFieldRef}
+            value={searchMode ? searchQuery : query}
             onChange={(event) => {
-              setQuery(event.target.value)
+              const next = event.target.value
+              if (searchMode) {
+                onSearchQueryChange?.(next)
+                return
+              }
+              setQuery(next)
             }}
           />
         </div>
       </div>
-      {status === 'loading' && <p className="messenger-empty">Загрузка чатов…</p>}
-      {status === 'error' && (
-        <div className="chat-panel-error">
-          <ErrorBanner error={error} />
-          {onReload !== undefined && (
-            <button
-              type="button"
-              className="chat-panel-retry"
-              onClick={() => {
-                onReload()
-              }}
-            >
-              Повторить
-            </button>
+      {searchMode ? (
+        <ul className="chat-list" aria-label="Результаты поиска">
+          <li className="sr-head">
+            {searchChatName !== null ? `Поиск по чату — ${searchChatName}` : 'Нет открытого чата'}
+          </li>
+          {trimmedSearchQuery === '' && (
+            <li className="sr-hint">Введите запрос — результаты появятся здесь</li>
           )}
-        </div>
-      )}
-      {status === 'ready' && chats.length === 0 && (
-        <p className="messenger-empty">Диалогов пока нет</p>
-      )}
-      {status === 'ready' && chats.length > 0 && visibleChats.length === 0 && (
-        <p className="messenger-empty">Ничего не найдено</p>
-      )}
-      {visibleChats.length > 0 && (
-        <ul className="chat-list" aria-label="Список чатов">
-          {visibleChats.map((item) => (
-            <ChatListItem
-              key={item.chatId}
-              item={item}
-              currentUserId={currentUserId}
-              active={item.chatId === activeChatId}
-              onSelect={onSelectChat}
-            />
-          ))}
+          {trimmedSearchQuery !== '' &&
+            searchResults.map((row) => (
+              <li key={row.messageId}>
+                <button
+                  type="button"
+                  className="contact sr-row"
+                  title="Перейти к сообщению"
+                  onClick={() => {
+                    onJumpToMessage?.(row.messageId)
+                  }}
+                >
+                  <Avatar source={row.avatarSource} initials={row.avatarInitials} />
+                  <span className="c-main">
+                    <span className="c-top">
+                      <span className="c-name" title={row.senderName}>
+                        {row.senderName}
+                      </span>
+                      <span className="c-time">{row.time}</span>
+                    </span>
+                    <span className="c-prev" title={row.snippet}>
+                      {row.snippet}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          {trimmedSearchQuery !== '' && searchResults.length === 0 && (
+            <li className="sr-hint">Ничего не найдено</li>
+          )}
         </ul>
+      ) : (
+        <>
+          {status === 'loading' && <p className="messenger-empty">Загрузка чатов…</p>}
+          {status === 'error' && (
+            <div className="chat-panel-error">
+              <ErrorBanner error={error} />
+              {onReload !== undefined && (
+                <button
+                  type="button"
+                  className="chat-panel-retry"
+                  onClick={() => {
+                    onReload()
+                  }}
+                >
+                  Повторить
+                </button>
+              )}
+            </div>
+          )}
+          {status === 'ready' && chats.length === 0 && (
+            <p className="messenger-empty">Диалогов пока нет</p>
+          )}
+          {status === 'ready' && chats.length > 0 && visibleChats.length === 0 && (
+            <p className="messenger-empty">Ничего не найдено</p>
+          )}
+          {visibleChats.length > 0 && (
+            <ul className="chat-list" aria-label="Список чатов">
+              {visibleChats.map((item) => (
+                <ChatListItem
+                  key={item.chatId}
+                  item={item}
+                  currentUserId={currentUserId}
+                  active={item.chatId === activeChatId}
+                  onSelect={onSelectChat}
+                />
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   )
