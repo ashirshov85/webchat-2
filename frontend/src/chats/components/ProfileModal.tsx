@@ -18,6 +18,16 @@
  *   `<b>`) из `GET /users/me` (getCurrentUser), email-фолбэк «—»
  *   (openProfile прототипа).
  *
+ * - Смена пароля (008b US2, T023; FR-004): между readonly-строками и
+ *   кнопками — PasswordChangeForm (T022, отдельная <form>, свой
+ *   submit/тост); гейтинг по me.hasPassword (контракт 0.10.0, inline
+ *   allOf над PublicUser): JIT-аккаунт 003 (hasPassword === false)
+ *   форму не видит — подсказка .modal-hint «задать пароль через
+ *   восстановление по email» со ссылкой /forgot-password (флоу 002).
+ *   Submit вложенной формы всплывает до формы профиля — гвард
+ *   `event.target !== event.currentTarget` в handleSubmit исключает
+ *   двойное сохранение (пароль ≠ «Сохранить» профиля).
+ *
  * - Переключатель «Режим инкогнито» (.tgl-row прототипа): семантика и
  *   API 007 — №38 GET /users/me/presence/settings на монтировании
  *   отражает персистентный режим (переживает перелогин), подпись
@@ -46,6 +56,7 @@ import { problemMessage } from '../../auth/problem'
 import { fetchPresenceSettings, updatePresenceSettings } from '../../presence/presenceApi'
 import { useToast } from '../../ui/Toast'
 import { resolveDisplayName } from '../../ui/names'
+import { PasswordChangeForm } from './PasswordChangeForm'
 import './profile-modal.css'
 
 export interface ProfileModalProps {
@@ -60,6 +71,7 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
   const [status, setStatus] = useState<LoadState>('loading')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
+  const [hasPassword, setHasPassword] = useState(true)
   const [nameInput, setNameInput] = useState('')
   const [incognito, setIncognito] = useState(false)
   /** Последнее серверное значение №38 — цель отката при сбое PUT (007). */
@@ -75,6 +87,7 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
       .then(([me, settings]) => {
         setUsername(me.username)
         setEmail(me.email)
+        setHasPassword(me.hasPassword)
         setNameInput(me.displayName ?? '')
         setIncognito(settings.incognito)
         setPersisted(settings.incognito)
@@ -92,6 +105,11 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
   /** Submit #profileForm прототипа: №39 PUT (имя) → №38 PUT → тост → закрытие. */
   const handleSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
+    // Submit вложенной <form> смены пароля (T023) всплывает до формы
+    // профиля — цепочка «Сохранить» для него не запускается вовсе.
+    if (event.target !== event.currentTarget) {
+      return
+    }
     if (saving) {
       return
     }
@@ -181,6 +199,14 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
         <span>email</span>
         <b>{email || '—'}</b>
       </div>
+      {hasPassword ? (
+        <PasswordChangeForm username={username} email={email} />
+      ) : (
+        <p className="modal-hint">
+          {'У аккаунта нет пароля — задать пароль можно через '}
+          <a href="/forgot-password">восстановление по email</a>
+        </p>
+      )}
       {error !== null && (
         <div className="modal-err" role="alert">
           {error}

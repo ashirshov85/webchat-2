@@ -128,3 +128,25 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ============ ПОДСКАЗКА JIT-АККАУНТА (008b US2, T023) ============ */
+
+/* Беспарольной JIT-аккаунт 003 (hasPassword === false, FR-004): формы
+   смены нет — подсказка «задать пароль через восстановление по email»
+   (/forgot-password, флоу 002). Каркас — .modal-ro/.tgl-row прототипа,
+   но текст переносится (без ellipsis .modal-ro b — ссылка обязана
+   читаться целиком); ссылка — токен --gold (FR-002). */
+.modal-hint {
+  display: block;
+  margin: 0;
+  padding: 7px 10px;
+  border-radius: var(--r-field);
+  border: 1px dashed rgba(138, 106, 44, 0.45);
+  background: rgba(25, 21, 16, 0.5);
+  font: italic 12.5px var(--font-body);
+  color: var(--muted-2);
+}
+
+.modal-hint a {
+  color: var(--gold);
+}

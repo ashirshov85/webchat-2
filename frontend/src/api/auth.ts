@@ -32,6 +32,10 @@ export type TokenPair = components['schemas']['TokenPair']
 
 export type PublicUser = components['schemas']['PublicUser']
 
+/** GET /users/me (№10, контракт 0.10.0): PublicUser + аддитивное required-поле hasPassword. */
+export type MeUserResponse =
+  operations['getCurrentUser']['responses'][200]['content']['application/json']
+
 export type LoginResponse = operations['login']['responses'][200]['content']['application/json']
 
 const BASE_URL = '/api/v1'
@@ -141,7 +145,7 @@ export async function changePassword(body: PasswordChangeRequest): Promise<Token
   return (await response.json()) as TokenPair
 }
 
-export async function getCurrentUser(): Promise<PublicUser> {
+export async function getCurrentUser(): Promise<MeUserResponse> {
   const response = await apiFetch('/users/me', {
     headers: { Accept: 'application/json, application/problem+json' },
   })
@@ -149,5 +153,5 @@ export async function getCurrentUser(): Promise<PublicUser> {
     const problem: unknown = await toApiProblem(response)
     throw problem
   }
-  return (await response.json()) as PublicUser
+  return (await response.json()) as MeUserResponse
 }
