@@ -11,6 +11,7 @@ import { authorizeSso, listSsoProviders, saveReturnTo } from '../../api/sso'
 import type { SsoAuthorizeRequest, SsoProvider } from '../../api/sso'
 import { setTokenPair } from '../session'
 import { problemMessage } from '../problem'
+import { loginRedirectTarget } from '../lib/returnTo'
 
 function currentReturnTo(): string | null {
   const value = new URLSearchParams(window.location.search).get('returnTo')
@@ -138,6 +139,7 @@ export function LoginPage() {
       const pair = await login({ identifier, password })
       setTokenPair(pair)
       setUser(pair.user)
+      window.location.assign(loginRedirectTarget(currentReturnTo()))
     } catch (err) {
       setError(problemMessage(err))
     } finally {
