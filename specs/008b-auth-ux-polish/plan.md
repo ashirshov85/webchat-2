@@ -157,8 +157,8 @@ contracts/
 └── openapi.yaml                                   # additive: 0.9.0 → 0.10.0
 
 deploy/
-├── local/docker-compose.yml                       # env admin seed (dev)
-└── k8s/                                           # env admin seed (prod: secret)
+├── local/docker-compose.yml                       # без изменений (только infra: PG/Redis/Mailpit/dex)
+└── k8s/                                           # env admin seed: ADMIN_SEED_EMAIL + secret ADMIN_SEED_PASSWORD
 ```
 
 **Structure Decision**: существующая структура `backend/` + `frontend/` + `contracts/`
