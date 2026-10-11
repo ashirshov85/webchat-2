@@ -339,7 +339,8 @@ class SessionServiceTest {
         verify(valueOperations).set(DENYLIST_PREFIX + sidA, DENYLIST_MARKER, TOKEN_PROPERTIES.accessTtl)
         verify(valueOperations).set(DENYLIST_PREFIX + sidB, DENYLIST_MARKER, TOKEN_PROPERTIES.accessTtl)
         // FR-008: the kept sid is never denylisted — the fresh access must live
-        verify(valueOperations, Mockito.never()).set(eqSafe(DENYLIST_PREFIX + currentSession.id), anyString(), any<Duration>())
+        verify(valueOperations, Mockito.never())
+            .set(eqSafe(DENYLIST_PREFIX + currentSession.id), anyString(), any<Duration>())
 
         val detailsCaptor = detailsCaptor()
         verify(authEventRecorder, Mockito.times(2)).record(
