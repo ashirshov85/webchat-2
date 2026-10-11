@@ -23,7 +23,7 @@ V9__sso_identities.sql:37-38):
 | Поле | Значение |
 |---|---|
 | username | `admin` (проходит `ck_users_username_format`, V1:17-18) |
-| email | `admin.seed.email`, env `ADMIN_SEED_EMAIL`, dev-умолчание `admin@webchat.local` |
+| email | `admin.seed.email`, env `ADMIN_SEED_EMAIL`, dev-умолчание `admin@webchat.local` (создание с дефолтом — warn + метка `email=default` в метрике: prod обязан задать env) |
 | password_hash | env `ADMIN_SEED_PASSWORD` → Argon2id в рантайме (`PasswordEncoder`, SecurityConfig.kt:37-39); env отсутствует → `NULL` (беспарольный активный аккаунт) |
 | status / email_confirmed_at | `active` / `now()` |
 | password_set_at | `now()` только если пароль задан |
