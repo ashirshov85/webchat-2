@@ -81,7 +81,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 ### Contract for User Story 2 (API-First)
 
 - [X] T008 [US2] Обновить `contracts/openapi.yaml` (0.9.0 → 0.10.0, строго аддитивно, contracts/auth-ux-polish-api.md §1–3): добавить `POST /api/v1/auth/password-change` (`operationId: changePassword`, `security: [{bearerAuth: []}]`, request-схема `PasswordChangeRequest` c `currentPassword`/`newPassword` без `confirmPassword`; ответы: 200 `TokenPair`, 400 `Problem` c `errors` `currentPassword: invalid` / `newPassword: too_short|too_long|blank|too_common|same_as_username|same_as_email`, 401, 429 + `Retry-After`); расширить `GET /users/me` inline `allOf` над `$ref PublicUser` c required `hasPassword: boolean` (НЕ в самом `PublicUser`); прогнать `scripts/validate-contracts.sh` (vacuum + drift + oasdiff breaking = 0)
-- [ ] T009 [US2] Регенерировать типы `frontend/src/api/schema.d.ts` командой `pnpm --dir frontend generate:api` (после T008); drift-check зелёный, `pnpm --dir frontend typecheck` проходит
+- [X] T009 [US2] Регенерировать типы `frontend/src/api/schema.d.ts` командой `pnpm --dir frontend generate:api` (после T008); drift-check зелёный, `pnpm --dir frontend typecheck` проходит
 
 ### Tests for User Story 2 (Test-First) ⚠️
 
