@@ -143,7 +143,7 @@ backend/
 └── src/test/kotlin/webchat/backend/
     ├── auth/PasswordChangeIT.kt                   # NEW
     ├── onboarding/AdminSeedIT.kt, StarterContactIT.kt  # NEW
-    └── auth/SessionIT.kt, RateLimitIT.kt          # extend
+    └── auth/SessionIT.kt, RateLimitIT.kt          # без изменений; покрытие смены пароля — в PasswordChangeIT (T010), hasPassword — в ProfileDisplayNameIT (T012a)
 
 frontend/
 ├── src/

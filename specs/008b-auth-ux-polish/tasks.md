@@ -16,7 +16,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 
 ## Format: `[ID] [P?] [Story] Description`
 
-- **[P]**: Можно параллельно (разные файлы, нет зависимостей от незавершённых задач)
+- **[P]**: Можно параллельно с другими [P]-задачами своей группы (разные файлы); явная текстовая зависимость в описании задачи («после TXXX», «зависит от TXXX») приоритетнее маркера
 - **[Story]**: Принадлежность к user story (US1, US2, US3, US4)
 - Все пути — от корня репозитория; backend-пакет `backend/src/main/kotlin/webchat/backend/` сокращён до `webchat/backend/`
 
@@ -143,7 +143,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 > **NOTE**: Написать ПЕРВЫМИ, убедиться в FAIL до реализации
 
 - [ ] T026 [P] [US4] Интеграционные тесты `backend/src/test/kotlin/webchat/backend/onboarding/AdminSeedIT.kt`: старт без admin → создан ровно один active `admin` (email из конфига, `starter_contact_added = TRUE`); повторный старт приложения → без дублей и перезаписи; занятый username/email → warn, существующие данные не тронуты; без `ADMIN_SEED_PASSWORD` → беспарольная JIT-форма (active, `password_hash IS NULL`, проходит ck_users_active_implies_email); с паролем → Argon2id
-- [ ] T027 [P] [US4] Интеграционные тесты `backend/src/test/kotlin/webchat/backend/onboarding/StarterContactIT.kt`: завершение регистрации 002 → admin в контактах ровно один раз; SSO JIT-регистрация → тот же результат; повторная доставка события → без дубля; симуляция потери события → первый `GET /contacts` добавляет admin ровно один раз (self-healing); пользователь удалил admin → повторные входы/запросы не возвращают; аккаунты, существовавшие до V17 (`starter_contact_added = TRUE` миграцией) → контактов не получают; admin не добавляется самому себе; AC6 (диалог с admin — обычная пара 004) — особых веток кода нет, покрывается регрессом 004 в T037
+- [ ] T027 [P] [US4] Интеграционные тесты `backend/src/test/kotlin/webchat/backend/onboarding/StarterContactIT.kt`: завершение регистрации 002 → admin в контактах ровно один раз; SSO JIT-регистрация → тот же результат; повторная доставка события → без дубля; симуляция потери события → первый `GET /contacts` добавляет admin ровно один раз (self-healing); seed не выполнен (admin отсутствует) → GET /contacts не ломается (best-effort), флаг starter_contact_added остаётся FALSE; после появления admin (восстановление seed) следующий запрос добавляет контакт ровно один раз (spec.md edge, research.md §1/§3); пользователь удалил admin → повторные входы/запросы не возвращают; аккаунты, существовавшие до V17 (`starter_contact_added = TRUE` миграцией) → контактов не получают; admin не добавляется самому себе; AC6 (диалог с admin — обычная пара 004) — особых веток кода нет, покрывается регрессом 004 в T037
 
 ### Implementation for User Story 4
 
