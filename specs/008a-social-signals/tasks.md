@@ -252,6 +252,23 @@
 
 ---
 
+## Phase 13: Bugfix — инициалы аватаров ленты сообщений из цепочки US1 (profile-name → username)
+
+**Purpose**: Несоответствие, найденное ревью: контакты (`ContactsModal.tsx:288-295`), шапка чата (`ChatHeader.tsx:494-496`), список чатов (`ChatListItem.tsx:152-154`), участники групп, typing-строка и результаты поиска деривируют инициалы из цепочки `resolveDisplayName(alias → displayName → username)` (T020/T023), а строки ленты сообщений (`FeedRow`/`LocalRow`, `MessageList.tsx:1066/1102`) рендерят `<Avatar source={username}>` БЕЗ `initials`-пропа — срабатывает фолбэк `initialsOf(source)` = инициалы из username (`Avatar.tsx:86`). Требование владельца: однообразно — есть profile-name (цепочка) → инициалы из него; нет → из username. Причина дефекта: лента построена в 008 T022 (коммит `d3e41c1`) при однокорневом контракте Avatar (инициалы+цвет из одного `source`=username, FR-024), а проводка T020-сплита (T023, коммит `72b7e2d`) MessageList в свой список поверхностей не включила; компонент до сих пор получает username-only-пропсы (`meUsername`/`peerUsername`, `MessageList.tsx:886-896`) и строит групповую атрибуцию Map userId→username (`MessageList.tsx:1386`), хотя данные цепочки доступны: проп `members` №28 уже несёт `member.user.alias/displayName/username`, peer-тройка и собственный `displayName` №10 вычислены на уровне MessengerPage (`MessengerPage.tsx:2438-2447`). Прототип тоже деривит аватары ленты из ИМЕНИ отправителя (chats.html:881/994) — текущее app-поведение расходится и с прототипом.
+
+**Поведение**:
+- Входящие direct: инициалы `initialsOf(resolveDisplayName(peerAlias, peer.displayName, peer.username))` — тот же источник, что шапка/строка списка.
+- Входящие группы: инициалы `initialsOf(resolveDisplayName(member.user.alias, member.user.displayName, member.user.username))` по №28-ростру; отправитель вне ростра — прежний фолбэк (`source` → username/стабильный id, т.е. `initialsOf(source)`).
+- Собственные и локальные строки (pending/outbox): инициалы из собственного `displayName` №10 (отсутствует/пустой → username); тот же класс несходимости у «Вы»-аватаров (подсказка композера `ChatHeader.tsx:353`, свои строки поиска `MessengerPage.tsx:2211`) — выровнять одной проводкой.
+- Цвет аватаров НЕ меняется: `source` остаётся username/стабильный id (`colorOf`, FR-004 — наличие/смена profile-name не перекрашивает).
+- Смежная несходимость того же класса: подпись отправителя над пузырём в группах — голый username (`senderNames`, `MessageList.tsx:1386`), тогда как typing-строка/поиск/участники показывают цепочку, прототип — имя отправителя; выровнять той же проводкой.
+- Направление реализации (выбор за исполнителем, паттерн T065): (а) MessageList получает сырые данные (peer-тройка, me.displayName; members уже есть пропом) и сам зовёт `resolveDisplayName`, ЛИБО (б) страница передаёт готовые имена/инициалы (паттерн T068: `avatarSource` + `avatarInitials`); единая точка `resolveDisplayName` (ui/names) не дублируется.
+- Контракт ui-behavior §1 «Аватары» уже декларирует цепочку для всех поверхностей — лента ему противоречила, текст контракта не меняется; контракт API (№11–№16/№18/№28/№42) не трогается.
+
+- [ ] T070 Провести цепочку US1 в аватары ленты: `frontend/src/chats/components/MessageList.tsx` (FeedRow/LocalRow — `initials`-проп по правилам фазы; групповая атрибуция `senderNames` — имена по цепочке вместо username) + проводка `frontend/src/chats/pages/MessengerPage.tsx` (peer-тройка/`me.displayName` №10 — по выбранному направлению) + «Вы»-аватары: подсказка композера `ChatHeader.tsx:353` и свои строки поиска `MessengerPage.tsx:2211` (инициалы из me.displayName → username; цвет остаётся `colorOf(meUsername)`). Тесты (писать первыми, красные до фикса; ожидания инициалов — с учётом исполненной T069: одиночное слово → два символа): MessageList-сюиты (delivery/group/outbox) — аватар входящей группы: инициалы из displayName/alias участника ≠ username (например displayName «Мария Соколова» → «МС» при username «mikhail»), direct — из peerAlias/displayName, свои/локальные — из me.displayName, цвет `colorOf(username)` не изменился, отправитель вне ростра — прежний фолбэк, подпись отправителя группы — имя по цепочке (актуализация существующих username-ожиданий); MessengerPage — проводка пропсов; ChatHeader/поиск — «Вы»-инициалы из displayName с фолбэком username. ВИЗУАЛЬНО: пиксели аватаров ленты меняются там, где цепочка ≠ username — СБЛИЖЕНИЕ с прототипом (он рисует имена отправителей): app-снимки по бюджету ≤2% либо перезахват затронутых базлайнов, prototype-baselines НЕ трогаются. Проверка: `pnpm --dir frontend lint && pnpm --dir frontend typecheck && pnpm --dir frontend test && pnpm --dir frontend test:visual`; `scripts/validate-contracts.sh` = 0 ERR
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -260,6 +277,7 @@
 - **Foundational (Phase 2)**: после Phase 1 — БЛОКИРУЕТ все истории (контракт 0.9.0 = источник типов; V16 = колонки US1/US4 (US3 — без миграции, только Redis); T003–T006 строго последовательно — один файл `contracts/openapi.yaml` + генерация)
 - **User Stories (Phases 3–6)**: все после Phase 2; последовательный порядок приоритетов US1 (P1) → US2 (P1) → US3 (P2) → US4 (P3) одним агентом (конституция: последовательная реализация); при команде — US3/US4 параллельны с US2 после US1, кроме общих файлов исторей (см. Parallel Team Strategy)
 - **Polish (Phase 7)**: после всех историй
+- **Bugfix (Phase 13)**: после Phase 12 (T069 сменила ожидания инициалов в тех же тестах ленты — последовательное исполнение); файлы MessageList/MessengerPage/ChatHeader общие с T066–T068 — после их закрытия
 - **Bugfix (Phase 12)**: после Phase 11 — независимый инкремент (свои файлы: avatar.ts + его тесты/базлайны; контракта API не касается); пиксели прототипа не трогает — отступление класса T060
 - **Enhancement (Phase 11)**: после Phase 10 (общие файлы ChatHeader/ChatListPanel/MessageList/MessengerPage — последовательное исполнение с T066/T067)
 - **Bugfix (Phase 10)**: после Phase 9 (общий файл MessageList.tsx с T066 — последовательное исполнение)
