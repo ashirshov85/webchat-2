@@ -9,7 +9,7 @@
 Четыре улучшения auth-пути на готовой инфраструктуре фич 002–008: (1) редирект на чат после
 парольного входа с поддержкой `returnTo` (клиентская механика по образцу 003, без изменения
 login-endpoint); (2) ссылка «Забыли пароль?» на странице входа в существующий флоу 002; (3)
-аддитивный endpoint `POST /auth/password-change` (проверка текущего пароля, политика 002,
+аддитивный endpoint `POST /api/v1/auth/password-change` (проверка текущего пароля, политика 002,
 Argon2id, rate limiting, аудит, отзыв прочих сессий + ротация refresh-токена текущей сессии)
 и форма смены пароля в «Мой профиль» (скрыта для JIT-аккаунтов без пароля — требуется
 аддитивное поле `hasPassword` в `GET /users/me`); (4) seed системного аккаунта admin при
@@ -49,7 +49,8 @@ Playwright visual; контрактный конвейер (vacuum lint, regen d
 
 1. **Seed admin**: `ApplicationRunner` + `INSERT … ON CONFLICT DO NOTHING`; email/пароль
    из env (`ADMIN_SEED_EMAIL`/`ADMIN_SEED_PASSWORD`); без пароля — JIT-форма + задание
-   пароля флоу 002 (research.md §1).
+   пароля флоу 002; ротация — только при создании строки, далее штатные флоу 002/008b
+   (research.md §1).
 2. **Событие регистрации**: Spring `ApplicationEvent` + `@TransactionalEventListener(AFTER_COMMIT)`
    + `@Async` из двух точек создания активных аккаунтов; дискриминатор —
    `users.starter_contact_added` (V17 помечает существующих без добавления контактов);
@@ -116,7 +117,7 @@ backend/
 ├── src/main/kotlin/webchat/backend/
 │   ├── auth/
 │   │   ├── api/SessionController.kt, RegisterController.kt, PasswordResetController.kt
-│   │   │   └── PasswordChangeController.kt        # NEW: POST /auth/password-change
+│   │   │   └── PasswordChangeController.kt        # NEW: POST /api/v1/auth/password-change
 │   │   ├── domain/model/User.kt                   # changePassword() — reuse
 │   │   ├── domain/service/
 │   │   │   ├── PasswordChangeService.kt           # NEW: проверка текущего, политика, сессии
@@ -127,6 +128,9 @@ backend/
 │   │   ├── ratelimit/RateLimitFilter.kt           # route table + per-user bucket
 │   │   ├── security/AuthEvents.kt                 # NEW enum values PASSWORD_CHANGE_*
 │   │   └── onboarding/                            # NEW: StarterContactListener, AdminSeed
+│   ├── users/
+│   │   ├── api/dto/MeUserResponse.kt               # NEW: PublicUser + hasPassword
+│   │   └── api/UsersController.kt                  # extend: me() → MeUserResponse
 │   ├── contacts/
 │   │   ├── api/ContactController.kt               # hook: self-healing fallback
 │   │   ├── domain/service/ContactService.kt       # reuse add (идемпотентен)
