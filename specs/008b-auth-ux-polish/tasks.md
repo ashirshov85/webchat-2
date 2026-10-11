@@ -43,7 +43,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 
 **⚠️ CRITICAL**: Задачи US2/US4 не начинаются до завершения этой фазы
 
-- [ ] T002 Создать миграцию `backend/src/main/resources/db/migration/V17__password_change_onboarding.sql`: (а) `ALTER TABLE users ADD COLUMN starter_contact_added BOOLEAN NOT NULL DEFAULT FALSE` (прецедент V15); (б) `UPDATE users SET starter_contact_added = TRUE` — существующие аккаунты помечаются «обработанными» без добавления контактов (бэкфилла нет, clarify spec.md); (в) `ALTER TYPE auth_event_type ADD VALUE 'password_change_completed'` и `ADD VALUE 'password_change_failed'` (прецедент V8__sso_enums.sql:19-24). Соответствие data-model.md §1.1–1.2
+- [X] T002 Создать миграцию `backend/src/main/resources/db/migration/V17__password_change_onboarding.sql`: (а) `ALTER TABLE users ADD COLUMN starter_contact_added BOOLEAN NOT NULL DEFAULT FALSE` (прецедент V15); (б) `UPDATE users SET starter_contact_added = TRUE` — существующие аккаунты помечаются «обработанными» без добавления контактов (бэкфилла нет, clarify spec.md); (в) `ALTER TYPE auth_event_type ADD VALUE 'password_change_completed'` и `ADD VALUE 'password_change_failed'` (прецедент V8__sso_enums.sql:19-24). Соответствие data-model.md §1.1–1.2
 
 **Checkpoint**: Миграция применяется (`./gradlew check` прогоняет Flyway); фундамент готов — истории US1–US4 можно начинать (US1/US3 не зависят от V17)
 
