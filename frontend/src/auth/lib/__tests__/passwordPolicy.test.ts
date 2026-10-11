@@ -9,22 +9,12 @@ const ACCOUNT = {
 const VALID_PASSWORD = 's3cure-pass!'
 
 describe('validateNewPassword', () => {
-  it('returns null for a compliant password', () => {
-    expect(validateNewPassword(VALID_PASSWORD, { ...ACCOUNT, confirm: VALID_PASSWORD })).toBeNull()
-  })
-
-  it('returns null at the minimum boundary of 8 characters', () => {
-    const password = 'Str0ng!2'
-    expect(validateNewPassword(password, { ...ACCOUNT, confirm: password })).toBeNull()
-  })
-
-  it('returns null at the maximum boundary of 128 characters', () => {
-    const password = 'a1B!'.repeat(32)
-    expect(validateNewPassword(password, { ...ACCOUNT, confirm: password })).toBeNull()
-  })
-
-  it('returns null for a passphrase with inner spaces', () => {
-    const password = 'correct horse battery'
+  it.each([
+    ['a compliant password', VALID_PASSWORD],
+    ['the minimum boundary of 8 characters', 'Str0ng!2'],
+    ['the maximum boundary of 128 characters', 'a1B!'.repeat(32)],
+    ['a passphrase with inner spaces', 'correct horse battery'],
+  ])('returns null for %s', (_reason, password) => {
     expect(validateNewPassword(password, { ...ACCOUNT, confirm: password })).toBeNull()
   })
 
