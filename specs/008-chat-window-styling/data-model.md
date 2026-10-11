@@ -25,7 +25,7 @@
 | Поле | Тип | Derivation |
 |---|---|---|
 | source | string | `username` (пользователи: peer, контакт, «Вы», отправитель) либо `title` (групповой чат) |
-| initials | string (1–2 буквы) | `initialsOf(source)`: первые буквы первых двух слов, uppercase; одиночное слово — одна буква |
+| initials | string (1–2 буквы) | `initialsOf(source)`: первые буквы первых двух слов, uppercase; одиночное слово — первые две буквы (008a T069 — требование владельца поверх прототипа; одна — только при недостатке материала) |
 | color | string (hex) | `colorOf(source)` = `PALETTE[fvn1a32(source) mod 6]`, `PALETTE` — палитра прототипа (6 цветов, см. design-tokens) |
 | shape | `'circle' \| 'octagon'` | circle — пользователи; octagon (clip-path 30/70%) — групповые чаты |
 | presenceDot | `'online' \| 'offline' \| 'unknown' \| null` | из presenceStore 007 (только аватары личных чатов/контактов); null — группы, собственный аватар, отправители в ленте |

@@ -438,12 +438,13 @@ visualTest.describe('T025 — 008a US1: profile «Имя» field and the rename 
 
       // The owner's surfaces converge by refetch (ui-behavior §1.2): the
       // №12 answer carries peerAlias, the sidebar row and the OPEN
-      // dialog header flip to «Маша» — initials from the chain («М»),
-      // the avatar colour stays derived from the username (FR-004).
+      // dialog header flip to «Маша» — initials from the chain («МА» —
+      // 008a T069: одиночное слово даёт два кластера), the avatar
+      // colour stays derived from the username (FR-004).
       await messenger.page.keyboard.press('Escape')
       await expect(messenger.page.locator('.modal-back.show')).toHaveCount(0)
       await expect(messenger.page.locator('.chat-head .chat-name')).toHaveText('Маша')
-      await expect(messenger.page.locator('.chat-head .head-av .av-in span')).toHaveText('М')
+      await expect(messenger.page.locator('.chat-head .head-av .av-in span')).toHaveText('МА')
       await expect(messenger.page.locator('.chat-item', { hasText: 'Маша' })).toHaveCount(1)
       // The toast auto-hides on its 3000 ms timer — wait it out so no
       // residue enters the header capture.

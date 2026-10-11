@@ -299,6 +299,20 @@ describe('MessengerPage group window from the unified list (US1)', () => {
     expect(within(groupDialog).queryByText('неизвестно')).toBeNull()
   })
 
+  it('row avatars carry the initials — two symbols for a single-word source (008a T069)', async () => {
+    await renderPage([groupRow(), directRow()])
+
+    // T020/T023: инициалы живут ВНУТРИ кнопки строки (aria-hidden —
+    // декоративны, доступное имя остаётся за текстом заголовка строки);
+    // T069: одиночное слово («alice») даёт ДВА кластера, многословный
+    // title группы — без изменений.
+    expect(chatRowButton('alice').querySelector('.av-in span')?.textContent).toBe('AL')
+    expect(chatRowButton('Проект Альфа').querySelector('.av-in span')?.textContent).toBe('ПА')
+    // Доступные имена строк инициалов не раскрывают (декоративность T020).
+    expect(chatRowButton('alice')).toHaveAccessibleName(/^alice\b/)
+    expect(chatRowButton('Проект Альфа')).toHaveAccessibleName(/^Проект Альфа/)
+  })
+
   it('keeps the direct dialog intact: peer header with the gear chat menu', async () => {
     await renderPage([groupRow(), directRow()])
 

@@ -27,9 +27,9 @@ describe('Avatar — деривация из единственного исто
     expect(avatarRoot(container).querySelector('.av-in span')?.textContent).toBe('AL')
   })
 
-  it('одиночное слово — одна буква, кириллица поддерживается', () => {
+  it('одиночное слово — два символа (008a T069), кириллица поддерживается', () => {
     const { container } = render(<Avatar source="Мария" />)
-    expect(avatarRoot(container).querySelector('.av-in span')?.textContent).toBe('М')
+    expect(avatarRoot(container).querySelector('.av-in span')?.textContent).toBe('МА')
   })
 
   it('цвет детерминирован: inline-переменная --av = colorOf(source)', () => {
@@ -82,7 +82,8 @@ describe('Avatar — форма круг/октагон и обод (design-toke
     const { container } = render(<Avatar source="alex" />)
     const root = avatarRoot(container)
     expect(root.querySelector('.av-in')).not.toBeNull()
-    expect(root.querySelector('.av-in > span')?.textContent).toBe('A')
+    // T069: одиночный источник — два символа.
+    expect(root.querySelector('.av-in > span')?.textContent).toBe('AL')
   })
 
   it('размер по умолчанию 40px; size переопределяет width/height', () => {

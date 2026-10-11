@@ -165,9 +165,10 @@ describe('ChatHeader prototype block (T021, FR-016 base, data-model 2.3)', () =>
     const head = container.querySelector('.chat-head') as HTMLElement
     expect(head).not.toBeNull()
 
-    // Avatar: circle of the peer username, initials «A» (FR-024).
+    // Avatar: circle of the peer username, initials «AL» (FR-024; 008a
+    // T069 — одиночное слово даёт два кластера).
     expect(head.querySelector('.head-av .avatar:not(.oct)')).not.toBeNull()
-    expect(head.querySelector('.avatar .av-in span')?.textContent).toBe('A')
+    expect(head.querySelector('.avatar .av-in span')?.textContent).toBe('AL')
 
     // Name: the 004 hook stays — h2.dialog-title (FR-034).
     expect(screen.getByRole('heading', { level: 2, name: 'alice' })).toHaveClass(
@@ -377,7 +378,8 @@ describe('ChatHeader members-tip (T043, FR-017, data-model 2.3, ui-behavior §4)
     expect(rows).toHaveLength(3)
     // «Вы» — первым (FR-017); собственная строка №28 не дублируется.
     expect(rows[0]?.querySelector('.mt-name')?.textContent).toBe('Вы')
-    expect(rows[0]?.querySelector('.avatar .av-in span')?.textContent).toBe('M')
+    // 008a T069: одиночный username («me») — два кластера.
+    expect(rows[0]?.querySelector('.avatar .av-in span')?.textContent).toBe('ME')
     expect(rows.slice(1).map((row) => row.querySelector('.mt-name')?.textContent)).toEqual([
       'alice',
       'bob',
