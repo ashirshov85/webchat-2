@@ -126,7 +126,7 @@ API и семантика восстановления не меняются —
 |---|---|
 | `POST /auth/login` | контракт и семантика без изменений |
 | password-reset 002 | без изменений (включая отзыв всех сессий при reset-confirm) |
-| SSO 003 | authorize/callback/token, `returnTo`-флоу — без изменений |
+| SSO 003 | authorize/callback/token — без изменений; `returnTo`-флоу — только усиление валидации путей (§4.1: `\`, `..`, управляющие символы, auth-маршруты), API-контракт не меняется |
 | Контакты 004 | `GET /contacts` — форма ответа без изменений (само-исцеление внутри, worst-case +1 контакт ровно один раз) |
 | `TokenPair` | schema без изменений |
 | Breaking | oasdiff `--fail-on ERR` против origin/main — зелёный |
