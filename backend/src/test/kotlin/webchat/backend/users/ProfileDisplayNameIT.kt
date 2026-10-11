@@ -3,7 +3,11 @@ package webchat.backend.users
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ObjectNode
+import com.sun.net.httpserver.HttpExchange
+import com.sun.net.httpserver.HttpServer
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.AfterAll
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.web.client.TestRestTemplate
@@ -13,13 +17,27 @@ import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.http.client.SimpleClientHttpRequestFactory
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.mock.web.MockHttpServletRequest
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
+import org.springframework.web.client.RestTemplate
 import org.springframework.web.util.UriComponentsBuilder
 import org.yaml.snakeyaml.Yaml
 import webchat.backend.chats.MessagingTestSupport
+import webchat.backend.sso.MockIdP
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
+import java.net.URI
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.OffsetDateTime
 import java.util.UUID
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * T009 (tasks.md Phase 3, US1): the profile-name slice of the 008a
@@ -51,17 +69,41 @@ import java.util.UUID
  *    integral `Retry-After ≥ 1` and is strictly per-user — a different
  *    user updates right after the refusal undisturbed.
  *
+ * T012a (tasks.md 008b Phase 4, US2, contract 0.10.0 §2): №10 grows
+ * the additive REQUIRED `hasPassword` boolean — inline `allOf` over
+ * `$ref PublicUser` (research.md 008b §4):
+ *  * the `true` leg — a password account grown through the real 002
+ *    flow answers `hasPassword=true` and its whole body satisfies the
+ *    LIVE inline №10 schema of contracts/openapi.yaml;
+ *  * the `false` leg — the password-less JIT account of SSO 003
+ *    (`password_hash IS NULL`, provisioned by a REAL MockIdP login —
+ *    SsoFlowIT/PasswordChangeIT conventions) answers `hasPassword=false`
+ *    under the same live schema;
+ *  * FR-004 suppression — the peer fragments of №11/№12/№13 and the
+ *    №26 sync delta peer, the №19 exact search hit and the №28 group
+ *    member fragment NEVER carry `hasPassword`: the JIT origin of an
+ *    account must not leak to other users.
+ *
  * NOTE (TDD, constitution VI): written BEFORE T011/T012 (and the
  * projection legs of T015–T017) land — until the №39 route exists
  * every PUT here answers 404/405 and the projection legs never see a
  * displayName, so every method fails (RED) by design; T026 acceptance
- * is this class green together with ContactAliasIT.
+ * is this class green together with ContactAliasIT. The T012a legs
+ * follow the same rule: until T014 lands `MeUserResponse` the №10
+ * body carries no `hasPassword`, so both required-field legs (and the
+ * switched №10 conformance leg of the first test) fail (RED) by design.
  */
 @Suppress("TooManyFunctions", "LargeClass") // T009: one helper per contract operation, one method per US1 rule
 class ProfileDisplayNameIT(
     @Autowired private val restTemplate: TestRestTemplate,
     @Autowired private val objectMapper: ObjectMapper,
+    @Autowired private val jdbcTemplate: JdbcTemplate,
 ) : MessagingTestSupport() {
+    @BeforeEach
+    fun resetIdp() {
+        mockIdP.reset()
+    }
+
     /** №39 happy path (set leg): 200 + the trimmed `PublicUser` body; repeat stays 200. */
     @Test
     fun `update sets trims and repeats the display name idempotently`() {
@@ -75,7 +117,9 @@ class ProfileDisplayNameIT(
         assertThat(bodyTree(baseline).hasDisplayName())
             .overridingErrorMessage("a user without a profile name must NOT carry displayName in №10")
             .isFalse
-        assertConformsToSchema(objectMapper.readTree(baseline.body), PUBLIC_USER_SCHEMA)
+        // 008b T012a: №10 now grows the additive REQUIRED hasPassword — the
+        // plain PublicUser leg is replaced by the LIVE inline allOf schema.
+        assertMeConformsToLiveContract(objectMapper.readTree(baseline.body))
 
         // Set with surrounding whitespace: the server trims BEFORE storing (FR-001).
         val setName = "  $PROFILE_NAME  "
@@ -334,6 +378,124 @@ class ProfileDisplayNameIT(
             .isEqualTo(HttpStatus.OK)
     }
 
+    /**
+     * T012a `true` leg (008b US2, contract 0.10.0 §2): a password
+     * account grown through the REAL 002 flow must carry the additive
+     * REQUIRED `hasPassword=true`, and the whole №10 body must satisfy
+     * the LIVE inline allOf(PublicUser, hasPassword) schema of
+     * contracts/openapi.yaml (research.md 008b §4). RED until T014
+     * lands `MeUserResponse` (constitution VI).
+     */
+    @Test
+    fun `me carries the required hasPassword true for a password account`() {
+        val alice = messagingUser("pwdholder")
+
+        val response = getMe(alice)
+        assertThat(response.statusCode)
+            .overridingErrorMessage("№10 must answer 200, got <%s>: %s", response.statusCode, response.body)
+            .isEqualTo(HttpStatus.OK)
+        val me = bodyTree(response)
+        assertMeConformsToLiveContract(me)
+        assertThat(me.hasPasswordFlag())
+            .overridingErrorMessage(
+                "№10 must carry the required boolean hasPassword=true for a password account, got <%s> in %s",
+                me[HAS_PASSWORD_FIELD],
+                response.body,
+            ).isEqualTo(true)
+    }
+
+    /**
+     * T012a `false` leg: the password-less JIT account of SSO 003 —
+     * provisioned by a REAL MockIdP login (SsoFlowIT/PasswordChangeIT
+     * conventions), so `users.password_hash IS NULL` while the account
+     * is `active`. №10 must answer `hasPassword=false` under the same
+     * live allOf schema — the profile form gates on exactly this
+     * signal (FR-004). RED until T014.
+     */
+    @Test
+    fun `me answers hasPassword false for the passwordless jit sso account`() {
+        mockIdP.setClaims(MockIdP.ControlledClaims(subject = SUBJECT_JIT, email = EMAIL_JIT, emailVerified = true))
+        val jit = performSsoLogin()
+
+        // sanity: the 003 JIT shape — active account, password_hash IS NULL
+        val jitRow = userRowOf(jit.id)
+        assertThat(jitRow)
+            .overridingErrorMessage("the JIT fixture <%s> must exist in users", jit.username)
+            .isNotNull
+        assertThat(jitRow!!["status"]).isEqualTo("active")
+        assertThat(jitRow["password_hash"]).isNull()
+
+        val response = getMe(jit)
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "№10 must answer 200 for the JIT session, got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.OK)
+        val me = bodyTree(response)
+        assertMeConformsToLiveContract(me)
+        assertThat(me.hasPasswordFlag())
+            .overridingErrorMessage(
+                "№10 must answer hasPassword=false for the password-less JIT account, got <%s> in %s",
+                me[HAS_PASSWORD_FIELD],
+                response.body,
+            ).isEqualTo(false)
+    }
+
+    /**
+     * T012a suppression leg (FR-004): the JIT marker must NEVER leak
+     * beyond №10 — the peer fragments of №11 (ensure), №12 (list) and
+     * №13 (get) plus the №26 sync delta peer, the №19 exact search hit
+     * and the №28 group member fragment all render through the shared
+     * `PublicUser`/`UserWithAlias` projectors and stay free of
+     * `hasPassword` (research.md 008b §4: the field inside `PublicUser`
+     * would disclose the JIT origin of an account to OTHER users).
+     * This leg guards the T014 implementation from exactly that leak.
+     */
+    @Test
+    fun `hasPassword stays off the peer search and member surfaces`() {
+        val (alice, bob) = messagingPair()
+        val carol = messagingUser("carol")
+        val chatId = ensureChatOk(bob, alice.id)
+
+        // a full projection: the surfaces carry every PublicUser field they may carry
+        assertThat(updateProfile(alice, PROFILE_NAME).statusCode)
+            .overridingErrorMessage("the fixture name must land before the suppression legs")
+            .isEqualTo(HttpStatus.OK)
+
+        assertThat(peerOf(objectMapper.readTree(ensureChat(bob, alice.id).body!!)).has(HAS_PASSWORD_FIELD))
+            .overridingErrorMessage("the №11 peer must NOT carry hasPassword (FR-004)")
+            .isFalse
+        assertThat(peerOf(chatListItemOf(listChats(bob), chatId)).has(HAS_PASSWORD_FIELD))
+            .overridingErrorMessage("the №12 peer must NOT carry hasPassword (FR-004)")
+            .isFalse
+        assertThat(peerOf(objectMapper.readTree(getChat(bob, chatId).body!!)).has(HAS_PASSWORD_FIELD))
+            .overridingErrorMessage("the №13 peer must NOT carry hasPassword (FR-004)")
+            .isFalse
+
+        // №26: an undelivered message pulls the delta whose peer renders at read time
+        sendMessageOk(alice, chatId, "the message that creates the hasPassword suppression delta")
+        val sync = requestSync(bob, listOf(chatId to ZERO_CURSOR))
+        assertThat(sync.statusCode)
+            .overridingErrorMessage("№26 sync must answer 200, got <%s>: %s", sync.statusCode, sync.body)
+            .isEqualTo(HttpStatus.OK)
+        assertThat(peerOf(deltaOf(objectMapper.readTree(sync.body!!), chatId)).has(HAS_PASSWORD_FIELD))
+            .overridingErrorMessage("the №26 delta peer must NOT carry hasPassword (FR-004)")
+            .isFalse
+
+        // №19 search (observed by a third party) and №28 group member fragment
+        assertThat(foundUserOf(searchUsers(carol, alice.username)).has(HAS_PASSWORD_FIELD))
+            .overridingErrorMessage("the №19 found user must NOT carry hasPassword (FR-004)")
+            .isFalse
+        assertThat(addContact(bob, alice.id).statusCode.is2xxSuccessful)
+            .overridingErrorMessage("the №28 fixture needs alice among bob's contacts")
+            .isTrue
+        val groupChatId = chatIdOf(createGroupOk(bob, GROUP_TITLE, memberUserIds = listOf(alice.id)))
+        assertThat(memberUserOf(getGroup(bob, groupChatId), alice.id).has(HAS_PASSWORD_FIELD))
+            .overridingErrorMessage("the №28 member fragment must NOT carry hasPassword (FR-004)")
+            .isFalse
+    }
+
     // ------------------------------------------------------------------
     // Contract №39/№10/№19/№26/№27/№28 call helpers (raw responses).
     // ------------------------------------------------------------------
@@ -482,6 +644,23 @@ class ProfileDisplayNameIT(
             null
         }
 
+    /** The required №10 boolean of 0.10.0 — `null` while absent/non-boolean (the RED shape before T014). */
+    private fun JsonNode.hasPasswordFlag(): Boolean? =
+        takeIf { has(HAS_PASSWORD_FIELD) && this[HAS_PASSWORD_FIELD].isBoolean }
+            ?.get(HAS_PASSWORD_FIELD)
+            ?.asBoolean()
+
+    /** The raw `users` row of a fixture (PasswordResetIT conventions) — the T012a JIT sanity legs. */
+    private fun userRowOf(userId: UUID): Map<String, Any>? =
+        jdbcTemplate
+            .queryForList(
+                """
+                SELECT id, username, email, password_hash, status::text AS status
+                FROM users WHERE id = ?
+                """.trimIndent(),
+                userId,
+            ).firstOrNull()
+
     /** The №39 400 of api-contract.md: problem+json with `errors.displayName=[invalid_display_name]`. */
     private fun assertInvalidDisplayName(
         response: ResponseEntity<String>,
@@ -584,20 +763,69 @@ class ProfileDisplayNameIT(
         schema: JsonNode,
         path: String,
         violations: MutableList<String>,
+        allOfDeclared: Set<String>? = null,
     ) {
         val ref = schema["\$ref"]?.takeIf { it.isTextual }
         if (ref != null) {
             val target = resolveLocalRef(ref.asText(), path, violations)
-            if (target != null) validateAgainst(node, target, path, violations)
+            if (target != null) validateAgainst(node, target, path, violations, allOfDeclared)
+            return
+        }
+        // 008b T012a: the №10 answer is the inline allOf(PublicUser, hasPassword)
+        // composition — every branch applies to the very same payload.
+        val composition = schema["allOf"]?.takeIf { it.isArray }
+        if (composition != null) {
+            validateAllOf(node, composition, path, violations)
             return
         }
         when (schema["type"]?.takeIf { it.isTextual }?.asText()) {
-            "object" -> validateObject(node, schema, path, violations)
+            "object" -> validateObject(node, schema, path, violations, allOfDeclared)
             "string" -> validateString(node, schema, path, violations)
             "integer" -> validateInteger(node, schema, path, violations)
+            "boolean" -> validateBoolean(node, path, violations)
             // a schema without a type imposes no structural constraint here
             else -> Unit
         }
+    }
+
+    /**
+     * allOf with the OpenAPI extension semantics: every branch contributes
+     * its required/property constraints, while the `additionalProperties:
+     * false` gate of ANY branch admits fields declared by ANY branch —
+     * the merged-object reading response validators apply to the canonical
+     * `allOf($ref PublicUser, extension)` pattern of contract 0.10.0 №10.
+     */
+    private fun validateAllOf(
+        node: JsonNode,
+        branches: JsonNode,
+        path: String,
+        violations: MutableList<String>,
+    ) {
+        val declared = mutableSetOf<String>()
+        branches.forEach { branch -> declared.addAll(declaredPropertiesOf(branch, path, violations)) }
+        branches.forEach { branch -> validateAgainst(node, branch, path, violations, declared) }
+    }
+
+    /** The property names a branch declares — follows a local `$ref` (branch 1 of the №10 composition). */
+    private fun declaredPropertiesOf(
+        schema: JsonNode,
+        path: String,
+        violations: MutableList<String>,
+    ): Set<String> {
+        val ref = schema["\$ref"]?.takeIf { it.isTextual }
+        val target =
+            if (ref != null) {
+                resolveLocalRef(ref.asText(), path, violations)
+            } else {
+                schema
+            }
+        return target
+            ?.get("properties")
+            ?.takeIf { it.isObject }
+            ?.fieldNames()
+            ?.asSequence()
+            ?.toSet()
+            .orEmpty()
     }
 
     private fun resolveLocalRef(
@@ -625,6 +853,7 @@ class ProfileDisplayNameIT(
         schema: JsonNode,
         path: String,
         violations: MutableList<String>,
+        allOfDeclared: Set<String>? = null,
     ) {
         if (!node.isObject) {
             violations.add("$path: expected an object, got <${node.nodeType}>")
@@ -643,7 +872,7 @@ class ProfileDisplayNameIT(
             when {
                 propertySchema != null && !propertySchema.isMissingNode ->
                     validateAgainst(node[field], propertySchema, "$path/$field", violations)
-                additionalForbidden ->
+                additionalForbidden && (allOfDeclared == null || field !in allOfDeclared) ->
                     violations.add("$path/$field: not declared by the schema and additionalProperties is false")
                 else -> Unit
             }
@@ -693,6 +922,48 @@ class ProfileDisplayNameIT(
         }
     }
 
+    private fun validateBoolean(
+        node: JsonNode,
+        path: String,
+        violations: MutableList<String>,
+    ) {
+        if (!node.isBoolean) {
+            violations.add("$path: expected a boolean, got <${node.nodeType}>")
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 008b T012a: the LIVE inline №10 schema of contract 0.10.0 — the
+    // allOf(PublicUser, hasPassword) composition lives INLINE in the
+    // path item (NOT under components), so the conformance legs
+    // navigate the path itself; every '/' of a segment is JSON-Pointer
+    // escaped as '~1'.
+    // ------------------------------------------------------------------
+
+    private fun meResponseSchema(): JsonNode {
+        val schema =
+            openApiContract.at(
+                "/paths/~1api~1v1~1users~1me/get/responses/200/content/application~1json/schema",
+            )
+        if (schema !is ObjectNode) {
+            throw AssertionError(
+                "contracts/openapi.yaml must keep the №10 200 answer as the inline " +
+                    "allOf(PublicUser, hasPassword) schema of 0.10.0 (research.md 008b §4), got: ${schema.nodeType}",
+            )
+        }
+        return schema
+    }
+
+    private fun assertMeConformsToLiveContract(payload: JsonNode) {
+        val violations = mutableListOf<String>()
+        validateAgainst(payload, meResponseSchema(), "#", violations)
+        assertThat(violations)
+            .overridingErrorMessage(
+                "the №10 body violates the live inline me-schema of contracts/openapi.yaml 0.10.0: %s",
+                violations,
+            ).isEmpty()
+    }
+
     // ------------------------------------------------------------------
     // Raw HTTP legs.
     // ------------------------------------------------------------------
@@ -734,7 +1005,134 @@ class ProfileDisplayNameIT(
             setBearerAuth(user.accessToken)
         }
 
-    private companion object {
+    // ------------------------------------------------------------------
+    // 008b T012a: the SSO leg (SsoFlowIT/PasswordChangeIT conventions) —
+    // the loopback MockIdP drives a REAL 003 login so the hasPassword
+    // `false` leg observes a genuine password-less JIT session.
+    // ------------------------------------------------------------------
+
+    /** A JSON POST with an explicit fixture source IP — the SSO legs keep their own per-IP buckets. */
+    private fun postJsonWithSourceIp(
+        path: String,
+        payload: Map<String, Any?>,
+        sourceIp: String,
+    ): ResponseEntity<String> =
+        restTemplate.postForEntity(
+            path,
+            HttpEntity(
+                payload,
+                HttpHeaders().apply {
+                    contentType = MediaType.APPLICATION_JSON
+                    set(X_FORWARDED_FOR_HEADER, sourceIp)
+                },
+            ),
+            String::class.java,
+        )
+
+    /**
+     * TestRestTemplate's JDK client follows redirects, which would chase the
+     * 302 Locations straight into unreachable redirect targets; the IdP and
+     * callback assertions need the raw FOUND responses (SsoFlowIT precedent).
+     */
+    private val noRedirectClient: RestTemplate =
+        RestTemplate(
+            object : SimpleClientHttpRequestFactory() {
+                override fun prepareConnection(
+                    connection: HttpURLConnection,
+                    httpMethod: String,
+                ) {
+                    super.prepareConnection(connection, httpMethod)
+                    connection.instanceFollowRedirects = false
+                }
+            },
+        )
+
+    /** The REAL 003 login loop through the loopback MockIdP → a password-less JIT fixture. */
+    private fun performSsoLogin(): MessagingUser {
+        val authorize =
+            postJsonWithSourceIp(SSO_AUTHORIZE_PATH, mapOf(PROVIDER_ID_FIELD to PROVIDER_ID), nextSsoIp())
+        assertThat(authorize.statusCode)
+            .overridingErrorMessage("sso/authorize must answer 200, got <%s>: %s", authorize.statusCode, authorize.body)
+            .isEqualTo(HttpStatus.OK)
+        val authorizationUrl = objectMapper.readTree(authorize.body)["authorizationUrl"].asText()
+
+        val idpRedirect = noRedirectClient.getForEntity(URI.create(authorizationUrl), String::class.java)
+        assertThat(idpRedirect.statusCode)
+            .overridingErrorMessage("the IdP authorize leg must redirect 302, got <%s>", idpRedirect.statusCode)
+            .isEqualTo(HttpStatus.FOUND)
+        val idpParameters = queryParametersOf(idpRedirect.headers.location.toString())
+
+        val callbackUrl =
+            UriComponentsBuilder
+                .fromHttpUrl(rootUri() + SSO_CALLBACK_PATH)
+                .queryParam(STATE_PARAMETER, idpParameters.getValue(STATE_PARAMETER))
+                .queryParam(CODE_PARAMETER, idpParameters.getValue(CODE_PARAMETER))
+                .build()
+                .toUriString()
+        val callbackResponse = noRedirectClient.getForEntity(URI.create(callbackUrl), String::class.java)
+        assertThat(callbackResponse.statusCode)
+            .overridingErrorMessage("sso/callback must redirect 302, got <%s>", callbackResponse.statusCode)
+            .isEqualTo(HttpStatus.FOUND)
+        val handshakeCode = queryParametersOf(callbackResponse.headers.location.toString()).getValue(CODE_PARAMETER)
+
+        val tokenExchange = postJsonWithSourceIp(SSO_TOKEN_PATH, mapOf(CODE_PARAMETER to handshakeCode), nextSsoIp())
+        assertThat(tokenExchange.statusCode)
+            .overridingErrorMessage(
+                "sso/token must answer 200, got <%s>: %s",
+                tokenExchange.statusCode,
+                tokenExchange.body,
+            ).isEqualTo(HttpStatus.OK)
+        val body = objectMapper.readTree(tokenExchange.body)
+        return MessagingUser(
+            id = UUID.fromString(body["user"]["id"].asText()),
+            username = body["user"]["username"].asText(),
+            email = body["user"]["email"].asText(),
+            accessToken = body["accessToken"].asText(),
+            refreshToken = body["refreshToken"].asText(),
+        )
+    }
+
+    private fun rootUri(): String = restTemplate.rootUri.removeSuffix("/")
+
+    private fun queryParametersOf(url: String): Map<String, String> =
+        UriComponentsBuilder
+            .fromUriString(url)
+            .build()
+            .queryParams
+            .map { (name, values) -> name to values.first() }
+            .toMap()
+
+    private fun nextSsoIp(): String = "$SSO_IP_PREFIX${ssoIpCounter.incrementAndGet()}"
+
+    companion object {
+        /** The same MockIdP controller class as the SSO ITs, driven directly by this suite (T012a). */
+        val mockIdP = MockIdP(ObjectMapper())
+
+        /**
+         * Loopback mount of the MockIdP whose base URI is known BEFORE the
+         * Spring context starts — the precondition for binding
+         * `sso.providers.*` to absolute IdP endpoints (SsoFlowIT /
+         * PasswordChangeIT precedent).
+         */
+        private val idpServer = IdpLoopbackMount(mockIdP)
+
+        @JvmStatic
+        @DynamicPropertySource
+        fun ssoProviderProperties(registry: DynamicPropertyRegistry) {
+            registry.add("sso.providers.$PROVIDER_ID.display-name") { "Profile DisplayName IT IdP" }
+            registry.add("sso.providers.$PROVIDER_ID.client-id") { MockIdP.DEFAULT_CLIENT_ID }
+            registry.add("sso.providers.$PROVIDER_ID.client-secret") { MockIdP.DEFAULT_CLIENT_SECRET }
+            registry.add("sso.providers.$PROVIDER_ID.authorization-uri") { "${idpServer.baseUri}/mock-idp/authorize" }
+            registry.add("sso.providers.$PROVIDER_ID.token-uri") { "${idpServer.baseUri}/mock-idp/token" }
+            registry.add("sso.providers.$PROVIDER_ID.jwks-uri") { "${idpServer.baseUri}/mock-idp/jwks" }
+        }
+
+        @JvmStatic
+        @AfterAll
+        fun stopIdpServer() {
+            idpServer.stop()
+        }
+
         const val PROFILE_PATH = "/api/v1/users/me/profile"
         const val ME_PATH = "/api/v1/users/me"
         const val SEARCH_PATH = "/api/v1/users/search"
@@ -747,6 +1145,25 @@ class ProfileDisplayNameIT(
         const val USER_ID_FIELD = "userId"
         const val TITLE_FIELD = "title"
         const val MEMBER_USER_IDS_FIELD = "memberUserIds"
+
+        // 008b T012a: the additive №10 field and the SSO fixture of the JIT leg
+        const val HAS_PASSWORD_FIELD = "hasPassword"
+        const val PROVIDER_ID = "mock-idp"
+        const val PROVIDER_ID_FIELD = "providerId"
+        const val SUBJECT_JIT = "subject-pdit-jit-4r8s"
+        const val EMAIL_JIT = "pdit.jit@example.com"
+        const val X_FORWARDED_FOR_HEADER = "X-Forwarded-For"
+
+        /** 198.18.29.x — dedicated SSO-fixture IPs of this suite (PasswordChangeIT owns .20–.28). */
+        const val SSO_IP_PREFIX = "198.18.29."
+        val ssoIpCounter = AtomicInteger()
+
+        const val STATE_PARAMETER = "state"
+        const val CODE_PARAMETER = "code"
+
+        const val SSO_AUTHORIZE_PATH = "/api/v1/auth/sso/authorize"
+        const val SSO_CALLBACK_PATH = "/api/v1/auth/sso/callback"
+        const val SSO_TOKEN_PATH = "/api/v1/auth/sso/token"
 
         const val INVALID_DISPLAY_NAME = "invalid_display_name"
         const val FLOOD_LIMIT = "flood_limit"
@@ -800,5 +1217,138 @@ class ProfileDisplayNameIT(
                 contractJson.valueToTree<JsonNode>(yamlRoot)
             }
         }
+    }
+}
+
+/**
+ * Loopback HTTP mount of the very same [MockIdP] controller class the SSO ITs
+ * use (SsoFlowIT's MockIdPLoopbackServer precedent, reduced to the three OIDC
+ * endpoints this suite drives — the PasswordChangeIT copy): the provider
+ * endpoints must be absolute URIs known while `@DynamicPropertySource` binds
+ * `sso.providers.*`, long before the random application port becomes
+ * observable. Requests are translated into [MockHttpServletRequest] and
+ * dispatched to the controller methods, responses are translated back —
+ * byte-for-byte the same behavior as the in-context bean, without a second
+ * Spring context.
+ */
+private class IdpLoopbackMount(
+    private val idp: MockIdP,
+) {
+    private val executor: ExecutorService =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, THREAD_NAME).apply { isDaemon = true }
+        }
+
+    private val server: HttpServer = HttpServer.create(InetSocketAddress(LOOPBACK_HOST, 0), BACKLOG)
+
+    /** Absolute base URI (e.g. `http://127.0.0.1:39291`) known before the Spring context starts. */
+    val baseUri: String = "http://$LOOPBACK_HOST:${server.address.port}"
+
+    init {
+        server.createContext(ROOT_PATH) { exchange -> handle(exchange) }
+        server.executor = executor
+        server.start()
+    }
+
+    fun stop() {
+        server.stop(STOP_DELAY_SECONDS)
+        executor.shutdownNow()
+    }
+
+    private fun handle(exchange: HttpExchange) {
+        val response =
+            try {
+                route(exchange)
+            } catch (cause: Exception) {
+                ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(cause.toString())
+            }
+        respond(exchange, response)
+        exchange.close()
+    }
+
+    @Suppress("ReturnCount") // each branch is one routed IdP endpoint
+    private fun route(exchange: HttpExchange): ResponseEntity<String> {
+        val path = exchange.requestURI.path
+        return when {
+            exchange.requestMethod == GET_METHOD && path == AUTHORIZE_PATH -> idp.authorize(toServletRequest(exchange))
+            exchange.requestMethod == POST_METHOD && path == TOKEN_PATH -> idp.token(toServletRequest(exchange))
+            exchange.requestMethod == GET_METHOD && path == JWKS_PATH ->
+                ResponseEntity
+                    .ok()
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(idp.jwks())
+            else -> ResponseEntity.notFound().build()
+        }
+    }
+
+    private fun toServletRequest(exchange: HttpExchange): MockHttpServletRequest {
+        val request = MockHttpServletRequest(exchange.requestMethod, exchange.requestURI.toString())
+        exchange.requestHeaders.forEach { (name, values) -> values.forEach { request.addHeader(name, it) } }
+        addParametersFrom(request, exchange.requestURI.rawQuery)
+        addParametersFrom(request, exchange.requestBody.readBytes().toString(StandardCharsets.UTF_8))
+        return request
+    }
+
+    /** Splits a raw query/form string into decoded parameters — the IdP reads every input via getParameter. */
+    private fun addParametersFrom(
+        request: MockHttpServletRequest,
+        raw: String?,
+    ) {
+        if (raw.isNullOrEmpty()) return
+        raw.split(AMPERSAND).forEach { pair ->
+            val separator = pair.indexOf(EQUALS_SIGN)
+            if (separator <= 0) return@forEach
+            val name = pair.substring(0, separator)
+            val value = pair.substring(separator + 1)
+            request.addParameter(
+                java.net.URLDecoder.decode(name, StandardCharsets.UTF_8),
+                java.net.URLDecoder.decode(value, StandardCharsets.UTF_8),
+            )
+        }
+    }
+
+    private fun respond(
+        exchange: HttpExchange,
+        response: ResponseEntity<String>,
+    ) {
+        response.headers.location?.let { exchange.responseHeaders.set(HttpHeaders.LOCATION, it.toString()) }
+        val body = response.body?.toByteArray(StandardCharsets.UTF_8) ?: ByteArray(0)
+        exchange.responseHeaders.set(
+            HttpHeaders.CONTENT_TYPE,
+            response.headers.contentType?.toString() ?: MediaType.APPLICATION_JSON_VALUE,
+        )
+        exchange.sendResponseHeaders(
+            response.statusCode.value(),
+            if (body.isEmpty()) NO_BODY else body.size.toLong(),
+        )
+        if (body.isNotEmpty()) exchange.responseBody.use { stream -> stream.write(body) }
+    }
+
+    private companion object {
+        const val LOOPBACK_HOST = "127.0.0.1"
+
+        const val ROOT_PATH = "/"
+
+        const val AUTHORIZE_PATH = "/mock-idp/authorize"
+
+        const val TOKEN_PATH = "/mock-idp/token"
+
+        const val JWKS_PATH = "/mock-idp/jwks"
+
+        const val THREAD_NAME = "pdit-idp-loopback"
+
+        const val BACKLOG = 0
+
+        const val STOP_DELAY_SECONDS = 0
+
+        const val NO_BODY = -1L
+
+        const val GET_METHOD = "GET"
+
+        const val POST_METHOD = "POST"
+
+        const val AMPERSAND = "&"
+
+        const val EQUALS_SIGN = '='
     }
 }
