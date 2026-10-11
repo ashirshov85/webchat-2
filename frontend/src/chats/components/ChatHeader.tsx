@@ -149,6 +149,12 @@ export interface GroupChatHeaderData {
   readonly meUserId: string | null
   /** The viewer's username — the «Вы» avatar derivation source. */
   readonly meUsername: string | null
+  /**
+   * Собственное профильное displayName №10 (008a T070): инициалы
+   * «Вы»-аватара подсказки состава — из него с фолбэком username;
+   * цвет остаётся colorOf(meUsername) (FR-004).
+   */
+  readonly meDisplayName?: string | null
 }
 
 /** One header, two variants — the page discriminates by `kind`. */
@@ -310,6 +316,8 @@ function GroupStatusRow({
 interface MembersTipProps {
   /** The «Вы» avatar derivation source. */
   readonly meUsername: string | null
+  /** Собственное displayName №10 — «Вы»-инициалы (008a T070). */
+  readonly meDisplayName: string | null | undefined
   /** The viewer's №28 role — the role mark of the «Вы» row (T096). */
   readonly myRole: GroupMember['role'] | null
   /** The live №28 members minus me (FR-017). */
@@ -344,13 +352,20 @@ function memberChainOf(member: GroupMember): string {
 }
 
 /** The `.members-tip` roster body (FR-017): «Вы» first, then №28 minus me. */
-function MembersTip({ meUsername, myRole, members, tipRef }: MembersTipProps) {
+function MembersTip({ meUsername, meDisplayName, myRole, members, tipRef }: MembersTipProps) {
   const meMark = roleMarkOf(myRole)
+  // 008a T070: «Вы»-инициалы — из me.displayName №10 с фолбэком
+  // username; пустая цепочка (нет №10) — фолбэк компонента от source.
+  const meName = resolveDisplayName(undefined, meDisplayName, meUsername ?? '')
   return (
     <div className="members-tip show" role="tooltip" ref={tipRef}>
       <div className="mt-title">Участники</div>
       <div className="mt-row">
-        <Avatar source={meUsername ?? ''} size={TIP_AVATAR_SIZE} />
+        <Avatar
+          source={meUsername ?? ''}
+          initials={meName === '' ? undefined : initialsOf(meName)}
+          size={TIP_AVATAR_SIZE}
+        />
         <span className="mt-name">Вы</span>
         {meMark !== null && <span className="mt-me">{meMark}</span>}
       </div>
@@ -571,6 +586,7 @@ export function ChatHeader({
         createPortal(
           <MembersTip
             meUsername={chat.meUsername}
+            meDisplayName={chat.meDisplayName}
             myRole={chat.myRole}
             members={tipMembers}
             tipRef={tipRef}

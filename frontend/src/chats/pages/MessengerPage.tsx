@@ -888,6 +888,7 @@ function headerChatOf(
   contacts: readonly ContactView[],
   meUserId: string | null,
   meUsername: string | null,
+  meDisplayName: string | null,
 ): ChatHeaderChat {
   if (chat.kind === 'group') {
     // №28 title/roster while the view is live (the optimistic
@@ -896,7 +897,8 @@ function headerChatOf(
     // live roster + myRole feed the members-tip (008 T043, FR-017);
     // the №12 basis carries no names — null keeps the status row a
     // non-source until №28 lands. myRole: live №28, else the basis —
-    // the gear matrix driver (T054).
+    // the gear matrix driver (T054). 008a T070: meDisplayName №10 —
+    // инициалы «Вы»-строки подсказки состава (фолбэк username).
     const live = group !== null && group.chatId === chat.chatId
     return {
       kind: 'group',
@@ -906,6 +908,7 @@ function headerChatOf(
       myRole: live ? group.myRole : chat.myRole,
       meUserId,
       meUsername,
+      meDisplayName,
     }
   }
   return {
@@ -942,6 +945,39 @@ function activeChatOfView(view: ChatView): ActiveChat | null {
     }
   }
   return null
+}
+
+/**
+ * №28-базис открытого окна (T046a): chatId группы для useGroup и
+ * ростер, сведённый по chatId-гарду, — прямой диалог получает
+ * null/undefined и не видит просроченного группового ростра.
+ */
+function groupChatIdOf(chat: ActiveChat | null): string | null {
+  return chat?.kind === 'group' ? chat.chatId : null
+}
+
+function groupMembersOf(
+  group: GroupView | null,
+  activeChatId: string | null,
+): GroupMember[] | undefined {
+  return group?.chatId === activeChatId ? group.members : undefined
+}
+
+/**
+ * Peer-тройка цепочки US1 direct-диалога (008a T070): персональный
+ * alias, профильное displayName и username собеседника ленты
+ * MessageList; группа — пустая тройка (инициалы входящих строк
+ * разрешаются по №28-ростеру).
+ */
+function peerTripleOf(chat: ActiveChat | null): {
+  username?: string
+  alias?: string | null
+  displayName?: string | null
+} {
+  if (chat?.kind !== 'direct') {
+    return {}
+  }
+  return { username: chat.peer.username, alias: chat.peerAlias, displayName: chat.peer.displayName }
 }
 
 /**
@@ -1070,6 +1106,12 @@ function MessengerMachine() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   /** Own username — the feed avatar source of outgoing rows (008 T022). */
   const [meUsername, setMeUsername] = useState<string | null>(null)
+  /**
+   * Собственное профильное displayName №10 (008a T070): инициалы
+   * «Вы»-аватаров ленты/подсказки состава/строк поиска — из него с
+   * фолбэком username (FR-003); цвет везде остаётся colorOf(username).
+   */
+  const [meDisplayName, setMeDisplayName] = useState<string | null>(null)
   const [activeChat, setActiveChat] = useState<ActiveChat | null>(null)
   /** The pending «шестерёнка» confirmation + its in-flight guard (T054). */
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
@@ -1175,6 +1217,7 @@ function MessengerMachine() {
         if (!cancelled) {
           setCurrentUserId(user.id)
           setMeUsername(user.username)
+          setMeDisplayName(user.displayName ?? null)
         }
       } catch {
         // Session refresh happens in apiFetch; without a user the
@@ -1213,15 +1256,14 @@ function MessengerMachine() {
   // attribution/✓✓ roster) and the group forms of the shell below. The
   // chatId guard keeps a direct dialog opened next free of the stale
   // group view before useGroup's switch reset lands.
-  const activeGroupChatId = activeChat?.kind === 'group' ? activeChat.chatId : null
+  const activeGroupChatId = groupChatIdOf(activeChat)
   const {
     group: activeGroup,
     status: activeGroupStatus,
     error: activeGroupError,
     reload: reloadActiveGroup,
   } = useGroup(activeGroupChatId)
-  const activeGroupMembers =
-    activeGroup !== null && activeGroup.chatId === activeChatId ? activeGroup.members : undefined
+  const activeGroupMembers = groupMembersOf(activeGroup, activeChatId)
 
   // №32/№34/№35 roster actions of the members form (US3, T047 → T057):
   // useGroupMembers runs every roster mutation through ONE local
@@ -2198,6 +2240,9 @@ function MessengerMachine() {
       return []
     }
     const results: ChatSearchResultRow[] = []
+    // 008a T070: «Вы»-инициалы — из me.displayName №10 с фолбэком
+    // username (единая цепочка US1); цвет — от username (FR-004).
+    const meInitials = initialsOf(resolveDisplayName(undefined, meDisplayName, meUsername ?? ''))
     for (const message of messages) {
       const matchIndex = findMatch(message.text, normalized)
       if (matchIndex === -1) {
@@ -2208,7 +2253,7 @@ function MessengerMachine() {
           messageId: message.id,
           senderName: 'Вы',
           avatarSource: meUsername ?? currentUserId,
-          avatarInitials: initialsOf(meUsername ?? ''),
+          avatarInitials: meInitials,
           time: formatTime(message.createdAt),
           snippet: snippetAround(message.text, matchIndex),
         })
@@ -2252,11 +2297,20 @@ function MessengerMachine() {
       })
     }
     return results
-  }, [searchMode, searchQuery, messages, activeChat, activeGroupMembers, currentUserId, meUsername])
+  }, [
+    searchMode,
+    searchQuery,
+    messages,
+    activeChat,
+    activeGroupMembers,
+    currentUserId,
+    meUsername,
+    meDisplayName,
+  ])
 
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
-  const dialogOpen = activeChat !== null
+  const dialogPeer = peerTripleOf(activeChat)
   const confirmation = confirmationOf(pendingAction, activeChat)
   /**
    * The shell formId (T034): a pending header confirmation rides
@@ -2398,10 +2452,17 @@ function MessengerMachine() {
             />
           </aside>
           <section className="chat panel" aria-label="Окно диалога">
-            {dialogOpen && activeChat !== null ? (
+            {activeChat !== null ? (
               <>
                 <ChatHeader
-                  chat={headerChatOf(activeChat, activeGroup, contacts, currentUserId, meUsername)}
+                  chat={headerChatOf(
+                    activeChat,
+                    activeGroup,
+                    contacts,
+                    currentUserId,
+                    meUsername,
+                    meDisplayName,
+                  )}
                   soundEnabled={soundStates.get(activeChat.chatId) ?? true}
                   onToggleSound={handleToggleChatSound}
                   searchActive={searchMode}
@@ -2436,7 +2497,10 @@ function MessengerMachine() {
                   messages={messages}
                   currentUserId={currentUserId ?? ''}
                   meUsername={meUsername ?? undefined}
-                  peerUsername={activeChat.kind === 'direct' ? activeChat.peer.username : undefined}
+                  meDisplayName={meDisplayName}
+                  peerUsername={dialogPeer.username}
+                  peerAlias={dialogPeer.alias}
+                  peerDisplayName={dialogPeer.displayName}
                   outbox={chatOutbox}
                   onRetry={handleRetry}
                   onRemove={handleRemove}

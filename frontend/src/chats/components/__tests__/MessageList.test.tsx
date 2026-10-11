@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
 import type { ChatView, Message, MessagePage } from '../../../api/chats'
+import { colorOf, initialsOf } from '../../../ui/avatar'
 import { formatDate, formatTime } from '../../../ui/time'
 import { useChatMessages } from '../../hooks/useChatMessages'
 import type { SyncPageUpdate } from '../../hooks/useChatMessages'
@@ -2490,5 +2491,71 @@ describe('MessageList typing-row bottom scroll (008a Phase 10, T067)', () => {
     flushRaf()
     expect(metrics.scrollTop).toBe(600)
     expect(metrics.writes).toBe(2)
+  })
+})
+
+/**
+ * 008a Phase 13 (T070): прямые диалоги — инициалы аватаров ленты по
+ * цепочке US1 `peerAlias → peer.displayName → peerUsername` (тот же
+ * источник, что шапка/строка списка) и собственные строки из
+ * `me.displayName` №10; ЦВЕТ остаётся `colorOf(username)` (FR-004).
+ */
+describe('MessageList direct feed avatars — US1 chain (008a T070)', () => {
+  it('входящие direct: инициалы из peerDisplayName/peerAlias, цвет — colorOf(peerUsername)', () => {
+    const { container } = render(
+      <MessageList
+        messages={[message({ id: 'in-1', senderId: PEER, text: 'Вопрос' })]}
+        currentUserId={ME}
+        peerUsername="mikhail"
+        peerDisplayName="Мария Соколова"
+      />,
+    )
+
+    const avatar = container.querySelector('.msg.them .avatar') as HTMLElement
+    expect(avatar.querySelector('.av-in span')?.textContent).toBe('МС')
+    expect(avatar.style.getPropertyValue('--av')).toBe(colorOf('mikhail'))
+
+    // alias — верх цепочки: перекрывает displayName.
+    const aliased = render(
+      <MessageList
+        messages={[message({ id: 'in-2', senderId: PEER, text: 'Снова' })]}
+        currentUserId={ME}
+        peerUsername="mikhail"
+        peerDisplayName="Мария Соколова"
+        peerAlias="Маша"
+      />,
+    )
+    expect(aliased.container.querySelector('.msg.them .avatar .av-in span')?.textContent).toBe('МА')
+  })
+
+  it('свои исходящие: инициалы из me.displayName №10, цвет — colorOf(meUsername)', () => {
+    const { container } = render(
+      <MessageList
+        messages={[message({ id: 'out-1', senderId: ME })]}
+        currentUserId={ME}
+        meUsername="me"
+        meDisplayName="Ада Лавлейс"
+      />,
+    )
+
+    const avatar = container.querySelector('.msg.me .avatar') as HTMLElement
+    expect(avatar.querySelector('.av-in span')?.textContent).toBe('АЛ')
+    expect(avatar.style.getPropertyValue('--av')).toBe(colorOf('me'))
+  })
+
+  it('без цепочки — прежний фолбэк: инициалы из username (T069: одиночное слово — два кластера)', () => {
+    const { container } = render(
+      <MessageList
+        messages={[message({ id: 'in-1', senderId: PEER }), message({ id: 'out-1', senderId: ME })]}
+        currentUserId={ME}
+        meUsername="me"
+        peerUsername="mikhail"
+      />,
+    )
+
+    expect(container.querySelector('.msg.them .avatar .av-in span')?.textContent).toBe(
+      initialsOf('mikhail'),
+    )
+    expect(container.querySelector('.msg.me .avatar .av-in span')?.textContent).toBe('ME')
   })
 })
