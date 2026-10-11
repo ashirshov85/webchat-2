@@ -236,6 +236,50 @@ class SessionService(
         }
     }
 
+    /**
+     * Password change keeping the caller signed in (FR-008, T017; research
+     * 008b §5, data-model 008b §3.3 step 6): kills EVERY active refresh
+     * generation of the user — the current session's included, so the old
+     * refresh value dies together with the old password — revokes all OTHER
+     * sessions (sid denylist + journal, exactly [revokeAllForUser]) and then
+     * issues a fresh generation into the CURRENT session: a new refresh + a
+     * new access token WITHOUT denylisting its sid (the marker is sid-scoped
+     * and would kill the just-minted access, AuthJwtDecoder).
+     *
+     * The guard follows the [requireSession] pattern: a missing or non-active
+     * current session is the uniform [InvalidRefreshTokenException] — the sid
+     * arrives from a verified access token, so a dead session means it was
+     * revoked concurrently and must not be resurrected.
+     */
+    @Transactional
+    fun revokeOthersAndRotateCurrent(
+        userId: UUID,
+        currentSessionId: UUID,
+        clientIp: String,
+        userAgent: String? = null,
+    ): IssuedTokenPair {
+        val currentSession =
+            sessionRepository.findById(currentSessionId)
+                ?: throw InvalidRefreshTokenException()
+        if (!currentSession.isActive) {
+            throw InvalidRefreshTokenException()
+        }
+        refreshTokenRepository.revokeActiveForUser(userId)
+        sessionRepository
+            .revokeAllForUserExcept(userId, currentSessionId, RevokedReason.PASSWORD_CHANGE)
+            .forEach { sessionId ->
+                denylistSid(sessionId)
+                authEventRecorder.record(
+                    eventType = AuthEventType.SESSION_REVOKED,
+                    clientIp = clientIp,
+                    userAgent = userAgent,
+                    userId = userId,
+                    details = mapOf(DETAIL_REASON to RevokedReason.PASSWORD_CHANGE.name.lowercase()),
+                )
+            }
+        return issueGeneration(currentSessionId, userId)
+    }
+
     /** Resolves the generation + session pair of the presented value — any miss is the uniform 401. */
     private fun requireSession(refreshToken: String): Pair<RefreshToken, Session> {
         val generation =
