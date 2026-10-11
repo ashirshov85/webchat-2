@@ -2,13 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { clearReturnTo, exchangeSsoToken, readReturnTo } from '../../api/sso'
 import { setTokenPair } from '../session'
 import { problemMessage } from '../problem'
+import { loginRedirectTarget } from '../lib/returnTo'
 
 type RecoveryAdvice = 'password-login' | 'complete-registration' | 'retry'
 
 type CallbackState =
   { phase: 'exchanging' } | { phase: 'error'; message: string; recovery: RecoveryAdvice }
-
-const CHAT_PATH = '/chat'
 
 const SSO_ERROR_MESSAGES: Record<string, string> = {
   invalid_state: 'The sign-in session is invalid or has expired. Please start sign-in again.',
@@ -42,17 +41,10 @@ function recoveryAdviceFor(code: string | null): RecoveryAdvice {
   return 'retry'
 }
 
-function isSafeReturnPath(value: string): boolean {
-  return value.startsWith('/') && !value.startsWith('//')
-}
-
 function redirectTarget(): string {
   const returnTo = readReturnTo()
   clearReturnTo()
-  if (returnTo !== null && returnTo !== '' && isSafeReturnPath(returnTo)) {
-    return returnTo
-  }
-  return CHAT_PATH
+  return loginRedirectTarget(returnTo)
 }
 
 export function SsoCallbackPage() {
