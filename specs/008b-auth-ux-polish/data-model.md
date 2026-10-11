@@ -48,7 +48,9 @@ ALTER TYPE auth_event_type ADD VALUE 'password_change_failed';
   не фиксируются отдельно — это обычная 400-валидация, как в reset-confirm 002.
 - Отзыв прочих сессий при смене фиксируется существующими записями `SESSION_REVOKED` c
   `details={reason:"password_change"}` (одна на каждую отозванную сессию — паттерн
-  SessionService.revokeAllForUser).
+  SessionService.revokeAllForUser). Записи неразличимы с reset-флоу 002 — корреляция
+  смены из профиля по соседней записи `password_change_completed` (у reset её нет);
+  принято осознанно.
 - Ни в одной записи — паролей, хешей или токенов (FR-010, SC-004).
 
 ### 1.3 Системный аккаунт admin (seed, не новая сущность)

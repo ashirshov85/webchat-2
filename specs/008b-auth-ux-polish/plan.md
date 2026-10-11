@@ -91,9 +91,9 @@ Playwright visual; контрактный конвейер (vacuum lint, regen d
 in-process состояния, seed одноразов на старт (II), Argon2id/аудит/секреты-env (V),
 переиспользование `TokenPair`/`ContactService`/`PasswordPolicyService` вместо новых
 абстракций (VII), блоклист слабых паролей остаётся серверным (без утечки в бандл).
-Единственное сознательное отклонение от буквального прочтения FR-005: топ-лист слабых
-паролей проверяется сервером (клиент проверяет все детерминированные правила до отправки)
-— зафиксировано в research.md §8, понятность сообщений сохраняется. Гейт пройден.
+Поведение из clarify-сессии зафиксировано в самом FR-005 (Q6, spec.md): топ-лист слабых
+паролей проверяется сервером, клиент проверяет детерминированные правила до отправки
+(research.md §8), понятность сообщений сохраняется. Отклонений от спеки нет. Гейт пройден.
 
 ## Project Structure
 
@@ -128,7 +128,7 @@ backend/
 │   │   ├── security/AuthEvents.kt                 # NEW enum values PASSWORD_CHANGE_*
 │   │   └── onboarding/                            # NEW: StarterContactListener, AdminSeed
 │   ├── contacts/
-│   │   ├── api/ContactsController.kt              # hook: self-healing fallback
+│   │   ├── api/ContactController.kt               # hook: self-healing fallback
 │   │   ├── domain/service/ContactService.kt       # reuse add (идемпотентен)
 │   │   └── repository/JdbcContactRepository.kt    # reuse ON CONFLICT DO NOTHING
 │   ├── sso/domain/service/IdentityResolutionService.kt  # hook: JIT-аккаунты
