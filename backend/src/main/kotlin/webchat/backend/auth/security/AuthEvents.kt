@@ -23,6 +23,11 @@ enum class AuthEventType(
     LOGOUT("logout"),
     PASSWORD_RESET_REQUESTED("password_reset_requested"),
     PASSWORD_RESET_COMPLETED("password_reset_completed"),
+
+    // Password change from profile (feature 008b, data-model §1.2 — must match
+    // V17__password_change_onboarding.sql). Pair precedent: LOGIN_SUCCESS/LOGIN_FAILED.
+    PASSWORD_CHANGE_COMPLETED("password_change_completed"),
+    PASSWORD_CHANGE_FAILED("password_change_failed"),
     SESSION_REVOKED("session_revoked"),
 
     // SSO events (feature 003, data-model §6 — must match V8__sso_enums.sql).
