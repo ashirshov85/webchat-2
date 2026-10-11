@@ -63,6 +63,19 @@ class JdbcSessionRepository(
             userId,
         )
 
+    override fun revokeAllForUserExcept(
+        userId: UUID,
+        keepSid: UUID,
+        reason: RevokedReason,
+    ): List<UUID> =
+        jdbcTemplate.queryForList(
+            REVOKE_ALL_FOR_USER_EXCEPT_SQL,
+            UUID::class.java,
+            reason.name.lowercase(),
+            userId,
+            keepSid,
+        )
+
     private fun toDb(instant: Instant?): Timestamp? = instant?.let(Timestamp::from)
 
     private companion object {
@@ -123,6 +136,14 @@ class JdbcSessionRepository(
             UPDATE sessions
             SET status = 'revoked', revoked_at = now(), revoked_reason = ?::session_revoked_reason
             WHERE user_id = ? AND status = 'active'
+            RETURNING id
+            """.trimIndent()
+
+        val REVOKE_ALL_FOR_USER_EXCEPT_SQL =
+            """
+            UPDATE sessions
+            SET status = 'revoked', revoked_at = now(), revoked_reason = ?::session_revoked_reason
+            WHERE user_id = ? AND status = 'active' AND id <> ?
             RETURNING id
             """.trimIndent()
     }
