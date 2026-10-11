@@ -9,6 +9,7 @@ import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import webchat.backend.auth.domain.model.RefreshToken
+import webchat.backend.auth.domain.model.RefreshTokenStatus
 import webchat.backend.auth.domain.model.RevokedReason
 import webchat.backend.auth.domain.model.Session
 import webchat.backend.auth.domain.model.SessionAuthMethod
@@ -136,6 +137,17 @@ class SessionService(
         userAgent: String? = null,
     ): IssuedTokenPair {
         val (generation, session) = requireSession(refreshToken)
+        // 008b (data-model 008b §3.3 step 6): a REVOKED generation is not
+        // chain reuse — the password change kills the current session's old
+        // value while the session STAYS active, and its re-presentation must
+        // stay the uniform silent 401, never the compromise verdict that
+        // would kill the freshly rotated pair (FR-008). Pre-008b a revoked
+        // generation always belonged to an already dead session, where the
+        // isActive guard below made the reuse leg equally silent — the
+        // observable behavior of 002 is unchanged.
+        if (generation.status == RefreshTokenStatus.REVOKED) {
+            throw InvalidRefreshTokenException()
+        }
         val replacementId = UUID.randomUUID()
         val (openValue, replacementHash) = mintRefreshValue()
 

@@ -132,6 +132,12 @@ class PasswordChangeIT(
         assertThat(refresh(pair["refreshToken"].asText(), xForwardedFor = "198.18.20.15").statusCode)
             .isEqualTo(HttpStatus.OK)
 
+        // data-model 008b §5.3: exactly ONE active refresh generation — the
+        // rotated current one (asserted BEFORE the US2 AC2 re-login below: a
+        // successful 002 login always opens its own session+generation, so
+        // counting after it would legitimately see the second device)
+        assertThat(activeRefreshGenerationsFor("pcsuccess")).isEqualTo(1)
+
         // US2 AC2: the old password is dead with the uniform message, the new one logs in
         val oldPasswordLogin = login("pcsuccess", PASSWORD, xForwardedFor = "198.18.20.13")
         assertThat(oldPasswordLogin.statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
@@ -142,9 +148,6 @@ class PasswordChangeIT(
         val hashAfter = userRow("pcsuccess")!!["password_hash"] as String
         assertThat(hashAfter).isNotEqualTo(hashBefore)
         assertThat(hashAfter).startsWith(ARGON2_PREFIX)
-
-        // data-model 008b §5.3: exactly ONE active refresh generation — the rotated current one
-        assertThat(activeRefreshGenerationsFor("pcsuccess")).isEqualTo(1)
 
         // FR-010: completion journaled with details={reason:"profile"}, no secrets anywhere
         assertThat(authEventCount("password_change_completed", "pcsuccess")).isEqualTo(1)
