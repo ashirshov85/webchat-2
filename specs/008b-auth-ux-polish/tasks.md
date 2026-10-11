@@ -33,7 +33,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 
 **Purpose**: Базлайн-верификация готовой инфраструктуры фич 001–008a на ветке фичи
 
-- [ ] T001 Verify green baseline на ветке `008b-auth-ux-polish`: `docker compose -f deploy/local/docker-compose.yml up -d`, затем `./gradlew check` (из `backend/`), `pnpm --dir frontend install && pnpm --dir frontend test && pnpm --dir frontend lint && pnpm --dir frontend typecheck`, `scripts/validate-contracts.sh` — все суиты зелёные до начала работ (фиксация базлайна для SC-005)
+- [X] T001 Verify green baseline на ветке `008b-auth-ux-polish`: `docker compose -f deploy/local/docker-compose.yml up -d`, затем `./gradlew check` (из `backend/`), `pnpm --dir frontend install && pnpm --dir frontend test && pnpm --dir frontend lint && pnpm --dir frontend typecheck`, `scripts/validate-contracts.sh` — все суиты зелёные до начала работ (фиксация базлайна для SC-005)
 
 ---
 
