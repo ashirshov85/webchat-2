@@ -188,7 +188,8 @@ describe('ChatListItem prototype row rebuild (T020, FR-008, data-model 2.1)', ()
     const row = container.querySelector('.chat-item') as HTMLElement
 
     expect(row.querySelector('.avatar:not(.oct)')).not.toBeNull()
-    expect(row.querySelector('.avatar .av-in span')?.textContent).toBe('A')
+    // 008a T069: одиночное слово («alice») — два кластера.
+    expect(row.querySelector('.avatar .av-in span')?.textContent).toBe('AL')
     expect(row.querySelector('.c-name')?.textContent).toBe('alice')
     // Truncation is CSS-side; the full name rides the title tooltip (spec
     // edge-case «полный текст — во всплывающей подсказке»).

@@ -3,9 +3,9 @@ import { AVATAR_PALETTE, colorOf, fnv1a32, initialsOf } from '../avatar'
 import { resolveDisplayName } from '../names'
 
 describe('initialsOf — первые буквы первых двух слов (FR-024, design-tokens §4)', () => {
-  it('одиночное слово — одна буква', () => {
-    expect(initialsOf('alex')).toBe('A')
-    expect(initialsOf('Мария')).toBe('М')
+  it('одиночное слово — первые ДВЕ буквы (008a T069: аватар всегда из двух символов)', () => {
+    expect(initialsOf('alex')).toBe('AL')
+    expect(initialsOf('Мария')).toBe('МА')
   })
 
   it('два слова — по первой букве каждого', () => {
@@ -23,7 +23,8 @@ describe('initialsOf — первые буквы первых двух слов 
 
   it('артикль "the" пропускается по алгоритму прототипа', () => {
     expect(initialsOf('The Rolling Stones')).toBe('RS')
-    expect(initialsOf('The North')).toBe('N')
+    // Каскад T069: после пропуска артикля остаётся одно слово — два кластера.
+    expect(initialsOf('The North')).toBe('NO')
   })
 
   it('пустой источник — пустые инициалы (без падения)', () => {
@@ -104,12 +105,13 @@ describe('initialsOf — Unicode-safe графемные кластеры (008a 
   })
 
   it('диакритика: базовая буква + combining-знак — один кластер, регистр базовой меняется', () => {
-    expect(initialsOf('éva')).toBe('É')
-    expect(initialsOf('e\u0301va')).toBe('E\u0301')
+    // T069: одиночное слово даёт два кластера — «é»+«v» целиком.
+    expect(initialsOf('éva')).toBe('ÉV')
+    expect(initialsOf('e\u0301va')).toBe('E\u0301V')
   })
 
   it('кириллица и латиница — по-кластерно на слово', () => {
-    expect(initialsOf('Мария')).toBe('М')
+    expect(initialsOf('Мария')).toBe('МА')
     expect(initialsOf('ada lovelace')).toBe('AL')
     expect(initialsOf('Мария Соколова')).toBe('МС')
   })
@@ -121,9 +123,25 @@ describe('initialsOf — Unicode-safe графемные кластеры (008a 
   })
 
   it('композиция с цепочкой US1: initialsOf(resolveDisplayName(alias, displayName, username))', () => {
-    expect(initialsOf(resolveDisplayName('Маша', 'Мария', 'mikhail'))).toBe('М')
+    expect(initialsOf(resolveDisplayName('Маша', 'Мария', 'mikhail'))).toBe('МА')
     expect(initialsOf(resolveDisplayName(null, 'Мария Соколова', 'mikhail'))).toBe('МС')
-    expect(initialsOf(resolveDisplayName(undefined, null, 'mikhail'))).toBe('M')
+    expect(initialsOf(resolveDisplayName(undefined, null, 'mikhail'))).toBe('MI')
+  })
+
+  it('T069: username-кейсы — первые два кластера одиночного слова', () => {
+    expect(initialsOf('olkot')).toBe('OL')
+    expect(initialsOf('mikhail')).toBe('MI')
+    expect(initialsOf('ada')).toBe('AD')
+  })
+
+  it('T069: эмодзи-слово без пробелов — первые два кластера целиком', () => {
+    expect(initialsOf('😀🙂')).toBe('😀🙂')
+  })
+
+  it('T069: недостаток материала — меньше двух символов', () => {
+    expect(initialsOf('a')).toBe('A')
+    expect(initialsOf('😀')).toBe('😀')
+    expect(initialsOf('👨‍💻')).toBe('👨‍💻')
   })
 })
 

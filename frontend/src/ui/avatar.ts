@@ -9,9 +9,11 @@
  * 008a T020 (FR-004, SC-006): источники аватара разделены — инициалы
  * вычисляются из отображаемого имени (`initialsOf(resolveDisplayName(...))`,
  * names.ts), цвет — по-прежнему `colorOf(username)`/title группы
- * (переименование пользователя не перекрашивает). Инициалы — первый
- * графемный кластер (`Intl.Segmenter`) каждого из первых двух слов
- * (кириллица/латиница/эмодзи, «тофу» недопустимо — 008a ui-behavior §1).
+ * (переименование пользователя не перекрашивает). Инициалы — графемные
+ * кластеры (`Intl.Segmenter`): два+ слова — по первому кластеру первых
+ * двух слов; одиночное слово — первые ДВА кластера (T069: аватар всегда
+ * из двух символов при достатке материала; кириллица/латиница/эмодзи,
+ * «тофу» недопустимо — 008a ui-behavior §1).
  */
 
 /** Палитра детерминированного цвета из прототипа (design-tokens §4). */
@@ -52,16 +54,38 @@ function firstGrapheme(word: string): string {
 }
 
 /**
- * Инициалы: первые графемные кластеры первых двух слов, uppercase; одиночное
- * слово — один кластер. Пустые части и артикль «the» пропускаются (алгоритм
- * прототипа). Пустой источник — пустая строка (аватар-компонент покажет
- * заглушку; в цепочке FR-003 вход всегда непуст — фолбэк `username`).
+ * Первые `count` графемных кластеров слова целиком (T069: одиночное
+ * слово отдаёт два кластера; меньше — только при недостатке материала).
+ */
+function firstGraphemes(word: string, count: number): string {
+  let result = ''
+  let taken = 0
+  for (const { segment } of GRAPHEME_SEGMENTER.segment(word)) {
+    if (taken >= count) break
+    result += segment
+    taken += 1
+  }
+  return result
+}
+
+/**
+ * Инициалы (008a T069): два+ слова — первый графемный кластер каждого
+ * из первых двух слов, uppercase («ada lovelace» → «AL»); одиночное
+ * слово — первые ДВА графемных кластера этого слова, оба в верхнем
+ * регистре («Мария» → «МА», «olkot» → «OL») — аватар всегда из двух
+ * символов, когда материала достаточно. Недостаток материала — символов
+ * меньше двух: слово из одного кластера («a», «😀», «👨‍💻») — один
+ * кластер; пустые части и артикль «the» пропускаются (алгоритм
+ * прототипа, каскадно даёт «The North» → «NO»). Пустой источник —
+ * пустая строка (аватар-компонент покажет заглушку; в цепочке FR-003
+ * вход всегда непуст — фолбэк `username`).
  */
 export function initialsOf(source: string): string {
   const words = source.split(' ').filter((word) => word.length > 0 && word.toLowerCase() !== 'the')
-  const first = firstGrapheme(words[0] ?? '')
-  const second = firstGrapheme(words[1] ?? '')
-  return (first + second).toUpperCase()
+  const [first = '', second] = words
+  const initials =
+    second === undefined ? firstGraphemes(first, 2) : firstGrapheme(first) + firstGrapheme(second)
+  return initials.toUpperCase()
 }
 
 /** Цвет: `PALETTE[fnv1a32(source) mod 6]` — детерминирован источником. */
