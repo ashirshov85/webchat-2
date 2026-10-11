@@ -223,8 +223,11 @@ brute-force identifier'ов; здесь пользователь уже ауте
 
 **Decision**: чисто клиентская механика, login-endpoint 002 не меняется. Общий модуль
 `frontend/src/auth/lib/returnTo.ts`: `isSafeReturnPath(value)` (перенос из
-SsoCallbackPage.tsx:45-47 с усилением: `startsWith('/') && !startsWith('//') &&
-!includes('\\')`) и
+SsoCallbackPage.tsx:45-47 с усилением по FR-002 (б)–(д): `startsWith('/') && !startsWith('//') &&
+!includes('\\')`, отклонение traversal-сегментов `..` (разбор pathname до `?`/`#`),
+отклонение управляющих символов и маршрутов auth-раздела — константа `AUTH_PATHS`:
+`/login`, `/register`, `/confirm-registration`, `/set-password`, `/forgot-password`,
+`/reset-password`, `/sso/callback`, сравнение по pathname) и
 `loginRedirectTarget(returnTo)` (safe → сам путь; null/пустой/unsafe → `/chat`).
 `SsoCallbackPage` переключается на импорт из общего модуля (регрессия прикрыта его
 тестами). `LoginPage.submit` после `setTokenPair(pair)` (LoginPage.tsx:139) выполняет
@@ -233,7 +236,9 @@ SsoCallbackPage.tsx:87-89; sessionId-хранилище не используе�
 момент submit). `ProtectedRoute` уже генерирует `/login?returnTo=…` (App.tsx:22-33) —
 паритет с 003 достигается автоматически. Ужесточение включено в scope фичи: общий
 модуль дополнительно отклоняет пути с `\` (браузеры нормализуют `\` в `/`, поэтому
-`/\evil.com` эквивалентен `//evil.com`); усиление применяется к обеим точкам —
+`/\evil.com` эквивалентен `//evil.com`), traversal-сегменты `..`, управляющие символы
+и маршруты auth-раздела (возврат на экраны входа бессмысленен, петля исключена);
+усиление применяется к обеим точкам —
 LoginPage и SsoCallbackPage (задачи T005/T006, контракт §4.1).
 
 **Rationale**: минимальная механика; изменение `POST /auth/login` не требуется, что

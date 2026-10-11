@@ -87,9 +87,12 @@ allOf:
 ### 4.1 Редирект после парольного входа (FR-001/FR-002)
 
 - Успешный `POST /auth/login` → `window.location.assign(loginRedirectTarget(returnTo))`:
-  safe `returnTo` (относительный путь: `startsWith('/') && !startsWith('//') &&
-  !includes('\\')` — обратные слеши отклоняются: браузеры нормализуют `\` в `/`,
-  поэтому `/\evil.com` эквивалентен `//evil.com`) → сам путь; отсутствующий/пустой/
+  safe `returnTo` — относительный путь, удовлетворяющий всем критериям FR-002 (а)–(д):
+  `startsWith('/') && !startsWith('//')`, без обратных слешей (браузеры нормализуют `\`
+  в `/`, поэтому `/\evil.com` эквивалентен `//evil.com`), без traversal-сегментов `..`
+  (pathname до `?`/`#`), без управляющих символов, не маршрут auth-раздела (`AUTH_PATHS`:
+  `/login`, `/register`, `/confirm-registration`, `/set-password`, `/forgot-password`,
+  `/reset-password`, `/sso/callback`) → сам путь; отсутствующий/пустой/
   небезопасный → `/chat`. Проверка — общий модуль `auth/lib/returnTo.ts`, разделяемый
   с `SsoCallbackPage` (паритет 003 с усилением для обоих флоу — задачи T003/T005,
   US1 AC1–3).

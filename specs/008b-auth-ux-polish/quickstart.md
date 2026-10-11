@@ -30,8 +30,9 @@
 2. **returnTo**: в разлогиненном состоянии открыть `/settings/security` → выброс на
    `/login?returnTo=/settings/security` (существующий ProtectedRoute) → войти по паролю →
    возврат на `/settings/security`.
-3. **Небезопасный returnTo**: `/login?returnTo=https://evil.example` и `?returnTo=//evil.example`
-   → после входа `/chat` (open redirect исключён, US1 AC3).
+3. **Небезопасный returnTo**: `/login?returnTo=https://evil.example`, `?returnTo=//evil.example`,
+   `?returnTo=/\evil.com`, `?returnTo=/a/../b` и `?returnTo=/login`
+   → после входа `/chat` (open redirect исключён, петля на /login исключена, US1 AC3, FR-002 (б)–(д)).
 4. **Регресс SSO**: вход через провайдера 003 → возврат по `returnTo`/`/chat` как раньше
    (US1 AC5); `SsoCallbackPage.test.tsx` зелёный.
 
