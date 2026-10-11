@@ -288,6 +288,8 @@ export function LoginPage() {
 
         <div className="auth-footer">
           Нет аккаунта? <a href="/register">Зарегистрироваться</a>
+          <br />
+          <a href="/forgot-password">Забыли пароль?</a>
         </div>
       </div>
     </div>

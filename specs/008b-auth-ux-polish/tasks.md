@@ -127,7 +127,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 
 ### Implementation for User Story 3
 
-- [ ] T025 [US3] Добавить в футер `frontend/src/auth/pages/LoginPage.tsx` (рядом с «Зарегистрироваться», plain `<a href="/forgot-password">`) ссылку «Забыли пароль?» (research.md §10; маршрут/страница 002 существуют, API не трогается) — после T007 (тот же файл)
+- [X] T025 [US3] Добавить в футер `frontend/src/auth/pages/LoginPage.tsx` (рядом с «Зарегистрироваться», plain `<a href="/forgot-password">`) ссылку «Забыли пароль?» (research.md §10; маршрут/страница 002 существуют, API не трогается) — после T007 (тот же файл)
 
 **Checkpoint**: US3 работает независимо; регресс 002 отсутствует (PasswordResetIT зелёный)
 
