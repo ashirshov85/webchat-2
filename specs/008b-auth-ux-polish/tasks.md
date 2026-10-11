@@ -63,8 +63,8 @@ description: "Task list for 008b-auth-ux-polish implementation"
 
 ### Implementation for User Story 1
 
-- [ ] T005 [US1] Создать общий модуль `frontend/src/auth/lib/returnTo.ts`: `isSafeReturnPath(value)` (перенос 1:1 из SsoCallbackPage.tsx:45-47: `startsWith('/') && !startsWith('//')`) и `loginRedirectTarget(returnTo)` (safe → путь; null/пустой/unsafe → `/chat`) — зависит от T003
-- [ ] T006 [P] [US1] Переключить `frontend/src/auth/pages/SsoCallbackPage.tsx` на импорт `isSafeReturnPath`/`loginRedirectTarget` из `frontend/src/auth/lib/returnTo.ts` (поведение не меняется; регрессия прикрыта тестами T003 и существующим SsoCallbackPage.test.tsx) — после T005
+- [ ] T005 [US1] Создать общий модуль `frontend/src/auth/lib/returnTo.ts`: `isSafeReturnPath(value)` (перенос из SsoCallbackPage.tsx:45-47 с усилением: `startsWith('/') && !startsWith('//') && !value.includes('\\')` — браузеры нормализуют `\` в `/`, поэтому `/\evil.com` эквивалентен `//evil.com`; MUST по FR-002, ожидание теста T003) и `loginRedirectTarget(returnTo)` (safe → путь; null/пустой/unsafe → `/chat`) — зависит от T003
+- [ ] T006 [P] [US1] Переключить `frontend/src/auth/pages/SsoCallbackPage.tsx` на импорт `isSafeReturnPath`/`loginRedirectTarget` из `frontend/src/auth/lib/returnTo.ts` (для валидных путей поведение не меняется; пути с `\` теперь отклоняются — усиление защиты от open redirect и для флоу 003; регрессия прикрыта тестами T003 и существующим SsoCallbackPage.test.tsx) — после T005
 - [ ] T007 [P] [US1] В `frontend/src/auth/pages/LoginPage.tsx` после `setTokenPair(pair)` (успешный submit) выполнить `window.location.assign(loginRedirectTarget(currentReturnTo()))` — параметр ещё в URL на момент submit, sessionId-хранилище не используется (research.md §7) — после T005
 
 **Checkpoint**: US1 полностью функционален и проверяется независимо (quickstart.md §US1, сценарии 1–4)
