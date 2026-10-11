@@ -59,7 +59,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 
 > **NOTE**: Написать ПЕРВЫМИ, убедиться в FAIL до реализации
 
-- [ ] T003 [P] [US1] Unit-тесты общего модуля в `frontend/src/auth/lib/__tests__/returnTo.test.ts`: `isSafeReturnPath` — true для `/chat`, `/settings/security`; false для `//evil.example`, `https://evil.example`, ``, `null`, `/\evil.com`, `/a/../b`, `/..`, `/foo\nbar` (управляющий символ), `/login`, `/login?x=1`, `/forgot-password`, `/register`, `/sso/callback` (критерии (б)–(д) FR-002); `loginRedirectTarget` — safe → сам путь, отсутствующий/пустой/небезопасный → `/chat`
+- [X] T003 [P] [US1] Unit-тесты общего модуля в `frontend/src/auth/lib/__tests__/returnTo.test.ts`: `isSafeReturnPath` — true для `/chat`, `/settings/security`; false для `//evil.example`, `https://evil.example`, ``, `null`, `/\evil.com`, `/a/../b`, `/..`, `/foo\nbar` (управляющий символ), `/login`, `/login?x=1`, `/forgot-password`, `/register`, `/sso/callback` (критерии (б)–(д) FR-002); `loginRedirectTarget` — safe → сам путь, отсутствующий/пустой/небезопасный → `/chat`
 - [ ] T004 [P] [US1] Расширить `frontend/src/auth/pages/__tests__/LoginPage.test.tsx`: успешный вход → `window.location.assign('/chat')`; c `?returnTo=/settings/security` → возврат по пути; небезопасный `returnTo` → `/chat`; ошибочный вход → переходов нет, остаётся ошибка 002
 
 ### Implementation for User Story 1
