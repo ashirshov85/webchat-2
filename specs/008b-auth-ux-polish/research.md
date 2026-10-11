@@ -222,17 +222,19 @@ brute-force identifier'ов; здесь пользователь уже ауте
 ## 7. Редирект после парольного входа и returnTo (NC из Assumptions spec.md:150)
 
 **Decision**: чисто клиентская механика, login-endpoint 002 не меняется. Общий модуль
-`frontend/src/auth/lib/returnTo.ts`: `isSafeReturnPath(value)` (перенос 1:1 из
-SsoCallbackPage.tsx:45-47: `startsWith('/') && !startsWith('//')`) и
+`frontend/src/auth/lib/returnTo.ts`: `isSafeReturnPath(value)` (перенос из
+SsoCallbackPage.tsx:45-47 с усилением: `startsWith('/') && !startsWith('//') &&
+!includes('\\')`) и
 `loginRedirectTarget(returnTo)` (safe → сам путь; null/пустой/unsafe → `/chat`).
 `SsoCallbackPage` переключается на импорт из общего модуля (регрессия прикрыта его
 тестами). `LoginPage.submit` после `setTokenPair(pair)` (LoginPage.tsx:139) выполняет
 `window.location.assign(loginRedirectTarget(currentReturnTo()))` — тот же механизм, что
 SsoCallbackPage.tsx:87-89; sessionId-хранилище не используется (параметр ещё в URL на
 момент submit). `ProtectedRoute` уже генерирует `/login?returnTo=…` (App.tsx:22-33) —
-паритет с 003 достигается автоматически. Замечено на будущее (вне scope): правило не
-отклоняет `/\evil.com` — сохранён точный паритет с 003, ужесточение обеих точек —
-отдельным решением.
+паритет с 003 достигается автоматически. Ужесточение включено в scope фичи: общий
+модуль дополнительно отклоняет пути с `\` (браузеры нормализуют `\` в `/`, поэтому
+`/\evil.com` эквивалентен `//evil.com`); усиление применяется к обеим точкам —
+LoginPage и SsoCallbackPage (задачи T005/T006, контракт §4.1).
 
 **Rationale**: минимальная механика; изменение `POST /auth/login` не требуется, что
 подтверждает Assumption spec.md:150.
