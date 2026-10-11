@@ -34,8 +34,11 @@
 
 /* .profile-name — дословно .modal input прототипа (как #ctcSearch/
    #addQuery contacts-modal.css): полная перекрыка auth-наследия
-   index.css (светлое поле, синий focus-accent). */
-.profile-form .profile-name {
+   index.css (светлое поле, синий focus-accent). .profile-pass (008b
+   US2, T022) — поля смены пароля PasswordChangeForm, та же типографика
+   .modal input прототипа. */
+.profile-form .profile-name,
+.profile-form .profile-pass {
   width: 100%;
   padding: 10px 12px;
   border-radius: var(--r-field);
@@ -49,11 +52,13 @@
     box-shadow 0.2s;
 }
 
-.profile-form .profile-name::placeholder {
+.profile-form .profile-name::placeholder,
+.profile-form .profile-pass::placeholder {
   color: var(--muted-3);
 }
 
-.profile-form .profile-name:focus-visible {
+.profile-form .profile-name:focus-visible,
+.profile-form .profile-pass:focus-visible {
   border-color: var(--gold-light);
   box-shadow: 0 0 0 2px rgba(232, 200, 119, 0.25);
   outline: none;
