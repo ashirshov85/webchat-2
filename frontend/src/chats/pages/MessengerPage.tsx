@@ -948,6 +948,39 @@ function activeChatOfView(view: ChatView): ActiveChat | null {
 }
 
 /**
+ * №28-базис открытого окна (T046a): chatId группы для useGroup и
+ * ростер, сведённый по chatId-гарду, — прямой диалог получает
+ * null/undefined и не видит просроченного группового ростра.
+ */
+function groupChatIdOf(chat: ActiveChat | null): string | null {
+  return chat?.kind === 'group' ? chat.chatId : null
+}
+
+function groupMembersOf(
+  group: GroupView | null,
+  activeChatId: string | null,
+): GroupMember[] | undefined {
+  return group?.chatId === activeChatId ? group.members : undefined
+}
+
+/**
+ * Peer-тройка цепочки US1 direct-диалога (008a T070): персональный
+ * alias, профильное displayName и username собеседника ленты
+ * MessageList; группа — пустая тройка (инициалы входящих строк
+ * разрешаются по №28-ростеру).
+ */
+function peerTripleOf(chat: ActiveChat | null): {
+  username?: string
+  alias?: string | null
+  displayName?: string | null
+} {
+  if (chat?.kind !== 'direct') {
+    return {}
+  }
+  return { username: chat.peer.username, alias: chat.peerAlias, displayName: chat.peer.displayName }
+}
+
+/**
  * The group forms of the single shell (008 T057; FR-023, ui-behavior
  * §3): the №28 lifecycle of the inhabitant slot — loading/error
  * states stay local to the slot (the modal lexicon: ErrorBanner +
@@ -1223,15 +1256,14 @@ function MessengerMachine() {
   // attribution/✓✓ roster) and the group forms of the shell below. The
   // chatId guard keeps a direct dialog opened next free of the stale
   // group view before useGroup's switch reset lands.
-  const activeGroupChatId = activeChat?.kind === 'group' ? activeChat.chatId : null
+  const activeGroupChatId = groupChatIdOf(activeChat)
   const {
     group: activeGroup,
     status: activeGroupStatus,
     error: activeGroupError,
     reload: reloadActiveGroup,
   } = useGroup(activeGroupChatId)
-  const activeGroupMembers =
-    activeGroup !== null && activeGroup.chatId === activeChatId ? activeGroup.members : undefined
+  const activeGroupMembers = groupMembersOf(activeGroup, activeChatId)
 
   // №32/№34/№35 roster actions of the members form (US3, T047 → T057):
   // useGroupMembers runs every roster mutation through ONE local
@@ -2278,7 +2310,7 @@ function MessengerMachine() {
 
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
-  const dialogOpen = activeChat !== null
+  const dialogPeer = peerTripleOf(activeChat)
   const confirmation = confirmationOf(pendingAction, activeChat)
   /**
    * The shell formId (T034): a pending header confirmation rides
@@ -2420,7 +2452,7 @@ function MessengerMachine() {
             />
           </aside>
           <section className="chat panel" aria-label="Окно диалога">
-            {dialogOpen && activeChat !== null ? (
+            {activeChat !== null ? (
               <>
                 <ChatHeader
                   chat={headerChatOf(
@@ -2466,11 +2498,9 @@ function MessengerMachine() {
                   currentUserId={currentUserId ?? ''}
                   meUsername={meUsername ?? undefined}
                   meDisplayName={meDisplayName}
-                  peerUsername={activeChat.kind === 'direct' ? activeChat.peer.username : undefined}
-                  peerAlias={activeChat.kind === 'direct' ? activeChat.peerAlias : undefined}
-                  peerDisplayName={
-                    activeChat.kind === 'direct' ? activeChat.peer.displayName : undefined
-                  }
+                  peerUsername={dialogPeer.username}
+                  peerAlias={dialogPeer.alias}
+                  peerDisplayName={dialogPeer.displayName}
                   outbox={chatOutbox}
                   onRetry={handleRetry}
                   onRemove={handleRemove}
