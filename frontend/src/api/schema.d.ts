@@ -184,6 +184,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/password-change": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Смена пароля из профиля (№43, Bearer)
+         * @description Проверяет текущий пароль; для беспарольного JIT-аккаунта 003 выполняет фиктивную Argon2-сверку (тайминговый паритет) и возвращает единый 400 currentPassword: invalid. Новый пароль проходит политику 002 (8–128 символов; не пустой/пробельный; вне топ-листа тривиальных; ≠ username/email — полевые коды newPassword). Успех: Argon2id-хеш сохраняется, все прочие сессии пользователя отзываются (sid в denylist, аудит session_revoked с reason=password_change), refresh текущей сессии ротируется — ответом выдаётся новая пара TokenPair (прежний refresh отозван; клиент обязан применить пару своим стандартным механизмом — пользователь остаётся вошедшим). confirmPassword в API нет: совпадение с подтверждением проверяется клиентом до отправки. Rate limit: IP 10/1m (pre-auth фильтр) + user 5/1m (после аутентификации). Требует Authorization: Bearer; неверный текущий пароль не использует 401 (инвариант границы аутентификации).
+         */
+        post: operations["changePassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/me": {
         parameters: {
             query?: never;
@@ -193,7 +213,7 @@ export interface paths {
         };
         /**
          * Текущий пользователь (№10, Bearer)
-         * @description Минимальный защищённый ресурс для проверки границы аутентификации (US3, SC-002).
+         * @description Минимальный защищённый ресурс для проверки границы аутентификации (US3, SC-002). Ответ — PublicUser + аддитивное required-поле hasPassword (008b): password_hash IS NULL ? false : true; для JIT-аккаунтов 003 — false. Признак присутствует только здесь (inline allOf над PublicUser) и не раскрывается peer/search/member поверхностями.
          */
         get: operations["getCurrentUser"];
         put?: never;
@@ -941,6 +961,18 @@ export interface components {
             /** @description Политика FR-004: 8–128 символов; не пустой/пробельный; вне топ-листа тривиальных; ≠ username/email */
             password: string;
             confirmPassword: string;
+        };
+        PasswordChangeRequest: {
+            /**
+             * Format: password
+             * @description Текущий пароль; неверный (или беспарольной JIT-аккаунт) — единый 400 currentPassword: invalid; потолок 128 — DoS-защита (паритет LoginRequest)
+             */
+            currentPassword: string;
+            /**
+             * Format: password
+             * @description Политика FR-004: 8–128 символов; не пустой/пробельный; вне топ-листа тривиальных; ≠ username/email — полевые коды too_short|too_long|blank|too_common|same_as_username|same_as_email. confirmPassword в API нет — совпадение с подтверждением проверяется клиентом до отправки
+             */
+            newPassword: string;
         };
         TokenPair: {
             /**
@@ -2074,6 +2106,59 @@ export interface operations {
             };
         };
     };
+    changePassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PasswordChangeRequest"];
+            };
+        };
+        responses: {
+            /** @description Пароль изменён; новая пара токенов текущей сессии (все прочие сессии и refresh-токены пользователя отозваны, текущий refresh ротирован) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenPair"];
+                };
+            };
+            /** @description Неверный текущий пароль или беспарольный JIT-аккаунт — errors: {currentPassword: [invalid]}; нарушение политики нового пароля — errors: {newPassword: [too_short | too_long | blank | too_common | same_as_username | same_as_email]} */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (только граница Bearer; неверный текущий пароль — 400) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Превышен лимит запросов (IP 10/1m или user 5/м); errors: {flood_limit} */
+            429: {
+                headers: {
+                    /** @description Задержка до повтора, секунды */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
     getCurrentUser: {
         parameters: {
             query?: never;
@@ -2083,13 +2168,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Данные аутентифицированного пользователя */
+            /** @description Данные аутентифицированного пользователя (PublicUser + hasPassword) */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PublicUser"];
+                    "application/json": components["schemas"]["PublicUser"] & {
+                        /** @description Наличие пароля (008b, FR-004): true — парольный аккаунт; false — беспарольной JIT-аккаунт 003 (форма смены пароля скрыта, доступно задание через восстановление по email) */
+                        hasPassword: boolean;
+                    };
                 };
             };
             /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
