@@ -26,6 +26,8 @@ export type PasswordResetRequest = components['schemas']['PasswordResetRequest']
 
 export type PasswordResetConfirmRequest = components['schemas']['PasswordResetConfirmRequest']
 
+export type PasswordChangeRequest = components['schemas']['PasswordChangeRequest']
+
 export type TokenPair = components['schemas']['TokenPair']
 
 export type PublicUser = components['schemas']['PublicUser']
@@ -132,6 +134,11 @@ async function authedPost(path: string, body: unknown): Promise<Response> {
 
 export async function logout(body: LogoutRequest): Promise<void> {
   await authedPost('/auth/logout', body)
+}
+
+export async function changePassword(body: PasswordChangeRequest): Promise<TokenPair> {
+  const response = await authedPost('/auth/password-change', body)
+  return (await response.json()) as TokenPair
 }
 
 export async function getCurrentUser(): Promise<PublicUser> {
