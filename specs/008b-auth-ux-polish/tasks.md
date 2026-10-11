@@ -123,7 +123,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 
 ### Tests for User Story 3 (Test-First) ⚠️
 
-- [ ] T024 [US3] Расширить `frontend/src/auth/pages/__tests__/LoginPage.test.tsx`: ссылка «Забыли пароль?» видима и различима, `href="/forgot-password"` (после T004 — тот же файл)
+- [X] T024 [US3] Расширить `frontend/src/auth/pages/__tests__/LoginPage.test.tsx`: ссылка «Забыли пароль?» видима и различима, `href="/forgot-password"` (после T004 — тот же файл)
 
 ### Implementation for User Story 3
 

@@ -65,6 +65,18 @@ describe('LoginPage', () => {
     expect(screen.getByRole('button', { name: 'ВОЙТИ' })).toBeInTheDocument()
   })
 
+  it('shows a visible forgot-password link in the footer', () => {
+    render(<LoginPage />)
+
+    const forgotPassword = screen.getByRole('link', { name: 'Забыли пароль?' })
+    expect(forgotPassword).toBeVisible()
+    expect(forgotPassword).toHaveAttribute('href', '/forgot-password')
+    expect(screen.getByRole('link', { name: 'Зарегистрироваться' })).toHaveAttribute(
+      'href',
+      '/register',
+    )
+  })
+
   it('toggles the password field type and the eye button aria-label', () => {
     render(<LoginPage />)
 
