@@ -28,7 +28,7 @@ export function isSafeReturnPath(value: string | null | undefined): boolean {
     return false
   }
   const pathname = pathnameOf(value)
-  if (pathname.split('/').some((segment) => segment === '..')) {
+  if (pathname.split('/').includes('..')) {
     return false
   }
   return !AUTH_PATHS.has(pathname)
