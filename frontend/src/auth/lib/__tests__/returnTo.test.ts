@@ -68,6 +68,6 @@ describe('loginRedirectTarget', () => {
     ['auth route', '/login'],
     ['auth route with query', '/login?x=1'],
   ])('falls back to /chat for %s', (_reason, value) => {
-    expect(loginRedirectTarget(value as unknown as string | null)).toBe(CHAT_PATH)
+    expect(loginRedirectTarget(value)).toBe(CHAT_PATH)
   })
 })
