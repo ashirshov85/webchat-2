@@ -19,6 +19,12 @@ import java.time.Duration
  * FR-009) extends the table with the five SSO routes — IP-only buckets,
  * including the two GET routes (`providers`, `callback`) the filter could
  * not see before.
+ *
+ * [PasswordChangeLimits] (008b T015, research.md §6 of
+ * specs/008b-auth-ux-polish, FR-007) is deliberately NOT a [RouteLimits]:
+ * the authenticated password-change route carries two tiers of different
+ * shape — the pre-auth per-IP flood guard of the filter table and the
+ * per-user bucket the controller enforces via `UserRateLimiter`.
  */
 @ConfigurationProperties(prefix = "auth.ratelimit")
 data class AuthRateLimitProperties(
@@ -31,7 +37,26 @@ data class AuthRateLimitProperties(
     val resetConfirm: RouteLimits,
     val refresh: RouteLimits,
     val sso: SsoLimits,
+    val passwordChange: PasswordChangeLimits,
 ) {
+    /**
+     * The two password-change tiers (research.md §6 of 008b): [ip] is the
+     * filter-table spec of the pre-auth flood guard `rl:ip:password-change:<ip>`
+     * (10/1m — login-IP parity); [userPerMinute] feeds the authenticated
+     * per-user bucket `rl:user:pwdchange:{userId}` of the controller
+     * (`UserRateLimiter.tryAcquire`, 5/1m — the operation is rarer and more
+     * sensitive than the 30/1m write limits: it verifies a credential and
+     * revokes sessions).
+     */
+    data class PasswordChangeLimits(
+        val ip: String,
+        val userPerMinute: Int,
+    ) {
+        init {
+            require(userPerMinute > 0) { "auth.ratelimit.password-change.user-per-minute must be positive" }
+        }
+    }
+
     /**
      * The five SSO routes of research §9 (normative source; mirrored by
      * contracts/sso-api.md §1–5 and quickstart S6.2): authorize is stricter

@@ -99,6 +99,12 @@ auth:
       ip: 30/1m
     refresh:
       ip: 30/1m
+    # 008b research.md §6 (FR-007): the password-change tiers — the per-IP
+    # pre-auth flood guard of the filter table (login-IP parity) and the
+    # authenticated per-user tier of the controller (UserRateLimiter)
+    password-change:
+      ip: 10/1m
+      user-per-minute: 5
     # 003 research.md §9 (FR-009): the five SSO routes, per source IP;
     # authorize/link-authorize are stricter (10/1m) — they create flow
     # contexts in Redis; the GET routes (providers/callback) ride the same
