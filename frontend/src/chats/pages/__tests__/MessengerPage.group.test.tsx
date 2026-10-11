@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
+import { colorOf } from '../../../ui/avatar'
 import type { ChatListItem, ContactView } from '../../../api/chats'
 import { MessengerPage } from '../MessengerPage'
 
@@ -525,5 +526,116 @@ describe('MessengerPage group.deleted with the group window open (US6, T062 → 
     expect(mockChats.listChats.mock.calls).toHaveLength(callsBeforeDelete)
     // The direct dialog of the same list keeps flowing.
     expect(chatRowButton('alice')).toBeInTheDocument()
+  })
+})
+
+/**
+ * 008a Phase 13 (T070): проводка цепочки US1 в аватары ленты —
+ * страница передаёт MessageList peer-тройку/`me.displayName` №10, а
+ * «Вы»-аватары (подсказка состава шапки, свои строки псевдо-поиска)
+ * несут инициалы из me.displayName с фолбэком username; ЦВЕТ везде
+ * остаётся `colorOf(username)` (FR-004).
+ */
+describe('MessengerPage feed avatar chain wiring (008a T070)', () => {
+  function marieRoster(): GroupView {
+    return {
+      chatId: GROUP_ID,
+      title: 'Проект Альфа',
+      description: null,
+      myRole: 'owner',
+      members: [
+        { user: peer(ME, 'me'), role: 'owner', joinedAt: '2026-09-20T12:00:00.000Z' },
+        {
+          user: { ...peer(ALICE, 'mikhail'), displayName: 'Мария Соколова' },
+          role: 'member',
+          joinedAt: '2026-09-20T12:00:00.000Z',
+        },
+      ],
+    }
+  }
+
+  async function renderChainPage(): Promise<void> {
+    mockGetCurrentUser.mockResolvedValue({ ...peer(ME, 'me'), displayName: 'Ада Лавлейс' })
+    mockChats.listChats.mockResolvedValue([groupRow()])
+    mockChats.getChat.mockImplementation((chatId: string) =>
+      chatId === GROUP_ID
+        ? Promise.resolve(groupChatView())
+        : Promise.reject(new Error('unexpected getChat call')),
+    )
+    mockChats.listMessages.mockResolvedValue({
+      messages: [
+        {
+          id: 'in-1',
+          chatId: GROUP_ID,
+          senderId: ALICE,
+          text: 'Вопрос',
+          seq: 1,
+          createdAt: '2026-09-25T12:00:00.000Z',
+        },
+        {
+          id: 'out-1',
+          chatId: GROUP_ID,
+          senderId: ME,
+          text: 'Понял',
+          seq: 2,
+          createdAt: '2026-09-25T12:01:00.000Z',
+        },
+      ],
+    })
+    mockChats.listContacts.mockResolvedValue(contacts())
+    mockChats.markChatRead.mockResolvedValue(undefined)
+    mockGroups.getGroup.mockResolvedValue(marieRoster())
+    installSilentStream()
+    render(<MessengerPage />)
+    await screen.findByRole('list', { name: 'Список чатов' })
+    fireEvent.click(screen.getByRole('button', { name: /Проект Альфа/ }))
+    await screen.findByRole('heading', { level: 2, name: 'Проект Альфа' })
+  }
+
+  it('лента группы: входящие — инициалы/подпись по цепочке №28, свои — из me.displayName №10', async () => {
+    await renderChainPage()
+
+    const list = screen.getByRole('list', { name: 'Сообщения диалога' })
+    const incoming = list.querySelector('.msg.them .avatar') as HTMLElement
+    expect(incoming.querySelector('.av-in span')?.textContent).toBe('МС')
+    expect(incoming.style.getPropertyValue('--av')).toBe(colorOf('mikhail'))
+    expect(list.querySelector('.msg.them .sender.message-sender')?.textContent).toBe(
+      'Мария Соколова',
+    )
+    const own = list.querySelector('.msg.me .avatar') as HTMLElement
+    expect(own.querySelector('.av-in span')?.textContent).toBe('АЛ')
+    expect(own.style.getPropertyValue('--av')).toBe(colorOf('me'))
+  })
+
+  it('подсказка состава: «Вы»-аватар — инициалы из me.displayName, цвет — colorOf(meUsername)', async () => {
+    await renderChainPage()
+
+    const statusRow = await screen.findByRole('button', { name: '2 участника' })
+    fireEvent.mouseEnter(statusRow)
+
+    const tip = document.querySelector('.members-tip')
+    expect(tip).not.toBeNull()
+    const meAvatar = tip?.querySelector('.mt-row .avatar') as HTMLElement
+    expect(meAvatar.querySelector('.av-in span')?.textContent).toBe('АЛ')
+    expect(meAvatar.style.getPropertyValue('--av')).toBe(colorOf('me'))
+  })
+
+  it('свои строки псевдо-поиска: «Вы»-инициалы из me.displayName №10', async () => {
+    await renderChainPage()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Поиск' }))
+    fireEvent.change(await screen.findByLabelText('Поиск по чату…'), {
+      target: { value: 'Понял' },
+    })
+
+    const row = await waitFor(() => {
+      const found = document.querySelector('.sr-row')
+      if (found === null) {
+        throw new Error('строка-результат не найдена')
+      }
+      return found as HTMLElement
+    })
+    expect(row.querySelector('.c-name')?.textContent).toBe('Вы')
+    expect(row.querySelector('.avatar .av-in span')?.textContent).toBe('АЛ')
   })
 })

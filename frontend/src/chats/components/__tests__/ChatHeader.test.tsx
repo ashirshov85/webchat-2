@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import type { GroupMember } from '../../../api/groups'
+import { colorOf } from '../../../ui/avatar'
 import { ChatHeader } from '../ChatHeader'
 import { ModalShell } from '../../../ui/ModalShell'
 
@@ -92,6 +93,7 @@ function groupChat(
     myRole: GroupMember['role'] | null
     meUserId: string | null
     meUsername: string | null
+    meDisplayName: string | null
   }> = {},
 ) {
   return {
@@ -102,6 +104,7 @@ function groupChat(
     myRole: null,
     meUserId: null,
     meUsername: null,
+    meDisplayName: null,
     ...overrides,
   }
 }
@@ -443,6 +446,30 @@ describe('ChatHeader members-tip (T043, FR-017, data-model 2.3, ui-behavior §4)
     expect(rows[0]?.querySelector('.mt-me')).toBeNull()
     expect(rows[1]?.querySelector('.mt-me')).toBeNull()
     expect(rows[2]?.querySelector('.mt-me')?.textContent).toBe('владелец')
+  })
+
+  it('«Вы»-инициалы подсказки состава — из me.displayName №10, цвет — colorOf(meUsername) (008a T070)', () => {
+    const { container } = renderHeader(
+      groupChat({
+        members: ownerRoster(),
+        myRole: 'owner',
+        meUserId: ME,
+        meUsername: 'me',
+        meDisplayName: 'Ада Лавлейс',
+      }),
+    )
+    fireEvent.mouseEnter(statusRow(container))
+
+    const meAvatar = tip()?.querySelector('.mt-row .avatar') as HTMLElement
+    expect(meAvatar.querySelector('.av-in span')?.textContent).toBe('АЛ')
+    expect(meAvatar.style.getPropertyValue('--av')).toBe(colorOf('me'))
+  })
+
+  it('«Вы»-инициалы без displayName №10 — фолбэк username (T069: два кластера)', () => {
+    const { container } = renderHeader(liveOwnerGroup())
+    fireEvent.mouseEnter(statusRow(container))
+
+    expect(tip()?.querySelector('.mt-row .avatar .av-in span')?.textContent).toBe('ME')
   })
 
   it('closes on mouseleave', () => {

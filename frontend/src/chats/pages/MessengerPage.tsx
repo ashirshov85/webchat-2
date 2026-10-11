@@ -888,6 +888,7 @@ function headerChatOf(
   contacts: readonly ContactView[],
   meUserId: string | null,
   meUsername: string | null,
+  meDisplayName: string | null,
 ): ChatHeaderChat {
   if (chat.kind === 'group') {
     // №28 title/roster while the view is live (the optimistic
@@ -896,7 +897,8 @@ function headerChatOf(
     // live roster + myRole feed the members-tip (008 T043, FR-017);
     // the №12 basis carries no names — null keeps the status row a
     // non-source until №28 lands. myRole: live №28, else the basis —
-    // the gear matrix driver (T054).
+    // the gear matrix driver (T054). 008a T070: meDisplayName №10 —
+    // инициалы «Вы»-строки подсказки состава (фолбэк username).
     const live = group !== null && group.chatId === chat.chatId
     return {
       kind: 'group',
@@ -906,6 +908,7 @@ function headerChatOf(
       myRole: live ? group.myRole : chat.myRole,
       meUserId,
       meUsername,
+      meDisplayName,
     }
   }
   return {
@@ -1070,6 +1073,12 @@ function MessengerMachine() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   /** Own username — the feed avatar source of outgoing rows (008 T022). */
   const [meUsername, setMeUsername] = useState<string | null>(null)
+  /**
+   * Собственное профильное displayName №10 (008a T070): инициалы
+   * «Вы»-аватаров ленты/подсказки состава/строк поиска — из него с
+   * фолбэком username (FR-003); цвет везде остаётся colorOf(username).
+   */
+  const [meDisplayName, setMeDisplayName] = useState<string | null>(null)
   const [activeChat, setActiveChat] = useState<ActiveChat | null>(null)
   /** The pending «шестерёнка» confirmation + its in-flight guard (T054). */
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
@@ -1175,6 +1184,7 @@ function MessengerMachine() {
         if (!cancelled) {
           setCurrentUserId(user.id)
           setMeUsername(user.username)
+          setMeDisplayName(user.displayName ?? null)
         }
       } catch {
         // Session refresh happens in apiFetch; without a user the
@@ -2198,6 +2208,9 @@ function MessengerMachine() {
       return []
     }
     const results: ChatSearchResultRow[] = []
+    // 008a T070: «Вы»-инициалы — из me.displayName №10 с фолбэком
+    // username (единая цепочка US1); цвет — от username (FR-004).
+    const meInitials = initialsOf(resolveDisplayName(undefined, meDisplayName, meUsername ?? ''))
     for (const message of messages) {
       const matchIndex = findMatch(message.text, normalized)
       if (matchIndex === -1) {
@@ -2208,7 +2221,7 @@ function MessengerMachine() {
           messageId: message.id,
           senderName: 'Вы',
           avatarSource: meUsername ?? currentUserId,
-          avatarInitials: initialsOf(meUsername ?? ''),
+          avatarInitials: meInitials,
           time: formatTime(message.createdAt),
           snippet: snippetAround(message.text, matchIndex),
         })
@@ -2252,7 +2265,16 @@ function MessengerMachine() {
       })
     }
     return results
-  }, [searchMode, searchQuery, messages, activeChat, activeGroupMembers, currentUserId, meUsername])
+  }, [
+    searchMode,
+    searchQuery,
+    messages,
+    activeChat,
+    activeGroupMembers,
+    currentUserId,
+    meUsername,
+    meDisplayName,
+  ])
 
   const chatOutbox =
     activeChatId === null ? [] : outbox.records.filter((record) => record.chatId === activeChatId)
@@ -2401,7 +2423,14 @@ function MessengerMachine() {
             {dialogOpen && activeChat !== null ? (
               <>
                 <ChatHeader
-                  chat={headerChatOf(activeChat, activeGroup, contacts, currentUserId, meUsername)}
+                  chat={headerChatOf(
+                    activeChat,
+                    activeGroup,
+                    contacts,
+                    currentUserId,
+                    meUsername,
+                    meDisplayName,
+                  )}
                   soundEnabled={soundStates.get(activeChat.chatId) ?? true}
                   onToggleSound={handleToggleChatSound}
                   searchActive={searchMode}
@@ -2436,7 +2465,12 @@ function MessengerMachine() {
                   messages={messages}
                   currentUserId={currentUserId ?? ''}
                   meUsername={meUsername ?? undefined}
+                  meDisplayName={meDisplayName}
                   peerUsername={activeChat.kind === 'direct' ? activeChat.peer.username : undefined}
+                  peerAlias={activeChat.kind === 'direct' ? activeChat.peerAlias : undefined}
+                  peerDisplayName={
+                    activeChat.kind === 'direct' ? activeChat.peer.displayName : undefined
+                  }
                   outbox={chatOutbox}
                   onRetry={handleRetry}
                   onRemove={handleRemove}

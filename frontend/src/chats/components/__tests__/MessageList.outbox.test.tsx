@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../../../api/chats'
+import { colorOf } from '../../../ui/avatar'
 import type { OutboxRecord } from '../../outbox'
 import { MessageList } from '../MessageList'
 
@@ -259,5 +260,45 @@ describe('MessageList evicted-record reason (T028, FR-005)', () => {
 
     expect(screen.getByText('отправляется')).toBeVisible()
     expect(screen.queryByText(/переполнение очереди/)).toBeNull()
+  })
+})
+
+/**
+ * 008a Phase 13 (T070): локальные строки (pending/outbox) — «Вы»-аватар
+ * ленты несёт инициалы собственного displayName №10 (фолбэк username);
+ * ЦВЕТ остаётся `colorOf(meUsername)` (FR-004).
+ */
+describe('MessageList local row avatars — me.displayName №10 (008a T070)', () => {
+  it('pending и outbox строки: инициалы из me.displayName, цвет — colorOf(meUsername)', () => {
+    const { container } = render(
+      <MessageList
+        messages={[]}
+        currentUserId={ME}
+        meUsername="me"
+        meDisplayName="Ада Лавлейс"
+        pending={[{ clientMessageId: 'cm-pend', text: 'Оптимистично' }]}
+        outbox={[outboxRecord({ clientMessageId: 'cm-2', state: 'sending', errorCode: undefined })]}
+      />,
+    )
+
+    const avatars = Array.from(container.querySelectorAll('.msg.me .avatar'))
+    expect(avatars).toHaveLength(2)
+    for (const avatar of avatars) {
+      expect(avatar.querySelector('.av-in span')?.textContent).toBe('АЛ')
+      expect((avatar as HTMLElement).style.getPropertyValue('--av')).toBe(colorOf('me'))
+    }
+  })
+
+  it('без displayName №10 — прежний фолбэк инициалов из username (T069)', () => {
+    const { container } = render(
+      <MessageList
+        messages={[]}
+        currentUserId={ME}
+        meUsername="me"
+        pending={[{ clientMessageId: 'cm-pend', text: 'Оптимистично' }]}
+      />,
+    )
+
+    expect(container.querySelector('.msg.me .avatar .av-in span')?.textContent).toBe('ME')
   })
 })

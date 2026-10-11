@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
 import type { ChatView, Message, MessagePage } from '../../../api/chats'
 import type { GroupMember } from '../../../api/groups'
+import { colorOf, initialsOf } from '../../../ui/avatar'
 import { useChatMessages } from '../../hooks/useChatMessages'
 import type { SyncPageUpdate } from '../../hooks/useChatMessages'
 import { MessageList } from '../MessageList'
@@ -19,6 +20,7 @@ import { MessageList } from '../MessageList'
 type GroupMessageListProps = ComponentProps<typeof MessageList> & {
   readonly members?: readonly GroupMember[]
   readonly othersReadUpToSeq?: number
+  readonly meDisplayName?: string | null
 }
 
 const GroupMessageList = MessageList as unknown as ComponentType<GroupMessageListProps>
@@ -89,6 +91,26 @@ function member(id: string, username: string, role: GroupMember['role'] = 'membe
       email: `${username}@example.com`,
       status: 'active',
       createdAt: '2026-09-01T00:00:00.000Z',
+    },
+    role,
+    joinedAt: '2026-09-01T00:00:00.000Z',
+  }
+}
+
+/**
+ * №28-строка с цепочкой US1 (008a T070): displayName/alias участника
+ * отличны от username — ростер «Мария Соколова» при username «mikhail».
+ */
+function memberWith(
+  id: string,
+  username: string,
+  user: Partial<Pick<GroupMember['user'], 'displayName' | 'alias'>> = {},
+  role: GroupMember['role'] = 'member',
+): GroupMember {
+  return {
+    user: {
+      ...member(id, username).user,
+      ...user,
     },
     role,
     joinedAt: '2026-09-01T00:00:00.000Z',
@@ -519,5 +541,102 @@ describe('MessageList group read marks and sync deltas (US2; №17/№26)', () =
     )
 
     expect(statusTexts(container)).toEqual([null, 'Прочитано'])
+  })
+})
+
+/**
+ * 008a Phase 13 (T070): аватары ленты и подпись отправителя группы
+ * живут по цепочке US1 `alias → displayName → username` (ростер №28,
+ * ui-behavior §1) — как шапка/список/участники/typing уже делают;
+ * ЦВЕТ остаётся `colorOf(username)` (FR-004: профильное имя не
+ * перекрашивает), отправитель вне ростра — прежний фолбэк от source.
+ */
+describe('MessageList group feed avatars — US1 chain (008a T070)', () => {
+  it('входящие группы: инициалы и подпись — из displayName участника ≠ username, цвет — colorOf(username)', () => {
+    const roster: readonly GroupMember[] = [
+      member(ME, 'me', 'owner'),
+      memberWith(ALICE, 'mikhail', { displayName: 'Мария Соколова' }),
+    ]
+    const { container } = render(
+      <GroupMessageList
+        messages={[groupMessage('in-1', 1, ALICE, 'Вопрос')]}
+        currentUserId={ME}
+        members={roster}
+      />,
+    )
+
+    const avatar = container.querySelector('.msg.them .avatar') as HTMLElement
+    expect(avatar.querySelector('.av-in span')?.textContent).toBe('МС')
+    expect(avatar.style.getPropertyValue('--av')).toBe(colorOf('mikhail'))
+    // Подпись отправителя над пузырём — имя по цепочке, не username.
+    expect(container.querySelector('.msg.them .sender.message-sender')?.textContent).toBe(
+      'Мария Соколова',
+    )
+  })
+
+  it('alias участника — верх цепочки: инициалы и подпись из alias', () => {
+    const roster: readonly GroupMember[] = [
+      member(ME, 'me', 'owner'),
+      memberWith(ALICE, 'mikhail', { displayName: 'Мария Соколова', alias: 'Маша' }),
+    ]
+    const { container } = render(
+      <GroupMessageList
+        messages={[groupMessage('in-1', 1, ALICE, 'Вопрос')]}
+        currentUserId={ME}
+        members={roster}
+      />,
+    )
+
+    expect(container.querySelector('.msg.them .avatar .av-in span')?.textContent).toBe('МА')
+    expect(container.querySelector('.msg.them .sender.message-sender')?.textContent).toBe('Маша')
+  })
+
+  it('отправитель вне ростра — прежний фолбэк: без подписи, инициалы/цвет от стабильного id', () => {
+    const stranger = '44444444-4444-4444-4444-444444444444'
+    const { container } = render(
+      <GroupMessageList
+        messages={[groupMessage('in-1', 1, stranger, 'Вопрос')]}
+        currentUserId={ME}
+        members={GROUP_ROSTER}
+      />,
+    )
+
+    const avatar = container.querySelector('.msg.them .avatar') as HTMLElement
+    expect(container.querySelector('.message-sender')).toBeNull()
+    expect(avatar.querySelector('.av-in span')?.textContent).toBe(initialsOf(stranger))
+    expect(avatar.style.getPropertyValue('--av')).toBe(colorOf(stranger))
+  })
+
+  it('свои строки группы: инициалы из me.displayName №10, цвет — colorOf(meUsername)', () => {
+    const { container } = render(
+      <GroupMessageList
+        messages={[groupMessage('out-1', 1, ME, 'Понял')]}
+        currentUserId={ME}
+        meUsername="me"
+        meDisplayName="Ада Лавлейс"
+        pending={[{ clientMessageId: 'cm-1', text: 'Локально' }]}
+        members={GROUP_ROSTER}
+      />,
+    )
+
+    const avatars = Array.from(container.querySelectorAll('.msg.me .avatar'))
+    expect(avatars).toHaveLength(2)
+    for (const avatar of avatars) {
+      expect(avatar.querySelector('.av-in span')?.textContent).toBe('АЛ')
+      expect((avatar as HTMLElement).style.getPropertyValue('--av')).toBe(colorOf('me'))
+    }
+  })
+
+  it('фолбэк собственных строк без displayName №10 — инициалы из username (T069: два кластера)', () => {
+    const { container } = render(
+      <GroupMessageList
+        messages={[groupMessage('out-1', 1, ME, 'Понял')]}
+        currentUserId={ME}
+        meUsername="me"
+        members={GROUP_ROSTER}
+      />,
+    )
+
+    expect(container.querySelector('.msg.me .avatar .av-in span')?.textContent).toBe('ME')
   })
 })

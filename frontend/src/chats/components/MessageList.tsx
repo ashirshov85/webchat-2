@@ -77,10 +77,18 @@
  * `meUsername`, direct incoming — `peerUsername`, group incoming —
  * the roster username (the №28 sender attribution); an unknown
  * username falls back to the stable user id, keeping the color
- * deterministic (FR-024). `React.memo` rows + `content-visibility:
- * auto` (message-list.css) keep a 1000+ feed at 60 fps (SC-010,
- * research §G); the `pop` entrance is transform/opacity-only and
- * dies under prefers-reduced-motion (FR-004 via machine.css). The
+ * deterministic (FR-024). 008a T070 (Phase 13): the feed INITIALS
+ * ride the US1 chain like every other surface — group incoming and
+ * the sender attribution resolve through the №28 roster
+ * (`alias → displayName → username`), direct incoming through the
+ * peer triple, own/local rows through `me.displayName` №10 (fallback
+ * username); the COLOR stays `colorOf(source)` — a profile name
+ * never recolors (FR-004), and a sender outside the roster keeps the
+ * plain `initialsOf(source)` fallback. `React.memo` rows +
+ * `content-visibility: auto` (message-list.css) keep a 1000+ feed at
+ * 60 fps (SC-010, research §G); the `pop` entrance is
+ * transform/opacity-only and dies under prefers-reduced-motion
+ * (FR-004 via machine.css). The
  * ЧЧ:ММ time of the `.b-time` footer and the `.date-divider`
  * between calendar days (FR-019) are rendered since T026 — the
  * T016(а) feed baselines carry both, so SC-001 at the US1
@@ -209,6 +217,8 @@ import type { GroupMember } from '../../api/groups'
 import { QUEUE_OVERFLOW_ERROR_CODE } from '../outbox'
 import type { OutboxRecord } from '../outbox'
 import { Avatar } from '../../ui/Avatar'
+import { initialsOf } from '../../ui/avatar'
+import { resolveDisplayName } from '../../ui/names'
 import { formatDate, formatTime } from '../../ui/time'
 import { TypingRow, renderableTyping } from './TypingRow'
 import type { TypingParticipant } from './TypingRow'
@@ -889,11 +899,28 @@ export interface MessageListProps {
    */
   readonly meUsername?: string
   /**
+   * Собственное профильное displayName №10 (008a T070, Phase 13):
+   * инициалы СВОИХ строк ленты (FeedRow outgoing + локальные
+   * pending/outbox) — `initialsOf(resolveDisplayName(undefined,
+   * meDisplayName, meUsername))`; отсутствует/пустое → username.
+   * Цвет аватара остаётся `colorOf(meUsername)` (FR-004).
+   */
+  readonly meDisplayName?: string | null
+  /**
    * The PEER username of the open DIRECT dialog — the avatar source
    * of incoming rows (T022, FR-024). Groups attribute through the
    * №28 roster instead; the stable user id is the fallback.
    */
   readonly peerUsername?: string
+  /**
+   * Peer-тройка цепочки US1 direct-диалога (008a T070): персональный
+   * `peerAlias` и профильное `peerDisplayName` собеседника —
+   * инициалы входящих строк разрешаются тем же `resolveDisplayName`,
+   * что шапка/строка списка (ui-behavior §1); цвет — от username.
+   */
+  readonly peerAlias?: string | null
+  /** Профильное displayName peer №11/№12/№13 (008a T070 — см. peerAlias). */
+  readonly peerDisplayName?: string | null
   /** Optimistic outgoing entries not yet acknowledged by the server. */
   readonly pending?: readonly PendingMessage[]
   /** Outbox records of the open chat (T036): `sending`/`failed` entries. */
@@ -1037,6 +1064,12 @@ interface FeedRowProps {
   readonly sender: string | undefined
   /** Avatar derivation source of the row (username or stable id). */
   readonly avatarSource: string
+  /**
+   * Готовые инициалы аватара строки (008a T070): из цепочки US1
+   * (№28-ростр / peer-тройка / me.displayName №10); undefined —
+   * прежний фолбэк `initialsOf(avatarSource)`.
+   */
+  readonly avatarInitials: string | undefined
   /** The ack transition animates the fresh ✓ (T023, FR-018). */
   readonly stampAnim: boolean
   /**
@@ -1054,6 +1087,7 @@ const FeedRow = memo(function FeedRow({
   read,
   sender,
   avatarSource,
+  avatarInitials,
   stampAnim,
   seatAnchor,
 }: FeedRowProps) {
@@ -1063,7 +1097,7 @@ const FeedRow = memo(function FeedRow({
       data-mid={message.id}
       data-seat-anchor={seatAnchor}
     >
-      <Avatar source={avatarSource} size={FEED_AVATAR_SIZE} />
+      <Avatar source={avatarSource} initials={avatarInitials} size={FEED_AVATAR_SIZE} />
       <div className="bubble">
         {sender !== undefined && <div className="sender message-sender">{sender}</div>}
         <div className="b-text message-text">{message.text}</div>
@@ -1084,6 +1118,8 @@ interface LocalRowProps {
   /** Terminal-failure reason label (the plain or queue-overflow one). */
   readonly failedReason: string
   readonly avatarSource: string
+  /** Инициалы «Вы»-аватара из me.displayName №10 (008a T070). */
+  readonly avatarInitials: string | undefined
   readonly onRetry?: (clientMessageId: string) => void
   readonly onRemove?: (clientMessageId: string) => void
 }
@@ -1094,12 +1130,13 @@ const LocalRow = memo(function LocalRow({
   failed,
   failedReason,
   avatarSource,
+  avatarInitials,
   onRetry,
   onRemove,
 }: LocalRowProps) {
   return (
     <li className="message outgoing msg me">
-      <Avatar source={avatarSource} size={FEED_AVATAR_SIZE} />
+      <Avatar source={avatarSource} initials={avatarInitials} size={FEED_AVATAR_SIZE} />
       <div className="bubble">
         <div className="b-text message-text">{text}</div>
         <div className="b-time">
@@ -1143,9 +1180,18 @@ interface FeedRowContext {
   readonly hasOlder: boolean
   readonly barrierIndex: number
   readonly readUpToSeq: number
-  readonly senderNames: Map<string, string> | undefined
+  /**
+   * №28-ростр группы (008a T070): userId → username (цвет, FR-004) +
+   * имя по цепочке US1 (подпись отправителя и инициалы аватара);
+   * undefined — direct-вариант без ростра.
+   */
+  readonly roster: Map<string, { readonly username: string; readonly name: string }> | undefined
   readonly meAvatarSource: string
+  /** Инициалы своих строк из me.displayName №10 (008a T070). */
+  readonly meAvatarInitials: string
   readonly peerUsername: string | undefined
+  /** Инициалы входящих direct из peer-тройки (008a T070). */
+  readonly peerAvatarInitials: string | undefined
   readonly seat: SeatCandidates
   readonly localIds: ReadonlySet<string>
 }
@@ -1156,14 +1202,29 @@ interface FeedRowContext {
  * peer second), the stable user id as the deterministic fallback.
  */
 function incomingAvatarSource(ctx: FeedRowContext, senderId: string): string {
-  return ctx.senderNames?.get(senderId) ?? ctx.peerUsername ?? senderId
+  return ctx.roster?.get(senderId)?.username ?? ctx.peerUsername ?? senderId
+}
+
+/**
+ * Avatar initials of an incoming row (008a T070): группа — имя
+ * отправителя по цепочке №28; direct — peer-тройка; отправитель вне
+ * ростра / неизвестный peer — undefined (прежний фолбэк от source).
+ */
+function incomingAvatarInitials(ctx: FeedRowContext, senderId: string): string | undefined {
+  const entry = ctx.roster?.get(senderId)
+  if (entry !== undefined) {
+    return initialsOf(entry.name)
+  }
+  return ctx.roster === undefined ? ctx.peerAvatarInitials : undefined
 }
 
 /** One server-message map entry: date divider, unread divider, row. */
 function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) {
   const outgoing = message.senderId === ctx.currentUserId
   const read = outgoing && message.seq <= ctx.readUpToSeq
-  const sender = outgoing ? undefined : ctx.senderNames?.get(message.senderId)
+  // 008a T070: подпись отправителя группы — имя по цепочке №28
+  // (alias → displayName → username), как typing/поиск/участники.
+  const sender = outgoing ? undefined : ctx.roster?.get(message.senderId)?.name
   // Date divider (FR-019): one per local calendar-day run — before
   // a message whose day differs from its predecessor's, and above
   // the oldest row once the history is known complete (`hasOlder`
@@ -1200,6 +1261,9 @@ function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) 
         read={read}
         sender={sender}
         avatarSource={outgoing ? ctx.meAvatarSource : incomingAvatarSource(ctx, message.senderId)}
+        avatarInitials={
+          outgoing ? ctx.meAvatarInitials : incomingAvatarInitials(ctx, message.senderId)
+        }
         stampAnim={ctx.localIds.has(message.id)}
         seatAnchor={rowSeatAnchor(message.id, ctx.seat)}
       />
@@ -1211,7 +1275,10 @@ export function MessageList({
   messages,
   currentUserId,
   meUsername,
+  meDisplayName,
   peerUsername,
+  peerAlias,
+  peerDisplayName,
   pending = [],
   outbox = [],
   onRetry,
@@ -1381,15 +1448,36 @@ export function MessageList({
   // Group variant (T038): the roster presence discriminates; sender
   // attribution resolves through it, and ✓✓ follows the group
   // watermark instead of the direct-chat `peerReadUpToSeq`.
+  // 008a T070: строки ростра несут username (цвет, FR-004) и имя по
+  // цепочке US1 (подпись отправителя + инициалы аватара).
   const isGroup = members !== undefined
-  const senderNames = isGroup
-    ? new Map(members.map((member) => [member.user.id, member.user.username]))
+  const roster = isGroup
+    ? new Map(
+        members.map((member) => [
+          member.user.id,
+          {
+            username: member.user.username,
+            name: resolveDisplayName(
+              member.user.alias,
+              member.user.displayName,
+              member.user.username,
+            ),
+          },
+        ]),
+      )
     : undefined
   const readUpToSeq = isGroup ? othersReadUpToSeq : peerReadUpToSeq
 
   // Avatar sources (T022, FR-024): usernames wherever the surface
   // knows them, the stable user id as the deterministic fallback.
+  // 008a T070: инициалы — из цепочки US1 (me.displayName №10 для
+  // своих, peer-тройка для direct-входящих); цвет не меняется.
   const meAvatarSource = meUsername ?? currentUserId
+  const meAvatarInitials = initialsOf(resolveDisplayName(undefined, meDisplayName, meAvatarSource))
+  const peerAvatarInitials =
+    peerUsername !== undefined
+      ? initialsOf(resolveDisplayName(peerAlias, peerDisplayName, peerUsername))
+      : undefined
 
   // T066: the unread barrier and the seat candidates (the frozen
   // snapshot semantics live in findBarrierIndex/seatCandidatesOf).
@@ -1414,9 +1502,11 @@ export function MessageList({
     hasOlder,
     barrierIndex,
     readUpToSeq,
-    senderNames,
+    roster,
     meAvatarSource,
+    meAvatarInitials,
     peerUsername,
+    peerAvatarInitials,
     seat,
     localIds: localIdsRef.current,
   }
@@ -1442,6 +1532,7 @@ export function MessageList({
           failed={false}
           failedReason=""
           avatarSource={meAvatarSource}
+          avatarInitials={meAvatarInitials}
         />
       ))}
       {activeOutbox.map((entry) => (
@@ -1452,6 +1543,7 @@ export function MessageList({
           failed={entry.state === 'failed'}
           failedReason={failedReasonOf(entry)}
           avatarSource={meAvatarSource}
+          avatarInitials={meAvatarInitials}
           onRetry={onRetry}
           onRemove={onRemove}
         />
