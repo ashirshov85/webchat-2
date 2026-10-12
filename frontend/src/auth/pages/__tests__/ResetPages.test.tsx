@@ -46,6 +46,42 @@ describe('ForgotPasswordPage', () => {
     expect(screen.getByRole('button', { name: 'Send reset link' })).toBeInTheDocument()
   })
 
+  it('renders the auth-card shell with badge, brand block and form title', () => {
+    const { container } = render(<ForgotPasswordPage />)
+
+    const card = container.querySelector('.auth-card')
+    expect(card).not.toBeNull()
+    expect(card?.querySelector('.auth-badge')).not.toBeNull()
+    const brandTitle = container.querySelector('.auth-card .auth-brand-title')
+    expect(brandTitle).not.toBeNull()
+    expect(brandTitle).toHaveTextContent('Aethergram')
+    expect(container.querySelector('.auth-card .auth-brand-sub')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: 'Forgot password' })).toHaveClass('auth-form-title')
+  })
+
+  it('uses the auth-field pattern with an svg icon for the email input', () => {
+    render(<ForgotPasswordPage />)
+
+    const field = screen.getByLabelText('Email').closest('.auth-field')
+    expect(field).not.toBeNull()
+    expect(field?.querySelector('svg.auth-field-icon')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Send reset link' })).toHaveClass('auth-submit')
+  })
+
+  it('shows the back-to-login link in the auth-footer in every state', async () => {
+    mockRequestPasswordReset.mockResolvedValueOnce(undefined)
+    render(<ForgotPasswordPage />)
+
+    const backLink = screen.getByRole('link', { name: 'Back to login' })
+    expect(backLink).toHaveAttribute('href', '/login')
+    expect(backLink.closest('.auth-footer')).not.toBeNull()
+
+    fillForgotPasswordForm('alice@example.com')
+    expect(await screen.findByRole('status')).toBeInTheDocument()
+
+    expect(screen.getByRole('link', { name: 'Back to login' })).toHaveAttribute('href', '/login')
+  })
+
   it('submits the email and shows the uniform check-your-email notice on 202', async () => {
     mockRequestPasswordReset.mockResolvedValueOnce(undefined)
     render(<ForgotPasswordPage />)
