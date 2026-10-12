@@ -47,12 +47,12 @@ export function ForgotPasswordPage() {
           <span className="auth-brand-sub-sep">·</span>
           {'EXPLORE'}
         </div>
-        <h2 className="auth-form-title">Forgot password</h2>
+        <h2 className="auth-form-title">Восстановление пароля</h2>
 
         {submittedEmail !== null && (
           <output>
-            If {submittedEmail} belongs to a registered account, we sent a password reset link. It
-            is valid for 1 hour.
+            Если {submittedEmail} принадлежит зарегистрированному аккаунту, мы отправили ссылку для
+            восстановления пароля. Она действует 1 час.
           </output>
         )}
         <form onSubmit={handleSubmit} noValidate>
@@ -84,12 +84,12 @@ export function ForgotPasswordPage() {
             />
           </div>
           <button type="submit" className="auth-submit" disabled={submitting}>
-            Send reset link
+            ОТПРАВИТЬ ССЫЛКУ
           </button>
         </form>
 
         <div className="auth-footer">
-          <a href="/login">Back to login</a>
+          <a href="/login">Вернуться ко входу</a>
         </div>
       </div>
     </div>

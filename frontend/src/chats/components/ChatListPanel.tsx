@@ -128,6 +128,11 @@ export interface ChatListPanelProps {
   readonly onOpenContacts?: () => void
   readonly onCreateGroup?: () => void
   /**
+   * T045: «Выйти» — последний пункт MainMenuButton; logout текущей
+   * сессии выполняет страница (панель — только проходной канал).
+   */
+  readonly onLogout?: () => void
+  /**
    * 008a Phase 11 (T068): режим псевдо-поиска — сайдбар рендерит
    * результаты вместо чатов (запрос и фильтрация — у страницы).
    */
@@ -155,6 +160,7 @@ export function ChatListPanel({
   onOpenProfile,
   onOpenContacts,
   onCreateGroup,
+  onLogout,
   searchMode = false,
   searchQuery = '',
   searchChatName = null,
@@ -185,6 +191,7 @@ export function ChatListPanel({
           onOpenProfile={onOpenProfile}
           onOpenContacts={onOpenContacts}
           onCreateGroup={onCreateGroup}
+          onLogout={onLogout}
         />
         <div className="search-wrap">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">

@@ -78,12 +78,5 @@ export function App() {
     return () => window.removeEventListener('popstate', sync)
   }, [])
 
-  const hideHeading = pathname === '/login' || pathname === '/register'
-
-  return (
-    <main>
-      {hideHeading ? null : <h1>WebChat</h1>}
-      {renderRoute(pathname)}
-    </main>
-  )
+  return <main>{renderRoute(pathname)}</main>
 }

@@ -25,12 +25,19 @@ export interface MainMenuButtonProps {
   readonly onOpenContacts?: () => void
   /** «Создать групповой чат» → форма create-group (T035). */
   readonly onCreateGroup?: () => void
+  /**
+   * «Выйти» (T045) — ПОСЛЕДНИЙ пункт: logout текущей сессии. Кнопка
+   * остаётся без бизнес-логики — revoke/очистка токенов/редирект
+   * принадлежат странице (002 FR-011).
+   */
+  readonly onLogout?: () => void
 }
 
 export function MainMenuButton({
   onOpenProfile,
   onOpenContacts,
   onCreateGroup,
+  onLogout,
 }: MainMenuButtonProps) {
   const [anchor, setAnchor] = useState<DOMRect | null>(null)
   const [open, setOpen] = useState(false)
@@ -52,6 +59,12 @@ export function MainMenuButton({
       label: 'Создать групповой чат',
       onSelect: () => {
         onCreateGroup?.()
+      },
+    },
+    {
+      label: 'Выйти',
+      onSelect: () => {
+        onLogout?.()
       },
     },
   ]

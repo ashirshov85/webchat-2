@@ -168,7 +168,7 @@ class EmailOutboxResilienceIT(
         val letters = fakeEmailGateway.deliveredTo("recover-raj@example.com")
         assertThat(letters).hasSize(1)
         assertThat(letters.single().recipient).isEqualTo("recover-raj@example.com")
-        assertThat(letters.single().subject).contains("Webchat")
+        assertThat(letters.single().subject).contains("Aethergram")
         assertThat(letters.single().text).contains("/confirm-registration?token=$openToken")
         assertThat(fakeEmailGateway.attemptsFor("recover-raj@example.com")).isEqualTo(2)
     }

@@ -18,15 +18,17 @@
  *   `<b>`) из `GET /users/me` (getCurrentUser), email-фолбэк «—»
  *   (openProfile прототипа).
  *
- * - Смена пароля (008b US2, T023; FR-004): между readonly-строками и
- *   кнопками — PasswordChangeForm (T022, отдельная <form>, свой
- *   submit/тост); гейтинг по me.hasPassword (контракт 0.10.0, inline
- *   allOf над PublicUser): JIT-аккаунт 003 (hasPassword === false)
- *   форму не видит — подсказка .modal-hint «задать пароль через
- *   восстановление по email» со ссылкой /forgot-password (флоу 002).
- *   Submit вложенной формы всплывает до формы профиля — гвард
- *   `event.target !== event.currentTarget` в handleSubmit исключает
- *   двойное сохранение (пароль ≠ «Сохранить» профиля).
+ * - Смена пароля (008b US2; T023 → T046): инлайн-форма вынесена в
+ *   ОТДЕЛЬНОГО жителя оболочки 'password-change' (PasswordChangeModal,
+ *   MessengerPage) — между readonly-строками и блоком «Сохранить»
+ *   кнопка «Смена пароля» (полная ширина окна профиля, вторичный
+ *   стиль — модификатор .profile-pass-open в profile-modal.css):
+ *   клик → onOpenPasswordChange — владелец переключает оболочку (форма
+ *   профиля закрывается: один житель; возврат — вручную). Гейтинг по
+ *   me.hasPassword (контракт 0.10.0, inline allOf над PublicUser):
+ *   JIT-аккаунт 003 (hasPassword === false) кнопки не видит —
+ *   подсказка .modal-hint «задать пароль через восстановление по
+ *   email» со ссылкой /forgot-password (флоу 002).
  *
  * - Переключатель «Режим инкогнито» (.tgl-row прототипа): семантика и
  *   API 007 — №38 GET /users/me/presence/settings на монтировании
@@ -56,17 +58,18 @@ import { problemMessage } from '../../auth/problem'
 import { fetchPresenceSettings, updatePresenceSettings } from '../../presence/presenceApi'
 import { useToast } from '../../ui/Toast'
 import { resolveDisplayName } from '../../ui/names'
-import { PasswordChangeForm } from './PasswordChangeForm'
 import './profile-modal.css'
 
 export interface ProfileModalProps {
   /** Отмена/успешное сохранение — закрытие оболочки (владелец T034). */
   readonly onClose?: () => void
+  /** Кнопка «Смена пароля» — переключение оболочки на жителя 'password-change' (008b T046). */
+  readonly onOpenPasswordChange?: () => void
 }
 
 type LoadState = 'loading' | 'ready' | 'error'
 
-export function ProfileModal({ onClose }: ProfileModalProps) {
+export function ProfileModal({ onClose, onOpenPasswordChange }: ProfileModalProps) {
   const showToast = useToast()
   const [status, setStatus] = useState<LoadState>('loading')
   const [username, setUsername] = useState('')
@@ -105,11 +108,6 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
   /** Submit #profileForm прототипа: №39 PUT (имя) → №38 PUT → тост → закрытие. */
   const handleSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault()
-    // Submit вложенной <form> смены пароля (T023) всплывает до формы
-    // профиля — цепочка «Сохранить» для него не запускается вовсе.
-    if (event.target !== event.currentTarget) {
-      return
-    }
     if (saving) {
       return
     }
@@ -200,7 +198,9 @@ export function ProfileModal({ onClose }: ProfileModalProps) {
         <b>{email || '—'}</b>
       </div>
       {hasPassword ? (
-        <PasswordChangeForm username={username} email={email} />
+        <button type="button" className="m-btn profile-pass-open" onClick={onOpenPasswordChange}>
+          Смена пароля
+        </button>
       ) : (
         <p className="modal-hint">
           {'У аккаунта нет пароля — задать пароль можно через '}

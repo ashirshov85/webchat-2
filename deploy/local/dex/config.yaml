@@ -55,5 +55,5 @@ staticClients:
     redirectURIs:
       # = sso.callback-url of the local backend run (quickstart «Предусловия»)
       - http://localhost:8080/api/v1/auth/sso/callback
-    name: WebChat
+    name: Aethergram
     secret: dev-secret # dev-only dummy (spec Assumptions, SC-004 exception)

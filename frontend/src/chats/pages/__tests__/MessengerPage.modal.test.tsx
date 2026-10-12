@@ -119,7 +119,9 @@ function contacts(): ContactView[] {
 
 /** Общая подготовка страницы БЕЗ №12-мока — его ставит вызывающий тест. */
 async function renderPageBase(): Promise<void> {
-  mockGetCurrentUser.mockResolvedValue(peer(ME, 'me'))
+  // hasPassword: true (контракт 0.10.0) — «Мой профиль» несёт кнопку
+  // «Смена пароля» (T046) для аккаунта с паролем.
+  mockGetCurrentUser.mockResolvedValue({ ...peer(ME, 'me'), hasPassword: true })
   mockChats.listMessages.mockResolvedValue({ messages: [] })
   mockChats.listContacts.mockResolvedValue(contacts())
   mockChats.ensureChat.mockResolvedValue(directChatView())
@@ -220,6 +222,29 @@ describe('MessengerPage единая ModalShell (T034, data-model 1.6/3.3)', () 
     await waitFor(() => {
       expect(screen.queryByRole('dialog', { name: 'Новый групповой чат' })).toBeNull()
     })
+  })
+
+  it('из «Мой профиль» кнопка «Смена пароля» открывает жителя оболочки с заголовком «Смена пароля»', async () => {
+    await renderPage()
+
+    const dialog = await openShellForm('Мой профиль', 'Мой профиль')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Смена пароля' }))
+
+    // T046: MODAL_TITLES['password-change'] — заголовок оболочки; житель
+    // сменился ВНУТРИ той же подложки (один житель, data-model 3.3),
+    // форма профиля закрыта.
+    const passDialog = await screen.findByRole('dialog', { name: 'Смена пароля' })
+    expect(within(passDialog).getByLabelText('Текущий пароль')).toBeInTheDocument()
+    expect(within(passDialog).getByLabelText('Новый пароль')).toBeInTheDocument()
+    expect(document.querySelectorAll('.modal-back')).toHaveLength(1)
+
+    // «Отмена» закрывает оболочку; возврат в «Мой профиль» — вручную,
+    // не автоматически (T046).
+    fireEvent.click(within(passDialog).getByRole('button', { name: 'Отмена' }))
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: 'Смена пароля' })).toBeNull()
+    })
+    expect(screen.queryByRole('dialog', { name: 'Мой профиль' })).toBeNull()
   })
 
   it('открытие переписки из «Контактов» закрывает оболочку и открывает окно чата', async () => {

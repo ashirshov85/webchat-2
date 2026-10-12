@@ -17,8 +17,8 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
   if (done) {
     return (
       <output>
-        Password reset — all sessions were revoked. You can now <a href="/login">log in</a> with the
-        new password.
+        Пароль сброшен — все сессии отозваны. Теперь вы можете <a href="/login">войти</a> с новым
+        паролем.
       </output>
     )
   }
@@ -31,7 +31,7 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
   async function submit() {
     setError(null)
     if (password !== confirmPassword) {
-      setError('Passwords do not match. The link stays valid — correct them and try again.')
+      setError('Пароли не совпадают. Ссылка остаётся действующей — исправьте и попробуйте снова.')
       return
     }
     setSubmitting(true)
@@ -48,13 +48,27 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
   return (
     <form onSubmit={handleSubmit} noValidate>
       {error !== null && <p role="alert">{error}</p>}
-      <div>
-        <label htmlFor="reset-password">Password</label>
+      <div className="auth-field">
+        <svg
+          className="auth-field-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          aria-hidden="true"
+        >
+          <rect x="4" y="10" width="16" height="10" rx="2" />
+          <path d="M8 10V7a4 4 0 0 1 8 0v3" strokeLinecap="round" />
+        </svg>
+        <label className="auth-label-sr" htmlFor="reset-password">
+          Новый пароль
+        </label>
         <input
           id="reset-password"
           name="password"
           type="password"
           autoComplete="new-password"
+          placeholder="Новый пароль"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           required
@@ -62,13 +76,27 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
           maxLength={128}
         />
       </div>
-      <div>
-        <label htmlFor="reset-password-confirm">Confirm password</label>
+      <div className="auth-field">
+        <svg
+          className="auth-field-icon"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          aria-hidden="true"
+        >
+          <rect x="4" y="10" width="16" height="10" rx="2" />
+          <path d="M8 10V7a4 4 0 0 1 8 0v3" strokeLinecap="round" />
+        </svg>
+        <label className="auth-label-sr" htmlFor="reset-password-confirm">
+          Подтвердите пароль
+        </label>
         <input
           id="reset-password-confirm"
           name="confirmPassword"
           type="password"
           autoComplete="new-password"
+          placeholder="Подтвердите пароль"
           value={confirmPassword}
           onChange={(event) => setConfirmPassword(event.target.value)}
           required
@@ -76,8 +104,8 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
           maxLength={128}
         />
       </div>
-      <button type="submit" disabled={submitting}>
-        Reset password
+      <button type="submit" className="auth-submit" disabled={submitting}>
+        СБРОСИТЬ ПАРОЛЬ
       </button>
     </form>
   )
