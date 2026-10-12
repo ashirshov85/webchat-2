@@ -566,10 +566,20 @@ class GroupPrivacyIT(
                 contacts.body,
             ).isEqualTo(HttpStatus.OK)
         val items = objectMapper.readTree(contacts.body)["contacts"].toList()
-        assertThat(items.map { it["user"]["id"].asText() })
+        // 008b US4 (FR-011): the starter contact `admin` rides every №20
+        // answer of a fixture user (T032–T034 + the T035 self-healing
+        // fallback). It carries no group projection by construction, but
+        // its seed fixture DOES carry the optional 008a `displayName`
+        // ('Administrator', T030) which the 0.5.0 exact-field-set pins
+        // below predate — the bookkeeping runs on the fixtures' rows,
+        // while assertNoGroupProjections below still covers the WHOLE
+        // raw answer including the starter contact.
+        val fixtureItems =
+            items.filterNot { it["user"]["username"].asText().equals(STARTER_ADMIN_USERNAME, ignoreCase = true) }
+        assertThat(fixtureItems.map { it["user"]["id"].asText() })
             .overridingErrorMessage("№20 lists the contacts only — the roster membership adds nothing here")
             .containsExactly(bob.id.toString())
-        items.forEach { item ->
+        fixtureItems.forEach { item ->
             assertThat(fieldNames(item))
                 .overridingErrorMessage(
                     "ContactView keeps the exact 0.5.0 field set (US5-4), got <%s>",
@@ -975,6 +985,9 @@ class GroupPrivacyIT(
         const val GROUP_ID_FIELD = "groupId"
 
         const val ADMIN_ROLE = "admin"
+
+        /** 008b US4: the seed-shape username of the starter admin (research.md 008b §1). */
+        const val STARTER_ADMIN_USERNAME = "admin"
 
         const val CHAT_NOT_FOUND = "chat_not_found"
         const val NOT_PARTICIPANT = "not_participant"

@@ -1183,7 +1183,16 @@ class ProfileDisplayNameIT(
 
         /** api-contract.md §1 №39: 30 profile writes per minute per user. */
         const val FLOOD_WINDOW = 30
-        const val FLOOD_BURST_ATTEMPT_CAP = 40
+
+        /**
+         * T037 (008b): the burst cap carries a ×2 headroom over the 30/min
+         * capacity. The greedy drip re-grants 1 token per 2 s mid-burst, so
+         * under the SOAK of a full `gradlew check` (per-request latencies
+         * near 0.5 s) a ×1.33 cap of 40 could see all attempts lawfully
+         * accepted and report a phantom «limit not enforced» — the cap must
+         * stay beyond the drip bound the assertion itself tolerates.
+         */
+        const val FLOOD_BURST_ATTEMPT_CAP = 60
         const val FLOOD_DRIP_SLACK = 1L
         const val RETRY_AFTER_FLOOR_SECONDS = 1L
         const val RETRY_AFTER_CEILING_SECONDS = 60L

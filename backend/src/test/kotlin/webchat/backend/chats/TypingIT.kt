@@ -949,7 +949,17 @@ class TypingIT(
         const val PROFILE_TYPING_SIGNALS_PER_MINUTE = 60
 
         const val POLLER_SLACK_TICKS = 2L
-        const val WINDOW_SLACK_SECONDS = 1L
+
+        /**
+         * T037 (008b): the CI soak slack of the SC-003 budget. A single
+         * unloaded JVM reaps at ~ttl + one tick, but the FULL `gradlew
+         * check` run soaks the machine (dozens of cached contexts,
+         * outbox/`scheduling-1` ticks, GC) and the 200 ms poller can lag
+         * seconds behind — reproduced on origin/main with a 5-class run.
+         * The budget keeps deriving from ttl + ticks; the slack only
+         * absorbs the shared-JVM starvation, never a missing reap.
+         */
+        const val WINDOW_SLACK_SECONDS = 5L
 
         /** FR-009/api-contract.md №41: 60 signals per minute per user. */
         const val WINDOW_SIGNALS = 60

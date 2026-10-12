@@ -208,8 +208,8 @@ class ContactAliasIT(
         assertContactNotFound(setAlias(owner, stranger.id, ALIAS), "an existing user who is not a contact")
         assertContactNotFound(setAlias(owner, UUID.randomUUID(), ALIAS), "an unknown user")
 
-        assertThat(contactIds(listContacts(owner)))
-            .overridingErrorMessage("a refused №40 must leave no contact rows behind")
+        assertThat(contactIdsWithoutStarterAdmin(listContacts(owner)))
+            .overridingErrorMessage("a refused №40 must leave no contact rows behind (besides the starter admin)")
             .isEmpty()
     }
 
@@ -381,9 +381,10 @@ class ContactAliasIT(
         assertThat(deleteContact(owner, peer.id).statusCode)
             .overridingErrorMessage("№22 contact deletion must answer 204")
             .isEqualTo(HttpStatus.NO_CONTENT)
-        assertThat(contactIds(listContacts(owner)))
-            .overridingErrorMessage("the deleted contact must be gone from the list")
-            .isEmpty()
+        assertThat(contactIdsWithoutStarterAdmin(listContacts(owner)))
+            .overridingErrorMessage(
+                "the deleted contact must be gone from the list (the starter admin is no 004 state)",
+            ).isEmpty()
         assertContactNotFound(setAlias(owner, peer.id, ALIAS), "a deleted contact")
 
         // A re-add starts from a clean slate — the alias must not resurrect.
@@ -544,8 +545,19 @@ class ContactAliasIT(
     // Body navigation and assertions.
     // ------------------------------------------------------------------
 
-    private fun contactIds(response: ResponseEntity<String>): List<String> =
-        objectMapper.readTree(response.body!!)["contacts"].map { it["user"]["id"].asText() }
+    /**
+     * The №20 ids WITHOUT the US4 starter contact of the system admin
+     * (008b FR-011): every fixture user grown through the real 002 API
+     * receives `admin` asynchronously (T032–T034) and via the T035 №20
+     * self-healing fallback — orthogonal to the №40 lifecycle this suite
+     * pins. Resolution matches the production rule: the seed-shape
+     * `lower(username) = 'admin'` (research.md 008b §1/§3).
+     */
+    private fun contactIdsWithoutStarterAdmin(response: ResponseEntity<String>): List<String> =
+        objectMapper
+            .readTree(response.body!!)["contacts"]
+            .filterNot { it["user"]["username"].asText().equals(STARTER_ADMIN_USERNAME, ignoreCase = true) }
+            .map { it["user"]["id"].asText() }
 
     private fun contactOf(
         response: ResponseEntity<String>,
@@ -910,9 +922,19 @@ class ContactAliasIT(
         val OVERSIZED_ALIAS: String = "м".repeat(ALIAS_MAX_LENGTH + 1)
         const val GROUP_TITLE = "008a contact-alias surfaces"
 
+        /** 008b US4: the seed-shape username of the starter admin (research.md 008b §1). */
+        const val STARTER_ADMIN_USERNAME = "admin"
+
         /** api-contract.md §1 №40: 30 alias writes per minute per user. */
         const val FLOOD_WINDOW = 30
-        const val FLOOD_BURST_ATTEMPT_CAP = 40
+
+        /**
+         * T037 (008b): ×2 headroom over the 30/min capacity — the greedy
+         * drip re-grants 1 token per 2 s mid-burst, so under the soak of a
+         * full `gradlew check` a ×1.33 cap of 40 could see every attempt
+         * lawfully accepted and report a phantom «limit not enforced».
+         */
+        const val FLOOD_BURST_ATTEMPT_CAP = 60
         const val FLOOD_DRIP_SLACK = 1L
         const val RETRY_AFTER_FLOOR_SECONDS = 1L
         const val RETRY_AFTER_CEILING_SECONDS = 60L
