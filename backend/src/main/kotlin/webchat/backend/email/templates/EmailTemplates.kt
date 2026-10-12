@@ -80,19 +80,19 @@ class EmailTemplates(
         link: String,
     ): RenderedEmail =
         RenderedEmail(
-            subject = "Webchat — подтверждение регистрации",
+            subject = "Aethergram — подтверждение регистрации",
             text =
                 """
                 Здравствуйте, $username!
 
-                Для аккаунта Webchat с именем пользователя «$username» указан этот адрес email.
+                Для аккаунта Aethergram с именем пользователя «$username» указан этот адрес email.
                 Подтвердите его, перейдя по одноразовой ссылке:
 
                 $link
 
                 Ссылка действует ограниченное время и может быть использована только один раз.
                 Если она не работает, запросите новую на странице регистрации.
-                Если вы не регистрировались в Webchat, просто проигнорируйте это письмо.
+                Если вы не регистрировались в Aethergram, просто проигнорируйте это письмо.
                 """.trimIndent(),
         )
 
@@ -102,7 +102,7 @@ class EmailTemplates(
         link: String,
     ): RenderedEmail =
         RenderedEmail(
-            subject = "Webchat — новая ссылка для подтверждения регистрации",
+            subject = "Aethergram — новая ссылка для подтверждения регистрации",
             text =
                 """
                 Здравствуйте, $username!
@@ -123,7 +123,7 @@ class EmailTemplates(
         link: String,
     ): RenderedEmail =
         RenderedEmail(
-            subject = "Webchat — задайте пароль",
+            subject = "Aethergram — задайте пароль",
             text =
                 """
                 Здравствуйте, $username!
@@ -134,7 +134,7 @@ class EmailTemplates(
 
                 Ссылка одноразовая и действует ограниченное время. Если она истекла,
                 запросите новую повторной отправкой письма.
-                Если вы не регистрировались в Webchat, просто проигнорируйте это письмо.
+                Если вы не регистрировались в Aethergram, просто проигнорируйте это письмо.
                 """.trimIndent(),
         )
 
@@ -148,12 +148,12 @@ class EmailTemplates(
         link: String,
     ): RenderedEmail =
         RenderedEmail(
-            subject = "Webchat — восстановление пароля",
+            subject = "Aethergram — восстановление пароля",
             text =
                 """
                 Здравствуйте, $username!
 
-                Для аккаунта Webchat «$username» поступил запрос на восстановление пароля.
+                Для аккаунта Aethergram «$username» поступил запрос на восстановление пароля.
                 Задайте новый пароль, перейдя по одноразовой ссылке:
 
                 $link

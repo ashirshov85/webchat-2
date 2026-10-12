@@ -29,14 +29,25 @@ afterEach(() => {
 })
 
 describe('App', () => {
-  it('renders the application heading on public pages', () => {
+  it('does not render the application heading on any route', () => {
     navigate('/forgot-password')
+    const publicPage = render(<App />)
+
+    expect(screen.queryByRole('heading', { level: 1, name: 'WebChat' })).not.toBeInTheDocument()
+
+    publicPage.unmount()
+    navigate('/set-password')
     render(<App />)
 
-    const heading = screen.getByRole('heading', { level: 1, name: 'WebChat' })
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    cleanup()
 
-    expect(heading).toBeInTheDocument()
-    expect(heading).toHaveTextContent('WebChat')
+    authenticate()
+    navigate('/')
+    render(<App />)
+
+    expect(screen.getByRole('complementary', { name: 'Чаты и контакты' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
   })
 })
 
