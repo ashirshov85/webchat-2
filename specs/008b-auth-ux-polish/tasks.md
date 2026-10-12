@@ -167,7 +167,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 **Purpose**: Регресс, контрактные гейты, аудит безопасности, сквозная проверка (SC-004/SC-005)
 
 - [X] T037 Полный регрессионный прогон: `./gradlew check` из `backend/` (включая новые `PasswordChangeIT`, `AdminSeedIT`, `StarterContactIT` и существующие `SessionIT`, `PasswordResetIT`, `RateLimitIT`, `SsoFlowIT`, `ContactsIT`) + `pnpm --dir frontend test && pnpm --dir frontend lint && pnpm --dir frontend typecheck` — SC-005
-- [ ] T038 Контрактные гейты: `scripts/validate-contracts.sh` — vacuum lint чист, regen drift = 0, `oasdiff breaking --fail-on ERR` против origin/main зелёный, версия 0.10.0, `contracts/BREAKING.md` не требуется (только аддитивно)
+- [X] T038 Контрактные гейты: `scripts/validate-contracts.sh` — vacuum lint чист, regen drift = 0, `oasdiff breaking --fail-on ERR` против origin/main зелёный, версия 0.10.0, `contracts/BREAKING.md` не требуется (только аддитивно)
 - [ ] T039 Верификация аудита безопасности (SC-004): в `auth_events` записи смены пароля (успешные + неверный текущий, включая JIT) без паролей/токенов; `users.password_hash` — Argon2id с индивидуальной солью; 0 открытых паролей в PG и логах; 429 с `Retry-After` вместо отказа сервиса
 - [ ] T040 Сквозная проверка по `specs/008b-auth-ux-polish/quickstart.md`: все сценарии US1–US4 вручную (два браузерных профиля для мультидевайс US2; Mailpit для писем сброса и беспарольного seed-admin)
 
