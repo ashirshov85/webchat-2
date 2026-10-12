@@ -1,9 +1,6 @@
 package webchat.backend.auth.onboarding
 
 import io.micrometer.core.instrument.MeterRegistry
-import java.sql.Timestamp
-import java.time.Instant
-import java.util.UUID
 import org.slf4j.LoggerFactory
 import org.springframework.boot.ApplicationArguments
 import org.springframework.boot.ApplicationRunner
@@ -11,6 +8,9 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Component
 import webchat.backend.config.AdminSeedProperties
+import java.sql.Timestamp
+import java.time.Instant
+import java.util.UUID
 
 /**
  * T030 [US4] (research.md §1 / data-model.md §1.3, FR-011–FR-012): the
@@ -57,7 +57,9 @@ class AdminSeedRunner(
                 return
             }
             reportSkip()
-        } catch (@Suppress("TooGenericExceptionCaught") ex: Exception) {
+        } catch (
+            @Suppress("TooGenericExceptionCaught") ex: Exception,
+        ) {
             // the seed is best-effort by design: any failure (incl. an
             // unreachable database) must never break the application start
             log.error("admin seed failed — application start continues", ex)
