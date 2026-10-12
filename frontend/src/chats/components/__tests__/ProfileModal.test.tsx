@@ -22,21 +22,20 @@ import { ProfileModal } from '../ProfileModal'
  * возвращает сохранённое значение; сбой PUT — problemMessage, чекбокс
  * возвращается к серверному значению.
  *
- * 008b US2 (T012 → T023): между readonly-строками и кнопками рендерится
- * PasswordChangeForm; гейтинг по me.hasPassword (контракт 0.10.0, inline
- * allOf над PublicUser) — JIT-аккаунт без пароля форму не видит, вместо
- * неё подсказка «задать пароль через восстановление по email» со ссылкой
- * /forgot-password (FR-004).
+ * 008b US2 (T012 → T046): между readonly-строками и блоком «Сохранить»
+ * кнопка «Смена пароля» (инлайн-форма вынесена в отдельную модаль —
+ * житель 'password-change' оболочки); гейтинг по me.hasPassword
+ * (контракт 0.10.0, inline allOf над PublicUser) — JIT-аккаунт без
+ * пароля кнопку не видит, вместо неё подсказка «задать пароль через
+ * восстановление по email» со ссылкой /forgot-password (FR-004).
  */
 const {
   mockGetCurrentUser,
-  mockChangePassword,
   mockUpdateProfile,
   mockFetchPresenceSettings,
   mockUpdatePresenceSettings,
 } = vi.hoisted(() => ({
   mockGetCurrentUser: vi.fn(),
-  mockChangePassword: vi.fn(),
   mockUpdateProfile: vi.fn(),
   mockFetchPresenceSettings: vi.fn(),
   mockUpdatePresenceSettings: vi.fn(),
@@ -44,7 +43,7 @@ const {
 
 vi.mock('../../../api/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../api/auth')>()
-  return { ...actual, getCurrentUser: mockGetCurrentUser, changePassword: mockChangePassword }
+  return { ...actual, getCurrentUser: mockGetCurrentUser }
 })
 
 vi.mock('../../../api/chats', async (importOriginal) => {
@@ -88,12 +87,13 @@ function meUser(
 
 function renderModal() {
   const onClose = vi.fn()
+  const onOpenPasswordChange = vi.fn()
   render(
     <ToastProvider>
-      <ProfileModal onClose={onClose} />
+      <ProfileModal onClose={onClose} onOpenPasswordChange={onOpenPasswordChange} />
     </ToastProvider>,
   )
-  return { onClose }
+  return { onClose, onOpenPasswordChange }
 }
 
 /** Переключатель «Режим инкогнито» (.tgl-row прототипа). */
@@ -322,27 +322,33 @@ describe('ProfileModal', () => {
   })
 
   /**
-   * Гейтинг формы смены пароля (008b US2, T012 → T023; FR-004, контракт
-   * 0.10.0): hasPassword === true — PasswordChangeForm между readonly-строками
-   * и кнопками (отдельная <form>, обе цепочки сабмита сосуществуют);
-   * hasPassword === false (JIT-аккаунт 003) — формы нет, подсказка «задать
-   * пароль через восстановление по email» со ссылкой /forgot-password.
+   * Гейтинг смены пароля (008b US2, T012 → T046; FR-004, контракт
+   * 0.10.0): инлайн-формы больше нет — hasPassword === true несёт кнопку
+   * «Смена пароля» (полная ширина окна профиля, модификатор класса в
+   * profile-modal.css), клик → onOpenPasswordChange (владелец оболочки
+   * переключает на жителя 'password-change'); hasPassword === false
+   * (JIT-аккаунт 003) — кнопки нет, подсказка «задать пароль через
+   * восстановление по email» со ссылкой /forgot-password.
    */
-  describe('форма смены пароля (008b US2)', () => {
-    it('renders PasswordChangeForm for a password account (hasPassword: true)', async () => {
+  describe('смена пароля (008b US2, T046)', () => {
+    it('инлайн-форма отсутствует; кнопка «Смена пароля» полной ширины; клик вызывает onOpenPasswordChange', async () => {
       mockGetCurrentUser_.mockResolvedValueOnce(meUser())
       mockFetch.mockResolvedValueOnce({ incognito: false })
-      renderModal()
+      const { onOpenPasswordChange } = renderModal()
 
-      expect(await screen.findByLabelText('Текущий пароль')).toBeVisible()
-      expect(screen.getByLabelText('Новый пароль')).toBeVisible()
-      expect(screen.getByLabelText('Повторите новый пароль')).toBeVisible()
-      // отдельная <form>: сабмит пароля не затрагивает «Сохранить» профиля
-      expect(screen.getByRole('button', { name: 'Сохранить' })).toBeVisible()
-      expect(screen.getByRole('button', { name: 'Сменить пароль' })).toBeVisible()
+      expect(await screen.findByText('hargrove')).toBeVisible()
+      // инлайн-полей смены пароля нет (T046 — вынос в отдельную модаль)
+      expect(screen.queryByLabelText('Текущий пароль')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Новый пароль')).not.toBeInTheDocument()
+      // кнопка между readonly-строками и блоком «Сохранить»
+      const button = screen.getByRole('button', { name: 'Смена пароля' })
+      expect(button).toHaveClass('m-btn')
+      expect(button).toHaveClass('profile-pass-open')
+      fireEvent.click(button)
+      expect(onOpenPasswordChange).toHaveBeenCalledTimes(1)
     })
 
-    it('hides the form for a JIT account (hasPassword: false) and points to /forgot-password', async () => {
+    it('hides the button for a JIT account (hasPassword: false) and points to /forgot-password', async () => {
       mockGetCurrentUser_.mockResolvedValueOnce(meUser({ hasPassword: false }))
       mockFetch.mockResolvedValueOnce({ incognito: false })
       renderModal()
@@ -352,7 +358,7 @@ describe('ProfileModal', () => {
       expect(link).toHaveAttribute('href', '/forgot-password')
       expect(screen.queryByLabelText('Текущий пароль')).not.toBeInTheDocument()
       expect(screen.queryByLabelText('Новый пароль')).not.toBeInTheDocument()
-      expect(screen.queryByRole('button', { name: 'Сменить пароль' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Смена пароля' })).not.toBeInTheDocument()
     })
   })
 })

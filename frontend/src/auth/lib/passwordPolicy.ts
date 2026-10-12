@@ -12,25 +12,30 @@ function normalize(value: string): string {
   return value.trim().toLowerCase()
 }
 
+/**
+ * Клиентская политика нового пароля (008b T020; русский текст — T046:
+ * единственный потребитель — модаль «Смена пароля», сообщения рендерятся
+ * в .modal-err дословно).
+ */
 export function validateNewPassword(password: string, context: NewPasswordContext): string | null {
   if (password.trim() === '') {
-    return 'Password must not be empty or consist only of whitespace.'
+    return 'Пароль не должен быть пустым или состоять только из пробелов'
   }
   if (password.length < MIN_LENGTH) {
-    return `Password must be at least ${MIN_LENGTH} characters long.`
+    return `Пароль должен быть не короче ${MIN_LENGTH} символов`
   }
   if (password.length > MAX_LENGTH) {
-    return `Password must be at most ${MAX_LENGTH} characters long.`
+    return `Пароль должен быть не длиннее ${MAX_LENGTH} символов`
   }
   if (password !== context.confirm) {
-    return 'Passwords do not match.'
+    return 'Пароли не совпадают'
   }
   const normalized = normalize(password)
   if (normalized === normalize(context.username)) {
-    return 'Password must be different from your username.'
+    return 'Пароль не должен совпадать с именем пользователя'
   }
   if (normalized === normalize(context.email)) {
-    return 'Password must be different from your email.'
+    return 'Пароль не должен совпадать с email'
   }
   return null
 }

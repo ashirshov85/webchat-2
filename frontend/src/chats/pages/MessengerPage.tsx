@@ -288,6 +288,7 @@ import type { ModalForm } from '../components/ContactsModal'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { MessageInput } from '../components/MessageInput'
 import { MessageList } from '../components/MessageList'
+import { PasswordChangeModal } from '../components/PasswordChangeModal'
 import { ProfileModal } from '../components/ProfileModal'
 import { QueueOverflowBanner } from '../components/QueueOverflowBanner'
 import { SyncIndicator } from '../components/SyncIndicator'
@@ -469,6 +470,8 @@ const MODAL_TITLES: Record<ModalFormId, string> = {
   'group-edit': 'Редактировать групповой чат',
   'group-members': 'Участники',
   profile: 'Мой профиль',
+  // 008b T046: житель-модаль смены пароля (кнопка из «Мой профиль»).
+  'password-change': 'Смена пароля',
   confirm: 'Подтверждение',
 }
 
@@ -1108,6 +1111,11 @@ function MessengerMachine() {
   /** Own username — the feed avatar source of outgoing rows (008 T022). */
   const [meUsername, setMeUsername] = useState<string | null>(null)
   /**
+   * Собственный email №10 (008b T046): контекст клиентской проверки
+   * «новый пароль ≠ email» модали «Смена пароля».
+   */
+  const [meEmail, setMeEmail] = useState<string | null>(null)
+  /**
    * Собственное профильное displayName №10 (008a T070): инициалы
    * «Вы»-аватаров ленты/подсказки состава/строк поиска — из него с
    * фолбэком username (FR-003); цвет везде остаётся colorOf(username).
@@ -1218,6 +1226,7 @@ function MessengerMachine() {
         if (!cancelled) {
           setCurrentUserId(user.id)
           setMeUsername(user.username)
+          setMeEmail(user.email)
           setMeDisplayName(user.displayName ?? null)
         }
       } catch {
@@ -2358,7 +2367,27 @@ function MessengerMachine() {
           }}
         />
       )}
-      {shellFormId === 'profile' && <ProfileModal onClose={closeShell} />}
+      {shellFormId === 'profile' && (
+        <ProfileModal
+          onClose={closeShell}
+          onOpenPasswordChange={() => {
+            setModalForm('password-change')
+          }}
+        />
+      )}
+      {/* 008b T046: модаль «Смена пароля» — отдельный житель оболочки
+          (кнопка из «Мой профиль» закрывает форму профиля: один житель,
+          возврат — вручную); успех — тост и закрытие у самой формы,
+          поведение FR-008 (ротация пары, отзыв прочих сессий) — в
+          PasswordChangeModal. */}
+      {shellFormId === 'password-change' && (
+        <PasswordChangeModal
+          username={meUsername ?? ''}
+          email={meEmail ?? ''}
+          onSuccess={closeShell}
+          onCancel={closeShell}
+        />
+      )}
       {/* grpForm-проекция прототипа (T035): №27 + валидация 006, тост
           «Групповой чат создан — {title}» у формы, окно группы —
           handleGroupCreated. */}

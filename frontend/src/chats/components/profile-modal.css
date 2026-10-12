@@ -35,8 +35,9 @@
 /* .profile-name — дословно .modal input прототипа (как #ctcSearch/
    #addQuery contacts-modal.css): полная перекрыка auth-наследия
    index.css (светлое поле, синий focus-accent). .profile-pass (008b
-   US2, T022) — поля смены пароля PasswordChangeForm, та же типографика
-   .modal input прототипа. */
+   US2, T022 → T046) — поля модали «Смена пароля» (PasswordChangeModal,
+   житель оболочки 'password-change'), та же типографика .modal input
+   прототипа. */
 .profile-form .profile-name,
 .profile-form .profile-pass {
   width: 100%;
@@ -149,4 +150,16 @@
 
 .modal-hint a {
   color: var(--gold);
+}
+
+/* ============ КНОПКА «СМЕНА ПАРОЛЯ» (008b US2, T046) ============ */
+
+/* Вход в модаль «Смена пароля» — отдельного жителя оболочки: вторичная
+   кнопка (базовый .m-btn без primary — стиль «Отмены»), но полная
+   ширина окна профиля; высота/паддинг скромнее primary (9px 16px →
+   8px 14px) — менее акцентное действие, чем «Сохранить»; позиция —
+   между readonly-строками и блоком «Сохранить». */
+.profile-form .profile-pass-open {
+  width: 100%;
+  padding: 8px 14px;
 }
