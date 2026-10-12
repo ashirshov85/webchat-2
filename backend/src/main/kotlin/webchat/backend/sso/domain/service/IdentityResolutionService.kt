@@ -1,5 +1,6 @@
 package webchat.backend.sso.domain.service
 
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -7,6 +8,7 @@ import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.model.UserStatus
 import webchat.backend.auth.domain.port.Clock
 import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.auth.onboarding.RegistrationCompletedEvent
 import webchat.backend.auth.security.AuthEventRecorder
 import webchat.backend.auth.security.AuthEventType
 import webchat.backend.sso.domain.model.ExternalIdentity
@@ -115,6 +117,7 @@ class IdentityResolutionService(
     private val userRepository: UserRepository,
     private val usernameGenerator: UsernameGenerator,
     private val authEventRecorder: AuthEventRecorder,
+    private val eventPublisher: ApplicationEventPublisher,
     private val clock: Clock,
 ) {
     /**
@@ -276,6 +279,12 @@ class IdentityResolutionService(
      * loser re-resolves against the winning account (auto-link/conflict/
      * incomplete exactly as a sequential second login would) instead of
      * surfacing an error.
+     *
+     * T034 publishes [RegistrationCompletedEvent] from the still-open
+     * transaction, next to the `sso_account_created` entry — the
+     * AFTER_COMMIT listener of T032 then onboards the JIT account exactly
+     * like a 002 registration (FR-011, spec.md:107 edge); the concurrent
+     * loser leg never publishes, only the winning JIT path does.
      */
     private fun provisionJitAccount(firstLogin: FirstLogin): IdentityResolution {
         val now = clock.now()
@@ -310,6 +319,7 @@ class IdentityResolutionService(
             userId = userId,
             details = mapOf(DETAIL_PROVIDER to firstLogin.providerId),
         )
+        eventPublisher.publishEvent(RegistrationCompletedEvent(userId))
         authEventRecorder.record(
             eventType = AuthEventType.SSO_LOGIN_SUCCESS,
             clientIp = firstLogin.clientIp,

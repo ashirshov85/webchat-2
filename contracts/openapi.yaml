@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: WebChat Public API
-  version: 0.9.0
+  version: 0.10.0
   description: >
     Публичный API веб-чата. Единственный источник истины публичного API;
     TypeScript-типы фронтенда генерируются из этого файла автоматически.
@@ -121,6 +121,23 @@ info:
     пути требуют Bearer (/users/me/*, /contacts/*, /chats/* — per-user,
     публичный перечень 002–003 не расширен). Изменение — только
     additive (0.8.0 → 0.9.0, без BREAKING.md).
+
+    Фича 008b (auth-ux-polish): endpoint №43 POST /auth/password-change —
+    смена пароля из профиля аутентифицированным пользователем: проверка
+    текущего пароля (беспарольной JIT-аккаунт 003 — единый 400
+    currentPassword: invalid после фиктивной сверки), политика 002
+    для нового (полевые коды newPassword), Argon2id, отзыв всех прочих
+    сессий (denylist sid, аудит session_revoked с reason=password_change)
+    и ротация refresh текущей — ответ 200 TokenPair (клиент применяет
+    пару сам, пользователь остаётся вошедшим; confirmPassword в API нет —
+    совпадение с подтверждением проверяется клиентом). GET /users/me №10
+    получает аддитивное required-поле hasPassword (inline allOf над
+    PublicUser, НЕ в самом PublicUser: признак не раскрывается
+    peer/search/member поверхностями; JIT-аккаунты — false). Rate limit
+    password-change: IP 10/1m (pre-auth) + user 5/1m; 429 с Retry-After,
+    flood_limit переиспользован. Новый путь требует Bearer: публичный
+    перечень 002–003 не расширен. Изменение — только additive
+    (0.9.0 → 0.10.0, без BREAKING.md).
 tags:
   - name: auth
     description: Регистрация, вход, сессии, восстановление пароля
@@ -530,21 +547,101 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /api/v1/auth/password-change:
+    post:
+      operationId: changePassword
+      tags: [auth]
+      summary: Смена пароля из профиля (№43, Bearer)
+      description: >
+        Проверяет текущий пароль; для беспарольного JIT-аккаунта 003 выполняет
+        фиктивную Argon2-сверку (тайминговый паритет) и возвращает единый 400
+        currentPassword: invalid. Новый пароль проходит политику 002
+        (8–128 символов; не пустой/пробельный; вне топ-листа тривиальных;
+        ≠ username/email — полевые коды newPassword). Успех: Argon2id-хеш
+        сохраняется, все прочие сессии пользователя отзываются (sid в
+        denylist, аудит session_revoked с reason=password_change), refresh
+        текущей сессии ротируется — ответом выдаётся новая пара TokenPair
+        (прежний refresh отозван; клиент обязан применить пару своим
+        стандартным механизмом — пользователь остаётся вошедшим).
+        confirmPassword в API нет: совпадение с подтверждением проверяется
+        клиентом до отправки. Rate limit: IP 10/1m (pre-auth фильтр) +
+        user 5/1m (после аутентификации). Требует Authorization: Bearer;
+        неверный текущий пароль не использует 401 (инвариант границы
+        аутентификации).
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordChangeRequest'
+      responses:
+        '200':
+          description: >
+            Пароль изменён; новая пара токенов текущей сессии (все прочие
+            сессии и refresh-токены пользователя отозваны, текущий refresh
+            ротирован)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '400':
+          description: >
+            Неверный текущий пароль или беспарольный JIT-аккаунт — errors:
+            {currentPassword: [invalid]}; нарушение политики нового пароля —
+            errors: {newPassword: [too_short | too_long | blank | too_common |
+            same_as_username | same_as_email]}
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Не аутентифицирован (только граница Bearer; неверный текущий пароль — 400)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429':
+          description: 'Превышен лимит запросов (IP 10/1m или user 5/м); errors: {flood_limit}'
+          headers:
+            Retry-After:
+              description: Задержка до повтора, секунды
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /api/v1/users/me:
     get:
       operationId: getCurrentUser
       tags: [users]
       summary: Текущий пользователь (№10, Bearer)
-      description: Минимальный защищённый ресурс для проверки границы аутентификации (US3, SC-002).
+      description: >
+        Минимальный защищённый ресурс для проверки границы аутентификации (US3, SC-002).
+        Ответ — PublicUser + аддитивное required-поле hasPassword (008b):
+        password_hash IS NULL ? false : true; для JIT-аккаунтов 003 — false.
+        Признак присутствует только здесь (inline allOf над PublicUser) и не
+        раскрывается peer/search/member поверхностями.
       security:
         - bearerAuth: []
       responses:
         '200':
-          description: Данные аутентифицированного пользователя
+          description: Данные аутентифицированного пользователя (PublicUser + hasPassword)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/PublicUser'
+                allOf:
+                  - $ref: '#/components/schemas/PublicUser'
+                  - type: object
+                    additionalProperties: false
+                    required: [hasPassword]
+                    properties:
+                      hasPassword:
+                        type: boolean
+                        description: 'Наличие пароля (008b, FR-004): true — парольный аккаунт; false — беспарольной JIT-аккаунт 003 (форма смены пароля скрыта, доступно задание через восстановление по email)'
         '401':
           description: Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно)
           content:
@@ -3002,6 +3099,23 @@ components:
           type: string
           minLength: 8
           maxLength: 128
+    PasswordChangeRequest:
+      type: object
+      additionalProperties: false
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          minLength: 1
+          maxLength: 128
+          format: password
+          description: 'Текущий пароль; неверный (или беспарольной JIT-аккаунт) — единый 400 currentPassword: invalid; потолок 128 — DoS-защита (паритет LoginRequest)'
+        newPassword:
+          type: string
+          minLength: 8
+          maxLength: 128
+          format: password
+          description: 'Политика FR-004: 8–128 символов; не пустой/пробельный; вне топ-листа тривиальных; ≠ username/email — полевые коды too_short|too_long|blank|too_common|same_as_username|same_as_email. confirmPassword в API нет — совпадение с подтверждением проверяется клиентом до отправки'
     TokenPair:
       type: object
       additionalProperties: false

@@ -64,6 +64,14 @@ import java.time.Duration
  * (browser redirects must not be starved by legitimate retries),
  * `sso-token` 30/1m (token-consuming like confirm/refresh in 002),
  * `sso-link-authorize` 10/1m (Bearer, same shape as authorize).
+ *
+ * The 008b T015 extension (research.md §6 of specs/008b-auth-ux-polish,
+ * FR-007): the `POST /auth/password-change` joins the table as an IP-only
+ * row — `rl:ip:password-change:<ip>` 10/1m, login-IP parity, greedy
+ * refill like the other 002 routes. Its per-user tier (5/1m,
+ * `rl:user:pwdchange:{userId}`) is enforced in the controller via
+ * UserRateLimiter: the Bearer subject is not visible to this pre-auth
+ * guard.
  */
 @Suppress("LargeClass", "LongParameterList", "TooManyFunctions")
 class RateLimitFilter(
@@ -95,6 +103,7 @@ class RateLimitFilter(
             "/api/v1/auth/password-reset/confirm" to
                 limitedRoute(POST_METHOD, "reset-confirm", properties.resetConfirm),
             "/api/v1/auth/refresh" to limitedRoute(POST_METHOD, "refresh", properties.refresh),
+            "/api/v1/auth/password-change" to passwordChangeRoute(properties.passwordChange),
             "/api/v1/auth/sso/providers" to ssoRoute("sso-providers", properties.sso.providers),
             "/api/v1/auth/sso/authorize" to ssoRoute("sso-authorize", properties.sso.authorize),
             "/api/v1/auth/sso/callback" to ssoRoute("sso-callback", properties.sso.callback),
@@ -289,6 +298,21 @@ class RateLimitFilter(
         )
     }
 
+    /**
+     * The password-change route (008b T015, research.md §6): IP-only — the
+     * authenticated per-user tier rides `UserRateLimiter` in the controller
+     * (the Bearer subject is not visible pre-auth), so no identifier bucket
+     * and no body replay here. Greedy refill like the other 002 routes
+     * (10/1m, login-IP parity), unlike the intervally-refilled SSO rows.
+     */
+    private fun passwordChangeRoute(limits: AuthRateLimitProperties.PasswordChangeLimits): LimitedRoute =
+        LimitedRoute(
+            method = POST_METHOD,
+            name = PASSWORD_CHANGE_ROUTE_NAME,
+            ipLimit = parseRateLimit(limits.ip),
+            identifierBucket = null,
+        )
+
     private fun limitedRoute(
         method: String,
         name: String,
@@ -352,6 +376,7 @@ class RateLimitFilter(
         const val EMAIL_FIELD = "email"
         const val IDENTIFIER_FIELD = "identifier"
         const val LOGIN_ROUTE_NAME = "login"
+        const val PASSWORD_CHANGE_ROUTE_NAME = "password-change"
         const val SSO_PROVIDERS_ROUTE_NAME = "sso-providers"
         const val SSO_CALLBACK_ROUTE_NAME = "sso-callback"
         const val REASON_DETAIL = "reason"

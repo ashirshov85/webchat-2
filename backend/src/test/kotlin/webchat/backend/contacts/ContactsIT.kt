@@ -185,8 +185,8 @@ class ContactsIT(
             .isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY)
         assertProblem(refusal, USER_ID_FIELD, SELF_FORBIDDEN)
 
-        assertThat(contactIds(listContacts(alice)))
-            .overridingErrorMessage("a refused self-add must leave the contact list empty")
+        assertThat(contactIdsWithoutStarterAdmin(listContacts(alice)))
+            .overridingErrorMessage("a refused self-add must leave the contact list empty (besides the starter admin)")
             .isEmpty()
     }
 
@@ -236,9 +236,10 @@ class ContactsIT(
             .overridingErrorMessage("the repeated add must return the SAME stored row (identical createdAt)")
             .isEqualTo(firstView["createdAt"].asText())
 
-        assertThat(contactIds(listContacts(alice)))
-            .overridingErrorMessage("after a repeated add the list must hold exactly one entry for the peer")
-            .containsExactly(bob.id.toString())
+        assertThat(contactIdsWithoutStarterAdmin(listContacts(alice)))
+            .overridingErrorMessage(
+                "after a repeated add the list must hold exactly one entry for the peer (besides the starter admin)",
+            ).containsExactly(bob.id.toString())
     }
 
     /**
@@ -264,9 +265,10 @@ class ContactsIT(
             .overridingErrorMessage("a repeated contact deletion must stay idempotent (204)")
             .isEqualTo(HttpStatus.NO_CONTENT)
 
-        assertThat(contactIds(listContacts(alice)))
-            .overridingErrorMessage("the deleted contact must be gone from the list")
-            .isEmpty()
+        assertThat(contactIdsWithoutStarterAdmin(listContacts(alice)))
+            .overridingErrorMessage(
+                "the deleted contact must be gone from the list (the starter admin is no 004 state)",
+            ).isEmpty()
 
         assertThat(getChat(alice, chatId).statusCode)
             .overridingErrorMessage("the dialog must remain after the contact deletion (FR-017)")
@@ -299,17 +301,17 @@ class ContactsIT(
                 .isEqualTo(HttpStatus.CREATED)
         }
 
-        val byLoginDefault = contactIds(listContacts(owner))
+        val byLoginDefault = contactIdsWithoutStarterAdmin(listContacts(owner))
         assertThat(byLoginDefault)
             .overridingErrorMessage("default sort must be sort=login (case-insensitive lower(username))")
             .containsExactly(alpha.id.toString(), mike.id.toString(), zulu.id.toString())
 
-        val byLogin = contactIds(listContacts(owner, "login"))
+        val byLogin = contactIdsWithoutStarterAdmin(listContacts(owner, "login"))
         assertThat(byLogin)
             .overridingErrorMessage("sort=login must order by lower(username): alpha < mike < zulu, got <%s>", byLogin)
             .containsExactly(alpha.id.toString(), mike.id.toString(), zulu.id.toString())
 
-        val byEmail = contactIds(listContacts(owner, "email"))
+        val byEmail = contactIdsWithoutStarterAdmin(listContacts(owner, "email"))
         assertThat(byEmail)
             .overridingErrorMessage(
                 "sort=email must order by lower(email): bravo < november < oscar, got <%s>",
@@ -482,8 +484,20 @@ class ContactsIT(
     private fun userIds(response: ResponseEntity<String>): List<String> =
         objectMapper.readTree(response.body)["users"].map { it["id"].asText() }
 
-    private fun contactIds(response: ResponseEntity<String>): List<String> =
-        objectMapper.readTree(response.body)["contacts"].map { it["user"]["id"].asText() }
+    /**
+     * The №20 ids WITHOUT the US4 starter contact of the system admin
+     * (008b FR-011): every fixture user grown through the real 002 API
+     * receives `admin` asynchronously (T032–T034 + the T035 listing
+     * fallback), which is orthogonal to the 004 bookkeeping this suite
+     * pins — the starter contact's own lifecycle is StarterContactIT's
+     * scope. Resolution matches the production rule: the seed-shape
+     * `lower(username) = 'admin'` (research.md 008b §1/§3).
+     */
+    private fun contactIdsWithoutStarterAdmin(response: ResponseEntity<String>): List<String> =
+        objectMapper
+            .readTree(response.body)["contacts"]
+            .filterNot { it["user"]["username"].asText().equals(STARTER_ADMIN_USERNAME, ignoreCase = true) }
+            .map { it["user"]["id"].asText() }
 
     private fun historyTexts(
         user: MessagingUser,
@@ -538,6 +552,7 @@ class ContactsIT(
         const val SELF_FORBIDDEN = "self_forbidden"
         const val USER_NOT_FOUND = "user_not_found"
         const val INVALID_SORT = "invalid_sort"
+        const val STARTER_ADMIN_USERNAME = "admin"
         const val QUERY_MAX_LENGTH = 254
 
         /** FR-016/api-contract.md №19 (T053a): 30 searches per minute per user. */

@@ -1,5 +1,6 @@
 package webchat.backend.auth.domain.service
 
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
@@ -9,6 +10,7 @@ import webchat.backend.auth.domain.model.User
 import webchat.backend.auth.domain.model.UserStatus
 import webchat.backend.auth.domain.port.Clock
 import webchat.backend.auth.domain.port.UserRepository
+import webchat.backend.auth.onboarding.RegistrationCompletedEvent
 import webchat.backend.auth.security.AuthEventRecorder
 import webchat.backend.auth.security.AuthEventType
 import webchat.backend.email.EmailType
@@ -108,6 +110,7 @@ class RegistrationService(
     private val outboxRepository: JdbcEmailOutboxRepository,
     private val emailTemplates: EmailTemplates,
     private val authEventRecorder: AuthEventRecorder,
+    private val eventPublisher: ApplicationEventPublisher,
     private val clock: Clock,
 ) {
     @Transactional
@@ -245,6 +248,7 @@ class RegistrationService(
             userAgent = userAgent,
             userId = user.id,
         )
+        eventPublisher.publishEvent(RegistrationCompletedEvent(user.id))
     }
 
     /**

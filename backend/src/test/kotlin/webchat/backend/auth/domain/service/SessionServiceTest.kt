@@ -321,6 +321,75 @@ class SessionServiceTest {
             .allSatisfy { details -> assertThat(details).containsEntry(DETAIL_REASON, "password_change") }
     }
 
+    @Test
+    fun `revokeOthersAndRotateCurrent kills other sessions, rotates the current one and keeps its sid alive`() {
+        val currentSession = activeSession()
+        whenever(sessionRepository.findById(currentSession.id)).thenReturn(currentSession)
+        val sidA = UUID.randomUUID()
+        val sidB = UUID.randomUUID()
+        whenever(sessionRepository.revokeAllForUserExcept(USER_ID, currentSession.id, RevokedReason.PASSWORD_CHANGE))
+            .thenReturn(listOf(sidA, sidB))
+        whenever(redisTemplate.opsForValue()).thenReturn(valueOperations)
+        whenever(jwtService.createAccessToken(currentSession.userId, currentSession.id)).thenReturn(ACCESS_TOKEN)
+
+        val issued = service.revokeOthersAndRotateCurrent(USER_ID, currentSession.id, CLIENT_IP, USER_AGENT)
+
+        // the WHOLE user's active chain dies — the current generation included
+        verify(refreshTokenRepository).revokeActiveForUser(USER_ID)
+        verify(valueOperations).set(DENYLIST_PREFIX + sidA, DENYLIST_MARKER, TOKEN_PROPERTIES.accessTtl)
+        verify(valueOperations).set(DENYLIST_PREFIX + sidB, DENYLIST_MARKER, TOKEN_PROPERTIES.accessTtl)
+        // FR-008: the kept sid is never denylisted — the fresh access must live
+        verify(valueOperations, Mockito.never())
+            .set(eqSafe(DENYLIST_PREFIX + currentSession.id), anyString(), any<Duration>())
+
+        val detailsCaptor = detailsCaptor()
+        verify(authEventRecorder, Mockito.times(2)).record(
+            eqSafe(AuthEventType.SESSION_REVOKED),
+            eqSafe(CLIENT_IP),
+            eqSafe(USER_AGENT),
+            eqSafe(USER_ID),
+            detailsCaptor.capture() ?: emptyMap(),
+        )
+        assertThat(detailsCaptor.allValues)
+            .hasSize(2)
+            .allSatisfy { details -> assertThat(details).containsEntry(DETAIL_REASON, "password_change") }
+
+        // rotation into the CURRENT session: new refresh (hash-at-rest) + new access
+        val generationCaptor = ArgumentCaptor.forClass(RefreshToken::class.java)
+        verify(refreshTokenRepository).insert(generationCaptor.capture() ?: dummyGeneration())
+        val generation = generationCaptor.value
+        assertThat(generation.sessionId).isEqualTo(currentSession.id)
+        assertThat(issued.accessToken).isEqualTo(ACCESS_TOKEN)
+        assertThat(issued.refreshToken).matches(BASE64_URL_PATTERN_STRING)
+        assertThat(sha256Hex(issued.refreshToken)).isEqualTo(generation.tokenHash)
+        assertThat(issued.expiresInSec).isEqualTo(TOKEN_PROPERTIES.accessTtl.seconds)
+    }
+
+    @Test
+    fun `revokeOthersAndRotateCurrent with an unknown current session is the uniform failure`() {
+        whenever(sessionRepository.findById(anyUuid())).thenReturn(null)
+
+        assertThatThrownBy { service.revokeOthersAndRotateCurrent(USER_ID, UUID.randomUUID(), CLIENT_IP) }
+            .isInstanceOf(InvalidRefreshTokenException::class.java)
+
+        verifyNoInteractions(refreshTokenRepository)
+        verifyNoInteractions(authEventRecorder)
+        verifyNoInteractions(redisTemplate)
+    }
+
+    @Test
+    fun `revokeOthersAndRotateCurrent never resurrects a concurrently revoked current session`() {
+        val deadSession = sessionWithStatus(SessionStatus.REVOKED)
+        whenever(sessionRepository.findById(deadSession.id)).thenReturn(deadSession)
+
+        assertThatThrownBy { service.revokeOthersAndRotateCurrent(USER_ID, deadSession.id, CLIENT_IP) }
+            .isInstanceOf(InvalidRefreshTokenException::class.java)
+
+        verifyNoInteractions(refreshTokenRepository)
+        verifyNoInteractions(authEventRecorder)
+        verifyNoInteractions(redisTemplate)
+    }
+
     @Suppress("UNCHECKED_CAST") // Mockito captures the raw jsonb details map
     private fun detailsCaptor(): ArgumentCaptor<Map<String, Any>> =
         ArgumentCaptor.forClass(Map::class.java) as ArgumentCaptor<Map<String, Any>>

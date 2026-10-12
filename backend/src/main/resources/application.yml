@@ -99,6 +99,12 @@ auth:
       ip: 30/1m
     refresh:
       ip: 30/1m
+    # 008b research.md §6 (FR-007): the password-change tiers — the per-IP
+    # pre-auth flood guard of the filter table (login-IP parity) and the
+    # authenticated per-user tier of the controller (UserRateLimiter)
+    password-change:
+      ip: 10/1m
+      user-per-minute: 5
     # 003 research.md §9 (FR-009): the five SSO routes, per source IP;
     # authorize/link-authorize are stricter (10/1m) — they create flow
     # contexts in Redis; the GET routes (providers/callback) ride the same
@@ -273,6 +279,20 @@ sso:
   # on :8080 directly, matching the dex redirect-uri fixed by quickstart
   # «Предусловия» (T042); real deployments override via env / K8s Secret.
   callback-url: ${SSO_CALLBACK_URL:http://localhost:8080/api/v1/auth/sso/callback}
+
+admin:
+  seed:
+    # 008b US4 (research.md §1, FR-011/FR-012): the idempotent system account
+    # seeded by AdminSeedRunner at every application start
+    enabled: true
+    # dev default keeps the local passwordless JIT form (password arrives by
+    # the 002 reset letter in Mailpit); prod MUST set ADMIN_SEED_EMAIL via
+    # env / K8s Secret (T036) — creating a row under the default is
+    # warn-observable in the runner
+    email: ${ADMIN_SEED_EMAIL:admin@webchat.local}
+    # password is deliberately ABSENT: the ADMIN_SEED_PASSWORD env var binds
+    # straight to admin.seed.password (relaxed env binding, no yml entry);
+    # secrets never live in the repo (constitution V, SC-005)
 
 chats:
   message:

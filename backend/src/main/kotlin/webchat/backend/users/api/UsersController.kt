@@ -13,8 +13,10 @@ import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.config.UsersProperties
+import webchat.backend.users.api.dto.MeUserResponse
 import webchat.backend.users.api.dto.PublicUserResponse
 import webchat.backend.users.domain.model.DisplayName
 import webchat.backend.users.domain.model.InvalidDisplayNameException
@@ -55,21 +57,41 @@ import java.util.UUID
  * SQL leg; Redis unavailability fails open ([UserRateLimiter]). Failures
  * leave as typed exceptions rendered problem+json below; the warn log
  * carries ids and waits only — never the submitted name (constitution V).
+ *
+ * 008b №10 (T014, contract 0.10.0 §2): `GET /users/me` grows the
+ * additive REQUIRED `hasPassword` — the inline `allOf(PublicUser,
+ * hasPassword)` body [MeUserResponse] with `password_hash IS NULL ?
+ * false : true` read from the 002 auth aggregate ([UserRepository]);
+ * the JIT marker serves ONLY the owner's own profile form (FR-004) and
+ * never enters the shared `PublicUser` projector, so №39 and the
+ * peer/search/member surfaces keep the bare projection (research.md
+ * 008b §4).
  */
 @RestController
 @RequestMapping("/api/v1/users")
 class UsersController(
     private val profileStore: ProfileStore,
+    private val userRepository: UserRepository,
     private val rateLimiter: UserRateLimiter,
     private val usersProperties: UsersProperties,
 ) {
     private val log = LoggerFactory.getLogger(UsersController::class.java)
 
-    /** Contract №10: the token owner as `PublicUser {id, username, email, status, createdAt, displayName?}`. */
+    /**
+     * Contract №10 of 0.10.0: the token owner as the inline
+     * `allOf(PublicUser, hasPassword)` body — the marker is `false`
+     * exactly while the account has no password (the JIT account of
+     * SSO 003, `password_hash IS NULL`).
+     */
     @GetMapping("/me")
     fun me(
         @AuthenticationPrincipal accessToken: Jwt,
-    ): PublicUserResponse = publicUserOf(UUID.fromString(accessToken.subject))
+    ): MeUserResponse {
+        val userId = UUID.fromString(accessToken.subject)
+        val owner = profileStore.findByUserId(userId) ?: throw AuthenticatedUserNotFoundException()
+        val account = userRepository.findById(userId) ?: throw AuthenticatedUserNotFoundException()
+        return MeUserResponse.of(publicUserOf(owner), account.passwordHash != null)
+    }
 
     /**
      * Contract №39 `PUT /users/me/profile` → `200 PublicUser` with the
@@ -91,11 +113,6 @@ class UsersController(
     }
 
     /** The shared `PublicUser` projector: the stored name rides ALONG, ABSENT while NULL (SC-007). */
-    private fun publicUserOf(userId: UUID): PublicUserResponse {
-        val owner = profileStore.findByUserId(userId) ?: throw AuthenticatedUserNotFoundException()
-        return publicUserOf(owner)
-    }
-
     private fun publicUserOf(profile: Profile): PublicUserResponse =
         PublicUserResponse(
             id = profile.id,

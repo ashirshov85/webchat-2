@@ -21,14 +21,22 @@ import { ProfileModal } from '../ProfileModal'
  * монтировании отражает персистентный режим; PUT идемпотентен и
  * возвращает сохранённое значение; сбой PUT — problemMessage, чекбокс
  * возвращается к серверному значению.
+ *
+ * 008b US2 (T012 → T023): между readonly-строками и кнопками рендерится
+ * PasswordChangeForm; гейтинг по me.hasPassword (контракт 0.10.0, inline
+ * allOf над PublicUser) — JIT-аккаунт без пароля форму не видит, вместо
+ * неё подсказка «задать пароль через восстановление по email» со ссылкой
+ * /forgot-password (FR-004).
  */
 const {
   mockGetCurrentUser,
+  mockChangePassword,
   mockUpdateProfile,
   mockFetchPresenceSettings,
   mockUpdatePresenceSettings,
 } = vi.hoisted(() => ({
   mockGetCurrentUser: vi.fn(),
+  mockChangePassword: vi.fn(),
   mockUpdateProfile: vi.fn(),
   mockFetchPresenceSettings: vi.fn(),
   mockUpdatePresenceSettings: vi.fn(),
@@ -36,7 +44,7 @@ const {
 
 vi.mock('../../../api/auth', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../api/auth')>()
-  return { ...actual, getCurrentUser: mockGetCurrentUser }
+  return { ...actual, getCurrentUser: mockGetCurrentUser, changePassword: mockChangePassword }
 })
 
 vi.mock('../../../api/chats', async (importOriginal) => {
@@ -58,9 +66,14 @@ const mockUpdateProfile_ = vi.mocked(updateProfile)
 const mockFetch = vi.mocked(fetchPresenceSettings)
 const mockUpdate = vi.mocked(updatePresenceSettings)
 
-/** Демо-«Я» прототипа: username/email/displayName из GET /users/me (№10). */
+/** Демо-«Я» прототипа: username/email/displayName из GET /users/me (№10); hasPassword — 008b. */
 function meUser(
-  overrides: Partial<{ username: string; email: string; displayName?: string }> = {},
+  overrides: Partial<{
+    username: string
+    email: string
+    displayName?: string
+    hasPassword: boolean
+  }> = {},
 ) {
   return {
     id: '11111111-1111-1111-1111-111111111111',
@@ -68,6 +81,7 @@ function meUser(
     email: 'h.hargrove@aethergram.io',
     status: 'active' as const,
     createdAt: '2026-09-01T00:00:00.000Z',
+    hasPassword: true,
     ...overrides,
   }
 }
@@ -304,6 +318,41 @@ describe('ProfileModal', () => {
       expect(await screen.findByText(`Профиль обновлён — ${XSS_IMG}`)).toBeVisible()
       expect(document.querySelector('img[onerror]')).toBeNull()
       expect(document.querySelector('.toast img')).toBeNull()
+    })
+  })
+
+  /**
+   * Гейтинг формы смены пароля (008b US2, T012 → T023; FR-004, контракт
+   * 0.10.0): hasPassword === true — PasswordChangeForm между readonly-строками
+   * и кнопками (отдельная <form>, обе цепочки сабмита сосуществуют);
+   * hasPassword === false (JIT-аккаунт 003) — формы нет, подсказка «задать
+   * пароль через восстановление по email» со ссылкой /forgot-password.
+   */
+  describe('форма смены пароля (008b US2)', () => {
+    it('renders PasswordChangeForm for a password account (hasPassword: true)', async () => {
+      mockGetCurrentUser_.mockResolvedValueOnce(meUser())
+      mockFetch.mockResolvedValueOnce({ incognito: false })
+      renderModal()
+
+      expect(await screen.findByLabelText('Текущий пароль')).toBeVisible()
+      expect(screen.getByLabelText('Новый пароль')).toBeVisible()
+      expect(screen.getByLabelText('Повторите новый пароль')).toBeVisible()
+      // отдельная <form>: сабмит пароля не затрагивает «Сохранить» профиля
+      expect(screen.getByRole('button', { name: 'Сохранить' })).toBeVisible()
+      expect(screen.getByRole('button', { name: 'Сменить пароль' })).toBeVisible()
+    })
+
+    it('hides the form for a JIT account (hasPassword: false) and points to /forgot-password', async () => {
+      mockGetCurrentUser_.mockResolvedValueOnce(meUser({ hasPassword: false }))
+      mockFetch.mockResolvedValueOnce({ incognito: false })
+      renderModal()
+
+      expect(await screen.findByText(/У аккаунта нет пароля/i)).toBeVisible()
+      const link = screen.getByRole('link', { name: /восстановление по email/ })
+      expect(link).toHaveAttribute('href', '/forgot-password')
+      expect(screen.queryByLabelText('Текущий пароль')).not.toBeInTheDocument()
+      expect(screen.queryByLabelText('Новый пароль')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Сменить пароль' })).not.toBeInTheDocument()
     })
   })
 })

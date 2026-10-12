@@ -84,6 +84,30 @@ describe('SsoCallbackPage', () => {
     expect(sessionStorage.getItem(RETURN_TO_STORAGE_KEY)).toBeNull()
   })
 
+  it('falls back to /chat when stored returnTo contains a backslash (open redirect via /\\evil.com)', async () => {
+    sessionStorage.setItem(RETURN_TO_STORAGE_KEY, '/\\evil.com')
+    window.history.pushState({}, '', '/sso/callback?code=handshake-789')
+    mockExchangeSsoToken.mockResolvedValueOnce(tokenPair())
+    assignSpy = stubLocationAssign()
+    render(<SsoCallbackPage />)
+
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith('/chat'))
+    expect(assignSpy).not.toHaveBeenCalledWith('/\\evil.com')
+    expect(sessionStorage.getItem(RETURN_TO_STORAGE_KEY)).toBeNull()
+  })
+
+  it('falls back to /chat when stored returnTo targets the auth section (/login)', async () => {
+    sessionStorage.setItem(RETURN_TO_STORAGE_KEY, '/login')
+    window.history.pushState({}, '', '/sso/callback?code=handshake-789')
+    mockExchangeSsoToken.mockResolvedValueOnce(tokenPair())
+    assignSpy = stubLocationAssign()
+    render(<SsoCallbackPage />)
+
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith('/chat'))
+    expect(assignSpy).not.toHaveBeenCalledWith('/login')
+    expect(sessionStorage.getItem(RETURN_TO_STORAGE_KEY)).toBeNull()
+  })
+
   it('shows the provider error screen without exchanging the code', async () => {
     window.history.pushState({}, '', '/sso/callback?sso_error=invalid_state')
     assignSpy = stubLocationAssign()

@@ -291,7 +291,7 @@ class BlockingIT(
 
         assertThat(blockUser(alice, bob.id).statusCode).isEqualTo(HttpStatus.NO_CONTENT)
 
-        assertThat(contactIds(listContacts(alice)))
+        assertThat(contactIdsWithoutStarterAdmin(listContacts(alice)))
             .overridingErrorMessage("the blocked peer must STAY in the blocker's contact list (FR-020)")
             .containsExactly(bob.id.toString())
 
@@ -660,9 +660,20 @@ class BlockingIT(
             chatId,
         ) ?: 0L
 
-    /** The №20 contact list as peer user ids. */
-    private fun contactIds(response: ResponseEntity<String>): List<String> =
-        objectMapper.readTree(response.body)["contacts"].map { it["user"]["id"].asText() }
+    /**
+     * The №20 ids as peer user ids WITHOUT the US4 starter contact of
+     * the system admin (008b FR-011): every fixture user grown through
+     * the real 002 API receives `admin` asynchronously (T032–T034) and
+     * via the T035 №20 self-healing fallback — blocks never touch that
+     * row (FR-020), so it is filtered out of the exact-match bookkeeping
+     * this suite pins. Resolution matches the production rule:
+     * `lower(username) = 'admin'` (research.md 008b §1/§3).
+     */
+    private fun contactIdsWithoutStarterAdmin(response: ResponseEntity<String>): List<String> =
+        objectMapper
+            .readTree(response.body)["contacts"]
+            .filterNot { it["user"]["username"].asText().equals(STARTER_ADMIN_USERNAME, ignoreCase = true) }
+            .map { it["user"]["id"].asText() }
 
     /** The caller's №20 `ContactView` of [userId] — the list must hold it exactly once. */
     private fun contactEntry(
@@ -700,6 +711,9 @@ class BlockingIT(
         const val PROBLEM_JSON_MEDIA_TYPE = "application/problem+json"
         const val USERS_PATH = "/api/v1/users"
         const val CONTACTS_PATH = "/api/v1/contacts"
+
+        /** 008b US4: the seed-shape username of the starter admin (research.md 008b §1). */
+        const val STARTER_ADMIN_USERNAME = "admin"
 
         const val CHAT_FIELD = "chat"
         const val USER_FIELD = "user"

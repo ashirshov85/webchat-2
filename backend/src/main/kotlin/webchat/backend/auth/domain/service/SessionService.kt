@@ -9,6 +9,7 @@ import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import webchat.backend.auth.domain.model.RefreshToken
+import webchat.backend.auth.domain.model.RefreshTokenStatus
 import webchat.backend.auth.domain.model.RevokedReason
 import webchat.backend.auth.domain.model.Session
 import webchat.backend.auth.domain.model.SessionAuthMethod
@@ -136,6 +137,17 @@ class SessionService(
         userAgent: String? = null,
     ): IssuedTokenPair {
         val (generation, session) = requireSession(refreshToken)
+        // 008b (data-model 008b §3.3 step 6): a REVOKED generation is not
+        // chain reuse — the password change kills the current session's old
+        // value while the session STAYS active, and its re-presentation must
+        // stay the uniform silent 401, never the compromise verdict that
+        // would kill the freshly rotated pair (FR-008). Pre-008b a revoked
+        // generation always belonged to an already dead session, where the
+        // isActive guard below made the reuse leg equally silent — the
+        // observable behavior of 002 is unchanged.
+        if (generation.status == RefreshTokenStatus.REVOKED) {
+            throw InvalidRefreshTokenException()
+        }
         val replacementId = UUID.randomUUID()
         val (openValue, replacementHash) = mintRefreshValue()
 
@@ -234,6 +246,50 @@ class SessionService(
                 details = mapOf(DETAIL_REASON to RevokedReason.PASSWORD_CHANGE.name.lowercase()),
             )
         }
+    }
+
+    /**
+     * Password change keeping the caller signed in (FR-008, T017; research
+     * 008b §5, data-model 008b §3.3 step 6): kills EVERY active refresh
+     * generation of the user — the current session's included, so the old
+     * refresh value dies together with the old password — revokes all OTHER
+     * sessions (sid denylist + journal, exactly [revokeAllForUser]) and then
+     * issues a fresh generation into the CURRENT session: a new refresh + a
+     * new access token WITHOUT denylisting its sid (the marker is sid-scoped
+     * and would kill the just-minted access, AuthJwtDecoder).
+     *
+     * The guard follows the [requireSession] pattern: a missing or non-active
+     * current session is the uniform [InvalidRefreshTokenException] — the sid
+     * arrives from a verified access token, so a dead session means it was
+     * revoked concurrently and must not be resurrected.
+     */
+    @Transactional
+    fun revokeOthersAndRotateCurrent(
+        userId: UUID,
+        currentSessionId: UUID,
+        clientIp: String,
+        userAgent: String? = null,
+    ): IssuedTokenPair {
+        val currentSession =
+            sessionRepository.findById(currentSessionId)
+                ?: throw InvalidRefreshTokenException()
+        if (!currentSession.isActive) {
+            throw InvalidRefreshTokenException()
+        }
+        refreshTokenRepository.revokeActiveForUser(userId)
+        sessionRepository
+            .revokeAllForUserExcept(userId, currentSessionId, RevokedReason.PASSWORD_CHANGE)
+            .forEach { sessionId ->
+                denylistSid(sessionId)
+                authEventRecorder.record(
+                    eventType = AuthEventType.SESSION_REVOKED,
+                    clientIp = clientIp,
+                    userAgent = userAgent,
+                    userId = userId,
+                    details = mapOf(DETAIL_REASON to RevokedReason.PASSWORD_CHANGE.name.lowercase()),
+                )
+            }
+        return issueGeneration(currentSessionId, userId)
     }
 
     /** Resolves the generation + session pair of the presented value — any miss is the uniform 401. */

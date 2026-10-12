@@ -37,6 +37,17 @@ interface SessionRepository {
         userId: UUID,
         reason: RevokedReason,
     ): List<UUID>
+
+    /**
+     * Revokes all active sessions of the user EXCEPT the kept one — password
+     * change with rotation of the current session (FR-008); returns the ids of
+     * actually revoked sessions (each sid must be denylisted).
+     */
+    fun revokeAllForUserExcept(
+        userId: UUID,
+        keepSid: UUID,
+        reason: RevokedReason,
+    ): List<UUID>
 }
 
 /**

@@ -1,7 +1,8 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components, operations } from '../../../api/schema'
 import type { ApiProblem } from '../../../api/auth'
+import { stubLocationAssign } from '../../../test/location'
 import { LoginPage } from '../LoginPage'
 
 type Problem = components['schemas']['Problem']
@@ -35,8 +36,15 @@ function loginResponse(): LoginResponse {
   }
 }
 
+const initialUrl = window.location.href
+
+let assignSpy: ReturnType<typeof stubLocationAssign> | undefined
+
 afterEach(() => {
   cleanup()
+  window.history.pushState({}, '', initialUrl)
+  assignSpy?.mockRestore()
+  assignSpy = undefined
   vi.resetAllMocks()
 })
 
@@ -55,6 +63,18 @@ describe('LoginPage', () => {
     expect(screen.getByLabelText('Email или имя пользователя')).toBeInTheDocument()
     expect(screen.getByLabelText('Пароль')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'ВОЙТИ' })).toBeInTheDocument()
+  })
+
+  it('shows a visible forgot-password link in the footer', () => {
+    render(<LoginPage />)
+
+    const forgotPassword = screen.getByRole('link', { name: 'Забыли пароль?' })
+    expect(forgotPassword).toBeVisible()
+    expect(forgotPassword).toHaveAttribute('href', '/forgot-password')
+    expect(screen.getByRole('link', { name: 'Зарегистрироваться' })).toHaveAttribute(
+      'href',
+      '/register',
+    )
   })
 
   it('toggles the password field type and the eye button aria-label', () => {
@@ -86,6 +106,64 @@ describe('LoginPage', () => {
     expect(mockSetTokenPair).toHaveBeenCalledWith(
       expect.objectContaining({ accessToken: 'access-1', refreshToken: 'refresh-1' }),
     )
+  })
+
+  it('redirects to /chat after a successful login', async () => {
+    window.history.pushState({}, '', '/login')
+    mockLogin.mockResolvedValueOnce(loginResponse())
+    assignSpy = stubLocationAssign()
+    render(<LoginPage />)
+
+    fillLoginForm('alice', 'correct horse')
+
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith('/chat'))
+    expect(mockSetTokenPair).toHaveBeenCalledTimes(1)
+  })
+
+  it('redirects to the safe returnTo path after a successful login', async () => {
+    window.history.pushState({}, '', '/login?returnTo=/settings/security')
+    mockLogin.mockResolvedValueOnce(loginResponse())
+    assignSpy = stubLocationAssign()
+    render(<LoginPage />)
+
+    fillLoginForm('alice', 'correct horse')
+
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith('/settings/security'))
+    expect(mockSetTokenPair).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['absolute url', 'https://evil.example'],
+    ['protocol-relative url', '//evil.example'],
+    ['backslash after slash', '/\\evil.com'],
+  ])('redirects to /chat when returnTo is an unsafe %s', async (_reason, value) => {
+    window.history.pushState({}, '', `/login?returnTo=${value}`)
+    mockLogin.mockResolvedValueOnce(loginResponse())
+    assignSpy = stubLocationAssign()
+    render(<LoginPage />)
+
+    fillLoginForm('alice', 'correct horse')
+
+    await waitFor(() => expect(assignSpy).toHaveBeenCalledWith('/chat'))
+    expect(assignSpy).not.toHaveBeenCalledWith(value)
+  })
+
+  it('does not redirect and keeps the 002 error when login fails', async () => {
+    window.history.pushState({}, '', '/login?returnTo=/settings/security')
+    mockLogin.mockRejectedValueOnce({
+      title: 'Unauthorized',
+      status: 401,
+      detail: 'Invalid credentials',
+    } satisfies Problem)
+    assignSpy = stubLocationAssign()
+    render(<LoginPage />)
+
+    fillLoginForm('alice', 'wrong password')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Invalid credentials')
+    expect(assignSpy).not.toHaveBeenCalled()
+    expect(mockSetTokenPair).not.toHaveBeenCalled()
   })
 
   it('shows the unified Invalid credentials error on 401', async () => {
