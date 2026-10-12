@@ -280,6 +280,20 @@ sso:
   # «Предусловия» (T042); real deployments override via env / K8s Secret.
   callback-url: ${SSO_CALLBACK_URL:http://localhost:8080/api/v1/auth/sso/callback}
 
+admin:
+  seed:
+    # 008b US4 (research.md §1, FR-011/FR-012): the idempotent system account
+    # seeded by AdminSeedRunner at every application start
+    enabled: true
+    # dev default keeps the local passwordless JIT form (password arrives by
+    # the 002 reset letter in Mailpit); prod MUST set ADMIN_SEED_EMAIL via
+    # env / K8s Secret (T036) — creating a row under the default is
+    # warn-observable in the runner
+    email: ${ADMIN_SEED_EMAIL:admin@webchat.local}
+    # password is deliberately ABSENT: the ADMIN_SEED_PASSWORD env var binds
+    # straight to admin.seed.password (relaxed env binding, no yml entry);
+    # secrets never live in the repo (constitution V, SC-005)
+
 chats:
   message:
     # 004 api-contract.md header (FR-003): text length cap after trim
