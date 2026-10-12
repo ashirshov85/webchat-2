@@ -7,3 +7,12 @@ coverage/
 .env
 .env.*
 *.log
+*.tmp
+
+# Playwright run artifacts (baselines stay committed and DO enter the context)
+test-results/
+tests/visual/test-results/
+playwright-report/
+
+# VCS metadata
+.git/
