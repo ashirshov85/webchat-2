@@ -58,11 +58,16 @@ function chatItem(overrides: Partial<ChatListItem> = {}): ChatListItem {
   }
 }
 
-/** Menu items → single ModalShell forms of MessengerPage (T034, ui-behavior §3). */
+/**
+ * Menu items → single ModalShell forms of MessengerPage (T034, ui-behavior
+ * §3); «Выйти» (T045) — последний пункт, колбэк уходит странице на logout
+ * текущей сессии (002 FR-011), не на форму оболочки.
+ */
 const MENU_ITEM_TO_PROP = [
   { label: 'Мой профиль', prop: 'onOpenProfile' },
   { label: 'Контакты', prop: 'onOpenContacts' },
   { label: 'Создать групповой чат', prop: 'onCreateGroup' },
+  { label: 'Выйти', prop: 'onLogout' },
 ] as const
 
 function panelElement(
@@ -87,7 +92,7 @@ describe('ChatListPanel without tabs (FR-006)', () => {
 })
 
 describe('ChatListPanel main menu (FR-007, ui-behavior §2)', () => {
-  it('opens the «Меню» button menu with the three prototype items', () => {
+  it('opens the «Меню» button menu with the prototype items plus «Выйти» last', () => {
     const { container } = render(panelElement([chatItem()]))
     const menuButton = screen.getByRole('button', { name: 'Меню' })
     // T030: кнопка едет в прототипном классе `.menu-btn` строки поиска.
@@ -98,10 +103,12 @@ describe('ChatListPanel main menu (FR-007, ui-behavior §2)', () => {
     fireEvent.click(menuButton)
 
     const items = screen.getAllByRole('menuitem')
+    // T045: «Выйти» — четвёртый, ПОСЛЕДНИЙ пункт главного меню.
     expect(items.map((item) => item.textContent)).toEqual([
       'Мой профиль',
       'Контакты',
       'Создать групповой чат',
+      'Выйти',
     ])
   })
 
@@ -132,6 +139,7 @@ describe('ChatListPanel main menu (FR-007, ui-behavior §2)', () => {
         onOpenProfile: vi.fn(),
         onOpenContacts: vi.fn(),
         onCreateGroup: vi.fn(),
+        onLogout: vi.fn(),
       }
       render(panelElement([chatItem()], handlers))
 

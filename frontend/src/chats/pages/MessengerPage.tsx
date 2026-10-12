@@ -260,7 +260,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from 'react'
-import { getCurrentUser } from '../../api/auth'
+import { getCurrentUser, logout } from '../../api/auth'
 import type { PublicUser } from '../../api/auth'
 import type { GroupMember, GroupView } from '../../api/groups'
 import { deleteGroup, leaveGroup } from '../../api/groups'
@@ -275,6 +275,7 @@ import {
 } from '../../api/chats'
 import type { ChatListItem, ChatView, ContactView, Message } from '../../api/chats'
 import { problemMessage } from '../../auth/problem'
+import { clearTokens, getRefreshToken } from '../../auth/session'
 import { getAckBatcher } from '../../sync/ack'
 import { advanceCursor } from '../../sync/cursors'
 import { useSync } from '../../sync/hooks/useSync'
@@ -2179,6 +2180,26 @@ function MessengerMachine() {
     [narrowViewport, setDrawerOpen],
   )
 
+  /**
+   * T045: «Выйти» главного меню — ревока ТОЛЬКО текущей сессии (002
+   * FR-011, параллельные устройства живы): revoke best-effort — ошибка
+   * сети/401 не блокирует локальный выход (refresh-токен удалён,
+   * ротация недоступна, серверная сессия истечёт по TTL); редирект на
+   * /login БЕЗ returnTo (auth-маршруты исключены из returnTo —
+   * FR-002 008b).
+   */
+  const handleLogout = useCallback(async (): Promise<void> => {
+    try {
+      await logout({ refreshToken: getRefreshToken() ?? '' })
+    } catch {
+      // best-effort revoke: сеть/401 не блокируют локальный выход —
+      // серверная сессия истечёт по TTL.
+    } finally {
+      clearTokens()
+      window.location.assign('/login')
+    }
+  }, [])
+
   // T068: Escape выключает режим со сбросом запроса (прототип :1621
   // exitSearchMode) — СТРОГО не выше модали/drawer: их Esc-владельцы
   // слушают тот же document (паттерн drawer T065), поиск режим ниже
@@ -2448,6 +2469,9 @@ function MessengerMachine() {
               }}
               onCreateGroup={() => {
                 setModalForm('create-group')
+              }}
+              onLogout={() => {
+                void handleLogout()
               }}
             />
           </aside>
