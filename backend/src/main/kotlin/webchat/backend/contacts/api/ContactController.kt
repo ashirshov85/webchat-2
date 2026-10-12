@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import webchat.backend.auth.onboarding.StarterContactService
 import webchat.backend.config.ContactsProperties
 import webchat.backend.config.UserRateLimiter
 import webchat.backend.contacts.api.dto.AddContactRequest
@@ -48,11 +49,15 @@ import java.util.UUID
  */
 @RestController
 @RequestMapping("/api/v1/contacts")
+// one function per contacts surface (№20–№22/№40) plus the shared
+// projections and the T035 best-effort onboarding shell
+@Suppress("TooManyFunctions")
 class ContactController(
     private val contactService: ContactService,
     private val userLookup: UserLookupPort,
     private val rateLimiter: UserRateLimiter,
     private val contactsProperties: ContactsProperties,
+    private val starterContactService: StarterContactService,
 ) {
     private val log = LoggerFactory.getLogger(ContactController::class.java)
 
@@ -66,6 +71,15 @@ class ContactController(
      * (T097, additive 0.8.0): one set read of `user_blocks` serves the
      * whole page, and the projection stays visible after the dialog is
      * deleted (№12 drops the hidden chat — bug 16).
+     *
+     * T035 [US4] self-healing fallback (FR-011, research.md 008b §3):
+     * the FIRST thing after the owner resolution — BEFORE any contact
+     * selection — is [StarterContactService.ensureOnboarded]: a lost
+     * `RegistrationCompletedEvent` (or a seed that was still missing at
+     * registration time) is healed right here, so the very answer of
+     * THIS listing already carries the admin starter contact. The call
+     * is best-effort ([ensureStarterContact]) and can never break the
+     * listing: the onboarding loss is retried by the NEXT GET.
      */
     @GetMapping
     fun list(
@@ -74,6 +88,7 @@ class ContactController(
     ): ContactsResponse {
         val resolvedSort = ContactSort.fromRaw(sort) ?: throw InvalidSortException()
         val ownerId = callerId(accessToken)
+        ensureStarterContact(ownerId)
         val blockedTargets = contactService.blockedTargetsOf(ownerId)
         return ContactsResponse(
             contacts =
@@ -153,6 +168,32 @@ class ContactController(
     }
 
     private fun callerId(accessToken: Jwt): UUID = UUID.fromString(accessToken.subject)
+
+    /**
+     * T035 [US4] (research.md 008b §3, FR-011): the best-effort shell of
+     * the `GET /contacts` self-healing fallback.
+     * [StarterContactService.ensureOnboarded] swallows its own failures
+     * by design, so this catch covers what escapes anyway — e.g. the
+     * REQUIRES_NEW transaction proxy failing before the method body is
+     * entered. Whatever happens, the listing itself answers normally:
+     * the onboarding loss is simply retried by the NEXT `GET /contacts`
+     * (data-model.md 008b §3.1–3.2). The warn log names the `user_id`
+     * explicitly — no payload, no tokens (constitution V).
+     */
+    private fun ensureStarterContact(ownerId: UUID) {
+        try {
+            starterContactService.ensureOnboarded(ownerId)
+        } catch (
+            @Suppress("TooGenericExceptionCaught") ex: Exception,
+        ) {
+            log.warn(
+                "starter contact fallback failed for user_id={} — the contacts listing is unaffected, " +
+                    "the next listing retries",
+                ownerId,
+                ex,
+            )
+        }
+    }
 
     /**
      * The FR-003 single gate of №40: a NON-NULL value must be a JSON
