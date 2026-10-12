@@ -173,6 +173,14 @@ description: "Task list for 008b-auth-ux-polish implementation"
 
 ---
 
+## Phase 8: Follow-up — экран /forgot-password в дизайн-языке auth-экранов
+
+**Purpose**: Запрос пользователя после закрытия фичи: стилизовать окно «Forgot password» в том же стиле, что окна логина и регистрации, и обеспечить возврат на страницу логина; spec.md 008b не меняется — задача добавлена по прямому запросу пользователя
+
+- [ ] T041 Test-First — сначала расширить `frontend/src/auth/pages/__tests__/ResetPages.test.tsx` ожиданиями нового DOM (убедиться в FAIL до реализации; существующие ассерты `getByLabelText('Email')` / кнопка «Send reset link» сохраняются — sr-метка остаётся программно связанной): рендер обёртки `auth-card` с `AuthBadge` и бренд-блоком «Aethergram»; поле email — паттерн `auth-field` (SVG-иконка + sr-метка); кнопка отправки `auth-submit`; в футере `auth-footer` — ссылка возврата с `href="/login"`, видимая и на экране успеха после 202 (проверить кейс после `mockRequestPasswordReset` resolve). Затем перестроить `frontend/src/auth/pages/ForgotPasswordPage.tsx` по образцу `RegisterPage.tsx` (единственный эталон паттерна): обёртка `auth-screen` → `auth-card` + четыре `auth-rivet` → `AuthBadge` → `auth-brand-title`/`auth-brand-sub` (CONNECT · CHAT · EXPLORE) → `auth-form-title` «Forgot password» → форма: `auth-field` с SVG-иконкой конверта (копия register-email), `auth-label-sr` «Email», placeholder, `autoComplete="email"`; кнопка `auth-submit` c `disabled={submitting}`; футер `auth-footer`: `<a href="/login">Back to login</a>` (язык текстов экрана не меняется — меняется только разметка/стили); состояния ошибки (`role="alert"`) и успеха (`output`) — внутри карточки, стили наследуются от `auth-theme.css` без новых правил; функциональность без изменений: `requestPasswordReset`, сводный 202, полевые коды 400, 429, блокировка повторной отправки. Критерии приёмки: `/forgot-password` визуально идентичен семейству auth-экранов 008 (тот же набор классов/компонентов, что `LoginPage`/`RegisterPage`); ссылка возврата на `/login` доступна во всех состояниях; API/бэкенд не затронуты. Верификация: `pnpm --dir frontend test && pnpm --dir frontend lint && pnpm --dir frontend typecheck`; ручная проверка цикла `/login` ↔ «Забыли пароль?» ↔ `/forgot-password` → «Back to login»
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -181,6 +189,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 - **Foundational (Phase 2)**: Зависит от Phase 1 — BLOCKS задачи US2 (enum аудита V17) и US4 (колонка V17); US1/US3 от V17 не зависят, но начинаются после Phase 1
 - **User Stories (Phases 3–6)**: После своих предпосылок истории независимы; приоритет P1 → P2
 - **Polish (Phase 7)**: После всех завершённых историй
+- **Follow-up (Phase 8)**: После Phase 7; вне утверждённого scope spec.md 008b (прямой запрос пользователя); только frontend, конфликтов с завершёнными задачами нет
 
 ### User Story Dependencies
 
