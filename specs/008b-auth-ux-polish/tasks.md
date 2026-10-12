@@ -156,7 +156,7 @@ description: "Task list for 008b-auth-ux-polish implementation"
 - [X] T033 [P] [US4] Опубликовать `RegistrationCompletedEvent(userId)` внутри транзакции в `backend/src/main/kotlin/webchat/backend/auth/domain/service/RegistrationService.kt` (`setPassword`, сразу после активирующего write рядом с журналом `PASSWORD_SET`)
 - [X] T034 [P] [US4] Опубликовать `RegistrationCompletedEvent(userId)` внутри транзакции в `backend/src/main/kotlin/webchat/backend/sso/domain/service/IdentityResolutionService.kt` (`provisionJitAccount`, после insert + `bindIdentity` рядом с `SSO_ACCOUNT_CREATED`)
 - [X] T035 [US4] Self-healing фолбэк: в `backend/src/main/kotlin/webchat/backend/contacts/api/ContactController.kt` (`list`) вызвать `ensureOnboarded(callerId)` сразу после разрешения ownerId, ДО выборки контактов, в best-effort `try/catch` — фолбэк никогда не ломает выдачу (зависит от T031)
-- [ ] T036 [P] [US4] Env для деплоя: расширить `deploy/k8s/overlays/dev/backend-auth-env.yaml` — `ADMIN_SEED_EMAIL` + optional `secretKeyRef` секрета `admin-seed` для `ADMIN_SEED_PASSWORD` (секреты только в secret manager, конституция V); docker-compose не меняется (бэкенд в нём не сервис)
+- [X] T036 [P] [US4] Env для деплоя: расширить `deploy/k8s/overlays/dev/backend-auth-env.yaml` — `ADMIN_SEED_EMAIL` + optional `secretKeyRef` секрета `admin-seed` для `ADMIN_SEED_PASSWORD` (секреты только в secret manager, конституция V); docker-compose не меняется (бэкенд в нём не сервис)
 
 **Checkpoint**: US4 работает независимо: seed идемпотентен, онбординг новых регистраций (обе точки), self-healing, 0 дублей (quickstart.md §US4, сценарии 1–6)
 

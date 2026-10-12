@@ -46,6 +46,21 @@
 # можно не заводить, пока приложение на ревью. ВАЖНО (GitHub): ключи
 # SSO_GITHUB_* в Secret обязательны ДО деплоя — провайдер включён, без ключей
 # backend упадёт на старте (fail-fast T007).
+#
+# Admin seed (008b US4, T036): the idempotent system-account seed
+# (AdminSeedRunner) runs on every backend start (admin.seed.enabled=true by
+# default). The stand pins ADMIN_SEED_EMAIL so the row is never created under
+# the dev default admin@webchat.local (which warns + tags email=default in
+# the admin_seed_total metric, T030) — replace it with a mailbox you actually
+# read: it receives the 002 reset letters that set the password of the
+# passwordless seed form. The seed password is NEVER stored in the repo
+# (constitution V): an OPTIONAL ref to the out-of-repo admin-seed Secret —
+#   kubectl -n dev create secret generic admin-seed \
+#     --from-literal=ADMIN_SEED_PASSWORD='<admin password>'
+# absent key → env unset → passwordless JIT form (active row, password_hash
+# IS NULL); the seed never overwrites an existing row, so rotating the secret
+# only affects fresh deployments without the admin row (research.md §1).
+# Local docker-compose is untouched: the backend is not a service there.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -192,3 +207,21 @@ spec:
             # browser-facing stand URL, registered in Google Cloud Console
             - name: SSO_CALLBACK_URL
               value: https://dev.webchat.lkshr.ru/api/v1/auth/sso/callback
+            # Admin seed (008b US4, T036): stand mailbox of the seeded system
+            # account; without this env the row would be created under the dev
+            # default admin@webchat.local (warn + email=default metric tag).
+            # Placeholder domain — swap for a mailbox you read before using
+            # the 002 reset flow for the seed account.
+            - name: ADMIN_SEED_EMAIL
+              value: admin@webchat.lkshr.ru
+            # Seed password — OPTIONAL out-of-repo admin-seed Secret (see
+            # header, constitution V): absent key leaves the env unset →
+            # passwordless JIT form (password_hash IS NULL); the seed never
+            # updates an existing row, so the secret only matters for fresh
+            # deployments without the admin row (research.md §1).
+            - name: ADMIN_SEED_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: admin-seed
+                  key: ADMIN_SEED_PASSWORD
+                  optional: true
