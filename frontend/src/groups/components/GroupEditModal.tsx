@@ -38,8 +38,10 @@ import { addMembers, kickMember, updateGroup } from '../../api/groups'
 import type { GroupMember, GroupView, UpdateGroupRequest } from '../../api/groups'
 import { problemMessage } from '../../auth/problem'
 import { Avatar } from '../../ui/Avatar'
+import { initialsOf } from '../../ui/avatar'
 import { useToast } from '../../ui/Toast'
 import { validateGroupDescription, validateGroupTitle } from '../validation'
+import { chainOf, memberChainOf } from './groupMemberName'
 import './group-edit-modal.css'
 
 export interface GroupEditModalProps {
@@ -150,15 +152,23 @@ export function GroupEditModal({
   )
   const draftIdSet = useMemo(() => new Set(draftIds), [draftIds])
 
-  /** Имя строки черновика: ростер №28 либо предложение №20 (добавление). */
-  const usernameOf = useCallback(
-    (userId: string): string => {
+  /**
+   * Строка черновика: ростер №28 либо предложение №20 (добавление).
+   * T049 (паритет с «Контактами»/GroupMembersModal, ui-behavior §1):
+   * отображаемое имя — цепочка `alias → displayName → username`
+   * (memberChainOf/chainOf, groupMemberName); username нужен отдельно
+   * только как источник ЦВЕТА аватара (colorOf(username), FR-004).
+   */
+  const draftSourceOf = useCallback(
+    (userId: string): { username: string; displayName: string } => {
       const member = rosterById.get(userId)
       if (member !== undefined) {
-        return member.user.username
+        return { username: member.user.username, displayName: memberChainOf(member) }
       }
       const contact = contactsById.get(userId)
-      return contact !== undefined ? contact.user.username : ''
+      return contact !== undefined
+        ? { username: contact.user.username, displayName: chainOf(contact) }
+        : { username: '', displayName: '' }
     },
     [rosterById, contactsById],
   )
@@ -172,7 +182,9 @@ export function GroupEditModal({
   }, [])
 
   const normalizedQuery = query.trim().toLowerCase()
-  /** renderGrpEditAdd прототипа: активные (черновик) не предлагаются. */
+  /** renderGrpEditAdd прототипа: активные (черновик) не предлагаются;
+   * фильтр — [цепочка, username, email] без регистра (T049 — паритет с
+   * «Контактами»: alias/displayName-звенья цепочки ищутся наравне). */
   const offer = useMemo(
     () =>
       contacts.filter((contact) => {
@@ -183,6 +195,7 @@ export function GroupEditModal({
           return true
         }
         return (
+          chainOf(contact).toLowerCase().includes(normalizedQuery) ||
           contact.user.username.toLowerCase().includes(normalizedQuery) ||
           contact.user.email.toLowerCase().includes(normalizedQuery)
         )
@@ -302,20 +315,20 @@ export function GroupEditModal({
           <div className="pick-empty">Нет участников</div>
         ) : (
           draftIds.map((userId) => {
-            const username = usernameOf(userId)
+            const { username, displayName } = draftSourceOf(userId)
             return (
               <div className="pick-row" key={userId}>
-                <Avatar source={username} size={32} />
+                <Avatar source={username} initials={initialsOf(displayName)} size={32} />
                 <div className="c-main">
                   <div className="c-top">
-                    <span className="c-name">{username}</span>
+                    <span className="c-name">{displayName}</span>
                   </div>
                 </div>
                 <button
                   type="button"
                   className="m-rm"
                   title="Удалить участника"
-                  aria-label={`Удалить участника ${username}`}
+                  aria-label={`Удалить участника ${displayName}`}
                   disabled={pending}
                   onClick={() => {
                     removeDraftMember(userId)
@@ -371,33 +384,43 @@ export function GroupEditModal({
           </div>
         )}
         {contactsStatus === 'ready' &&
-          offer.map((contact) => (
-            <div className="pick-row" key={contact.user.id}>
-              <Avatar source={contact.user.username} size={32} />
-              <div className="c-main">
-                <div className="c-top">
-                  <span className="c-name">{contact.user.username}</span>
+          offer.map((contact) => {
+            // T049: имя строки предложения — цепочка `alias → displayName →
+            // username`, инициалы — из неё, цвет — colorOf(username);
+            // подпись «username · email» — identity-контекст.
+            const displayName = chainOf(contact)
+            return (
+              <div className="pick-row" key={contact.user.id}>
+                <Avatar
+                  source={contact.user.username}
+                  initials={initialsOf(displayName)}
+                  size={32}
+                />
+                <div className="c-main">
+                  <div className="c-top">
+                    <span className="c-name">{displayName}</span>
+                  </div>
+                  <div className="c-prev">
+                    {contact.user.username} · {contact.user.email}
+                  </div>
                 </div>
-                <div className="c-prev">
-                  {contact.user.username} · {contact.user.email}
-                </div>
+                <button
+                  type="button"
+                  className="m-add"
+                  title="Добавить участника"
+                  aria-label={`Добавить участника ${displayName}`}
+                  disabled={pending}
+                  onClick={() => {
+                    addDraftMember(contact.user.id)
+                  }}
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </button>
               </div>
-              <button
-                type="button"
-                className="m-add"
-                title="Добавить участника"
-                aria-label={`Добавить участника ${contact.user.username}`}
-                disabled={pending}
-                onClick={() => {
-                  addDraftMember(contact.user.id)
-                }}
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M12 5v14M5 12h14" />
-                </svg>
-              </button>
-            </div>
-          ))}
+            )
+          })}
       </div>
 
       {/* #grpEditErr прототипа: постоянная строка ошибки (min-height

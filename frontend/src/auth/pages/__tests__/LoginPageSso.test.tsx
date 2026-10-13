@@ -103,7 +103,7 @@ describe('LoginPage SSO', () => {
     expect(sessionStorage.getItem(RETURN_TO_STORAGE_KEY)).toBe('/settings/profile')
   })
 
-  it('shows an error instead of navigating when authorize fails', async () => {
+  it('shows the russian error instead of navigating when authorize fails with 404 (T048)', async () => {
     mockListSsoProviders.mockResolvedValueOnce({ providers: enabledProviders })
     mockAuthorizeSso.mockRejectedValueOnce({
       title: 'Not Found',
@@ -116,8 +116,112 @@ describe('LoginPage SSO', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Продолжить с Google' }))
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Provider not found')
+    expect(alert).toHaveTextContent('Провайдер входа не найден или недоступен')
     expect(assignSpy).not.toHaveBeenCalled()
     expect(sessionStorage.getItem(RETURN_TO_STORAGE_KEY)).toBeNull()
+  })
+
+  it('shows the russian IdP-unavailable error on 502 (T048)', async () => {
+    mockListSsoProviders.mockResolvedValueOnce({ providers: enabledProviders })
+    mockAuthorizeSso.mockRejectedValueOnce({
+      title: 'Bad Gateway',
+      status: 502,
+      detail: 'Identity provider is temporarily unavailable',
+    })
+    assignSpy = stubLocationAssign()
+    render(<LoginPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Продолжить с Google' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Сервис входа временно недоступен — попробуйте позже')
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it('shows the russian rate-limit hint on 429 with retryAfterSec (T048)', async () => {
+    mockListSsoProviders.mockResolvedValueOnce({ providers: enabledProviders })
+    mockAuthorizeSso.mockRejectedValueOnce({
+      title: 'Too Many Requests',
+      status: 429,
+      detail: 'Too many requests',
+      retryAfterSec: 300,
+    })
+    assignSpy = stubLocationAssign()
+    render(<LoginPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Продолжить с Google' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Слишком много попыток — попробуйте через 5 минут')
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it('shows «Слишком много попыток — попробуйте позже» on 429 without retryAfterSec (T048)', async () => {
+    mockListSsoProviders.mockResolvedValueOnce({ providers: enabledProviders })
+    mockAuthorizeSso.mockRejectedValueOnce({
+      title: 'Too Many Requests',
+      status: 429,
+      detail: 'Too many requests',
+    })
+    render(<LoginPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Продолжить с Google' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Слишком много попыток — попробуйте позже')
+  })
+
+  it('shows the russian network fallback when authorize throws (T048)', async () => {
+    mockListSsoProviders.mockResolvedValueOnce({ providers: enabledProviders })
+    mockAuthorizeSso.mockRejectedValueOnce(new TypeError('NetworkError when attempting to fetch.'))
+    assignSpy = stubLocationAssign()
+    render(<LoginPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Продолжить с Google' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Не удалось подключиться к сервису входа — попробуйте позже')
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it('shows «Недопустимый адрес возврата» on 400 returnTo:invalid_format (T048)', async () => {
+    window.history.pushState({}, '', '/login?returnTo=https%3A%2F%2Fevil.example')
+    mockListSsoProviders.mockResolvedValueOnce({ providers: enabledProviders })
+    mockAuthorizeSso.mockRejectedValueOnce({
+      title: 'Bad Request',
+      status: 400,
+      detail: 'Invalid request',
+      errors: { returnTo: ['invalid_format'] },
+    })
+    assignSpy = stubLocationAssign()
+    render(<LoginPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Продолжить с Google' }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Недопустимый адрес возврата')
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it('resets ssoStartingId after a failure so the provider can be clicked again (T048)', async () => {
+    mockListSsoProviders.mockResolvedValueOnce({ providers: enabledProviders })
+    mockAuthorizeSso
+      .mockRejectedValueOnce({ title: 'Not Found', status: 404, detail: 'Provider not found' })
+      .mockResolvedValueOnce({ authorizationUrl: 'https://idp.example/oauth/authorize?state=ok' })
+    assignSpy = stubLocationAssign()
+    render(<LoginPage />)
+
+    const google = await screen.findByRole('button', { name: 'Продолжить с Google' })
+    fireEvent.click(google)
+    await screen.findByRole('alert')
+
+    // Кнопка снова активна (ssoStartingId сброшен) — повторный клик работает.
+    expect(google).toBeEnabled()
+    fireEvent.click(google)
+
+    await waitFor(() =>
+      expect(assignSpy).toHaveBeenCalledWith('https://idp.example/oauth/authorize?state=ok'),
+    )
+    expect(mockAuthorizeSso).toHaveBeenCalledTimes(2)
   })
 })

@@ -10,8 +10,86 @@ import type { LoginResponse } from '../../api/auth'
 import { authorizeSso, listSsoProviders, saveReturnTo } from '../../api/sso'
 import type { SsoAuthorizeRequest, SsoProvider } from '../../api/sso'
 import { setTokenPair } from '../session'
-import { problemMessage } from '../problem'
+import { isFieldErrors, retryAfterMessageRu } from '../lib/problemRu'
 import { loginRedirectTarget } from '../lib/returnTo'
+
+/** Сетевой сбой/неизвестная проблема парольной ноги — единый русский fallback (T048). */
+const LOGIN_FALLBACK = 'Не удалось войти. Проверьте соединение и попробуйте ещё раз'
+
+/** Сетевой сбой/неизвестная проблема SSO-ноги — единый русский fallback (T048). */
+const SSO_FALLBACK = 'Не удалось подключиться к сервису входа — попробуйте позже'
+
+/**
+ * ЛОКАЛЬНЫЙ маппинг problem+json логина (POST /auth/login, контракт №5) →
+ * русские сообщения (T048, паттерн T046/T047 — глобальный problemMessage
+ * здесь больше не используется): 401 uniform (detail «Invalid credentials»,
+ * причины неразличимы) → «Неверный логин или пароль»; 403 («Registration
+ * is not completed…») → подсказка завершить регистрацию; 400 identifier/
+ * password: missing — зеркала клиентской проверки (форма noValidate);
+ * 429 ± retryAfterSec — общий модуль problemRu; прочее → fallback.
+ * 400 returnTo на этой ноге невозможен (returnTo — только client-side).
+ */
+function loginProblemMessage(cause: unknown): string {
+  if (typeof cause !== 'object' || cause === null) {
+    return LOGIN_FALLBACK
+  }
+  const problem = cause as { status?: unknown; errors?: unknown; retryAfterSec?: unknown }
+  if (typeof problem.status !== 'number') {
+    return LOGIN_FALLBACK
+  }
+  if (problem.status === 401) {
+    return 'Неверный логин или пароль'
+  }
+  if (problem.status === 403) {
+    return 'Регистрация не завершена — подтвердите email и задайте пароль'
+  }
+  if (problem.status === 429) {
+    return retryAfterMessageRu(problem.retryAfterSec)
+  }
+  if (problem.status === 400 && isFieldErrors(problem.errors)) {
+    if (problem.errors.identifier?.includes('missing')) {
+      return 'Введите email или имя пользователя'
+    }
+    if (problem.errors.password?.includes('missing')) {
+      return 'Введите пароль'
+    }
+  }
+  return LOGIN_FALLBACK
+}
+
+/**
+ * ЛОКАЛЬНЫЙ маппинг SSO-ноги (POST /auth/sso/authorize) → русские
+ * сообщения (T048): 404 (неизвестный/отключённый провайдер неразличимы) →
+ * «Провайдер входа не найден или недоступен»; 502 (IdP недоступен);
+ * 429 — общий модуль problemRu; 400 returnTo: invalid_format → «Недопустимый
+ * адрес возврата»; сетевой сбой/прочее → fallback.
+ */
+function ssoProblemMessage(cause: unknown): string {
+  if (typeof cause !== 'object' || cause === null) {
+    return SSO_FALLBACK
+  }
+  const problem = cause as { status?: unknown; errors?: unknown; retryAfterSec?: unknown }
+  if (typeof problem.status !== 'number') {
+    return SSO_FALLBACK
+  }
+  if (problem.status === 404) {
+    return 'Провайдер входа не найден или недоступен'
+  }
+  if (problem.status === 502) {
+    return 'Сервис входа временно недоступен — попробуйте позже'
+  }
+  if (problem.status === 429) {
+    return retryAfterMessageRu(problem.retryAfterSec)
+  }
+  if (
+    problem.status === 400 &&
+    isFieldErrors(problem.errors) &&
+    problem.errors.returnTo?.includes('invalid_format')
+  ) {
+    return 'Недопустимый адрес возврата'
+  }
+  return SSO_FALLBACK
+}
 
 function currentReturnTo(): string | null {
   const value = new URLSearchParams(window.location.search).get('returnTo')
@@ -134,6 +212,16 @@ export function LoginPage() {
 
   async function submit() {
     setError(null)
+    // Клиентская проверка пустых полей ДО запроса (T046-паттерн): форма
+    // noValidate — пустые/пробельные значения не уходят на сервер.
+    if (identifier.trim() === '') {
+      setError('Введите email или имя пользователя')
+      return
+    }
+    if (password === '') {
+      setError('Введите пароль')
+      return
+    }
     setSubmitting(true)
     try {
       const pair = await login({ identifier, password })
@@ -141,7 +229,7 @@ export function LoginPage() {
       setUser(pair.user)
       window.location.assign(loginRedirectTarget(currentReturnTo()))
     } catch (err) {
-      setError(problemMessage(err))
+      setError(loginProblemMessage(err))
     } finally {
       setSubmitting(false)
     }
@@ -158,7 +246,7 @@ export function LoginPage() {
       if (returnTo !== null) saveReturnTo(returnTo)
       window.location.assign(authorizationUrl)
     } catch (err) {
-      setSsoError(problemMessage(err))
+      setSsoError(ssoProblemMessage(err))
       setSsoStartingId(null)
     }
   }

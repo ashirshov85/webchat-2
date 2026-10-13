@@ -54,7 +54,7 @@ import { problemMessage } from '../../auth/problem'
 import { ErrorBanner } from '../../chats/components/ErrorBanner'
 import { Avatar } from '../../ui/Avatar'
 import { initialsOf } from '../../ui/avatar'
-import { resolveDisplayName } from '../../ui/names'
+import { memberChainOf } from './groupMemberName'
 import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
 import './group-members-modal.css'
 
@@ -144,14 +144,9 @@ function directChatOf(chats: readonly ChatListItem[], userId: string): ChatListI
   return null
 }
 
-/**
- * Цепочка имени участника (008a T023; ui-behavior §1): №28
- * `GroupMember.user` несёт профильное `displayName` и персональный
- * `alias` вызывающего — единая точка `resolveDisplayName` (ui/names).
- */
-function chainOf(member: GroupMember): string {
-  return resolveDisplayName(member.user.alias, member.user.displayName, member.user.username)
-}
+// Цепочка имени участника (008a T023; ui-behavior §1) — общий хелпер
+// `memberChainOf` (groupMemberName, T049): №28 `GroupMember.user` несёт
+// профильное `displayName` и персональный `alias` вызывающего.
 
 export function GroupMembersModal({
   members,
@@ -231,7 +226,7 @@ export function GroupMembersModal({
     }
     // 008a T023: aria-label'ы пунктов несут цепочку имени участника
     // (`alias → displayName → username`, ui-behavior §1).
-    const displayName = chainOf(menuMember)
+    const displayName = memberChainOf(menuMember)
     const actions = actionsFor(myRole, menuMember)
     const offerContact =
       contactUserIds !== undefined && onAddContact !== undefined
@@ -301,7 +296,7 @@ export function GroupMembersModal({
             // 008a T023: цепочка имени строки (ui-behavior §1) —
             // инициалы — из неё, цвет аватара — от username (FR-004);
             // усечение — CSS, полный текст — в `title` (конвенция 008).
-            const displayName = chainOf(member)
+            const displayName = memberChainOf(member)
             // Кебаб несёт меню — рендерим только когда пункты есть:
             // ростер-действия по матрице myRole ИЛИ «Добавить в контакты»
             // (member-зритель кебаба не видит вовсе — T095).

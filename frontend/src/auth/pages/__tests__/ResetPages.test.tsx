@@ -235,23 +235,84 @@ describe('ResetPasswordPage', () => {
     })
   })
 
-  it('shows the invalid-or-expired-link detail on 400', async () => {
+  it('shows the russian invalid-or-expired-link message on a uniform 400 without errors', async () => {
     window.history.pushState({}, '', '/reset-password?token=used-token')
     mockConfirmPasswordReset.mockRejectedValueOnce({
       title: 'Bad Request',
       status: 400,
-      detail: 'Token invalid or expired',
+      detail: 'Token is invalid or expired; request a new link',
     } satisfies Problem)
     render(<ResetPasswordPage />)
 
     fillResetPasswordForm('correct horse', 'correct horse')
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Token invalid or expired')
+    expect(alert).toHaveTextContent(
+      'Ссылка недействительна или истекла — запросите новое письмо на странице восстановления пароля',
+    )
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
-  it('shows policy error codes from a 400 and keeps the link usable for a retry', async () => {
+  it.each([
+    ['blank', '        ', 'Пароль не должен быть пустым или состоять только из пробелов'],
+    ['too_short', 'Sh0rt!1', 'Пароль должен быть не короче 8 символов'],
+    ['too_long', 'a1B!'.repeat(32) + 'z', 'Пароль должен быть не длиннее 128 символов'],
+    ['too_common', 'password123', 'Этот пароль слишком распространён — выберите другой'],
+    ['same_as_username', 'hargrove', 'Пароль не должен совпадать с именем пользователя'],
+    ['same_as_email', 'h.hargrove@aethergram.io', 'Пароль не должен совпадать с email'],
+  ])(
+    '400 password:%s → the russian message shared with the password-change modal',
+    async (code, password, message) => {
+      window.history.pushState({}, '', '/reset-password?token=reset-token')
+      mockConfirmPasswordReset.mockRejectedValueOnce({
+        title: 'Bad Request',
+        status: 400,
+        errors: { password: [code] },
+      } satisfies Problem)
+      render(<ResetPasswordPage />)
+
+      fillResetPasswordForm(password, password)
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(message)
+      // отклонённый пароль НЕ расходует ссылку (контракт №9, T039)
+      expect(mockConfirmPasswordReset).toHaveBeenCalledTimes(1)
+    },
+  )
+
+  it.each([
+    ['mismatch', 'Пароли не совпадают'],
+    ['missing', 'Подтвердите пароль'],
+  ])('400 confirmPassword:%s → «%s»', async (code, message) => {
+    window.history.pushState({}, '', '/reset-password?token=reset-token')
+    mockConfirmPasswordReset.mockRejectedValueOnce({
+      title: 'Bad Request',
+      status: 400,
+      errors: { confirmPassword: [code] },
+    } satisfies Problem)
+    render(<ResetPasswordPage />)
+
+    // значения равны — клиентская проверка совпадения проходит,
+    // до сервера доходит серверный код (напр. нормализация)
+    fillResetPasswordForm('correct horse', 'correct horse')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+  })
+
+  it('400 password:missing → «Введите пароль»', async () => {
+    window.history.pushState({}, '', '/reset-password?token=reset-token')
+    mockConfirmPasswordReset.mockRejectedValueOnce({
+      title: 'Bad Request',
+      status: 400,
+      errors: { password: ['missing'] },
+    } satisfies Problem)
+    render(<ResetPasswordPage />)
+
+    fillResetPasswordForm('correct horse', 'correct horse')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Введите пароль')
+  })
+
+  it('keeps the link usable for a retry after a policy 400 (russian message)', async () => {
     window.history.pushState({}, '', '/reset-password?token=reset-token')
     mockConfirmPasswordReset
       .mockRejectedValueOnce({
@@ -264,7 +325,9 @@ describe('ResetPasswordPage', () => {
 
     fillResetPasswordForm('password123', 'password123')
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('too_common')
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Этот пароль слишком распространён — выберите другой',
+    )
 
     fillResetPasswordForm('correct horse', 'correct horse')
 
@@ -277,7 +340,7 @@ describe('ResetPasswordPage', () => {
     })
   })
 
-  it('shows the rate-limit detail with the retry hint on 429', async () => {
+  it('shows the russian rate-limit message with the pluralized retry hint on 429', async () => {
     window.history.pushState({}, '', '/reset-password?token=reset-token')
     mockConfirmPasswordReset.mockRejectedValueOnce({
       title: 'Too Many Requests',
@@ -290,8 +353,22 @@ describe('ResetPasswordPage', () => {
     fillResetPasswordForm('correct horse', 'correct horse')
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Rate limit exceeded')
-    expect(alert).toHaveTextContent('Try again in 42 s')
+    expect(alert).toHaveTextContent('Слишком много попыток — попробуйте через 42 секунды')
     expect(screen.getByRole('button', { name: 'СБРОСИТЬ ПАРОЛЬ' })).toBeInTheDocument()
+  })
+
+  it.each([
+    ['сетевой сбой', new TypeError('NetworkError when attempting to fetch resource.')],
+    ['неизвестная проблема 500', { title: 'Internal Server Error', status: 500 } satisfies Problem],
+  ])('%s → единый русский fallback', async (_reason, cause) => {
+    window.history.pushState({}, '', '/reset-password?token=reset-token')
+    mockConfirmPasswordReset.mockRejectedValueOnce(cause)
+    render(<ResetPasswordPage />)
+
+    fillResetPasswordForm('correct horse', 'correct horse')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Не удалось сбросить пароль. Проверьте соединение и попробуйте ещё раз',
+    )
   })
 })

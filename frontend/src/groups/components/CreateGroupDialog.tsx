@@ -37,8 +37,10 @@ import { createGroup } from '../../api/groups'
 import type { CreateGroupRequest, GroupView } from '../../api/groups'
 import { problemMessage } from '../../auth/problem'
 import { Avatar } from '../../ui/Avatar'
+import { initialsOf } from '../../ui/avatar'
 import { useToast } from '../../ui/Toast'
 import { validateGroupTitle } from '../validation'
+import { chainOf } from './groupMemberName'
 import './create-group.css'
 
 export interface CreateGroupDialogProps {
@@ -101,7 +103,10 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
     })
   }, [])
 
-  /** renderPickList прототипа: живой фильтр username/email без регистра. */
+  /** renderPickList прототипа: живой фильтр [цепочка, username, email] без
+   * регистра (T049 — паритет с «Контактами»: цепочка `alias →
+   * displayName → username` ищется наравне с username/email; перекрытые
+   * alias'ом звенья — не часть цепочки и не ищутся). */
   const normalizedQuery = query.trim().toLowerCase()
   const visibleContacts = useMemo(() => {
     if (normalizedQuery === '') {
@@ -109,6 +114,7 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
     }
     return contacts.filter(
       (contact) =>
+        chainOf(contact).toLowerCase().includes(normalizedQuery) ||
         contact.user.username.toLowerCase().includes(normalizedQuery) ||
         contact.user.email.toLowerCase().includes(normalizedQuery),
     )
@@ -207,27 +213,38 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
           <div className="pick-empty">Ничего не найдено</div>
         )}
         {contactsStatus === 'ready' &&
-          visibleContacts.map((contact) => (
-            <label key={contact.user.id} className="pick-row">
-              <input
-                type="checkbox"
-                aria-label={`Выбрать ${contact.user.username}`}
-                checked={selectedIds.has(contact.user.id)}
-                onChange={() => {
-                  toggleMember(contact.user.id)
-                }}
-              />
-              <Avatar source={contact.user.username} size={32} />
-              <div className="c-main">
-                <div className="c-top">
-                  <span className="c-name">{contact.user.username}</span>
+          visibleContacts.map((contact) => {
+            // T049 (паритет с «Контактами», ui-behavior §1): имя строки —
+            // цепочка `alias → displayName → username`, инициалы аватара —
+            // из неё, цвет — colorOf(username) (FR-004); подпись
+            // «username · email» — identity-контекст, порядок №20 серверный.
+            const displayName = chainOf(contact)
+            return (
+              <label key={contact.user.id} className="pick-row">
+                <input
+                  type="checkbox"
+                  aria-label={`Выбрать ${displayName}`}
+                  checked={selectedIds.has(contact.user.id)}
+                  onChange={() => {
+                    toggleMember(contact.user.id)
+                  }}
+                />
+                <Avatar
+                  source={contact.user.username}
+                  initials={initialsOf(displayName)}
+                  size={32}
+                />
+                <div className="c-main">
+                  <div className="c-top">
+                    <span className="c-name">{displayName}</span>
+                  </div>
+                  <div className="c-prev">
+                    {contact.user.username} · {contact.user.email}
+                  </div>
                 </div>
-                <div className="c-prev">
-                  {contact.user.username} · {contact.user.email}
-                </div>
-              </div>
-            </label>
-          ))}
+              </label>
+            )
+          })}
       </div>
 
       {/* #grpErr прототипа: постоянная строка ошибки (min-height держит
