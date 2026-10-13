@@ -1,10 +1,46 @@
 import { useState } from 'react'
 import type { SubmitEvent } from 'react'
 import { confirmPasswordReset } from '../../api/auth'
-import { problemMessage } from '../problem'
+import { isFieldErrors, passwordProblemMessageRu } from '../lib/passwordProblemRu'
 
 interface ResetPasswordFormProps {
   readonly token: string
+}
+
+/** Сетевой сбой/неизвестная проблема — единый русский fallback (T047). */
+const RESET_FALLBACK = 'Не удалось сбросить пароль. Проверьте соединение и попробуйте ещё раз'
+
+/** Uniform 400 без field-ошибок: неизвестная/использованная/истёкшая ссылка (контракт №9). */
+const LINK_INVALID_MESSAGE =
+  'Ссылка недействительна или истекла — запросите новое письмо на странице восстановления пароля'
+
+/**
+ * ЛОКАЛЬНЫЙ маппинг problem+json confirm-этапа → русские сообщения
+ * (T047, паритет формулировок с «Сменой пароля» T046): 400 без errors —
+ * недействительная ссылка; confirmPassword/password: missing-коды и
+ * серверное несовпадение — свои строки; полевые коды политики и 429 —
+ * общий модуль passwordProblemRu. Глобальный problemMessage
+ * (анонимный флоу без 401-кейса) в этом файле не используется.
+ */
+function resetPasswordProblemMessage(cause: unknown): string {
+  if (typeof cause === 'object' && cause !== null) {
+    const problem = cause as { status?: unknown; errors?: unknown }
+    if (problem.status === 400) {
+      if (!isFieldErrors(problem.errors)) {
+        return LINK_INVALID_MESSAGE
+      }
+      if (problem.errors.confirmPassword?.includes('mismatch')) {
+        return 'Пароли не совпадают'
+      }
+      if (problem.errors.confirmPassword?.includes('missing')) {
+        return 'Подтвердите пароль'
+      }
+      if (problem.errors.password?.includes('missing')) {
+        return 'Введите пароль'
+      }
+    }
+  }
+  return passwordProblemMessageRu(cause, RESET_FALLBACK)
 }
 
 export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
@@ -39,7 +75,7 @@ export function ResetPasswordForm({ token }: ResetPasswordFormProps) {
       await confirmPasswordReset({ token, password, confirmPassword })
       setDone(true)
     } catch (err) {
-      setError(problemMessage(err))
+      setError(resetPasswordProblemMessage(err))
     } finally {
       setSubmitting(false)
     }

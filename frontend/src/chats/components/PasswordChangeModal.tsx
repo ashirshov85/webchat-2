@@ -16,9 +16,11 @@
  *   топ-лист слабых паролей — только сервер (research §8): 400
  *   newPassword: too_common рендерится понятным русским сообщением.
  *
- * - ЛОКАЛЬНЫЙ маппинг problem → русские сообщения (T046; функция в этом
- *   модуле — глобальный problemMessage НЕ трогается, прочие экраны не
- *   меняются): 400 `currentPassword: invalid` → «Текущий пароль
+ * - Маппинг problem → русские сообщения (T046 → T047: полевые коды
+ *   newPassword и 429 — ОБЩИЙ модуль auth/lib/passwordProblemRu;
+ *   локально — 401 и `currentPassword: invalid`; глобальный
+ *   problemMessage НЕ трогается, прочие экраны не меняются): 400
+ *   `currentPassword: invalid` → «Текущий пароль
  *   неверен»; 400 `newPassword:` blank/too_short/too_long/too_common/
  *   same_as_username/same_as_email; 429 + retryAfterSec → «Слишком
  *   много попыток — попробуйте через N» (склонение секунд/минут/часов);
@@ -41,6 +43,7 @@
 import { useState, type SubmitEvent } from 'react'
 import { changePassword } from '../../api/auth'
 import { validateNewPassword } from '../../auth/lib/passwordPolicy'
+import { isFieldErrors, passwordProblemMessageRu } from '../../auth/lib/passwordProblemRu'
 import { setTokenPair } from '../../auth/session'
 import { useToast } from '../../ui/Toast'
 import './profile-modal.css'
@@ -58,88 +61,28 @@ export interface PasswordChangeModalProps {
 /** Сетевой сбой/неизвестная проблема — единый русский fallback (T046). */
 const PROBLEM_FALLBACK = 'Не удалось изменить пароль. Проверьте соединение и попробуйте ещё раз'
 
-/** Русское согласование количественных форм: 1 час / 2 часа / 5 часов (11–14 — «много»). */
-function pluralRu(count: number, one: string, few: string, many: string): string {
-  const mod100 = count % 100
-  if (mod100 >= 11 && mod100 <= 14) {
-    return many
-  }
-  const mod10 = count % 10
-  if (mod10 === 1) {
-    return one
-  }
-  if (mod10 >= 2 && mod10 <= 4) {
-    return few
-  }
-  return many
-}
-
-/** retryAfterSec → «N секунд/минут/часов» (ceil-округление, паритет problem.ts). */
-function formatRetryAfterRu(seconds: number): string {
-  const total = Math.max(1, Math.ceil(seconds))
-  if (total < 60) {
-    return `${total} ${pluralRu(total, 'секунду', 'секунды', 'секунд')}`
-  }
-  const minutes = Math.ceil(total / 60)
-  if (minutes < 60) {
-    return `${minutes} ${pluralRu(minutes, 'минуту', 'минуты', 'минут')}`
-  }
-  const hours = Math.ceil(minutes / 60)
-  return `${hours} ${pluralRu(hours, 'час', 'часа', 'часов')}`
-}
-
-function isFieldErrors(value: unknown): value is Record<string, string[]> {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-  return Object.values(value).every(
-    (codes) => Array.isArray(codes) && codes.every((code) => typeof code === 'string'),
-  )
-}
-
-/** Серверные коды newPassword (T021) → русские тексты (паритет клиентской проверки). */
-const NEW_PASSWORD_MESSAGES: Readonly<Record<string, string>> = {
-  blank: 'Пароль не должен быть пустым или состоять только из пробелов',
-  too_short: 'Пароль должен быть не короче 8 символов',
-  too_long: 'Пароль должен быть не длиннее 128 символов',
-  too_common: 'Этот пароль слишком распространён — выберите другой',
-  same_as_username: 'Пароль не должен совпадать с именем пользователя',
-  same_as_email: 'Пароль не должен совпадать с email',
-}
-
 /**
  * ЛОКАЛЬНЫЙ маппинг problem+json смены пароля → русские сообщения
- * (T046): только этот флоу; глобальный problemMessage (auth/problem.ts)
- * и сообщения прочих экранов — вне scope.
+ * (T046 → T047: полевые коды newPassword и 429 — общий модуль
+ * passwordProblemRu; ЗДЕСЬ остаются специфичные ветки флоу — 401
+ * «Сессия истекла» (Bearer-граница) и 400 currentPassword: invalid).
  */
 function passwordChangeProblemMessage(cause: unknown): string {
-  if (typeof cause !== 'object' || cause === null) {
-    return PROBLEM_FALLBACK
-  }
-  const problem = cause as { status?: unknown; errors?: unknown; retryAfterSec?: unknown }
-  if (typeof problem.status !== 'number') {
-    return PROBLEM_FALLBACK
-  }
-  if (problem.status === 401) {
-    // Граница Bearer: и access, и refresh уже не спасают — нужен вход.
-    return 'Сессия истекла — войдите заново'
-  }
-  if (problem.status === 429) {
-    if (typeof problem.retryAfterSec === 'number' && Number.isFinite(problem.retryAfterSec)) {
-      return `Слишком много попыток — попробуйте через ${formatRetryAfterRu(problem.retryAfterSec)}`
+  if (typeof cause === 'object' && cause !== null) {
+    const problem = cause as { status?: unknown; errors?: unknown }
+    if (problem.status === 401) {
+      // Граница Bearer: и access, и refresh уже не спасают — нужен вход.
+      return 'Сессия истекла — войдите заново'
     }
-    return 'Слишком много попыток — попробуйте позже'
-  }
-  if (problem.status === 400 && isFieldErrors(problem.errors)) {
-    if (problem.errors.currentPassword?.includes('invalid')) {
+    if (
+      problem.status === 400 &&
+      isFieldErrors(problem.errors) &&
+      problem.errors.currentPassword?.includes('invalid')
+    ) {
       return 'Текущий пароль неверен'
     }
-    const code = problem.errors.newPassword?.[0]
-    if (code !== undefined && NEW_PASSWORD_MESSAGES[code] !== undefined) {
-      return NEW_PASSWORD_MESSAGES[code]
-    }
   }
-  return PROBLEM_FALLBACK
+  return passwordProblemMessageRu(cause, PROBLEM_FALLBACK)
 }
 
 export function PasswordChangeModal({
