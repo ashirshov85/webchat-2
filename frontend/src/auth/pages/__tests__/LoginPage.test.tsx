@@ -148,7 +148,7 @@ describe('LoginPage', () => {
     expect(assignSpy).not.toHaveBeenCalledWith(value)
   })
 
-  it('does not redirect and keeps the 002 error when login fails', async () => {
+  it('does not redirect and shows the russian 401 error when login fails', async () => {
     window.history.pushState({}, '', '/login?returnTo=/settings/security')
     mockLogin.mockRejectedValueOnce({
       title: 'Unauthorized',
@@ -161,12 +161,12 @@ describe('LoginPage', () => {
     fillLoginForm('alice', 'wrong password')
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Invalid credentials')
+    expect(alert).toHaveTextContent('Неверный логин или пароль')
     expect(assignSpy).not.toHaveBeenCalled()
     expect(mockSetTokenPair).not.toHaveBeenCalled()
   })
 
-  it('shows the unified Invalid credentials error on 401', async () => {
+  it('shows the unified russian «Неверный логин или пароль» on 401 (T048)', async () => {
     mockLogin.mockRejectedValueOnce({
       title: 'Unauthorized',
       status: 401,
@@ -177,26 +177,58 @@ describe('LoginPage', () => {
     fillLoginForm('alice', 'wrong password')
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Invalid credentials')
+    expect(alert).toHaveTextContent('Неверный логин или пароль')
     expect(mockSetTokenPair).not.toHaveBeenCalled()
   })
 
-  it('shows the finish-registration detail on 403', async () => {
+  it('shows the russian finish-registration message on 403 (T048)', async () => {
     mockLogin.mockRejectedValueOnce({
       title: 'Forbidden',
       status: 403,
-      detail: 'Finish registration',
+      detail: 'Registration is not completed: confirm your email and set a password',
     } satisfies Problem)
     render(<LoginPage />)
 
     fillLoginForm('alice', 'correct horse')
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Finish registration')
+    expect(alert).toHaveTextContent('Регистрация не завершена — подтвердите email и задайте пароль')
     expect(mockSetTokenPair).not.toHaveBeenCalled()
   })
 
-  it('shows the rate-limit error with the retry hint on 429', async () => {
+  it('shows «Введите email или имя пользователя» on 400 identifier:missing (T048)', async () => {
+    mockLogin.mockRejectedValueOnce({
+      title: 'Bad Request',
+      status: 400,
+      detail: 'Invalid request',
+      errors: { identifier: ['missing'] },
+    } satisfies Problem)
+    render(<LoginPage />)
+
+    fillLoginForm('alice', 'correct horse')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Введите email или имя пользователя')
+    expect(mockSetTokenPair).not.toHaveBeenCalled()
+  })
+
+  it('shows «Введите пароль» on 400 password:missing (T048)', async () => {
+    mockLogin.mockRejectedValueOnce({
+      title: 'Bad Request',
+      status: 400,
+      detail: 'Invalid request',
+      errors: { password: ['missing'] },
+    } satisfies Problem)
+    render(<LoginPage />)
+
+    fillLoginForm('alice', 'correct horse')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Введите пароль')
+    expect(mockSetTokenPair).not.toHaveBeenCalled()
+  })
+
+  it('shows the russian rate-limit hint with seconds on 429 (T048)', async () => {
     mockLogin.mockRejectedValueOnce({
       title: 'Too Many Requests',
       status: 429,
@@ -208,11 +240,10 @@ describe('LoginPage', () => {
     fillLoginForm('alice', 'correct horse')
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Too many attempts')
-    expect(alert).toHaveTextContent('Try again in 42 s')
+    expect(alert).toHaveTextContent('Слишком много попыток — попробуйте через 42 секунды')
   })
 
-  it('shows the brute-force lockout retry hint in minutes on 429', async () => {
+  it('shows the brute-force lockout hint in minutes on 429 (T048)', async () => {
     mockLogin.mockRejectedValueOnce({
       title: 'Too Many Requests',
       status: 429,
@@ -224,7 +255,65 @@ describe('LoginPage', () => {
     fillLoginForm('alice', 'correct horse')
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('Too many failed attempts')
-    expect(alert).toHaveTextContent('Try again in 15 minutes')
+    expect(alert).toHaveTextContent('Слишком много попыток — попробуйте через 15 минут')
+  })
+
+  it('shows «Слишком много попыток — попробуйте позже» on 429 without retryAfterSec (T048)', async () => {
+    mockLogin.mockRejectedValueOnce({
+      title: 'Too Many Requests',
+      status: 429,
+      detail: 'Too many attempts',
+    } satisfies Problem)
+    render(<LoginPage />)
+
+    fillLoginForm('alice', 'correct horse')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Слишком много попыток — попробуйте позже')
+  })
+
+  it.each([
+    ['сетевой сбой', new TypeError('NetworkError when attempting to fetch.')],
+    [
+      'неизвестная ошибка 500',
+      { title: 'Internal Server Error', status: 500, detail: 'Unexpected' } satisfies Problem,
+    ],
+  ])('shows the unified russian fallback on %s (T048)', async (_reason, cause) => {
+    mockLogin.mockRejectedValueOnce(cause)
+    render(<LoginPage />)
+
+    fillLoginForm('alice', 'correct horse')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Не удалось войти. Проверьте соединение и попробуйте ещё раз')
+    expect(mockSetTokenPair).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['пустой identifier', ''],
+    ['пробельный identifier', '   '],
+  ])(
+    'client-side check: %s → «Введите email или имя пользователя» без запроса (T048)',
+    async (_reason, identifier) => {
+      render(<LoginPage />)
+
+      fillLoginForm(identifier, 'correct horse')
+
+      const alert = await screen.findByRole('alert')
+      expect(alert).toHaveTextContent('Введите email или имя пользователя')
+      expect(mockLogin).not.toHaveBeenCalled()
+      expect(mockSetTokenPair).not.toHaveBeenCalled()
+    },
+  )
+
+  it('client-side check: пустой password → «Введите пароль» без запроса (T048)', async () => {
+    render(<LoginPage />)
+
+    fillLoginForm('alice', '')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Введите пароль')
+    expect(mockLogin).not.toHaveBeenCalled()
+    expect(mockSetTokenPair).not.toHaveBeenCalled()
   })
 })

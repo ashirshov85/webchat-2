@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { SubmitEvent } from 'react'
 import { confirmPasswordReset } from '../../api/auth'
-import { isFieldErrors, passwordProblemMessageRu } from '../lib/passwordProblemRu'
+import { isFieldErrors, passwordProblemMessageRu } from '../lib/problemRu'
 
 interface ResetPasswordFormProps {
   readonly token: string
@@ -19,7 +19,7 @@ const LINK_INVALID_MESSAGE =
  * (T047, паритет формулировок с «Сменой пароля» T046): 400 без errors —
  * недействительная ссылка; confirmPassword/password: missing-коды и
  * серверное несовпадение — свои строки; полевые коды политики и 429 —
- * общий модуль passwordProblemRu. Глобальный problemMessage
+ * общий модуль problemRu (ранее passwordProblemRu, T048). Глобальный problemMessage
  * (анонимный флоу без 401-кейса) в этом файле не используется.
  */
 function resetPasswordProblemMessage(cause: unknown): string {

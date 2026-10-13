@@ -1,11 +1,16 @@
 /**
- * Общий модуль русских сообщений problem+json для парольных флоу
- * (008b T047 — извлечение из локального маппинга PasswordChangeModal
- * T046): единый источник текстов для «Смены пароля» (newPassword) и
- * «Сброса пароля» (password). Глобальный problemMessage (auth/
- * problem.ts, английский) НЕ трогается; 401 «Сессия истекла» и
- * currentPassword: invalid остаются ЛОКАЛЬНЫМИ ветками смены пароля —
- * сброс пароля анонимен, кейсировать 401 там нельзя.
+ * Общий модуль русских сообщений problem+json для auth-экранов.
+ * История имён (решение зафиксировано здесь, T048): T046 — локальный
+ * маппинг PasswordChangeModal; T047 — извлечение в passwordProblemRu.ts;
+ * T048 — ПЕРЕИМЕНОВАН в problemRu.ts, т.к. утилиты (formatRetryAfterRu,
+ * isFieldErrors, retryAfterMessageRu) стали общими для ВСЕХ auth-экранов
+ * (логин/SSO — не «парольные» флоу, старое имя вводило в заблуждение);
+ * PasswordChangeModal (T046) и ResetPasswordForm (T047) переведены на
+ * новые импорты БЕЗ изменения текстов/поведения. passwordProblemMessageRu
+ * и NEW_PASSWORD_MESSAGES остаются парольной частью модуля. Глобальный
+ * problemMessage (auth/problem.ts, английский) НЕ трогается; 401 «Сессия
+ * истекла» и currentPassword: invalid остаются ЛОКАЛЬНЫМИ ветками смены
+ * пароля — сброс пароля анонимен, логин имеет свою русскую 401-строку.
  */
 
 /** Русское согласование количественных форм: 1 час / 2 часа / 5 часов (11–14 — «много»). */
@@ -48,6 +53,18 @@ export function isFieldErrors(value: unknown): value is Record<string, string[]>
 }
 
 /**
+ * Generic-обёртка 429 → «Слишком много попыток…» для всех auth-экранов
+ * (T048): с числовым retryAfterSec — «…через N» (склонение секунд/минут/
+ * часов), без него — «…позже».
+ */
+export function retryAfterMessageRu(retryAfterSec: unknown): string {
+  if (typeof retryAfterSec === 'number' && Number.isFinite(retryAfterSec)) {
+    return `Слишком много попыток — попробуйте через ${formatRetryAfterRu(retryAfterSec)}`
+  }
+  return 'Слишком много попыток — попробуйте позже'
+}
+
+/**
  * Серверные коды политики нового пароля → русские тексты ДОСЛОВНО из
  * T046 (паритет клиентской validateNewPassword); ключ поля у флоу
  * разный — newPassword (смена) / password (сброс), коды совпадают.
@@ -64,7 +81,7 @@ export const NEW_PASSWORD_MESSAGES: Readonly<Record<string, string>> = {
 /**
  * Generic-обёртка problem → русское сообщение: 400 полевые коды
  * newPassword/password → NEW_PASSWORD_MESSAGES; 429 ± retryAfterSec →
- * «Слишком много попыток…»; прочее (включая 401 — локальная ветка
+ * retryAfterMessageRu; прочее (включая 401 — локальная ветка
  * смены пароля) → fallback вызывающего.
  */
 export function passwordProblemMessageRu(cause: unknown, fallback: string): string {
@@ -76,10 +93,7 @@ export function passwordProblemMessageRu(cause: unknown, fallback: string): stri
     return fallback
   }
   if (problem.status === 429) {
-    if (typeof problem.retryAfterSec === 'number' && Number.isFinite(problem.retryAfterSec)) {
-      return `Слишком много попыток — попробуйте через ${formatRetryAfterRu(problem.retryAfterSec)}`
-    }
-    return 'Слишком много попыток — попробуйте позже'
+    return retryAfterMessageRu(problem.retryAfterSec)
   }
   if (problem.status === 400 && isFieldErrors(problem.errors)) {
     const code = problem.errors.newPassword?.[0] ?? problem.errors.password?.[0]

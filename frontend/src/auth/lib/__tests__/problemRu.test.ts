@@ -4,17 +4,20 @@ import {
   isFieldErrors,
   NEW_PASSWORD_MESSAGES,
   passwordProblemMessageRu,
-} from '../passwordProblemRu'
+  retryAfterMessageRu,
+} from '../problemRu'
 
 /**
  * Общий модуль русских сообщений problem+json (008b T047 — извлечение из
- * PasswordChangeModal T046): единый источник текстов для «Смены пароля»
- * и «Сброса пароля». Строки NEW_PASSWORD_MESSAGES — ДОСЛОВНО из T046
- * (паритет с validateNewPassword); formatRetryAfterRu — винительный
- * падеж после «через» (1 минуту/2 минуты/5 минут), регресс
- * PasswordChangeModal.test держит формы неизменными; 401 в общий
- * маппинг НЕ входит — ветка «Сессия истекла» остаётся локальной для
- * смены пароля (сброс — анонимный флоу).
+ * PasswordChangeModal T046; T048 — переименование passwordProblemRu →
+ * problemRu и generic-обёртка retryAfterMessageRu для всех auth-экранов):
+ * единый источник текстов для «Смены пароля», «Сброса пароля» и логина.
+ * Строки NEW_PASSWORD_MESSAGES — ДОСЛОВНО из T046 (паритет с
+ * validateNewPassword); formatRetryAfterRu — винительный падеж после
+ * «через» (1 минуту/2 минуты/5 минут), регресс PasswordChangeModal.test
+ * держит формы неизменными; 401 в общий маппинг НЕ входит — ветка
+ * «Сессия истекла» остаётся локальной для смены пароля (сброс —
+ * анонимный флоу, логин имеет свою русскую 401-строку).
  */
 
 const FALLBACK = 'Не удалось изменить пароль. Проверьте соединение и попробуйте ещё раз'
@@ -79,6 +82,22 @@ describe('isFieldErrors', () => {
     expect(isFieldErrors('password')).toBe(false)
     expect(isFieldErrors({ password: 'too_common' })).toBe(false)
     expect(isFieldErrors({ password: [42] })).toBe(false)
+  })
+})
+
+describe('retryAfterMessageRu', () => {
+  it('429 c retryAfterSec → «Слишком много попыток — попробуйте через N» (T048)', () => {
+    expect(retryAfterMessageRu(300)).toBe('Слишком много попыток — попробуйте через 5 минут')
+    expect(retryAfterMessageRu(7200)).toBe('Слишком много попыток — попробуйте через 2 часа')
+    expect(retryAfterMessageRu(42)).toBe('Слишком много попыток — попробуйте через 42 секунды')
+  })
+
+  it.each([
+    ['без retryAfterSec', undefined],
+    ['retryAfterSec не число', '300'],
+    ['retryAfterSec NaN', Number.NaN],
+  ])('%s → «Слишком много попыток — попробуйте позже»', (_reason, value) => {
+    expect(retryAfterMessageRu(value)).toBe('Слишком много попыток — попробуйте позже')
   })
 })
 

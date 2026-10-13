@@ -17,7 +17,7 @@
  *   newPassword: too_common рендерится понятным русским сообщением.
  *
  * - Маппинг problem → русские сообщения (T046 → T047: полевые коды
- *   newPassword и 429 — ОБЩИЙ модуль auth/lib/passwordProblemRu;
+ *   newPassword и 429 — ОБЩИЙ модуль auth/lib/problemRu;
  *   локально — 401 и `currentPassword: invalid`; глобальный
  *   problemMessage НЕ трогается, прочие экраны не меняются): 400
  *   `currentPassword: invalid` → «Текущий пароль
@@ -43,7 +43,7 @@
 import { useState, type SubmitEvent } from 'react'
 import { changePassword } from '../../api/auth'
 import { validateNewPassword } from '../../auth/lib/passwordPolicy'
-import { isFieldErrors, passwordProblemMessageRu } from '../../auth/lib/passwordProblemRu'
+import { isFieldErrors, passwordProblemMessageRu } from '../../auth/lib/problemRu'
 import { setTokenPair } from '../../auth/session'
 import { useToast } from '../../ui/Toast'
 import './profile-modal.css'
@@ -64,7 +64,8 @@ const PROBLEM_FALLBACK = 'Не удалось изменить пароль. П�
 /**
  * ЛОКАЛЬНЫЙ маппинг problem+json смены пароля → русские сообщения
  * (T046 → T047: полевые коды newPassword и 429 — общий модуль
- * passwordProblemRu; ЗДЕСЬ остаются специфичные ветки флоу — 401
+ * problemRu (до T048 — passwordProblemRu); ЗДЕСЬ остаются специфичные
+ * ветки флоу — 401
  * «Сессия истекла» (Bearer-граница) и 400 currentPassword: invalid).
  */
 function passwordChangeProblemMessage(cause: unknown): string {
