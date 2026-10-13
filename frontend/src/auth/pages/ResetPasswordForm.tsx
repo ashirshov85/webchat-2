@@ -22,22 +22,34 @@ const LINK_INVALID_MESSAGE =
  * общий модуль problemRu (ранее passwordProblemRu, T048). Глобальный problemMessage
  * (анонимный флоу без 401-кейса) в этом файле не используется.
  */
+/** Локальные ветки confirm-этапа для 400; null — передать в общий модуль. */
+function confirmFieldProblemMessage(problem: {
+  status?: unknown
+  errors?: unknown
+}): string | null {
+  if (problem.status !== 400) {
+    return null
+  }
+  if (!isFieldErrors(problem.errors)) {
+    return LINK_INVALID_MESSAGE
+  }
+  if (problem.errors.confirmPassword?.includes('mismatch')) {
+    return 'Пароли не совпадают'
+  }
+  if (problem.errors.confirmPassword?.includes('missing')) {
+    return 'Подтвердите пароль'
+  }
+  if (problem.errors.password?.includes('missing')) {
+    return 'Введите пароль'
+  }
+  return null
+}
+
 function resetPasswordProblemMessage(cause: unknown): string {
   if (typeof cause === 'object' && cause !== null) {
-    const problem = cause as { status?: unknown; errors?: unknown }
-    if (problem.status === 400) {
-      if (!isFieldErrors(problem.errors)) {
-        return LINK_INVALID_MESSAGE
-      }
-      if (problem.errors.confirmPassword?.includes('mismatch')) {
-        return 'Пароли не совпадают'
-      }
-      if (problem.errors.confirmPassword?.includes('missing')) {
-        return 'Подтвердите пароль'
-      }
-      if (problem.errors.password?.includes('missing')) {
-        return 'Введите пароль'
-      }
+    const message = confirmFieldProblemMessage(cause)
+    if (message !== null) {
+      return message
     }
   }
   return passwordProblemMessageRu(cause, RESET_FALLBACK)
