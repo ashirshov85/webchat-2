@@ -143,6 +143,7 @@ import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
 import { useToast } from '../../ui/Toast'
 import { resolveDisplayName } from '../../ui/names'
 import { lastSeenFormat } from '../../ui/time'
+import { chainOf } from '../../groups/components/groupMemberName'
 import './contacts-modal.css'
 
 export interface ContactsModalProps {
@@ -247,21 +248,12 @@ function byUsername(a: ContactView, b: ContactView): number {
 }
 
 /**
- * Цепочка отображаемого имени строки (008a T022; ui-behavior §1):
- * `alias → displayName → username` — единая точка `resolveDisplayName`
- * (ui/names, T018). №20 `ContactView` несёт alias вызывающего поверх
- * `user.displayName` (контракт 0.9.0).
- */
-function chainOf(contact: ContactView): string {
-  return resolveDisplayName(contact.alias, contact.user.displayName, contact.user.username)
-}
-
-/**
  * FR-005 сортировка по цепочке (008a T022): locale `ru` ПРОТОТИПА
  * renderContactsModal (chats.html:1292 — `displayName.localeCompare(
  * …, 'ru')`) — кириллица раньше латиницы; тай-брейк — прежняя
  * корневая коллация 'und' (`byUsername`, «текущая коллация»
  * ui-behavior §1): совпадающие цепочки различаются username.
+ * Цепочка строки — общий хелпер `chainOf` (groupMemberName, T049).
  */
 function byDisplayChain(a: ContactView, b: ContactView): number {
   return chainOf(a).localeCompare(chainOf(b), 'ru') || byUsername(a, b)

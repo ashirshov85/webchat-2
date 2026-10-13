@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
 import type { ContactView } from '../../../api/chats'
 import type { GroupMember } from '../../../api/groups'
+import { colorOf, initialsOf } from '../../../ui/avatar'
 import { ToastProvider } from '../../../ui/Toast'
 import { GroupEditModal } from '../GroupEditModal'
 
@@ -87,6 +88,58 @@ function offerContacts(): ContactView[] {
   return [
     { user: user(DAVE, 'dave'), createdAt: '2026-09-02T00:00:00.000Z', blockedByMe: false },
     { user: user(EVE, 'eve'), createdAt: '2026-09-03T00:00:00.000Z', blockedByMe: false },
+  ]
+}
+
+/**
+ * Цепочка имён US1 (T049): участник/контакт с произвольными звеньями
+ * `user.alias → user.displayName → user.username` (№28 GroupMember.user
+ * и №20-предложение несут оба звена — контракт 0.9.0).
+ */
+const FRANK_ID = '66666666-6666-6666-6666-666666666666'
+const GRACE_ID = '77777777-7777-7777-7777-777777777777'
+const HEIDI_ID = '88888888-8888-8888-8888-888888888888'
+
+/** alias бьёт displayName (Франк), displayName бьёт username (Grace), фолбэк username (heidi). */
+function namedRoster(): GroupMember[] {
+  return [
+    // Владелец (own-строка) с displayName — в черновик не попадает.
+    {
+      user: { ...user(ME, 'alice'), displayName: 'Алиса' },
+      role: 'owner',
+      joinedAt: '2026-09-20T12:00:00.000Z',
+    },
+    {
+      user: {
+        ...user(BOB, 'bob'),
+        displayName: 'Zephyr',
+        alias: 'Франк',
+      },
+      role: 'member',
+      joinedAt: '2026-09-20T12:00:00.000Z',
+    },
+    {
+      user: {
+        ...user(CAROL, 'carol'),
+        displayName: 'Grace',
+      },
+      role: 'member',
+      joinedAt: '2026-09-20T12:00:00.000Z',
+    },
+    member(HEIDI_ID, 'heidi', 'member'),
+  ]
+}
+
+function namedOffer(): ContactView[] {
+  return [
+    {
+      user: { ...user(FRANK_ID, 'frank'), displayName: 'Hidden One' },
+      // alias №20 — персональное поле вызывающего РЯДОМ с user (контракт 0.9.0).
+      alias: 'Дэвид',
+      createdAt: '2026-09-02T00:00:00.000Z',
+      blockedByMe: false,
+    },
+    { user: user(GRACE_ID, 'grace'), createdAt: '2026-09-03T00:00:00.000Z', blockedByMe: false },
   ]
 }
 
@@ -487,5 +540,113 @@ describe('GroupEditModal submission (№29 + состав, FR-025)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('not_in_contacts')
     expect(screen.getByRole('button', { name: 'Удалить участника dave' })).toBeInTheDocument()
     expect(screen.getByLabelText('Название')).toHaveValue('Новое название')
+  })
+})
+
+/**
+ * Цепочка имён US1 в редактировании состава (T049, баг-фикс; паритет с
+ * «Контактами»/GroupMembersModal 008a, ui-behavior §1): строки черновика
+ * №28 и предложение №20 несут отображаемое имя
+ * `alias → displayName → username` (.c-name + aria «Удалить/Добавить
+ * участника …»), инициалы аватара — из цепочки, цвет — colorOf(username)
+ * (FR-004), подпись предложения «username · email», живой фильтр — по
+ * [цепочка, username, email] без регистра (перекрытое alias'ом
+ * displayName не ищется). Собственная строка (владелец alice с
+ * displayName) в черновике по-прежнему отсутствует.
+ */
+describe('GroupEditModal цепочка имён US1 (T049, паритет с «Контактами»)', () => {
+  /** Открытая форма с именованным ростером и именованным предложением №20. */
+  async function renderNamedReady() {
+    mockListContacts.mockResolvedValue(namedOffer())
+    renderModal({ members: namedRoster() })
+    await screen.findByRole('button', { name: 'Добавить участника Дэвид' })
+  }
+
+  it('рендерит строки черновика №28 по цепочке alias → displayName → username', async () => {
+    await renderNamedReady()
+
+    // alias бьёт displayName бьёт username: aria «Удалить участника …» — цепочка.
+    const frankRow = screen
+      .getByRole('button', { name: 'Удалить участника Франк' })
+      .closest('.pick-row') as HTMLElement
+    const graceRow = screen
+      .getByRole('button', { name: 'Удалить участника Grace' })
+      .closest('.pick-row') as HTMLElement
+    const heidiRow = screen
+      .getByRole('button', { name: 'Удалить участника heidi' })
+      .closest('.pick-row') as HTMLElement
+
+    // .c-name — цепочка, а НЕ username; username не показывается как имя.
+    expect(frankRow.querySelector('.c-name')?.textContent).toBe('Франк')
+    expect(graceRow.querySelector('.c-name')?.textContent).toBe('Grace')
+    expect(heidiRow.querySelector('.c-name')?.textContent).toBe('heidi')
+
+    // Инициалы аватара — из цепочки, цвет — colorOf(username) (FR-004).
+    expect(frankRow.querySelector<HTMLElement>('.avatar')?.style.getPropertyValue('--av')).toBe(
+      colorOf('bob'),
+    )
+    expect(frankRow.querySelector('.av-in span')?.textContent).toBe(initialsOf('Франк'))
+    expect(graceRow.querySelector<HTMLElement>('.avatar')?.style.getPropertyValue('--av')).toBe(
+      colorOf('carol'),
+    )
+    expect(graceRow.querySelector('.av-in span')?.textContent).toBe(initialsOf('Grace'))
+    expect(heidiRow.querySelector('.av-in span')?.textContent).toBe(initialsOf('heidi'))
+
+    // Собственная строка владельца (alice, displayName «Алиса») не рендерится.
+    expect(screen.queryByRole('button', { name: 'Удалить участника Алиса' })).toBeNull()
+    expect(screen.queryByText('Алиса')).toBeNull()
+  })
+
+  it('рендерит предложение №20 по цепочке: aria, .c-name, инициалы, подпись «username · email»', async () => {
+    await renderNamedReady()
+
+    const davidRow = screen
+      .getByRole('button', { name: 'Добавить участника Дэвид' })
+      .closest('.pick-row') as HTMLElement
+    const graceOfferRow = screen
+      .getByRole('button', { name: 'Добавить участника grace' })
+      .closest('.pick-row') as HTMLElement
+
+    expect(davidRow.querySelector('.c-name')?.textContent).toBe('Дэвид')
+    expect(graceOfferRow.querySelector('.c-name')?.textContent).toBe('grace')
+
+    // Подпись предложения — по-прежнему «username · email» (identity-контекст).
+    expect(davidRow.textContent).toContain('frank · frank@example.com')
+    expect(graceOfferRow.textContent).toContain('grace · grace@example.com')
+
+    // Инициалы — из цепочки, цвет — colorOf(username).
+    expect(davidRow.querySelector<HTMLElement>('.avatar')?.style.getPropertyValue('--av')).toBe(
+      colorOf('frank'),
+    )
+    expect(davidRow.querySelector('.av-in span')?.textContent).toBe(initialsOf('Дэвид'))
+  })
+
+  it('фильтрует предложение по цепочке без регистра; перекрытое alias’ом displayName — не ищется', async () => {
+    await renderNamedReady()
+
+    // alias-звено (ДЭВ в верхнем регистре находит «Дэвид»).
+    fillSearch('ДЭВ')
+    expect(screen.getByRole('button', { name: 'Добавить участника Дэвид' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Добавить участника grace' })).toBeNull()
+
+    // displayName «Hidden One» перекрыт alias'ом «Дэвид» — НЕ часть цепочки.
+    fillSearch('hidden')
+    expect(screen.getByText('Ничего не найдено')).toBeInTheDocument()
+
+    // username/email ищутся как раньше.
+    fillSearch('GRA')
+    expect(screen.getByRole('button', { name: 'Добавить участника grace' })).toBeInTheDocument()
+    fillSearch('FRANK@EXAMPLE.COM')
+    expect(screen.getByRole('button', { name: 'Добавить участника Дэвид' })).toBeInTheDocument()
+  })
+
+  it('добавленная по цепочке строка черновика несёт цепочку имени (№31-кандидат из №20)', async () => {
+    await renderNamedReady()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить участника Дэвид' }))
+
+    // Строка перешла в черновик с именем по цепочке предложения №20.
+    expect(screen.getByRole('button', { name: 'Удалить участника Дэвид' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Добавить участника Дэвид' })).toBeNull()
   })
 })

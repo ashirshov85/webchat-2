@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
 import type { ContactView } from '../../../api/chats'
+import { colorOf, initialsOf } from '../../../ui/avatar'
 import { ToastProvider } from '../../../ui/Toast'
 import { CreateGroupDialog } from '../CreateGroupDialog'
 
@@ -65,6 +66,32 @@ function contacts(): ContactView[] {
     { user: peer(CAROL, 'carol'), createdAt: '2026-09-04T00:00:00.000Z', blockedByMe: false },
   ]
 }
+
+/** Контакт с произвольными звеньями цепочки US1 (T049): alias/displayName опциональны. */
+function namedContact(
+  id: string,
+  username: string,
+  names: { alias?: string; displayName?: string } = {},
+): ContactView {
+  return {
+    user: {
+      ...peer(id, username),
+      ...(names.displayName === undefined ? {} : { displayName: names.displayName }),
+    },
+    createdAt: '2026-09-05T00:00:00.000Z',
+    blockedByMe: false,
+    ...(names.alias === undefined ? {} : { alias: names.alias }),
+  }
+}
+
+const VALYA_ID = '66666666-6666-6666-6666-666666666666'
+const ANNA_ID = '77777777-7777-7777-7777-777777777777'
+const XENA_ID = '88888888-8888-8888-8888-888888888888'
+
+/** alias бьёт displayName (Валя), displayName бьёт username (Anna), фолбэк username (xena). */
+const VALYA = namedContact(VALYA_ID, 'carol', { displayName: 'Zeta', alias: 'Валя' })
+const ANNA = namedContact(ANNA_ID, 'dave', { displayName: 'Anna' })
+const XENA = namedContact(XENA_ID, 'xena')
 
 function groupView(): GroupView {
   return {
@@ -311,5 +338,93 @@ describe('CreateGroupDialog №27 submission (FR-002, FR-025)', () => {
     expect(alert).toHaveTextContent('not_in_contacts')
     expect(screen.getByLabelText('Название')).toHaveValue('Проект Альфа')
     expect(screen.getByRole('checkbox', { name: 'Выбрать alice' })).toBeChecked()
+  })
+})
+
+/**
+ * Цепочка имён US1 в подборщике (T049, баг-фикс; паритет с «Контактами»
+ * 008a T022, ui-behavior §1): строки подборщика №20 несут отображаемое
+ * имя `alias → displayName → username` (.c-name + aria «Выбрать …»),
+ * инициалы аватара — из цепочки, цвет — colorOf(username) (FR-004),
+ * подпись «username · email» — identity-контекст, живой фильтр ищет по
+ * [цепочка, username, email] без регистра: перекрытое alias'ом
+ * displayName — НЕ часть цепочки и не ищется (паритет
+ * ContactsModal.test.tsx, T024).
+ */
+describe('CreateGroupDialog цепочка имён US1 (T049, паритет с «Контактами»)', () => {
+  it('показывает цепочку alias → displayName → username в .c-name и aria, инициалы — из цепочки, цвет — colorOf(username)', async () => {
+    mockListContacts.mockResolvedValueOnce([VALYA, ANNA, XENA])
+    renderDialog({})
+
+    // alias бьёт displayName бьёт username: aria-имя чекбокса — цепочка.
+    const valyaRow = (await screen.findByRole('checkbox', { name: 'Выбрать Валя' })).closest(
+      'label',
+    ) as HTMLElement
+    const annaRow = screen
+      .getByRole('checkbox', { name: 'Выбрать Anna' })
+      .closest('label') as HTMLElement
+    const xenaRow = screen
+      .getByRole('checkbox', { name: 'Выбрать xena' })
+      .closest('label') as HTMLElement
+
+    // .c-name — цепочка, а НЕ username.
+    expect(within(valyaRow).getByText('Валя')).toBeInTheDocument()
+    expect(within(annaRow).getByText('Anna')).toBeInTheDocument()
+    expect(within(xenaRow).getByText('xena')).toBeInTheDocument()
+    expect(within(valyaRow).queryByText('carol')).toBeNull()
+
+    // Подпись строки — по-прежнему «username · email» (эталон ContactsModal).
+    expect(within(valyaRow).getByText('carol · carol@example.com')).toBeInTheDocument()
+    expect(within(annaRow).getByText('dave · dave@example.com')).toBeInTheDocument()
+
+    // Инициалы аватара — из цепочки, цвет — colorOf(username) (FR-004).
+    expect(valyaRow.querySelector<HTMLElement>('.avatar')?.style.getPropertyValue('--av')).toBe(
+      colorOf('carol'),
+    )
+    expect(valyaRow.querySelector('.av-in span')?.textContent).toBe(initialsOf('Валя'))
+    expect(annaRow.querySelector<HTMLElement>('.avatar')?.style.getPropertyValue('--av')).toBe(
+      colorOf('dave'),
+    )
+    expect(annaRow.querySelector('.av-in span')?.textContent).toBe(initialsOf('Anna'))
+    expect(xenaRow.querySelector('.av-in span')?.textContent).toBe(initialsOf('xena'))
+  })
+
+  it('фильтрует по цепочке без регистра: alias и displayName находятся, перекрытое alias’ом имя — нет', async () => {
+    mockListContacts.mockResolvedValueOnce([VALYA, ANNA, XENA])
+    renderDialog({})
+    await screen.findByRole('checkbox', { name: 'Выбрать Валя' })
+
+    // alias-звено цепочки (ВАЛ в верхнем регистре находит «Валя»).
+    fillSearch('ВАЛ')
+    expect(screen.getByRole('checkbox', { name: 'Выбрать Валя' })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Выбрать Anna' })).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: 'Выбрать xena' })).toBeNull()
+
+    // displayName-звено цепочки (Anna задан поверх username dave).
+    fillSearch('nn')
+    expect(screen.getByRole('checkbox', { name: 'Выбрать Anna' })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Выбрать Валя' })).toBeNull()
+
+    // username-фолбэк и email ищутся как раньше.
+    fillSearch('XEN')
+    expect(screen.getByRole('checkbox', { name: 'Выбрать xena' })).toBeInTheDocument()
+    fillSearch('DAVE@EXAMPLE.COM')
+    expect(screen.getByRole('checkbox', { name: 'Выбрать Anna' })).toBeInTheDocument()
+
+    // Перекрытый alias'ом displayName «Zeta» — НЕ часть цепочки: промах.
+    fillSearch('zeta')
+    expect(screen.getByText('Ничего не найдено')).toBeInTheDocument()
+  })
+
+  it('выбранная по цепочке строка переживает фильтр (мультивыбор сохраняется)', async () => {
+    mockListContacts.mockResolvedValueOnce([VALYA, ANNA, XENA])
+    renderDialog({})
+    await screen.findByRole('checkbox', { name: 'Выбрать Валя' })
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Выбрать Валя' }))
+    fillSearch('anna')
+    expect(screen.queryByRole('checkbox', { name: 'Выбрать Валя' })).toBeNull()
+    fillSearch('')
+    expect(screen.getByRole('checkbox', { name: 'Выбрать Валя' })).toBeChecked()
   })
 })
