@@ -97,7 +97,7 @@
 | blocked | blockedByMe | метка «заблокирован» (и заморозка бейджа — семантика 005) |
 | order | lastMessage.createdAt DESC (без изменений) | FR-009 |
 
-Фильтр поиска — по `name` (client-side, FR-010; поиск по сообщениям — фича 013).
+Фильтр поиска — по `name` (client-side, FR-010; поиск по сообщениям — фича 014).
 
 ### 2.2 MessageBubbleView (лента, FR-018–020)
 
@@ -119,7 +119,7 @@
 | avatar | Avatar(как 1.2) | direct — circle+presence, group — octagon |
 | status | direct: presenceStore (online/offline/unknown); group: memberCount | direct: лампа + «В сети»/нейтральное «неизвестно» (без ложного «офлайн»); group: `pluralRu` «N участников» |
 | membersTip | GroupView.members + myRole | hover/focus статуса группы: «Вы» первым (+«администратор» при владении), далее участники с пометкой «администратор» |
-| actions | ChatGearMenu (FR-023) | единственная кнопка заголовка; поиск (013) и per-chat звук (008a) не отображаются |
+| actions | ChatGearMenu (FR-023) | единственная кнопка заголовка; поиск (014) и per-chat звук (008a) не отображаются |
 
 ### 2.4 ComposerView (композер, FR-021/022, FR-030)
 

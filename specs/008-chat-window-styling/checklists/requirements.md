@@ -33,5 +33,5 @@
 
 - Items checked after validation on 2026-10-03; all items pass.
 - Justification for «Content Quality / no implementation details»: шрифты (Old Standard TT / Cormorant SC / Anonymous Pro), прототип `tmp/chats.html` и WebAudio названы в спеке как нормативные дизайн-ограничения, прямо утверждённые в описании фичи (дизайн-макет — бизнес-артефакт, а не технический выбор); выбор метода визуальной регрессии и точных контрольных точек адаптива делегирован в `plan.md`.
-- Границы объёма зафиксированы явно: поиск по сообщениям — 013; typing-индикатор, lastSeen, отображаемые имена, per-chat звук — 008a (FR-010, FR-015, FR-016, Assumptions).
+- Границы объёма зафиксированы явно: поиск по сообщениям — 014; typing-индикатор, lastSeen, отображаемые имена, per-chat звук — 008a (FR-010, FR-015, FR-016, Assumptions).
 - Description provided extremely detailed scope; no [NEEDS CLARIFICATION] markers were needed — все неоднозначности решены информированными допущениями, зафиксированными в разделе Assumptions (кнопки заголовка для отложенных фич скрыты, цвет аватара детерминирован из username, форматы дат/времени по прототипу).
