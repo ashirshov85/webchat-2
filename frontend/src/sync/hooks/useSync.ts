@@ -37,6 +37,15 @@
  * (№17 is monotone server-side — a replay after a lost response is a
  * no-op).
  *
+ * T052 (008b Phase 17): every cycle START also re-feeds the persisted
+ * cursor tails through the shared №25 batcher — the cursor may run
+ * ahead of the server delivery position after a lost debounce ack of
+ * the previous session, and without the top-up №26 answers «no delta»
+ * while the server-unread counter of №12 stays bounded below the
+ * never-acked tail. The end-of-cycle flush (awaited before the cycle
+ * resolves) makes every consumer-visible completion an after-ack
+ * moment: the page shell re-anchors №12 once per completed cycle.
+ *
  * Integration: mount once in MessengerPage (T023) — `onChatUpdate`
  * feeds the chat list and the open dialog, `syncing` drives the
  * SyncIndicator (T020); the ack batcher is the per-user shared
@@ -216,6 +225,21 @@ async function runCatchUp(
   const pending = readPendingReads(userId)
   if (Object.keys(pending).length > 0) {
     await flushPendingReads(userId, pending)
+  }
+  // T052 secondary window (cursor ahead without a delta): the
+  // persisted cursor may legitimately run ahead of the server delivery
+  // position — the previous session's debounce ack was lost (the
+  // batcher is in-memory, cursors.ts persists the echo), so №26 takes
+  // the effective cursor max(client, server), returns NO delta at all
+  // and nothing moves `delivered_up_to_seq` — the server-unread
+  // counter of a racing №12 stays 0 with no re-anchor until a live
+  // frame. Re-feed every persisted tail through the shared batcher:
+  // №25 is idempotent and monotone (server GREATEST), so the
+  // end-of-cycle flush closes the gap and the consumer's after-ack №12
+  // re-anchor counts the tail. A §5.5-dropped chat is suppressed by
+  // the batcher itself.
+  for (const { chatId, upToSeq } of readSyncCursors(userId)) {
+    batcher.ack(chatId, upToSeq)
   }
   for (;;) {
     const response = await sync(readSyncCursors(userId), SYNC_CHAT_LIMIT, SYNC_MESSAGE_LIMIT)

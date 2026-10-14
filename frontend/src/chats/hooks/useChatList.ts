@@ -53,6 +53,24 @@
  *    each incoming message counts exactly once (a per-chat high-water
  *    of counted `seq`s filters pages against realtime races, US1-3).
  *
+ * T052 (entry race, 008b Phase 17): the №12 refetch of every SSE
+ * (re)open fires in parallel with the catch-up cycle of the SAME
+ * (re)open, and its snapshot is delivery-bounded BELOW the tail the
+ * cycle/live frames just counted optimistically — the №25 ack is still
+ * inside the debounce window (≤1 s), so the wholesale replace answered
+ * `unreadCount: 0` and ERASED the entry badge until the next live
+ * message. A pre-ack snapshot is indistinguishable from a
+ * legitimately-lower one (same `lastMessage.id`, lower counter — read
+ * elsewhere vs not-yet-acked), so the merge keeps the counted tail
+ * ONLY while its ack is unconfirmed (`unconfirmedTails`, the per-chat
+ * count of optimistically counted incoming whose №25 has not been
+ * flushed): `max(serverUnread, local badge)`. The server stays the
+ * truth AFTER the ack — `confirmCountedTails()` (the completed cycle
+ * flushed №25; wired by MessengerPage together with one re-anchor №12
+ * refetch) clears the protection, so a legitimately lower snapshot
+ * converges the badge DOWN again (US3-7), and the counted high-water
+ * of T035/US1-3 keeps living its own session-scoped life untouched.
+ *
  * While `blockedByMe` the badge is FROZEN (US3-5 — FR-020 of 004,
  * semantics unchanged): no realtime increment, no read reset, no
  * delta adoption, and a №12 refetch of a STILL-blocked chat keeps the
@@ -164,6 +182,15 @@ export interface UseChatListResult {
    */
   readonly markChatReadLocally: (chatId: string) => void
   /**
+   * T052: declares the optimistically counted unread tails CONFIRMED —
+   * the completed catch-up cycle flushed №25, so from now on a №12
+   * snapshot is after-ack and server-authoritative for them: the merge
+   * protection stands down and a legitimately lower value converges
+   * the badge DOWN (US3-7). Wired by MessengerPage once per completed
+   * cycle, right before the re-anchor №12 refetch — never per ack.
+   */
+  readonly confirmCountedTails: () => void
+  /**
    * Merges an applied catch-up page into the list (feature 005,
    * T023/T035): preview/position of a known chat follow the page tail
    * (idempotent — only a strictly newer `seq` replaces anything), an
@@ -224,6 +251,7 @@ function applyMessageCreated(
   message: Message,
   currentUserId: string | null,
   countedIncomingSeq: Map<string, number>,
+  unconfirmedTails: Map<string, number>,
 ): ChatListItem[] {
   const index = chats.findIndex((item) => item.chatId === message.chatId)
   const current = index === -1 ? undefined : chats[index]
@@ -240,6 +268,9 @@ function applyMessageCreated(
       message.chatId,
       Math.max(countedIncomingSeq.get(message.chatId) ?? 0, message.seq),
     )
+    // T052: the frame's ack is still in the debounce window — a №12
+    // snapshot racing it cannot have counted this message.
+    unconfirmedTails.set(message.chatId, (unconfirmedTails.get(message.chatId) ?? 0) + 1)
   }
   const updated: ChatListItem = {
     ...current,
@@ -307,6 +338,7 @@ function applySyncDelta(
   update: SyncChatListUpdate,
   currentUserId: string | null,
   countedIncomingSeq: Map<string, number>,
+  unconfirmedTails: Map<string, number>,
 ): ChatListItem[] {
   const tail = update.messages.at(-1)
   const pageTop = tail?.seq ?? 0
@@ -319,14 +351,16 @@ function applySyncDelta(
     if (update.peer === undefined || tail === undefined) {
       return chats
     }
+    const pageIncoming = countIncoming(update.messages, currentUserId, 0)
     const unreadCount =
-      update.unreadCount !== undefined
-        ? update.unreadCount + countIncoming(update.messages, currentUserId, 0)
-        : countIncoming(update.messages, currentUserId, 0)
+      update.unreadCount !== undefined ? update.unreadCount + pageIncoming : pageIncoming
     countedIncomingSeq.set(
       update.chatId,
       Math.max(countedIncomingSeq.get(update.chatId) ?? 0, pageTop),
     )
+    if (pageIncoming > 0) {
+      unconfirmedTails.set(update.chatId, pageIncoming)
+    }
     const created: ChatListItem = {
       chatId: update.chatId,
       peer: update.peer,
@@ -347,15 +381,23 @@ function applySyncDelta(
       // The №26 anchor: assignment (not increment) — the server value
       // outranks any local optimism, converging the badge up (missed
       // messages, US3-2) or down (offline reads flushed before №26,
-      // US3-7).
-      unreadCount = update.unreadCount + countIncoming(update.messages, currentUserId, 0)
+      // US3-7). T052: the anchor re-bases the badge, so the un-acked
+      // tail is exactly the page's incoming — the pre-ack snapshot
+      // cannot know any of it.
+      const pageIncoming = countIncoming(update.messages, currentUserId, 0)
+      unreadCount = update.unreadCount + pageIncoming
+      unconfirmedTails.set(update.chatId, pageIncoming)
     } else {
       // The №15 continuation: only messages above the counted
       // high-water — a realtime-raced message already counted is
-      // skipped (US1-3).
-      unreadCount =
-        current.unreadCount +
-        countIncoming(update.messages, currentUserId, countedIncomingSeq.get(update.chatId) ?? 0)
+      // skipped (US1-3). Everything it adds is un-acked (T052).
+      const added = countIncoming(
+        update.messages,
+        currentUserId,
+        countedIncomingSeq.get(update.chatId) ?? 0,
+      )
+      unreadCount = current.unreadCount + added
+      unconfirmedTails.set(update.chatId, (unconfirmedTails.get(update.chatId) ?? 0) + added)
     }
     countedIncomingSeq.set(
       update.chatId,
@@ -377,10 +419,29 @@ function applySyncDelta(
  * сбрасывается до разблокировки») — the moment of blocking is the value
  * the user saw; a just-blocked or unblocked chat adopts the server
  * value (the unblock refetch converges it).
+ *
+ * T052 (entry race): an UNBLOCKED chat with an unconfirmed counted
+ * tail keeps the optimistic badge — the snapshot is delivery-bounded
+ * (`seq ≤ delivered_up_to_seq`) and the tail's №25 is still inside the
+ * debounce window, so `unreadCount` lower than the local badge is
+ * ambiguous by contract (not-yet-acked vs read-elsewhere) and must not
+ * erase what was already counted. Once the tail is confirmed
+ * (confirmCountedTails — the completed cycle flushed №25) the plain
+ * server replace takes over again and the badge converges DOWN too.
  */
-function mergeRefetchedChats(items: ChatListItem[], previous: ChatListItem[]): ChatListItem[] {
+function mergeRefetchedChats(
+  items: ChatListItem[],
+  previous: ChatListItem[],
+  unconfirmedTails: ReadonlyMap<string, number>,
+): ChatListItem[] {
   const merged = items.map((item) => {
     if (!item.blockedByMe) {
+      if ((unconfirmedTails.get(item.chatId) ?? 0) > 0) {
+        const local = previous.find((entry) => entry.chatId === item.chatId)
+        if (local !== undefined && !local.blockedByMe && local.unreadCount > item.unreadCount) {
+          return { ...item, unreadCount: local.unreadCount }
+        }
+      }
       return item
     }
     const local = previous.find((entry) => entry.chatId === item.chatId)
@@ -440,6 +501,14 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
    */
   const countedIncomingSeqRef = useRef(new Map<string, number>())
   /**
+   * T052: per-chat count of optimistically counted incoming whose №25
+   * ack has not been flushed yet — the merge protection against a
+   * racing pre-ack №12 snapshot. Cleared by confirmCountedTails() (the
+   * completed catch-up cycle flushed №25) and on a user switch, like
+   * every per-chat bookkeeping here; never persisted.
+   */
+  const unconfirmedTailsRef = useRef(new Map<string, number>())
+  /**
    * Tombstones of `group.you_removed` groups (T058, §5.2/§1): chatIds
    * whose later frames — the post-commit order race may still deliver
    * message/roster frames committed before the removal — must be
@@ -454,6 +523,7 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
     // user's chats (even id-identical ones — the same dialog seen
     // from the peer side) must not inherit the old session's counts.
     countedIncomingSeqRef.current = new Map()
+    unconfirmedTailsRef.current = new Map()
     removedGroupIdsRef.current = new Set()
   }, [currentUserId])
 
@@ -485,7 +555,7 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
         }
         setError(null)
         setStatus('ready')
-        applyChats((previous) => mergeRefetchedChats(items, previous))
+        applyChats((previous) => mergeRefetchedChats(items, previous, unconfirmedTailsRef.current))
         // T065: тот же коммит несёт и строки, и ревизию базиса —
         // потребители №12-полей строк сходятся строго по этому факту.
         setListRevision((revision) => revision + 1)
@@ -526,6 +596,7 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
           event.message,
           currentUserIdRef.current,
           countedIncomingSeqRef.current,
+          unconfirmedTailsRef.current,
         ),
       )
     })
@@ -614,6 +685,10 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
     [applyChats],
   )
 
+  const confirmCountedTails = useCallback(() => {
+    unconfirmedTailsRef.current.clear()
+  }, [])
+
   const applySyncUpdate = useCallback(
     (update: SyncChatListUpdate) => {
       if (removedGroupIdsRef.current.has(update.chatId)) {
@@ -622,7 +697,13 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
         return
       }
       applyChats((previous) =>
-        applySyncDelta(previous, update, currentUserIdRef.current, countedIncomingSeqRef.current),
+        applySyncDelta(
+          previous,
+          update,
+          currentUserIdRef.current,
+          countedIncomingSeqRef.current,
+          unconfirmedTailsRef.current,
+        ),
       )
     },
     [applyChats],
@@ -635,6 +716,7 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
     listRevision,
     reload,
     markChatReadLocally,
+    confirmCountedTails,
     applySyncUpdate,
   }
 }

@@ -360,7 +360,14 @@ describe('useSync — loop A: №26 delta application (US1-1…US1-3)', () => {
     expect(views.seqs(CHAT_B)).toEqual([1, 2, 3, 4])
     expect(getCursor(USER, CHAT_B)).toBe(4)
     expect(getCursor(USER, CHAT_A)).toBe(30)
-    expect(mockedDeliveryAck).toHaveBeenCalledWith([{ chatId: CHAT_B, upToSeq: 4 }])
+    // T052: the cycle START re-feeds the persisted cursor tails through
+    // the shared batcher (the secondary-window top-up below), so the
+    // №25 batch of this cycle carries CHAT_A's tail alongside the
+    // applied page's ack.
+    expect(mockedDeliveryAck).toHaveBeenCalledWith([
+      { chatId: CHAT_A, upToSeq: 30 },
+      { chatId: CHAT_B, upToSeq: 4 },
+    ])
   })
 })
 
@@ -739,5 +746,66 @@ describe('useSync — flushPendingReads pre-step (§3.1/§6, T034)', () => {
 
     expect(mockedMarkChatRead).not.toHaveBeenCalled()
     expect(mockedSync).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * T052 secondary window (cursor ahead without a delta): the persisted
+ * cursor (cursors.ts) may legitimately run AHEAD of the server
+ * delivery position — the previous session's debounce ack was lost
+ * (the batcher is in-memory, the cursor is the persisted echo), so №26
+ * takes the effective cursor max(client, server), returns NO delta at
+ * all and nothing in the old cycle moved `delivered_up_to_seq`: the
+ * server-unread counter of №12 stayed 0 and the entry badge had no
+ * re-anchor until a live frame arrived. The cycle START now re-feeds
+ * every persisted cursor tail through the shared batcher — №25 is
+ * idempotent and monotone (server GREATEST), so the end-of-cycle
+ * flush closes the gap and the consumer's after-ack №12 re-anchor
+ * counts the tail.
+ */
+describe('useSync — cursor-tail top-up (T052, вторичное окно)', () => {
+  it('acks the persisted cursor tail through the batcher even when №26 returns no deltas', async () => {
+    advanceCursor(USER, CHAT_A, 7)
+    mockedSync.mockResolvedValue(syncResponse([]))
+    const result = mountSync()
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    expect(mockedSync).toHaveBeenCalledWith([{ chatId: CHAT_A, upToSeq: 7 }], 20, 50)
+    expect(mockedDeliveryAck).toHaveBeenCalledWith([{ chatId: CHAT_A, upToSeq: 7 }])
+    expect(getCursor(USER, CHAT_A)).toBe(7)
+  })
+
+  it('merges the top-up with the applied pages of the same cycle into one №25 batch (per-chat max)', async () => {
+    advanceCursor(USER, CHAT_A, 7)
+    mockedSync.mockResolvedValueOnce(
+      syncResponse([delta({ chatId: CHAT_B, messages: messages(CHAT_B, 1, 2), lastSeq: 2 })]),
+    )
+    const result = mountSync()
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    expect(mockedDeliveryAck).toHaveBeenCalledTimes(1)
+    expect(mockedDeliveryAck).toHaveBeenCalledWith([
+      { chatId: CHAT_A, upToSeq: 7 },
+      { chatId: CHAT_B, upToSeq: 2 },
+    ])
+  })
+
+  it('a dropped (§5.5) chat tail is suppressed by the batcher itself — the top-up never poisons №25', async () => {
+    advanceCursor(USER, CHAT_A, 7)
+    getAckBatcher(USER).drop(CHAT_A)
+    mockedSync.mockResolvedValue(syncResponse([]))
+    const result = mountSync()
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    expect(mockedDeliveryAck).not.toHaveBeenCalled()
   })
 })
