@@ -27,6 +27,18 @@
  * badge was counted before), and refetches replace the local state
  * wholesale, so the server stays the single source of truth.
  *
+ * T054 (sender lift, 008b Phase 19): the sender's own position has a
+ * SECOND source besides frames — the outbox confirm. The №16 group
+ * fanout is the active roster MINUS the sender (realtime-group-
+ * events.md §3.7 — the devices already hold the durable POST answer),
+ * so `applyOwnSentMessage(message)` (wired by MessengerPage's
+ * `handleConfirmed`) runs the SAME `applyMessageCreated` reducer over
+ * the server-confirmed copy: the row lifts at once in the live
+ * session (preview + re-sort; badge never grows — outgoing; dedup by
+ * `message.id` keeps a direct own-echo frame racing the confirm a
+ * no-op), closing the §3.7 group gap that held the sender's row at
+ * its old position until the next №12 refetch.
+ *
  * Catch-up deltas (feature 005, T023): `applySyncUpdate` merges the
  * №26/№15 pages useSync applied — a known chat's preview/position move
  * to the page tail (dedup: only a strictly newer `seq` replaces the
@@ -201,6 +213,22 @@ export interface UseChatListResult {
    * blocked chat stays frozen (US3-5).
    */
   readonly applySyncUpdate: (update: SyncChatListUpdate) => void
+  /**
+   * T054 (sender lift, 008b Phase 19; FR-014 «по дате последнего
+   * сообщения полученного ИЛИ отправленного»): applies the user's OWN
+   * message confirmed by the server (№16 201/200, the outbox
+   * `onConfirmed` path — MessengerPage `handleConfirmed`) with the
+   * ready `message.created` reducer — the row's preview/position move
+   * at once, the badge never grows (outgoing), a duplicate (the
+   * direct own-echo frame racing the confirm) dedups by `message.id`.
+   * The §3.7 group gap closer: the group fanout is the roster MINUS
+   * the sender («the sender's own stream stays silent»), so for
+   * groups this confirm is the ONLY live source of the sender's row
+   * position — without it the row waited for the next №12 refetch
+   * (reconnect/reload); for direct chats it is insurance against a
+   * lost own-echo frame.
+   */
+  readonly applyOwnSentMessage: (message: Message) => void
 }
 
 /**
@@ -709,6 +737,21 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
     [applyChats],
   )
 
+  const applyOwnSentMessage = useCallback(
+    (message: Message) => {
+      applyChats((previous) =>
+        applyMessageCreated(
+          previous,
+          message,
+          currentUserIdRef.current,
+          countedIncomingSeqRef.current,
+          unconfirmedTailsRef.current,
+        ),
+      )
+    },
+    [applyChats],
+  )
+
   return {
     chats,
     status,
@@ -718,5 +761,6 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
     markChatReadLocally,
     confirmCountedTails,
     applySyncUpdate,
+    applyOwnSentMessage,
   }
 }

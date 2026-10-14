@@ -1349,3 +1349,119 @@ describe('useChatList pre-ack №12 merge (T052, entry race)', () => {
     expect(result.current.chats[0]?.unreadCount).toBe(0)
   })
 })
+
+/**
+ * T054 (sender lift, 008b Phase 19): the №16 group fanout is the
+ * active roster MINUS the sender (realtime-group-events.md §3.7 —
+ * «the sender's own stream stays silent», the devices already hold
+ * the durable POST answer), so the outbox confirm — not a frame — is
+ * the only live source of the sender's own row position. The hook
+ * exposes `applyOwnSentMessage(message)` for exactly that caller
+ * (MessengerPage `handleConfirmed`): the ready `applyMessageCreated`
+ * reducer lifts the row with ANY message (preview + sort, badge only
+ * for incoming, dedup by `message.id`), so an own confirm is a pure
+ * position/preview update — the badge never grows, a direct-chat
+ * own-echo frame racing the confirm dedups to the SAME reference, and
+ * the FR-020 frozen badge of a blocked chat is untouched (an outgoing
+ * message is not incoming bookkeeping).
+ */
+describe('useChatList own sent message (T054, №16 confirm)', () => {
+  it('lifts a messageless known group row to the top with the own message as preview — badge stays 0', async () => {
+    installStream()
+    const group = groupRow()
+    const activeDirect = chatItem({
+      chatId: 'chat-1',
+      lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+    })
+    mockedListChats.mockResolvedValue([activeDirect, group])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1', GROUP_ID])
+
+    act(() => {
+      result.current.applyOwnSentMessage(
+        makeMessage(GROUP_ID, 'g-1', 1, ME, '2026-09-20T14:00:00.000Z', 'моё сообщение'),
+      )
+    })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual([GROUP_ID, 'chat-1'])
+    const lifted = result.current.chats.find((item) => item.chatId === GROUP_ID)
+    expect(lifted?.lastMessage?.id).toBe('g-1')
+    expect(lifted?.lastMessage?.text).toBe('моё сообщение')
+    // Исходящее: бейдж не растёт (FR-014 — только входящие).
+    expect(lifted?.unreadCount).toBe(0)
+  })
+
+  it('is idempotent: re-applying the same message.id and a later own-echo frame keep the SAME reference (US1-3)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    const own = makeMessage(GROUP_ID, 'g-1', 1, ME, '2026-09-20T14:00:00.000Z')
+    act(() => {
+      result.current.applyOwnSentMessage(own)
+    })
+    const afterConfirm = result.current.chats
+    expect(afterConfirm[0]?.lastMessage?.id).toBe('g-1')
+
+    act(() => {
+      result.current.applyOwnSentMessage(own)
+    })
+    expect(result.current.chats).toBe(afterConfirm)
+
+    // Direct-style own-echo кадр с тем же id поверх confirm'а —
+    // единичное применение, без задвоения превью.
+    emitMessageCreated(stream, own)
+    expect(result.current.chats).toBe(afterConfirm)
+    expect(result.current.chats[0]?.unreadCount).toBe(0)
+  })
+
+  it('ignores an own message of an unknown chatId — no row materializes, no refetch', async () => {
+    installStream()
+    mockedListChats.mockResolvedValue([chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    const before = result.current.chats
+
+    act(() => {
+      result.current.applyOwnSentMessage(
+        makeMessage('chat-unknown', 'u-1', 1, ME, '2026-09-20T14:00:00.000Z'),
+      )
+    })
+
+    expect(result.current.chats).toBe(before)
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the FR-020 frozen badge of a blocked chat — an own confirm is not incoming bookkeeping', async () => {
+    installStream()
+    mockedListChats.mockResolvedValue([
+      chatItem({
+        blockedByMe: true,
+        unreadCount: 3,
+        lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+      }),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    act(() => {
+      result.current.applyOwnSentMessage(
+        makeMessage('chat-1', 'm-1', 20, ME, '2026-09-20T14:00:00.000Z'),
+      )
+    })
+
+    const chat = result.current.chats.find((item) => item.chatId === 'chat-1')
+    expect(chat?.unreadCount).toBe(3)
+    expect(chat?.lastMessage?.id).toBe('m-1')
+  })
+})
