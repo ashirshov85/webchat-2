@@ -36,7 +36,7 @@ import { ContactsModal } from '../ContactsModal'
  * становятся клиентскими (с 008a T022 — по цепочке имён
  * `alias → displayName → username` (locale ru прототипа, тай-брейк
  * username 'und') и подстрока [цепочка, username, email] без
- * регистра); пометки «заблокирован»/«чат удалён» — из
+ * регистра); пометки «заблокирован»/«чат не создан» — из
  * пропа chats (№12, blockedByMe/наличие связанного чата); клик без
  * чата — БЕЗ действия (Clarification: создание чата — только пунктом
  * «Создать чат»); «⋯»-меню (ContextMenu) с подтверждениями
@@ -267,7 +267,7 @@ describe('ContactsModal список (FR-011)', () => {
 })
 
 describe('ContactsModal пометки и клики строк (FR-013)', () => {
-  it('помечает «заблокирован» (blockedByMe связанного чата) и «чат удалён» (чата нет)', async () => {
+  it('помечает «заблокирован» (blockedByMe связанного чата) и «чат не создан» (чата нет)', async () => {
     const { container } = renderModal()
     await screen.findByText('alice')
 
@@ -275,10 +275,10 @@ describe('ContactsModal пометки и клики строк (FR-013)', () =>
       /заблокирован/i,
     )
     expect(rowOf(container, 'Борис').querySelector('.c-prev')?.textContent ?? '').toMatch(
-      /чат удалён/i,
+      /чат не создан/i,
     )
     expect(within(rowOf(container, 'alice')).queryByText(/заблокирован/i)).toBeNull()
-    expect(within(rowOf(container, 'alice')).queryByText(/чат удалён/i)).toBeNull()
+    expect(within(rowOf(container, 'alice')).queryByText(/чат не создан/i)).toBeNull()
   })
 
   it('клик по контакту с чатом — №11 ensureChat → onOpenChat(ChatView) (004)', async () => {
@@ -413,7 +413,7 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
     expect(await screen.findByText('Контакт разблокирован — анна')).toBeVisible()
   })
 
-  it('удаление чата: подтверждение → №14 + тост; после №12-обновления — «чат удалён» и пункт «Создать чат»', async () => {
+  it('удаление чата: подтверждение → №14 + тост; после №12-обновления — «чат не создан» и пункт «Создать чат»', async () => {
     const { container, rerenderChats, onOpenChat, onChatDeleted } = renderModal()
     mockedEnsureChat.mockResolvedValue(chatViewOf(ALICE_CHAT))
     await screen.findByText('alice')
@@ -438,7 +438,7 @@ describe('ContactsModal меню «⋯» (FR-013, FR-014)', () => {
 
     rerenderChats([CAROL_CHAT])
     expect(rowOf(container, 'alice').querySelector('.c-prev')?.textContent ?? '').toMatch(
-      /чат удалён/i,
+      /чат не создан/i,
     )
     openContactMenu(container, 'alice')
     expect(menuLabels()).toEqual([
