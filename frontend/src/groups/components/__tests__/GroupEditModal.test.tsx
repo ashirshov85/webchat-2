@@ -650,3 +650,92 @@ describe('GroupEditModal цепочка имён US1 (T049, паритет с «
     expect(screen.queryByRole('button', { name: 'Добавить участника Дэвид' })).toBeNull()
   })
 })
+
+/**
+ * Единообразные строки черновика состава (T050, баг-фикс): ВСЕ строки
+ * `.grp-edit-members` — и ростер №28, и перенесённые «+» из №20 — несут
+ * подпись `.c-prev` «{username} · {email}» ДОСЛОВНО как строка
+ * предложения `.grp-edit-add` этой же модали (до фикса подпись
+ * пропадала при переносе строки из предложения в черновик, а строки
+ * ростера её не имели вовсе): сверху имя-цепочка T049, ниже —
+ * identity-контекст; пустое состояние «Нет участников» подписи не
+ * имеет, aria-метки и аватары не регрессируют.
+ */
+describe('GroupEditModal единообразная подпись черновика (T050)', () => {
+  /** Открытая форма с именованным ростером и именованным предложением №20. */
+  async function renderNamedReady() {
+    mockListContacts.mockResolvedValue(namedOffer())
+    renderModal({ members: namedRoster() })
+    await screen.findByRole('button', { name: 'Добавить участника Дэвид' })
+  }
+
+  function draftList(): HTMLElement {
+    return document.querySelector('.grp-edit-members') as HTMLElement
+  }
+
+  /** Строка черновика по aria-кнопке «Удалить участника {цепочка}». */
+  function draftRow(chain: string): HTMLElement {
+    return screen
+      .getByRole('button', { name: `Удалить участника ${chain}` })
+      .closest('.pick-row') as HTMLElement
+  }
+
+  it('(а) строки черновика ИЗ ростера №28 несут подпись «username · email» дословно как предложение', async () => {
+    await renderNamedReady()
+
+    // Имя — цепочка T049, подпись — identity-контекст «username · email».
+    const frankRow = draftRow('Франк')
+    expect(frankRow.querySelector('.c-name')?.textContent).toBe('Франк')
+    expect(frankRow.querySelector('.c-prev')?.textContent).toBe('bob · bob@example.com')
+
+    const graceRow = draftRow('Grace')
+    expect(graceRow.querySelector('.c-name')?.textContent).toBe('Grace')
+    expect(graceRow.querySelector('.c-prev')?.textContent).toBe('carol · carol@example.com')
+
+    const heidiRow = draftRow('heidi')
+    expect(heidiRow.querySelector('.c-name')?.textContent).toBe('heidi')
+    expect(heidiRow.querySelector('.c-prev')?.textContent).toBe('heidi · heidi@example.com')
+
+    // Подписи живут в черновике .grp-edit-members, а не в предложении.
+    expect(draftList().contains(frankRow.querySelector('.c-prev') as Node)).toBe(true)
+  })
+
+  it('(б) строка, добавленная из предложения «+», сохраняет подпись «username · email» в черновике', async () => {
+    await renderNamedReady()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить участника Дэвид' }))
+
+    // Строка переехала из .grp-edit-add в .grp-edit-members — подпись
+    // (раньше пропадала) и имя-цепочка на месте.
+    const addedRow = draftRow('Дэвид')
+    expect(addedRow.querySelector('.c-name')?.textContent).toBe('Дэвид')
+    expect(addedRow.querySelector('.c-prev')?.textContent).toBe('frank · frank@example.com')
+    expect(draftList().contains(addedRow)).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Добавить участника Дэвид' })).toBeNull()
+  })
+
+  it('(в) регресс: предложение неизменно, «Нет участников» без подписи, aria «Удалить участника {цепочка}» жив', async () => {
+    await renderNamedReady()
+
+    // Предложение .grp-edit-add — имя-цепочка + подпись (не регрессировало).
+    const offerRow = screen
+      .getByRole('button', { name: 'Добавить участника Дэвид' })
+      .closest('.pick-row') as HTMLElement
+    expect(offerRow.querySelector('.c-name')?.textContent).toBe('Дэвид')
+    expect(offerRow.querySelector('.c-prev')?.textContent).toBe('frank · frank@example.com')
+    expect(document.querySelector('.grp-edit-add')?.contains(offerRow)).toBe(true)
+
+    // aria-label «Удалить участника {цепочка}» не регрессировал.
+    expect(
+      screen.getByRole('button', { name: 'Удалить участника Франк' }).getAttribute('aria-label'),
+    ).toBe('Удалить участника Франк')
+
+    // Пустой черновик — «Нет участников» без каких-либо подписей.
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить участника Франк' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить участника Grace' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить участника heidi' }))
+
+    expect(draftList().textContent).toBe('Нет участников')
+    expect(draftList().querySelectorAll('.c-prev')).toHaveLength(0)
+  })
+})
