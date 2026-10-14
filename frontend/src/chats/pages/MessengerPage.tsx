@@ -1245,6 +1245,7 @@ function MessengerMachine() {
     error: chatListError,
     reload: reloadChatList,
     markChatReadLocally,
+    confirmCountedTails,
     applySyncUpdate: applyChatListSync,
     listRevision: chatListRevision,
   } = useChatList(currentUserId)
@@ -1302,7 +1303,7 @@ function MessengerMachine() {
 
   // The §3.1 catch-up loop (feature 005): runs on every SSE (re)open,
   // its `syncing` drives the SyncIndicator below.
-  const { syncing, onChatUpdate } = useSync(currentUserId)
+  const { syncing, error: syncError, onChatUpdate } = useSync(currentUserId)
   const realtime = useRealtime()
 
   // №37 presence heartbeat (007 research.md §E2; 008 T076): keep THIS
@@ -1446,6 +1447,38 @@ function MessengerMachine() {
     chimeOnSyncBatch(syncIncomingRef.current)
     syncIncomingRef.current = 0
   }, [syncing])
+
+  // T052 (entry unread race, 008b Phase 17): №12-снимок ограничен
+  // позицией доставки (`seq ≤ delivered_up_to_seq` — считается только
+  // №25-подтверждённый хвост), поэтому refetch каждого (re)open гоняется
+  // с catch-up-циклом того же (re)open и затирал оптимистичный бейдж
+  // дельты/живых кадров нулём до подтверждения ack'ов. Этот эффект —
+  // falling-edge флага syncing — срабатывает ТОЛЬКО после завершённого
+  // цикла (runCatchUp ожидает batcher.flush() перед resolve: №25
+  // подтверждён, а отменённый более ранний refetch-эффект уже не
+  // применится) и выполняет ОДНОКРАТНЫЙ реанкор: confirmCountedTails()
+  // разоружает защиту merge (после-ack снимок серверно-авторитарен —
+  // бейдж сходится и вниз, US3-7), reloadChatList() перезапрашивает
+  // №12 уже после-ack. Один реанкор на завершённый цикл — не на каждый
+  // ack, цикла «refetch ⇄ sync» нет (реанкор не запускает sync);
+  // сорвавшийся цикл (syncError) защиту НЕ разоружает — хвосты не
+  // подтверждены, следующий успешный цикл реанкорит сам.
+  const reanchorRanRef = useRef(false)
+  useEffect(() => {
+    if (syncing) {
+      reanchorRanRef.current = true
+      return
+    }
+    if (!reanchorRanRef.current) {
+      return
+    }
+    reanchorRanRef.current = false
+    if (syncError !== null) {
+      return
+    }
+    confirmCountedTails()
+    reloadChatList()
+  }, [syncing, syncError, confirmCountedTails, reloadChatList])
 
   // Applied realtime frames confirm through the same shared №25
   // batcher as the catch-up pages (sync-protocol.md §2): the frame's

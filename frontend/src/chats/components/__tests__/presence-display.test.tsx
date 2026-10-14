@@ -320,7 +320,7 @@ describe('ContactsModal presence dots (T040 → T042, US3-AS2, FR-024, data-mode
     expect(contactRowOf(container, 'анна').querySelector('.c-prev')).toBeNull()
   })
 
-  it('008a T048: пометки «заблокирован»/«чат удалён» приоритетнее presence-статуса в `.c-prev`', async () => {
+  it('008a T048: пометки «заблокирован»/«чат не создан» приоритетнее presence-статуса в `.c-prev`', async () => {
     mockedListContacts.mockResolvedValue([contactView(ALICE, 'alice'), contactView(BOB, 'Борис')])
     presence.entries.set(ALICE, { status: 'online', rev: 1 })
     presence.entries.set(BOB, { status: 'online', rev: 1 })
@@ -341,7 +341,7 @@ describe('ContactsModal presence dots (T040 → T042, US3-AS2, FR-024, data-mode
       'Заблокирован',
     )
     expect(contactRowOf(view.container, 'Борис').querySelector('.c-prev')?.textContent).toBe(
-      'Чат удалён',
+      'Чат не создан',
     )
   })
 })

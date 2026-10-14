@@ -355,6 +355,9 @@ describe('№12-рефетч — легитимный источник сход�
     await toggleBell(ALICE_CHAT_ID, 'alice', false)
 
     // (Ре)подключение рефетчит №12 — серверная правда ПОСЛЕ переключения.
+    // T052: завершённый catch-up-цикл того же (re)open добавляет свой
+    // реанкор-рефетч — счёт вызовов толерантен, намерение теста (рефетч
+    // случился и значение сходится) проверяется состоянием ниже.
     mockChats.listChats.mockResolvedValue([
       { ...chatRow(ALICE_CHAT_ID, ALICE, 'alice'), soundEnabled: false },
     ])
@@ -362,7 +365,7 @@ describe('№12-рефетч — легитимный источник сход�
       stream.onOpen?.()
     })
     await waitFor(() => {
-      expect(mockChats.listChats).toHaveBeenCalledTimes(2)
+      expect(mockChats.listChats.mock.calls.length).toBeGreaterThanOrEqual(2)
     })
     emitMessageCreated(stream, makeMessage(ALICE_CHAT_ID, 1, ALICE))
     expect(mockSound.playBellTone).not.toHaveBeenCalled()
@@ -374,7 +377,7 @@ describe('№12-рефетч — легитимный источник сход�
       stream.onOpen?.()
     })
     await waitFor(() => {
-      expect(mockChats.listChats).toHaveBeenCalledTimes(3)
+      expect(mockChats.listChats.mock.calls.length).toBeGreaterThanOrEqual(3)
     })
     await waitFor(() => {
       expect(bell()).toHaveAttribute('aria-pressed', 'true')

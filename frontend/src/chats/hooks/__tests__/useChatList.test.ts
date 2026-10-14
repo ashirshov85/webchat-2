@@ -1125,6 +1125,41 @@ describe('useChatList blocked badge freeze (US3-5, FR-020 of 004)', () => {
     expect(chat?.lastMessage?.id).toBe('a-3')
   })
 
+  it('preserves the frozen value across the T052 entry race too — a №26-counted tail never thaws a blocked badge', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValueOnce([
+      chatItem({
+        blockedByMe: true,
+        unreadCount: 3,
+        lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+      }),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-1',
+        messages: [makeMessage('chat-1', 'a-2', 11, PEER_A, '2026-09-20T12:00:00.000Z')],
+        unreadCount: 7,
+      })
+    })
+    expect(result.current.chats[0]?.unreadCount).toBe(3)
+
+    mockedListChats.mockResolvedValueOnce([chatItem({ blockedByMe: true, unreadCount: 8 })])
+    act(() => {
+      stream.onOpen?.()
+    })
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await settleRefetch()
+
+    expect(result.current.chats[0]?.unreadCount).toBe(3)
+  })
+
   it('preserves the frozen value across №12 refetches while the block persists and converges after unblock', async () => {
     installStream()
     mockedListChats.mockResolvedValueOnce([blockedChatItem()])
@@ -1154,5 +1189,163 @@ describe('useChatList blocked badge freeze (US3-5, FR-020 of 004)', () => {
     await waitFor(() => {
       expect(result.current.chats[0]?.unreadCount).toBe(8)
     })
+  })
+})
+
+/**
+ * Pumps the microtask chain of an in-flight №12 fetch (the effect body
+ * continues after exactly one `await listChats()` hop) so a triggered
+ * refetch is guaranteed APPLIED before the next assertion — waitFor on
+ * the call count alone can pass while the merge has not landed yet.
+ */
+async function settleRefetch(hops = 4): Promise<void> {
+  for (let hop = 0; hop < hops; hop += 1) {
+    await act(async () => {
+      await Promise.resolve()
+    })
+  }
+}
+
+/**
+ * T052 (entry unread race; spec 008b Phase 17, FR-007 user report):
+ * №12's `unreadCount` is DELIVERY-BOUNDED — `seq ≤ LEAST(last_seq,
+ * delivered_up_to_seq)`, only the №25-acked tail counts — while the
+ * refetch every SSE (re)open fires races the catch-up cycle of the
+ * SAME (re)open: a №26 delta (or a live frame) counts the missed
+ * incoming optimistically, and the №12 response — a snapshot taken
+ * before the debounced №25 moved the delivery position — still answers
+ * `unreadCount: 0`, so the wholesale merge replace ERASED the badge at
+ * entry (the counter appeared only after the NEXT live message).
+ *
+ * The merge must keep the already-counted optimistic tail while its
+ * ack is unconfirmed (a pre-ack snapshot cannot know it — same
+ * `lastMessage.id`, lower counter is ambiguous by contract), and the
+ * server stays the truth AFTER the ack: `confirmCountedTails()` — the
+ * completed catch-up cycle flushed №25 — re-arms the plain replace so
+ * a legitimately lower value converges the badge DOWN too (US3-7,
+ * read from another device / offline №17 flush before the snapshot).
+ * FR-020 is untouched: a blocked chat never counts, its frozen badge
+ * rides the existing merge rule (the test above).
+ */
+describe('useChatList pre-ack №12 merge (T052, entry race)', () => {
+  it('a racing pre-ack №12 (same lastMessage.id, unreadCount 0) does not erase the №26-counted badge', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValueOnce([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+      }),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    // The №26 delta of the same (re)open: pre-ack anchor 0, the page's
+    // single incoming counts on top — the optimistic badge of 1 with
+    // `countedIncomingSeq` = 11.
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-1',
+        messages: [makeMessage('chat-1', 'a-2', 11, PEER_A, '2026-09-20T12:00:00.000Z')],
+        unreadCount: 0,
+      })
+    })
+    expect(result.current.chats[0]?.unreadCount).toBe(1)
+
+    // The racing №12 lands AFTER the delta (network order): the message
+    // is committed (same lastMessage.id) but №25 has not moved the
+    // delivery position yet — `unreadCount: 0`.
+    mockedListChats.mockResolvedValueOnce([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-2', 11, PEER_A, '2026-09-20T12:00:00.000Z'),
+        unreadCount: 0,
+      }),
+    ])
+    act(() => {
+      stream.onOpen?.()
+    })
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await settleRefetch()
+
+    expect(result.current.chats[0]?.unreadCount).toBe(1)
+  })
+
+  it('the same protection holds for a realtime-counted tail — a live frame raced the refetch', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValueOnce([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+      }),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitMessageCreated(stream, makeMessage('chat-1', 'a-2', 20, PEER_A, '2026-09-20T12:00:00.000Z'))
+    expect(result.current.chats[0]?.unreadCount).toBe(1)
+
+    mockedListChats.mockResolvedValueOnce([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-2', 20, PEER_A, '2026-09-20T12:00:00.000Z'),
+        unreadCount: 0,
+      }),
+    ])
+    act(() => {
+      stream.onOpen?.()
+    })
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await settleRefetch()
+
+    expect(result.current.chats[0]?.unreadCount).toBe(1)
+  })
+
+  it('converges DOWN after confirmCountedTails() — the server is the truth once №25 is flushed (US3-7)', async () => {
+    installStream()
+    mockedListChats.mockResolvedValueOnce([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-1', 10, PEER_A, '2026-09-20T10:00:00.000Z'),
+      }),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    act(() => {
+      result.current.applySyncUpdate({
+        chatId: 'chat-1',
+        messages: [makeMessage('chat-1', 'a-2', 11, PEER_A, '2026-09-20T12:00:00.000Z')],
+        unreadCount: 0,
+      })
+    })
+    expect(result.current.chats[0]?.unreadCount).toBe(1)
+
+    // The catch-up cycle completed — the №25 flush confirmed the tail,
+    // so the protection is re-armed off and a legitimately lower value
+    // (the offline №17 flush landed before this snapshot — read from
+    // another device) converges the badge down.
+    act(() => {
+      result.current.confirmCountedTails()
+    })
+    mockedListChats.mockResolvedValueOnce([
+      chatItem({
+        lastMessage: makeMessage('chat-1', 'a-2', 11, PEER_A, '2026-09-20T12:00:00.000Z'),
+        unreadCount: 0,
+      }),
+    ])
+    act(() => {
+      result.current.reload()
+    })
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await settleRefetch()
+
+    expect(result.current.chats[0]?.unreadCount).toBe(0)
   })
 })

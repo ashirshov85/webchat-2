@@ -20,7 +20,7 @@
  *
  * - Пометки из пропа `chats` (№12, владелец — MessengerPage): связанный
  *   direct-чат с `blockedByMe` → «заблокирован» (+ класс .blocked);
- *   контакта без чата → «чат удалён» (+ .nochat, подсказка title).
+ *   контакта без чата → «чат не создан» (+ .nochat, подсказка title).
  *
  *   T097 (bug 16): чат удалён → №12 теряет пару, и блокировка контакта
  *   больше ниоткуда не проецировалась. Мерж ТРЁХ источников, приоритет
@@ -104,7 +104,7 @@
  *
  * Превью-статус `.c-prev` (feature 008a, US3, T048; FR-011, ui-behavior
  * §3, прототип renderContactsModal — `flags.length ? capFirst(…) :
- * presenceOf(c)`): пометки «заблокирован»/«чат удалён» приоритетнее —
+ * presenceOf(c)`): пометки «заблокирован»/«чат не создан» приоритетнее —
  * при них превью остаётся прежним; иначе `.c-prev` несёт presence-текст
  * через `usePresenceEntry` (T047): online — «В сети», offline с
  * раскрытым `lastSeenAt` — «Был в сети — {время}» (`lastSeenFormat`
@@ -218,19 +218,19 @@ function boundChatOf(chats: readonly ChatListItem[], contact: ContactView): Boun
   return null
 }
 
-/** Пометки строки (renderContactsModal прототипа): «заблокирован», «чат удалён». */
+/** Пометки строки (renderContactsModal прототипа): «заблокирован», «чат не создан». */
 function contactFlags(bound: BoundChat | null, blocked: boolean): string[] {
   const flags: string[] = []
   if (blocked) {
     flags.push('заблокирован')
   }
   if (bound === null) {
-    flags.push('чат удалён')
+    flags.push('чат не создан')
   }
   return flags
 }
 
-/** capFirst прототипа: «Заблокирован, чат удалён». */
+/** capFirst прототипа: «Заблокирован, чат не создан». */
 function capFirst(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1)
 }
@@ -308,7 +308,7 @@ function contactStatusText(entry: PresenceEntry): string {
 /**
  * Превью-статус строки «Контактов» (008a T048; прототип
  * renderContactsModal — flags.length ? capFirst(…) : presenceOf(c)):
- * вызывается ТОЛЬКО без пометок «заблокирован»/«чат удалён» — они
+ * вызывается ТОЛЬКО без пометок «заблокирован»/«чат не создан» — они
  * приоритетнее статуса. Отдельный компонент — хук записи нужен СТРОКЕ
  * (`usePresenceEntry` T047: та же регистрация поверхности и №36-
  * бэкфилл, что у точки аватара), а строки выводятся циклом. Bug 12
@@ -927,7 +927,7 @@ export function ContactsModal({
                   (bound === null ? ' nochat' : '')
                 }
                 aria-label={`Контакт ${displayName}`}
-                title={bound !== null ? 'Открыть чат' : 'Чат удалён — создайте через меню ⋯'}
+                title={bound !== null ? 'Открыть чат' : 'Чат не создан — создайте через меню ⋯'}
                 onClick={() => {
                   handleRowActivate(contact)
                 }}
@@ -938,7 +938,7 @@ export function ContactsModal({
                     <span className="c-name">{displayName}</span>
                   </div>
                   {/* 008a T048 (ui-behavior §3): пометки «заблокирован»/
-                      «чат удалён» приоритетнее; иначе превью-строка —
+                      «чат не создан» приоритетнее; иначе превью-строка —
                       presence-статус «В сети»/«Был в сети — …». */}
                   {flags.length > 0 ? (
                     <div className="c-prev">{capFirst(flags.join(', '))}</div>
