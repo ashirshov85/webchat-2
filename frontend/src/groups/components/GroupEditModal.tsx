@@ -158,17 +158,27 @@ export function GroupEditModal({
    * отображаемое имя — цепочка `alias → displayName → username`
    * (memberChainOf/chainOf, groupMemberName); username нужен отдельно
    * только как источник ЦВЕТА аватара (colorOf(username), FR-004).
+   * T050: email — подпись «username · email» строки черновика,
+   * дословно как предложение renderGrpEditAdd (identity-контекст).
    */
   const draftSourceOf = useCallback(
-    (userId: string): { username: string; displayName: string } => {
+    (userId: string): { username: string; displayName: string; email: string } => {
       const member = rosterById.get(userId)
       if (member !== undefined) {
-        return { username: member.user.username, displayName: memberChainOf(member) }
+        return {
+          username: member.user.username,
+          displayName: memberChainOf(member),
+          email: member.user.email,
+        }
       }
       const contact = contactsById.get(userId)
       return contact !== undefined
-        ? { username: contact.user.username, displayName: chainOf(contact) }
-        : { username: '', displayName: '' }
+        ? {
+            username: contact.user.username,
+            displayName: chainOf(contact),
+            email: contact.user.email,
+          }
+        : { username: '', displayName: '', email: '' }
     },
     [rosterById, contactsById],
   )
@@ -315,13 +325,18 @@ export function GroupEditModal({
           <div className="pick-empty">Нет участников</div>
         ) : (
           draftIds.map((userId) => {
-            const { username, displayName } = draftSourceOf(userId)
+            const { username, displayName, email } = draftSourceOf(userId)
             return (
               <div className="pick-row" key={userId}>
                 <Avatar source={username} initials={initialsOf(displayName)} size={32} />
                 <div className="c-main">
                   <div className="c-top">
                     <span className="c-name">{displayName}</span>
+                  </div>
+                  {/* T050: подпись черновика дословно как предложение
+                      (renderGrpEditAdd) — единообразие всех строк состава. */}
+                  <div className="c-prev">
+                    {username} · {email}
                   </div>
                 </div>
                 <button
