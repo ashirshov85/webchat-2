@@ -1247,6 +1247,7 @@ function MessengerMachine() {
     markChatReadLocally,
     confirmCountedTails,
     applySyncUpdate: applyChatListSync,
+    applyOwnSentMessage,
     listRevision: chatListRevision,
   } = useChatList(currentUserId)
 
@@ -1355,6 +1356,13 @@ function MessengerMachine() {
   const handleConfirmed = useCallback(
     (message: Message) => {
       confirmMessage(message)
+      // T054 (008b Phase 19): №16-confirm поднимает строку отправителя
+      // в «Чатах» живой сессией — для ГРУППЫ это единственный живой
+      // источник позиции (fanout §3.7 = ростер МИНУС отправитель,
+      // «the sender's own stream stays silent»), для direct —
+      // страховка от потерянного own-echo кадра; редупликацию
+      // confirm ⇄ кадр держит dedup по `message.id` редьюсера.
+      applyOwnSentMessage(message)
       setOwnAckIds((previous) => {
         const next = new Set(previous)
         next.add(message.id)
@@ -1367,7 +1375,7 @@ function MessengerMachine() {
         return next
       })
     },
-    [confirmMessage],
+    [confirmMessage, applyOwnSentMessage],
   )
   const outbox = useOutbox(currentUserId, { onConfirmed: handleConfirmed })
 
