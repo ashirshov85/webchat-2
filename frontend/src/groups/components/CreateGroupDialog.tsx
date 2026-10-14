@@ -7,28 +7,30 @@
  * «Отмена»/успех submit через onClose-колбэки владельца).
  *
  * - Поля прототипа: «Название» (#grpName, плейсхоллер «Название
- *   группового чата»), «Участники» + живой фильтр (#grpSearch —
- *   username/email без регистра, выбор переживает фильтр) и
- *   подборщик-пикер №20-контактов (#grpMembers: строки .pick-row —
- *   чекбокс + аватар + имя + подпись «username · email»; порядок №20
- *   серверный, FR-034). Поля описания в создании НЕТ — прототип его не
- *   несёт (описание редактируется позже, grpEditForm — T056).
+ *   группового чата»), «Описание» (#grpDesc — T055, паритет с
+ *   grpEditForm: опционально, ≤256 после trim), «Участники» + живой
+ *   фильтр (#grpSearch — username/email без регистра, выбор переживает
+ *   фильтр) и подборщик-пикер №20-контактов (#grpMembers: строки
+ *   .pick-row — чекбокс + аватар + имя + подпись «username · email»;
+ *   порядок №20 серверный, FR-034).
  *
  * - Валидация (порядок прототипа): сперва ≥1 участник («Выберите хотя
  *   бы одного участника из контактов» — норматив FR-001), затем
  *   название 006 (validateGroupTitle: trim 1–64 — невалидный черновик
- *   не доходит до №27). Пустые состояния подборщика — прототипные
+ *   не доходит до №27) и описание 006 (validateGroupDescription:
+ *   trim ≤256). Пустые состояния подборщика — прототипные
  *   «Нет контактов — сначала добавьте контакт» / «Ничего не найдено»;
  *   сбой №20 — .modal-err + «Повторить» (ожидание 004, FR-034).
  *
  * - Submit — один атомарный №27 `createGroup`: обрезанный title +
- *   memberUserIds в порядке выбора (точное №27-тело без description).
- *   Успех — ровно один тост «Групповой чат создан — {title}» (FR-025,
- *   тост прототипа; слот z-99 живёт в ToastProvider страницы поверх
- *   модали) и `onCreated(GroupView)` — MessengerPage закрывает оболочку,
- *   сходится №12 и открывает окно группы (quickstart §3.1). Серверная
- *   проблема (422 not_in_contacts, сеть) — .modal-err без закрытия:
- *   черновик и выбор остаются исправимыми.
+ *   memberUserIds в порядке выбора; description — только непустое
+ *   после обрезки (семантика №29/GroupEditModal — пустое эквивалентно
+ *   отсутствию). Успех — ровно один тост «Групповой чат создан —
+ *   {title}» (FR-025, тост прототипа; слот z-99 живёт в ToastProvider
+ *   страницы поверх модали) и `onCreated(GroupView)` — MessengerPage
+ *   закрывает оболочку, сходится №12 и открывает окно группы
+ *   (quickstart §3.1). Серверная проблема (422 not_in_contacts, сеть)
+ *   — .modal-err без закрытия: черновик и выбор остаются исправимыми.
  */
 import { useCallback, useEffect, useMemo, useState, type SubmitEvent } from 'react'
 import { listContacts } from '../../api/chats'
@@ -39,7 +41,7 @@ import { problemMessage } from '../../auth/problem'
 import { Avatar } from '../../ui/Avatar'
 import { initialsOf } from '../../ui/avatar'
 import { useToast } from '../../ui/Toast'
-import { validateGroupTitle } from '../validation'
+import { validateGroupDescription, validateGroupTitle } from '../validation'
 import { chainOf } from './groupMemberName'
 import './create-group.css'
 
@@ -55,6 +57,7 @@ type ContactsStatus = 'loading' | 'ready' | 'error'
 export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProps) {
   const showToast = useToast()
   const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
   const [query, setQuery] = useState('')
   /** Insertion order = memberUserIds order of №27. */
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set<string>())
@@ -136,9 +139,19 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
         setError(validatedTitle.error)
         return
       }
+      const validatedDescription = validateGroupDescription(description)
+      if (!validatedDescription.ok) {
+        setError(validatedDescription.error)
+        return
+      }
       const body: CreateGroupRequest = {
         title: validatedTitle.title,
         memberUserIds: [...selectedIds],
+      }
+      // №27 несёт description только непустым после обрезки (семантика
+      // №29/GroupEditModal — пустое эквивалентно отсутствию).
+      if (validatedDescription.description !== undefined) {
+        body.description = validatedDescription.description
       }
       setError(null)
       setPending(true)
@@ -154,7 +167,7 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
           setPending(false)
         })
     },
-    [pending, selectedIds, title, onCreated, showToast],
+    [pending, selectedIds, title, description, onCreated, showToast],
   )
 
   return (
@@ -170,6 +183,20 @@ export function CreateGroupDialog({ onCreated, onCancel }: CreateGroupDialogProp
         value={title}
         onChange={(event) => {
           setTitle(event.target.value)
+        }}
+      />
+
+      <label htmlFor="grp-create-description">Описание</label>
+      <input
+        id="grp-create-description"
+        name="description"
+        type="text"
+        className="grp-create-description"
+        placeholder="Описание группового чата"
+        autoComplete="off"
+        value={description}
+        onChange={(event) => {
+          setDescription(event.target.value)
         }}
       />
 

@@ -17,9 +17,12 @@ import { CreateGroupDialog } from '../CreateGroupDialog'
  * `createGroup` (обрезанный title + memberUserIds в порядке выбора),
  * серверная проблема (422 not_in_contacts) видна БЕЗ закрытия формы.
  *
- * От прототипа (FR-001 — норматив): поля описания в создании НЕТ
- * (группа из формы — только название + участники; описание — grpEditForm
- * T056); пустой подбор участников отклоняется («Выберите хотя бы одного
+ * Поле «Описание» (T055, запрос пользователя — паритет с
+ * grpEditForm/#grpEditDescription прототипа): опционально, ≤256 после
+ * trim (validateGroupDescription 006), отправляется ТОЛЬКО непустое
+ * после обрезки (семантика №29/GroupEditModal), 257+ — клиентская
+ * ошибка в .modal-err без запроса; пустой подбор участников отклоняется
+ * («Выберите хотя бы одного
  * участника из контактов» — порядок проверок прототипа: участники,
  * затем название); живой фильтр подборщика по username/email без
  * регистра с сохранением выбора; пустые состояния «Нет контактов —
@@ -117,6 +120,10 @@ function renderDialog(props: { onCreated?: (group: GroupView) => void; onCancel?
 
 function fillTitle(value: string) {
   fireEvent.change(screen.getByLabelText('Название'), { target: { value } })
+}
+
+function fillDescription(value: string) {
+  fireEvent.change(screen.getByLabelText('Описание'), { target: { value } })
 }
 
 function fillSearch(value: string) {
@@ -338,6 +345,124 @@ describe('CreateGroupDialog №27 submission (FR-002, FR-025)', () => {
     expect(alert).toHaveTextContent('not_in_contacts')
     expect(screen.getByLabelText('Название')).toHaveValue('Проект Альфа')
     expect(screen.getByRole('checkbox', { name: 'Выбрать alice' })).toBeChecked()
+  })
+})
+
+/**
+ * Поле «Описание» в создании группы (T055, запрос пользователя; паритет
+ * с «Редактировать групповой чат» — #grpEditDescription прототипа):
+ * опциональное поле между «Название» и «Участники», валидация 006
+ * (≤256 после trim), тело №27 несёт description только непустым после
+ * обрезки — семантика №29/GroupEditModal; невалидный черновик не
+ * доходит до №27.
+ */
+describe('CreateGroupDialog поле «Описание» (T055, паритет с grpEditForm)', () => {
+  it('renders label «Описание» + input между «Название» и «Участники» (порядок #grpEditForm)', async () => {
+    await renderReady()
+
+    const description = screen.getByLabelText('Описание')
+    expect(description).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Описание группового чата')).toBeInTheDocument()
+    expect(description).toHaveAttribute('autocomplete', 'off')
+
+    // Порядок прототипа: Название → Описание → Участники.
+    const title = screen.getByLabelText('Название')
+    const search = screen.getByPlaceholderText('Поиск контакта — имя, username или email')
+    expect(
+      Boolean(title.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true)
+    expect(
+      Boolean(description.compareDocumentPosition(search) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true)
+  })
+
+  it('submits №27 with a trimmed non-empty description: {title, description, memberUserIds}', async () => {
+    const onCreated = vi.fn()
+    const view = { ...groupView(), description: 'Рабочая группа по проекту' }
+    mockListContacts.mockResolvedValueOnce(contacts())
+    mockCreateGroup.mockResolvedValueOnce(view)
+    renderDialog({ onCreated })
+    await screen.findByRole('checkbox', { name: 'Выбрать alice' })
+
+    fillTitle('Проект Альфа')
+    fillDescription('  Рабочая группа по проекту  ')
+    pick('alice')
+    submit()
+
+    await waitFor(() => {
+      expect(mockCreateGroup).toHaveBeenCalledTimes(1)
+    })
+    expect(mockCreateGroup).toHaveBeenCalledWith({
+      title: 'Проект Альфа',
+      description: 'Рабочая группа по проекту',
+      memberUserIds: [ALICE],
+    })
+    // onCreated получает GroupView с description (№28).
+    await waitFor(() => {
+      expect(onCreated).toHaveBeenCalledWith(view)
+    })
+  })
+
+  it('omits description from the №27 body when empty or whitespace-only (семантика №29)', async () => {
+    await renderReady()
+
+    fillTitle('Проект Альфа')
+    pick('alice')
+    submit()
+    await waitFor(() => {
+      expect(mockCreateGroup).toHaveBeenCalledTimes(1)
+    })
+    expect(mockCreateGroup).toHaveBeenLastCalledWith({
+      title: 'Проект Альфа',
+      memberUserIds: [ALICE],
+    })
+    expect('description' in (mockCreateGroup.mock.calls[0]?.[0] ?? {})).toBe(false)
+
+    // Пробельное описание эквивалентно отсутствию.
+    fillDescription('   ')
+    submit()
+    await waitFor(() => {
+      expect(mockCreateGroup).toHaveBeenCalledTimes(2)
+    })
+    expect(mockCreateGroup).toHaveBeenLastCalledWith({
+      title: 'Проект Альфа',
+      memberUserIds: [ALICE],
+    })
+    expect('description' in (mockCreateGroup.mock.calls[1]?.[0] ?? {})).toBe(false)
+  })
+
+  it('rejects a 257-character description without calling №27 and keeps the draft (validateGroupDescription)', async () => {
+    await renderReady()
+
+    fillTitle('Проект Альфа')
+    fillDescription('a'.repeat(257))
+    pick('alice')
+    submit()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/256/)
+    expect(mockCreateGroup).not.toHaveBeenCalled()
+    // Черновик формы жив: поля сохранены.
+    expect(screen.getByLabelText('Название')).toHaveValue('Проект Альфа')
+    expect(screen.getByLabelText('Описание')).toHaveValue('a'.repeat(257))
+    expect(screen.getByRole('checkbox', { name: 'Выбрать alice' })).toBeChecked()
+  })
+
+  it('accepts the 256-boundary description and submits it trimmed', async () => {
+    await renderReady()
+
+    fillTitle('Проект Альфа')
+    fillDescription(`  ${'a'.repeat(256)}  `)
+    pick('alice')
+    submit()
+
+    await waitFor(() => {
+      expect(mockCreateGroup).toHaveBeenCalledTimes(1)
+    })
+    expect(mockCreateGroup).toHaveBeenCalledWith({
+      title: 'Проект Альфа',
+      description: 'a'.repeat(256),
+      memberUserIds: [ALICE],
+    })
   })
 })
 
