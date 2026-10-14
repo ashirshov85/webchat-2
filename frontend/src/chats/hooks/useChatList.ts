@@ -98,6 +98,13 @@
  * resurrection). The tombstone is group-scoped (direct chats and other
  * groups keep flowing) and lives until №12 returns the group again
  * (the US6 re-add path: server truth outranks the local tombstone).
+ * T051 (№31 after №32/№33): the re-add path is LIVE — a §3.2
+ * `group.member.added` frame whose `user.id` IS the current user (the
+ * fanout includes the added one) pierces the tombstone and re-runs
+ * the US1-2 №12 refetch right away, so the restored membership
+ * revives the row in a live session without a reconnect/reload; a
+ * stale redelivery without membership converges dead (№12 does not
+ * return the group, the tombstone stays armed).
  *
  * `group.deleted` (feature 006, T066; US6, §3.5/§5.2, FR-006) joins
  * with the same shape: the №30 hard-delete broadcast to every FORMER
@@ -550,9 +557,20 @@ export function useChatList(currentUserId: string | null): UseChatListResult {
         })
         return
       }
-      if (removedGroupIdsRef.current.has(event.groupId)) {
+      if (
+        removedGroupIdsRef.current.has(event.groupId) &&
+        !(event.type === 'group.member.added' && event.user.id === currentUserIdRef.current)
+      ) {
         // §1 race (T058): a late roster/metadata frame of the removed
         // group — ignored, no refetch, no rename, no resurrection.
+        // T051 exception: the §3.2 «меня добавили» frame (fanout
+        // INCLUDES the added user) pierces the tombstone — the server
+        // has just restored the membership (№31 re-add after №32/№33),
+        // so the frame falls through to the US1-2 refetch below and
+        // the №12 answer decides: the group returns → the row revives
+        // and the cleanup above clears the tombstone; a stale
+        // redelivery without membership → №12 stays silent, the row
+        // stays dead and the tombstone stays armed.
         return
       }
       if (event.type === 'group.updated') {

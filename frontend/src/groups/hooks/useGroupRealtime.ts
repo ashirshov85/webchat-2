@@ -54,6 +54,15 @@
  * materialize a ghost row of a group №12 will never return (unlike a
  * removed membership, a hard-deleted chat has no re-add revival path).
  *
+ * The T051 slice refines the US3 tombstone with the re-add truth
+ * (№31 after №32/№33): the §3.2 fanout reaches the ADDED user too, so
+ * a `group.member.added` frame whose `user.id` is the current user is
+ * the server's own «your membership is alive again» signal — it lifts
+ * the tombstone and materializes the group (the `group.deleted`
+ * tombstone is effectively permanent still: №12 can never return a
+ * hard-deleted chat, so a stale pierce converges dead). A
+ * stranger-added frame keeps the §1 race handling — no-op.
+ *
  * Unknown group `event:` types pass through untouched (§1 forward
  * compatibility).
  */
@@ -93,11 +102,33 @@ const NO_REMOVED_CHAT_IDS: ReadonlySet<string> = new Set()
 
 /**
  * `group.member.added` (§3.2, US1-2): materializes an unknown group;
- * a known one is a no-op, a tombstoned one ignores the stale frame
- * (a frame published after the kick must not resurrect the group).
+ * a known one is a no-op, and a tombstoned one ignores a stale frame
+ * (a frame published after the kick must not resurrect the group) —
+ * UNLESS the frame's `user.id` is the current user himself (T051):
+ * the §3.2 fanout includes the ADDED member, so «меня добавили» is
+ * the server's own signal that the membership is alive again (the №31
+ * re-add after a №32 kick / №33 leave) — the tombstone lifts and the
+ * group materializes; №12 converges the aggregates. Reducer stays
+ * pure: `currentUserId` rides as a parameter.
  */
-function applyMemberAdded(slice: GroupRealtimeSlice, groupId: string): GroupRealtimeSlice {
-  if (slice.removedChatIds.has(groupId) || slice.groups.some((entry) => entry.chatId === groupId)) {
+function applyMemberAdded(
+  slice: GroupRealtimeSlice,
+  groupId: string,
+  addedUserId: string,
+  currentUserId: string | null,
+): GroupRealtimeSlice {
+  if (slice.removedChatIds.has(groupId)) {
+    if (addedUserId !== currentUserId) {
+      return slice
+    }
+    const removedChatIds = new Set(slice.removedChatIds)
+    removedChatIds.delete(groupId)
+    if (slice.groups.some((entry) => entry.chatId === groupId)) {
+      return { ...slice, removedChatIds }
+    }
+    return { groups: [...slice.groups, { chatId: groupId }], removedChatIds }
+  }
+  if (slice.groups.some((entry) => entry.chatId === groupId)) {
     return slice
   }
   return { ...slice, groups: [...slice.groups, { chatId: groupId }] }
@@ -180,15 +211,18 @@ function applyDeleted(slice: GroupRealtimeSlice, groupId: string): GroupRealtime
  * no-op here (same reference, React bails out; the №28 view of
  * useGroup is their consumer) — and unknown future types (§1) pass
  * through untouched. A frame that changes nothing returns the SAME
- * slice reference.
+ * slice reference. `currentUserId` (T051) decides the tombstone
+ * pierce of `group.member.added` — a parameter, so the reducer stays
+ * pure.
  */
 export function reduceGroupSlice(
   slice: GroupRealtimeSlice,
   event: GroupRealtimeEvent,
+  currentUserId: string | null,
 ): GroupRealtimeSlice {
   switch (event.type) {
     case 'group.member.added':
-      return applyMemberAdded(slice, event.groupId)
+      return applyMemberAdded(slice, event.groupId, event.user.id, currentUserId)
     case 'group.you_removed':
       return applyYouRemoved(slice, event.groupId)
     case 'group.updated':
@@ -220,7 +254,8 @@ export function reduceGroupEvent(
   state: GroupRealtimeState,
   event: GroupRealtimeEvent,
 ): GroupRealtimeState {
-  return reduceGroupSlice({ groups: state, removedChatIds: NO_REMOVED_CHAT_IDS }, event).groups
+  return reduceGroupSlice({ groups: state, removedChatIds: NO_REMOVED_CHAT_IDS }, event, null)
+    .groups
 }
 
 export interface UseGroupRealtimeResult {
@@ -237,11 +272,14 @@ export interface UseGroupRealtimeResult {
 /**
  * Keeps the group realtime slice live on the shared per-user №18
  * stream (one SSE connection per device/session — useRealtime): every
- * parsed `group.*` frame goes through `reduceGroupEvent`, so the state
+ * parsed `group.*` frame goes through `reduceGroupSlice`, so the state
  * converges idempotently whatever the at-most-once channel redelivers
  * or loses (lost frames are REST/sync-converged, §5.4 — not replayed).
+ * `currentUserId` (T051) feeds the tombstone pierce of
+ * `group.member.added` — the «меня добавили» frame of a removed group
+ * lifts the tombstone and revives the row.
  */
-export function useGroupRealtime(): UseGroupRealtimeResult {
+export function useGroupRealtime(currentUserId: string | null): UseGroupRealtimeResult {
   const realtime = useRealtime()
   const [slice, setSlice] = useState<GroupRealtimeSlice>(() => ({
     groups: [],
@@ -249,8 +287,8 @@ export function useGroupRealtime(): UseGroupRealtimeResult {
   }))
   useEffect(() => {
     return realtime.onGroupEvent((event) => {
-      setSlice((previous) => reduceGroupSlice(previous, event))
+      setSlice((previous) => reduceGroupSlice(previous, event, currentUserId))
     })
-  }, [realtime])
+  }, [realtime, currentUserId])
   return { groups: slice.groups }
 }

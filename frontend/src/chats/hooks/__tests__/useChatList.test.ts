@@ -875,6 +875,191 @@ describe('useChatList group.deleted (US6, T062 → T066, §3.5/§5.2)', () => {
   })
 })
 
+/**
+ * T051 (re-add convergence, №31 after №32/№33): a group removed by
+ * `group.you_removed` (any reason — kicked or a voluntary left) is
+ * tombstoned against the §1 order race, but the US6 re-add path must
+ * stay open IN A LIVE SESSION: the §3.2 `group.member.added` frame is
+ * fanned out to every active participant INCLUDING the added one, so
+ * a frame whose `user.id` IS the current user pierces the tombstone
+ * and re-runs the US1-2 №12 refetch — the server truth (the restored
+ * membership) outranks the local tombstone, the row returns without a
+ * reload, and the tombstone clears (the existing №12 cleanup). The
+ * §1 negatives stay closed: a stranger-added frame never pierces,
+ * `message.created` of the tombstoned group stays ignored until the
+ * revival, and a stale redelivered «меня добавили» frame without real
+ * membership refetches a №12 that does not return the group — the row
+ * stays dead and the tombstone stays armed.
+ */
+describe('useChatList re-add of a removed group (T051, №31 after №32/№33)', () => {
+  it('pierces the tombstone with a «меня добавили» frame — №12 revives the row and clears the tombstone (kicked)', async () => {
+    const stream = installStream()
+    mockedListChats
+      .mockResolvedValueOnce([groupRow(), chatItem()])
+      .mockResolvedValueOnce([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'kicked' })
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+
+    emitGroupEvent(stream, 'group.member.added', {
+      groupId: GROUP_ID,
+      user: peer(ME, 'me'),
+      actorId: ACTOR,
+    })
+
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(result.current.chats.map((item) => item.chatId)).toEqual([GROUP_ID, 'chat-1'])
+    })
+
+    // Tombstone cleared — the next §3.1 frame renames the live row
+    // (live frame-handling, not a one-off resurrection).
+    emitGroupEvent(stream, 'group.updated', {
+      groupId: GROUP_ID,
+      title: 'Новое название',
+      description: null,
+      actorId: ACTOR,
+    })
+    expect(result.current.chats.find((item) => item.chatId === GROUP_ID)?.title).toBe(
+      'Новое название',
+    )
+    expect(mockedListChats).toHaveBeenCalledTimes(2)
+  })
+
+  it('the same revival works after a voluntary leave (reason left, №33)', async () => {
+    const stream = installStream()
+    mockedListChats
+      .mockResolvedValueOnce([groupRow(), chatItem()])
+      .mockResolvedValueOnce([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'left' })
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+
+    emitGroupEvent(stream, 'group.member.added', {
+      groupId: GROUP_ID,
+      user: peer(ME, 'me'),
+      actorId: ACTOR,
+    })
+
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(result.current.chats.map((item) => item.chatId)).toEqual([GROUP_ID, 'chat-1'])
+    })
+  })
+
+  it('a stranger-added frame of the tombstoned group never pierces — no refetch, no resurrection (§1 race)', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValue([groupRow(), chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'kicked' })
+    emitGroupEvent(stream, 'group.member.added', {
+      groupId: GROUP_ID,
+      user: peer(STRANGER, 'carol'),
+      actorId: ACTOR,
+    })
+
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+  })
+
+  it('message.created of the group is ignored before the re-add and flows again after the revival', async () => {
+    const stream = installStream()
+    mockedListChats.mockResolvedValueOnce([groupRow(), chatItem()]).mockResolvedValueOnce([
+      groupRow({
+        lastMessage: makeMessage(GROUP_ID, 'g-1', 5, ACTOR, '2026-09-20T10:00:00.000Z'),
+      }),
+      chatItem(),
+    ])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'kicked' })
+
+    // BEFORE the re-add: a frame of the tombstoned group is the §1
+    // race — ignored, no US1-2/FR-019 refetch.
+    emitMessageCreated(stream, makeMessage(GROUP_ID, 'g-1', 5, ACTOR, '2026-09-20T10:00:00.000Z'))
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(1)
+
+    emitGroupEvent(stream, 'group.member.added', {
+      groupId: GROUP_ID,
+      user: peer(ME, 'me'),
+      actorId: ACTOR,
+    })
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(result.current.chats.map((item) => item.chatId)).toEqual([GROUP_ID, 'chat-1'])
+    })
+
+    // AFTER the revival: the tombstone is gone — an incoming frame
+    // updates the preview and grows the badge as for any known chat.
+    emitMessageCreated(stream, makeMessage(GROUP_ID, 'g-2', 6, ACTOR, '2026-09-20T11:00:00.000Z'))
+    const group = result.current.chats.find((item) => item.chatId === GROUP_ID)
+    expect(group?.lastMessage?.id).toBe('g-2')
+    expect(group?.unreadCount).toBe(1)
+  })
+
+  it('a stale redelivered «меня добавили» frame without real membership does not resurrect the row', async () => {
+    const stream = installStream()
+    mockedListChats
+      .mockResolvedValueOnce([groupRow(), chatItem()])
+      .mockResolvedValueOnce([chatItem()])
+    const { result } = mountChatList()
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+
+    emitGroupEvent(stream, 'group.you_removed', { groupId: GROUP_ID, reason: 'kicked' })
+    emitGroupEvent(stream, 'group.member.added', {
+      groupId: GROUP_ID,
+      user: peer(ME, 'me'),
+      actorId: ACTOR,
+    })
+
+    // The refetch happened (the pierce is honest), but №12 has no
+    // membership to return — the row stays dead.
+    await waitFor(() => {
+      expect(mockedListChats).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    })
+
+    // The tombstone stays armed: №12 did not return the group, so a
+    // later §3.1 frame of it is still the §1 race — ignored.
+    emitGroupEvent(stream, 'group.updated', {
+      groupId: GROUP_ID,
+      title: 'Новое название',
+      description: null,
+      actorId: ACTOR,
+    })
+    expect(result.current.chats.map((item) => item.chatId)).toEqual(['chat-1'])
+    expect(mockedListChats).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('useChatList blocked badge freeze (US3-5, FR-020 of 004)', () => {
   function blockedChatItem(): ChatListItem {
     return chatItem({

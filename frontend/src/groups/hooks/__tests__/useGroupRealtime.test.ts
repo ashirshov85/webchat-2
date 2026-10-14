@@ -1,8 +1,12 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { components } from '../../../api/schema'
-import type { GroupRealtimeEvent, GroupRealtimeState } from '../useGroupRealtime'
-import { reduceGroupEvent, useGroupRealtime } from '../useGroupRealtime'
+import type {
+  GroupRealtimeEvent,
+  GroupRealtimeSlice,
+  GroupRealtimeState,
+} from '../useGroupRealtime'
+import { reduceGroupEvent, reduceGroupSlice, useGroupRealtime } from '../useGroupRealtime'
 
 /**
  * Group events reducer — the US1 starting slice (T019 → T027;
@@ -150,8 +154,8 @@ function emitGroupEvent(event: GroupRealtimeEvent) {
 
 const mounted: Array<{ unmount(): void }> = []
 
-function mountGroupRealtime() {
-  const rendered = renderHook(() => useGroupRealtime())
+function mountGroupRealtime(currentUserId: string | null = ME) {
+  const rendered = renderHook(() => useGroupRealtime(currentUserId))
   mounted.push(rendered)
   return rendered
 }
@@ -335,5 +339,59 @@ describe('useGroupRealtime — group.deleted (US6 slice → T066, §3.5/§5.2)',
     emitGroupEvent(groupUpdated(GROUP_B, 'Проект Бета', null))
 
     expect(result.current.groups).toEqual([{ chatId: GROUP_B, title: 'Проект Бета' }])
+  })
+})
+
+/**
+ * T051 re-add slice (№31 after №32/№33): the §3.2 frame is fanned out
+ * to every active participant INCLUDING the added one, so a
+ * `group.member.added` whose `user.id` IS the current user is the
+ * server's own «you are a member again» signal — it lifts the
+ * `group.you_removed` tombstone and materializes the group (the
+ * membership is alive server-side, the tombstone must not outlive
+ * it). A stranger-added frame keeps the §1 race handling: the
+ * tombstone stays and the group stays dead.
+ */
+describe('useGroupRealtime — re-add after removal (T051, №31 after №32/№33)', () => {
+  it('reduceGroupSlice: a «меня добавили» frame lifts the tombstone and materializes the group', () => {
+    const tombstoned: GroupRealtimeSlice = {
+      groups: [],
+      removedChatIds: new Set([GROUP_A]),
+    }
+
+    const next = reduceGroupSlice(tombstoned, memberAdded(GROUP_A, ME), ME)
+
+    expect(next.groups.map((entry) => entry.chatId)).toEqual([GROUP_A])
+    expect(next.removedChatIds.has(GROUP_A)).toBe(false)
+  })
+
+  it('reduceGroupSlice: a stranger-added frame keeps the tombstone — no-op, same reference', () => {
+    const tombstoned: GroupRealtimeSlice = {
+      groups: [],
+      removedChatIds: new Set([GROUP_A]),
+    }
+
+    expect(reduceGroupSlice(tombstoned, memberAdded(GROUP_A, CAROL), ME)).toBe(tombstoned)
+  })
+
+  it('the live hook revives the group when the current user is re-added', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(youRemoved(GROUP_A, 'kicked'))
+    expect(result.current.groups).toEqual([])
+
+    emitGroupEvent(memberAdded(GROUP_A, ME))
+    expect(result.current.groups.map((entry) => entry.chatId)).toEqual([GROUP_A])
+  })
+
+  it('a stranger-added frame still cannot resurrect the tombstoned group', () => {
+    const { result } = mountGroupRealtime()
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    emitGroupEvent(youRemoved(GROUP_A, 'kicked'))
+
+    emitGroupEvent(memberAdded(GROUP_A, CAROL))
+    expect(result.current.groups).toEqual([])
   })
 })
