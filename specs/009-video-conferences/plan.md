@@ -26,8 +26,9 @@ SecurityConfig и per-IP бакетами `RateLimitFilter` (паттерн 002)
 `DeleteRoom`, `SendData`) и персистентны в `conference_participants` до конца конференции
 (Q5/Q9/Q22). Жизненный цикл наблюдаем из чата realtime-событиями `conference.started` /
 `conference.ended` через существующий per-user SSE-канал (post-commit публикация); завершение —
-по вебхуку `room_finished`, команде модератора, per-env максимуму длительности (scheduler) либо
-компенсирующему sweeper'у при потере вебхука (SC-007). Фронтенд — модуль
+по вебхуку `room_finished`, команде модератора, per-env максимуму длительности (scheduler),
+компенсирующему sweeper'у при потере вебхука (SC-007) либо CASCADE удаления чата
+(`chat_deleted`). Фронтенд — модуль
 `frontend/src/conferences/` на `livekit-client` + `@livekit/components-react` (ленивая загрузка):
 единый pre-join (FR-005–FR-007), экран конференции с переключением устройств на лету (Q11=B),
 лёгкая публичная гостевая join-страница `/join/:inviteToken`, кнопки «видеозвонок»/«аудиозвонок»

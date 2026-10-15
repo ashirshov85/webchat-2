@@ -70,7 +70,7 @@ Self-hosting) на 2026-10-15.
 |---|---|
 | Доступ | `permitAll` в SecurityConfig (LiveKit не умеет Bearer) + per-IP бакет `RateLimitFilter` |
 | Аутентификация | header `Authorization: Bearer <JWT>` (ключ вебхука), JWT содержит sha256-хеш тела; проверка `WebhookReceiver.receive(rawBody, authHeader)` по **сырому** телу (`Content-Type: application/webhook+json`, приём как `byte[]`) |
-| Обрабатываемые события | `room_started` → `created→active` + SSE `conference.started`; `room_finished` → `finalize` + SSE `conference.ended`; `participant_joined`/`participant_left` → метки `last_joined_at`/`last_left_at` (principals по префиксу identity) и метрики; прочие события игнорируются (200) |
+| Обрабатываемые события | `room_started` → 200/no-op (комната создаётся eagerly при №44 — вебхук приходит до входа участников); первый `participant_joined` при статусе `created` → `created→active` + SSE `conference.started`; `room_finished` → `finalize` + SSE `conference.ended`; `participant_joined`/`participant_left` → метки `last_joined_at`/`last_left_at` (principals по префиксу identity) и метрики; прочие события игнорируются (200) |
 | Идемпотентность | условные переходы статуса в БД + `event.id` (дедуп в рамках окна ретраев LiveKit); ретраи доставки LiveKit безопасны |
 | Доступность | 200 всегда, кроме невалидной подписи (401) — валидные события не теряются из-за ошибок обработки |
 | Приватность | identity/room name без PII (§2/§3); payload вебхука не логируется |

@@ -44,7 +44,7 @@ LiveKit (не в БД): room c:{conferenceId}, participants u:{userId}:{connId} 
 | `status` | varchar(16) NOT NULL | CHECK `IN ('created','active','ended')`; переходы только вперёд (см. ниже), conditional UPDATE — идемпотентность finalize |
 | `max_participants` | int NOT NULL | CHECK `> 0`; снапшот `conferences.max-participants` при создании (FR-015: применяется и как `max_participants` комнаты LiveKit, и в pre-check минта) |
 | `created_at` | timestamptz NOT NULL DEFAULT now() | |
-| `started_at` | timestamptz NULL | первый `participant_joined` (вебхук `room_started`); NULL ⟺ `status='created'` |
+| `started_at` | timestamptz NULL | первый `participant_joined` (`room_started` приходит при eager-создании комнаты и началом не считается); NULL ⟺ `status='created'` |
 | `ended_at` | timestamptz NULL | NULL ⟺ `status <> 'ended'` |
 | `end_reason` | varchar(32) NULL | CHECK в `('last_left','moderator','max_duration','room_lost','chat_deleted')`; NULL ⟺ `status <> 'ended'` |
 
@@ -53,8 +53,9 @@ LiveKit (не в БД): room c:{conferenceId}, participants u:{userId}:{connId} 
 существующую — идемпотентность FR-001); `ix_conferences_status ON conferences (status)` — sweeper
 и gauge-метрики (research §7/§13).
 
-**Переходы состояний**: `created → active` — вебхук `room_started` (первый вход, conditional
-UPDATE `WHERE status='created'`, дубли вебхука — no-op); `created|active → ended` —
+**Переходы состояний**: `created → active` — первый вебхук `participant_joined`
+(conditional UPDATE `WHERE status='created'`, дубли — no-op; `room_started` приходит при
+eager-создании комнаты при №44 и началом не считается); `created|active → ended` —
 finalize (вебхук `room_finished` / модератор №48 / scheduler max-duration / sweeper / CASCADE
 чата, [research.md §7](./research.md)); обратных переходов нет. `started_at`/`ended_at`/`end_reason`
 заполняются в соответствующих переходах (CHECK согласованности: `status='ended' ⟺ ended_at IS NOT NULL`).

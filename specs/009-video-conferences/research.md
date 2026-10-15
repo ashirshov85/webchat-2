@@ -224,9 +224,11 @@ LiveKit broadcast-события закрывают UI (заблокирован
   комната» + sweeper-самоисцеление (ниже) не оставляет сирот: если процесс упал между коммитом и
   createRoom, комнату создаёт `RoomConfiguration`-путь — упрощение v1: sweeper при первой же
   проверке `created`-конференции без комнаты досоздаёт её.
-- **Начало**: вебхук `room_started` (первый участник зашёл) → переход `created→active`
-  (conditional UPDATE, идемпотентно) → post-commit SSE `conference.started` активным членам чата
-  (снимок членства в транзакции события).
+- **Начало**: первый вебхук `participant_joined` для конференции в статусе `created` → переход
+  `created→active` (conditional UPDATE, идемпотентно) → post-commit SSE `conference.started`
+  активным членам чата (снимок членства в транзакции события). `room_started` триггером начала
+  НЕ является: комната создаётся eagerly при №44 (post-commit `createRoom`), и вебхук приходит
+  в момент создания комнаты — до входа первого участника; обрабатывается как no-op (200).
 - **Завершение** (все пути → единый идемпотентный `finalize`): (а) вебхук `room_finished`
   (последний вышел + `departure_timeout`, либо `DeleteRoom`); (б) модератор №48 = `DeleteRoom`
   → далее (а); (в) **максимум длительности** (Q16=B, дефолт 4 ч): `ConferenceLifecycleScheduler`
@@ -434,8 +436,8 @@ Redis-инстанс без разделения — допустимо на dev
   nonce-подпись/отзыв, идемпотентный finalize); IT `AbstractIntegrationTest` + GenericContainer
   `livekit/livekit-server --dev` (профиль test): membership-отказ 403 (SC-002), guest-флоу
   (валидный/истёкший/отозванный nonce — SC-003), квота (заниженный max-participants), rate-limit
-  429 публичного endpoint (SC-004), вебхуки (room_started/finished → статусы + SSE-события,
-  дубли вебхуков), системное сообщение в истории, исключение из чата → разрыв; фронтенд — Vitest
+  429 публичного endpoint (SC-004), вебхуки (первый `participant_joined` → started,
+  `room_finished` → finalize + SSE-события, дубли вебхуков), системное сообщение в истории, исключение из чата → разрыв; фронтенд — Vitest
   (pre-join дефолты/блокировки, join-страница, виджет-карточка, SSE-индикатор) + Playwright e2e
   (звонок двух вкладок против локального LiveKit: вход/мьют/экран/выход-завершение, SC-001
   вручную); нагрузка — §12. E2EE-чаты (010) — негативный IT: создание конференции из E2EE-чата
