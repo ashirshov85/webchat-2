@@ -56,8 +56,8 @@ LiveKit (не в БД): room c:{conferenceId}, participants u:{userId}:{connId} 
 **Переходы состояний**: `created → active` — первый вебхук `participant_joined`
 (conditional UPDATE `WHERE status='created'`, дубли — no-op; `room_started` приходит при
 eager-создании комнаты при №44 и началом не считается); `created|active → ended` —
-finalize (вебхук `room_finished` / модератор №48 / scheduler max-duration / sweeper / CASCADE
-чата, [research.md §7](./research.md)); обратных переходов нет. `started_at`/`ended_at`/`end_reason`
+finalize (вебхук `room_finished` / модератор №48 / scheduler max-duration / sweeper / удаление
+чата — событие домена до CASCADE, [research.md §7](./research.md)); обратных переходов нет. `started_at`/`ended_at`/`end_reason`
 заполняются в соответствующих переходах (CHECK согласованности: `status='ended' ⟺ ended_at IS NOT NULL`).
 
 Mapping путей завершения на `end_reason` (детерминизм SSE `reason` и IT, инвариант 5):
@@ -65,7 +65,7 @@ Mapping путей завершения на `end_reason` (детерминиз�
 предзаписывает причину до `DeleteRoom`, вебхук-финализация переиспользует предзаписанную;
 `max_duration` — scheduler; `room_lost` — sweeper, а также любое завершение в статусе
 `created` (комната закрыта по empty-timeout — «никто не вошёл», — вебхуком или sweeper'ом);
-`chat_deleted` — CASCADE удаления чата.
+`chat_deleted` — удаление чата: событие домена обрабатывается в транзакции удаления до срабатывания `ON DELETE CASCADE` (предзапись причины + снимок членства), затем CASCADE удаляет строки.
 
 ## Сущность 2: ConferenceParticipant (`conference_participants`)
 

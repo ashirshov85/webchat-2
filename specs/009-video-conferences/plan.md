@@ -174,7 +174,7 @@ backend/
 ├── src/main/kotlin/webchat/backend/chats/…             # эволюция: системные сообщения (порт + kind/payload)
 ├── src/main/kotlin/webchat/backend/groups/…            # событие MemberRemoved (in-process, для FR-003 edge)
 ├── src/main/kotlin/webchat/backend/config/
-│   ├── SecurityConfig.kt                               # +3 permitAll: invite-info, join-by-invite, webhook
+│   ├── SecurityConfig.kt                               # +3 permitAll: invite-info, join-by-invite, вебхук (строка вебхука открывается одновременно с его контроллером, чтобы маршрут не был публичным до обработчика)
 │   ├── RateLimitFilter.kt (auth/ratelimit)             # + строки per-IP бакетов публичных маршрутов
 │   └── ConferencesProperties.kt                        # conferences.* (квоты/таймеры per-env)
 ├── src/main/resources/db/migration/V18__conferences.sql
