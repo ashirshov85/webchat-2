@@ -33,7 +33,8 @@ SecurityConfig и per-IP бакетами `RateLimitFilter` (паттерн 002)
 единый pre-join (FR-005–FR-007), экран конференции с переключением устройств на лету (Q11=B),
 лёгкая публичная гостевая join-страница `/join/:inviteToken`, кнопки «видеозвонок»/«аудиозвонок»
 в `ChatHeader`. Квоты (`maxParticipants`, дефолты Q19) — конфигурация per-env; LiveKit-комната
-создается с `max_participants` + `departure_timeout=60 c` (жёсткий cap медиа-плоскости).
+создается с `max_participants` + `empty_timeout=60 c` и `departure_timeout=60 c` — обе границы
+жизни пустой комнаты (livekit-integration §2).
 Нагрузочный расчёт на бюджет 1000 одновременных конференций (принцип II) —
 [research.md §12](./research.md); валидация — k6 (контрольная плоскость) + нагрузочный прогон
 медиа-плоскости на dev-стенде (SC-008).
