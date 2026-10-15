@@ -217,7 +217,11 @@ LiveKit broadcast-события закрывают UI (заблокирован
 **Решение**: состояние конференции — `conferences.status ('created'|'active'|'ended')` +
 `end_reason`. Поток:
 - **Создание** (№44, идемпотентно: частичный уникальный индекс «одна не-`ended` на чат»; повторное
-  нажатие возвращает существующую — edge спеки): транзакция [INSERT строки `created` +
+  нажатие возвращает существующую — edge спеки): перед транзакцией — лёгкий pre-flight
+  доступности медиа-плоскости (`ListRooms`-probe): отказ → `503 conference_media_unavailable`
+  без записи в БД (edge «звонок временно недоступен», api-contract №44); гонка «probe успешен,
+  комната не создалась» остаётся за sweeper'ом (self-heal, ниже). Транзакция [INSERT строки
+  `created` +
   `CreateRoom` вызов **до** коммита не выполняется — см. ниже] + INSERT системного сообщения (§8);
   post-commit — `LiveKitAdminClient.createRoom(c:{id}, empty_timeout = empty-room-timeout (60 c),
   departure_timeout = 60 c, max_participants = maxParticipants)`. Порядок «сначала коммит, потом
@@ -236,7 +240,8 @@ LiveKit broadcast-события закрывают UI (заблокирован
   отправляет предупреждение: SSE участникам-членам + admin `SendData(topic="conference.warning")`
   в комнату (достаёт гостей, у которых нет SSE); по истечении — `DeleteRoom`; (г) **sweeper**
   (SC-007, компенсация потери вебхука): периодическая проверка `active`-конференций — комната
-  отсутствует в `ListRooms` дольше grace-окна → finalize c `end_reason='room_lost'`; заодно
+  отсутствует в `ListRooms` дольше grace-окна → finalize c `end_reason='room_lost'`
+  (конфиг `conferences.sweep-interval`/`conferences.room-lost-grace`, дефолты 60 с / 120 с); заодно
   завершает `created`-конференции, чья комната исчезла по `empty_timeout` («никто не вошёл»,
   edge спеки).
 - **Finalize** (conditional UPDATE `status<>'ended'` под блокировкой — защита от дублей вебхуков
@@ -301,8 +306,9 @@ obs/аудита; (г) `empty_timeout`=300 (дефолт LiveKit) — откло
 
 **Решение**: `ConferencesProperties` (`@ConfigurationProperties("conferences")`, конвенция
 `GroupsProperties` и др.): `max-participants` (dev-стенд **≤ 16** — SC-008), `token-ttl` (15 мин),
-`guest-invite-ttl` (24 ч), `guest-name-max-length` (50), `empty-room-timeout-seconds` (60),
-`max-duration` (4 ч), `warning-before-end` (5 мин), `sweep-interval`. LiveKit-подключение:
+`guest-invite-ttl` (24 ч), `guest-name-max-length` (50), `empty-room-timeout` (60),
+`max-duration` (4 ч), `warning-before-end` (5 мин), `sweep-interval` (60 с),
+`room-lost-grace` (120 с — порог `room_lost`, ≥ 2× empty-timeout). LiveKit-подключение:
 `livekit.url | api-key | api-secret` (env, секреты не в коде — принцип V). Применение квот —
 в двух точках (FR-015): создание комнаты (`max_participants` комнаты = `max-participants`) и
 каждый минт токена (pre-check `ListParticipants` → дружественный `409 conference_full`).

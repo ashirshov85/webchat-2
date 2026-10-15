@@ -32,7 +32,7 @@ pnpm --dir frontend dev                                    # SPA :5173, /api →
 - Настройки фичи (`conferences.*`) — дефолты Q19 в `application.yml`: maxParticipants, TTL
   ссылки 24 ч, пустая комната 60 с, длительность 4 ч, имя гостя ≤ 50. Для быстрых проверок
   таймаутов — заниженные значения, например
-  `SPRING_APPLICATION_JSON='{"conferences":{"empty-room-timeout-seconds":10,"max-duration":"PT2M","warning-before-end":"PT30S","max-participants":3}}'`.
+  `SPRING_APPLICATION_JSON='{"conferences":{"empty-room-timeout":"10s","max-duration":"PT2M","warning-before-end":"PT30S","max-participants":3}}'`.
 
 Далее: 2–3 браузера/приватных окна; HTTP — с `Authorization: Bearer <accessToken>`;
 SSE — DevTools → Network → EventStream. Камера/микрофон — реальные или
