@@ -182,7 +182,8 @@ description: "Task list for feature implementation: Видеоконференц
 - [ ] T063 [P] Прогнать frontend: `pnpm --dir frontend test`, `pnpm --dir frontend exec playwright test tests/e2e/conferences.spec.ts` (против local-compose LiveKit), lint/format backend+frontend
 - [ ] T064 Аудит безопасности (принцип V): `LIVEKIT_API_KEY/SECRET` и ключи nonce — только env; webhook payload и identity без PII не логируются; гостю недоступны API чатов (проверка без Bearer); ошибки публичных endpoints не раскрывают деталей конференции/причин подделки
 - [ ] T065 Прогнать ручную валидацию quickstart.md §3.1–§3.5 целиком на `deploy/local` (включая негативные ветки 3.1.3, 3.4.5–3.4.8, 3.5.2–3.5.5)
-- [ ] T066 Проверить наблюдаемость (SC-009): метрики `webchat_conference_*` на `/actuator/prometheus` — активные конференции/участники, события, квоты, отказы гостевого входа; k6 smoke из T058 против dev-стенда (SC-004/SC-008)
+- [ ] T066 Проверить наблюдаемость (SC-009): метрики `webchat_conference_*` на `/actuator/prometheus` — активные конференции/участники, события, квоты, отказы гостевого входа; k6 smoke из T058 против dev-стенда (SC-004; медиа-прогон — T067)
+- [ ] T067 [P] Нагрузочная валидация медиа-плоскости на dev-стенде (SC-008, конституция II/VI) по требованиям к окружениям (specs/ROADMAP.md): `lk load-test` (или эквивалент, research §12) против dev livekit-server (VPS 4 vCPU / 6 ГБ; limits cpu ~1500m–2 / mem 1–1.5Gi; 720p low-слои без 1080p; maxParticipants ≤ 16; квота активных комнат per-env) в пределах ёмкости стенда ~10 одновременных 1:1 / ~2 групповых: профили publishers/subscribers, фиксация join-латентности, потерь, CPU/mem ноды (Prometheus-метрики LiveKit + `webchat_conference_*`); экстраполяция prod-бюджета (1000 конференций / ~36k поток-эквивалентов) по формуле ёмкости нод research §12 (8 vCPU ≈ 3–4k streams → 10–14 медиа-нод); полноразмерные прогоны — платформенная фича 016; отчёт — в `load/REPORT.md`
 
 ---
 

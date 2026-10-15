@@ -133,8 +133,10 @@ pnpm --dir frontend exec playwright test tests/e2e/conferences.spec.ts
 docker run --rm -i grafana/k6 run - < load/k6/conferences.smoke.js
 ```
 
-Медиа-нагрузка (SC-008): прогон Load-test-инструментом LiveKit против dev-стенда
-(`maxParticipants ≤ 16`) с экстраполяцией по формуле [research.md §12](./research.md);
+Медиа-нагрузка (SC-008): прогон `lk load-test` против dev-стенда по требованиям
+к окружениям ROADMAP (VPS 4 vCPU / 6 ГБ, limits cpu ~1500m–2 / mem 1–1.5Gi, 720p,
+maxParticipants ≤ 16; ёмкость стенда ~10 одновременных 1:1 / ~2 групповых)
+с экстраполяцией по формуле [research.md §12](./research.md);
 полный прогон — фича 016. Метрики `webchat_conference_*` (FR-018) — Actuator
 `/actuator/prometheus`; по ним проверяются SC-001–SC-009.
 
