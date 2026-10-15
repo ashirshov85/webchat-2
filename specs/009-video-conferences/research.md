@@ -234,8 +234,9 @@ LiveKit broadcast-события закрывают UI (заблокирован
   НЕ является: комната создаётся eagerly при №44 (post-commit `createRoom`), и вебхук приходит
   в момент создания комнаты — до входа первого участника; обрабатывается как no-op (200).
 - **Завершение** (все пути → единый идемпотентный `finalize`): (а) вебхук `room_finished`
-  (последний вышел + `departure_timeout`, либо `DeleteRoom`); (б) модератор №48 = `DeleteRoom`
-  → далее (а); (в) **максимум длительности** (Q16=B, дефолт 4 ч): `ConferenceLifecycleScheduler`
+  (последний вышел + `departure_timeout`, либо `DeleteRoom`); для `active` без предзаписи —
+  `last_left`, для `created` («никто не вошёл», empty-timeout) — `room_lost`; (б) модератор №48:
+  предзапись `end_reason='moderator'` → `DeleteRoom` → далее (а) с предзаписанной причиной; (в) **максимум длительности** (Q16=B, дефолт 4 ч): `ConferenceLifecycleScheduler`
   (fixed-delay, как scheduler-прецедент groups) — за `warning-before-end` (5 мин) до лимита
   отправляет предупреждение: SSE участникам-членам + admin `SendData(topic="conference.warning")`
   в комнату (достаёт гостей, у которых нет SSE); по истечении — `DeleteRoom`; (г) **sweeper**
@@ -243,7 +244,7 @@ LiveKit broadcast-события закрывают UI (заблокирован
   отсутствует в `ListRooms` дольше grace-окна → finalize c `end_reason='room_lost'`
   (конфиг `conferences.sweep-interval`/`conferences.room-lost-grace`, дефолты 60 с / 120 с); заодно
   завершает `created`-конференции, чья комната исчезла по `empty_timeout` («никто не вошёл»,
-  edge спеки).
+  edge спеки) с `end_reason='room_lost'`.
 - **Finalize** (conditional UPDATE `status<>'ended'` под блокировкой — защита от дублей вебхуков
   и гонок с API): `status='ended'`, `ended_at`, `end_reason`; **удаление** строк
   `conference_participants` и `conference_guest_invites` (Q18=A: состав после завершения не
