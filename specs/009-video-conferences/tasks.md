@@ -37,7 +37,7 @@ description: "Task list for feature implementation: Видеоконференц
 - [ ] T003 [P] Добавить сервис `livekit` в `deploy/local/docker-compose.yml`: образ `livekit/livekit-server --dev`, `devkey/secret`, `webhook.urls → http://backend:8080/api/internal/conferences/livekit/webhook`, `enable_remote_unmute: true`, порты 7880/7881/7882+UDP (livekit-integration §1)
 - [ ] T004 [P] Создать манифесты `deploy/k8s/base/livekit.yaml` и `deploy/k8s/overlays/dev/livekit.yaml`: Deployment/Service, порты 7880/7881/7882+UDP/TURN, Redis distributed mode, hostNetwork, `enable_remote_unmute: true` (обязательно для серверного мьюта №49 — livekit-integration §1; research §11)
 - [ ] T005 [P] Создать `backend/src/main/kotlin/webchat/backend/config/ConferencesProperties.kt` (`conferences.*`: `max-participants`, `token-ttl=900s`, `guest-invite-ttl=24h`, `empty-room-timeout=60s`, `max-duration=4h`, `warning-before-end=5m`, `reconnect-window=120s`, `guest-name-max-length=50`, `livekit.url/key/secret` из env) + дефолты Q19 в `backend/src/main/resources/application.yml`
-- [ ] T006 Обновить `contracts/openapi.yaml`: аддитивно операции №44–№55 (тег `conferences`), SSE №18 `conference.started`/`conference.ended`, схема `Message` (nullable `senderId`, `kind`, `payload`), minor 0.10.0→0.11.0; прогнать `./scripts/validate-contracts.sh` (vacuum→oasdiff, без breaking) и `pnpm --dir frontend generate:api` (обновить `schema.d.ts`)
+- [ ] T006 Обновить `contracts/openapi.yaml`: аддитивно операции №44–№55 (тег `conferences`; в №44 включить `503 conference_media_unavailable` — недоступность медиа-плоскости при создании, edge spec.md), SSE №18 `conference.started`/`conference.ended`, схема `Message` (nullable `senderId`, `kind`, `payload`), minor 0.10.0→0.11.0; прогнать `./scripts/validate-contracts.sh` (vacuum→oasdiff, без breaking) и `pnpm --dir frontend generate:api` (обновить `schema.d.ts`)
 
 **Checkpoint**: зависимости, окружение и контракт готовы; генерация TS-типов актуальна
 
@@ -71,12 +71,12 @@ description: "Task list for feature implementation: Видеоконференц
 ### Implementation for User Story 1
 
 - [ ] T015 [P] [US1] Создать DTO в `backend/src/main/kotlin/webchat/backend/conferences/api/dto/ConferenceDtos.kt`: `ConferenceView`, `MeView`, `ParticipantView`, `JoinTicket`, `CreateConferenceRequest{mode}` — строго по api-contract §4
-- [ ] T016 [US1] Реализовать `ConferenceService.create` в `backend/src/main/kotlin/webchat/backend/conferences/domain/service/ConferenceService.kt`: E2EE-чат → `409 conference_e2ee_unsupported`; идемпотентность «одна активная на чат» (ux-индекс → `200` существующей, сообщение не дублируется, edge); `CreateRoom(name=c:{id}, empty/departure_timeout=60, max_participants)`; строка создателя `role='moderator'`; системное сообщение-виджет в той же транзакции (FR-001/FR-002; зависит от T007–T012)
 - [ ] T017 [US1] Расширить домен chats системными сообщениями: nullable `sender`, `kind`, `payload` в модели записи/чтения сообщений и в fanout `message.created` (порт системных сообщений в `backend/src/main/kotlin/webchat/backend/chats/`; payload `{"type":"conference_invite","conferenceId","mode"}` ≤ 4 КБ, seq-выделение и post-commit фанаут без изменений — research §8, конституция III/IV)
+- [ ] T016 [US1] Реализовать `ConferenceService.create` в `backend/src/main/kotlin/webchat/backend/conferences/domain/service/ConferenceService.kt`: E2EE-чат → `409 conference_e2ee_unsupported`; идемпотентность «одна активная на чат» (ux-индекс → `200` существующей, сообщение не дублируется, edge); `CreateRoom(name=c:{id}, empty/departure_timeout=60, max_participants)`; строка создателя `role='moderator'`; системное сообщение-виджет в той же транзакции (FR-001/FR-002; зависит от T007–T012 и T017 — порт системных сообщений chats)
 - [ ] T018 [US1] Реализовать `JoinTokenService` в `backend/src/main/kotlin/webchat/backend/conferences/domain/service/JoinTokenService.kt`: минт LiveKit JWT HS256 (identity `u:{userId}:{connId}`, name=username, roomJoin, TTL `conferences.token-ttl`, grants из `ParticipantRestrictions`, metadata `{role,guest:false}`, без админ-grants — livekit-integration §3); pre-check квоты `ListParticipants` vs `max_participants` → `409 conference_full` (FR-015)
 - [ ] T019 [US1] Реализовать `ConferenceController` (№44 create, №45 get, №46 me, №47 join) и `ConferencesExceptionHandler` (ProblemDetail: `403 conference_forbidden`, `404 conference_not_found`, `409 conference_e2ee_unsupported|conference_ended|conference_full`, `503 conference_media_unavailable`) в `backend/src/main/kotlin/webchat/backend/conferences/api/`; membership-check на каждом join до минта (FR-003, SC-002)
 - [ ] T020 [US1] Реализовать in-process слушатель `GroupMemberRemovedEvent` (событие 006, публикация в `backend/src/main/kotlin/webchat/backend/groups/GroupService.kt`; обрабатывать обе причины — №32 исключение и №33 добровольный выход, включая `actorId = null`) → post-commit `ListParticipants` по префиксу `u:{userId}:` → `RemoveParticipant` (FR-003 edge: вышедший/исключённый из чата отключается, повторный минт заблокирован membership-check'ом)
-- [ ] T021 [US1] IT в `backend/src/test/kotlin/webchat/backend/conferences/` (Testcontainers PG+Redis+LiveKit `--dev`): конкурентное создание → одна конференция на чат; join не-члена → 403 до всякой строки participant (SC-002); grants тикета из ограничений; системное сообщение в истории с `kind='system'`; `conference_full` при исчерпании слотов (инварианты 1–3 data-model §примеры)
+- [ ] T021 [US1] IT в `backend/src/test/kotlin/webchat/backend/conferences/` (Testcontainers PG+Redis+LiveKit `--dev`): конкурентное создание → одна конференция на чат; join не-члена → 403 до всякой строки participant (SC-002); grants тикета из ограничений; системное сообщение в истории с `kind='system'`; `conference_full` при исчерпании слотов; остановка контейнера LiveKit → №44 отвечает `503 conference_media_unavailable`, строка конференции и системное сообщение не создаются (откат транзакции) (инварианты 1–3 data-model §примеры)
 - [ ] T022 [P] [US1] Создать API-клиент `frontend/src/conferences/api/conferences.ts` на сгенерированных типах `schema.d.ts` (№44–№47, обработка Problem-ошибок)
 - [ ] T023 [P] [US1] Добавить кнопки «видеозвонок»/«аудиозвонок» в `frontend/src/chats/components/ChatHeader.tsx`: №44 с `mode=video|audio` → переход `/conference/{id}?mode=…`; при активной конференции — переход на существующую (без дубля карточки)
 - [ ] T024 [P] [US1] Реализовать рендер системного сообщения-карточки в компонентах списка сообщений `frontend/src/chats/`: `payload.type='conference_invite'` → карточка с кнопкой «Подключиться» (переход по ссылке, статус проверяется №45 при клике); неизвестные `payload.type` — нейтральный плейсхолдер (OCP, api-contract §4)
@@ -199,7 +199,7 @@ description: "Task list for feature implementation: Видеоконференц
 
 ### User Story Dependencies
 
-- **US1 (P1)**: после Foundational; ядро — от T016 зависят T018–T021 (backend) и T026+ (frontend)
+- **US1 (P1)**: после Foundational; ядро — T017 (порт системных сообщений chats) → T016; от T016 зависят T018–T021 (backend) и T026+ (frontend)
 - **US2 (P1)**: после Foundational; переиспользует №46/`JoinTicket` из US1 (T019/T018) и `ConferenceRoom` (T027) — реализуема параллельно с US1 после T027 либо сразу после US1
 - **US3 (P2)**: после Foundational; зависит от T018 (grants) и T012 (`UpdateParticipant`/`MutePublishedTrack`); SSE-событие завершения №48 доезжает в US5 (T055)
 - **US4 (P3)**: после Foundational; переиспользует `PreJoinScreen` (US2, T030) на гостевой странице; квота — T018
@@ -230,8 +230,8 @@ Task: "T023 [US1] ChatHeader.tsx кнопки звонка"
 Task: "T024 [US1] карточка-приглашение в frontend/src/chats/"
 
 # Затем последовательно (общие зависимости):
-Task: "T016 [US1] ConferenceService.create"
-Task: "T018 [US1] JoinTokenService" → "T019 [US1] ConferenceController №44–№47"
+Task: "T017 [US1] системные сообщения в домене chats"
+Task: "T016 [US1] ConferenceService.create" → "T018 [US1] JoinTokenService" → "T019 [US1] ConferenceController №44–№47"
 ```
 
 ---
