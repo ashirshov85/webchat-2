@@ -1221,10 +1221,15 @@ function incomingAvatarInitials(ctx: FeedRowContext, senderId: string): string |
 /** One server-message map entry: date divider, unread divider, row. */
 function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) {
   const outgoing = message.senderId === ctx.currentUserId
+  // 009 (T006): системный виджет (senderId=null, kind='system') — без
+  // отправителя: нейтральная строка («?»-аватар, без подписи); рендер
+  // карточки-виджета по payload.type — T024.
+  const senderId = message.senderId
+  const system = senderId === null
   const read = outgoing && message.seq <= ctx.readUpToSeq
   // 008a T070: подпись отправителя группы — имя по цепочке №28
   // (alias → displayName → username), как typing/поиск/участники.
-  const sender = outgoing ? undefined : ctx.roster?.get(message.senderId)?.name
+  const sender = outgoing || system ? undefined : ctx.roster?.get(senderId)?.name
   // Date divider (FR-019): one per local calendar-day run — before
   // a message whose day differs from its predecessor's, and above
   // the oldest row once the history is known complete (`hasOlder`
@@ -1260,9 +1265,15 @@ function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) 
         outgoing={outgoing}
         read={read}
         sender={sender}
-        avatarSource={outgoing ? ctx.meAvatarSource : incomingAvatarSource(ctx, message.senderId)}
+        avatarSource={
+          outgoing ? ctx.meAvatarSource : system ? '' : incomingAvatarSource(ctx, senderId)
+        }
         avatarInitials={
-          outgoing ? ctx.meAvatarInitials : incomingAvatarInitials(ctx, message.senderId)
+          outgoing
+            ? ctx.meAvatarInitials
+            : system
+              ? undefined
+              : incomingAvatarInitials(ctx, senderId)
         }
         stampAnim={ctx.localIds.has(message.id)}
         seatAnchor={rowSeatAnchor(message.id, ctx.seat)}

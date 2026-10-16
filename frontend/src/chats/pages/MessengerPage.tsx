@@ -791,6 +791,9 @@ function useTypingParticipants(
     }
     return realtime.onMessageCreated(activeChatId, (event) => {
       const senderId = event.message.senderId
+      if (senderId === null) {
+        return
+      }
       setTypingDeadlines((previous) => {
         if (!previous.has(senderId)) {
           return previous

@@ -1,0 +1,26 @@
+# oasdiff breaking --err-ignore — path+field-scoped исключения (009-video-conferences, T006)
+#
+# Основание: specs/009-video-conferences/contracts/api-contract.md §4/§6 —
+# единственное намеренное изменение существующих схем в контракте 0.11.0 — nullable-переход
+# Message.senderId (null у системных виджетов kind=system, первый — conference_invite №44):
+#   №12 GET  /api/v1/chats                     — ChatListItem.lastMessage (Message)
+#   №15 GET  /api/v1/chats/{chatId}/messages   — MessagePage.messages (Message)
+#   №16 POST /api/v1/chats/{chatId}/messages   — Message (общая схема => тот же переход,
+#                                                неизбежное следствие переиспользования схемы)
+#   №26 POST /api/v1/users/me/sync             — SyncChatDelta.messages (Message)
+#
+# Переход выражается правилом oasdiff response-property-became-nullable (senderId);
+# прочие дельты Message (kind, payload) — аддитивные новые поля, ERR не создают.
+# Преемственность: тот же приём, что в 006 с peer/blockedByMe (T002, later удалён как мёртвый).
+#
+# Область действия точечная: любое другое поле на этих путях и любые другие пути по-прежнему
+# падают с --fail-on ERR. Глобальные rule-exclusions НЕ используются.
+#
+# УДАЛИТЬ этот файл, когда база сравнения на origin/main станет 0.11.0 — дифф по данным полям
+# исчезнет, и исключения станут мёртвыми строками.
+
+GET /api/v1/chats the response property `chats/items/lastMessage/anyOf[#/components/schemas/Message]/senderId` became nullable for the status `200`
+GET /api/v1/chats/{chatId}/messages the response property `messages/items/senderId` became nullable for the status `200`
+POST /api/v1/chats/{chatId}/messages the response property `senderId` became nullable for the status `200`
+POST /api/v1/chats/{chatId}/messages the response property `senderId` became nullable for the status `201`
+POST /api/v1/users/me/sync the response property `chats/items/messages/items/senderId` became nullable for the status `200`
