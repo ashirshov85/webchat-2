@@ -69,6 +69,15 @@
  * принадлежит странице, onToggleSearch — провод). Активна только при
  * открытом чате — заголовок существует лишь у открытого окна.
  *
+ * 009 US1 (T023; FR-001): кнопки «видеозвонок»/«аудиозвонок» в .ch-btns —
+ * старт конференции из открытого чата. Заголовок — проекция (паттерн
+ * лупы/колокола): клик уходит страницей onStartCall(mode), №44 и переход
+ * /conference/{id}?mode=… владеет MessengerPage. Прототип 008 кнопок
+ * звонка не имеет — новая пара ride'ит дословную лексику .ch-btn без
+ * спецсостояний (нет .on/.off: звонок — не тумблер); размещение — за
+ * bell-колоколом, перед «шестернёнкой», в любом чате (direct и группа:
+ * FR-001 покрывает 1:1 и групповые).
+ *
  * The avatar derives from the peer username (circle) or the group
  * title (octagon, FR-024) via ui/Avatar and recalculates on renames;
  * the title itself is resolved by the page — the live №28 title
@@ -94,6 +103,7 @@ import { resolveDisplayName } from '../../ui/names'
 import { pluralRu, lastSeenFormat } from '../../ui/time'
 import { usePresenceEntry } from '../../presence/usePresence'
 import type { PresenceEntry } from '../../presence/presenceStore'
+import type { ConferenceMode } from '../../conferences/api/conferences'
 import { ChatGearMenu } from './ChatGearMenu'
 import type { GearMenuChat } from './ChatGearMenu'
 import './chat-header.css'
@@ -186,6 +196,12 @@ export interface ChatHeaderProps {
   readonly searchActive?: boolean
   /** Клик лупы (T068): страница переключает режим поиска сайдбара. */
   readonly onToggleSearch?: () => void
+  /**
+   * 009 US1 (T023; FR-001): клик «видеозвонок»/«аудиозвонок» — старт
+   * конференции из открытого чата; страница владеет №44 и переходом
+   * /conference/{id}?mode=… (заголовок — проекция, паттерн лупы).
+   */
+  readonly onStartCall?: (mode: ConferenceMode) => void
   /** direct: «Добавить в контакты» — №21 belongs to the page (T054). */
   readonly onAddContact?: () => void
   /** direct: «Заблокировать/Разблокировать контакт» — №23/№24 of the page. */
@@ -415,6 +431,7 @@ export function ChatHeader({
   onToggleSound,
   searchActive = false,
   onToggleSearch,
+  onStartCall,
   onAddContact,
   onToggleBlock,
   onDeleteChat,
@@ -532,9 +549,11 @@ export function ChatHeader({
       {/* Правые кнопки: лупа псевдо-поиска (008a Phase 11 T068,
           прототип #btnSearch) — первой; bell-колокол звука (008a T057,
           ui-behavior §4.1) — всегда, персональная настройка участия;
-          «шестерёнка» (FR-016, T054): direct — всегда, group — с
-          известной ролью (живой №28 или базис №12/№13/№27) — без роли
-          матрица пунктов 006 не определена. */}
+          «видеозвонок»/«аудиозвонок» (009 US1 T023, FR-001) — за
+          колоколом, в любом чате (direct и группа), без спецсостояний —
+          звонок не тумблер; «шестерёнка» (FR-016, T054): direct —
+          всегда, group — с известной ролью (живой №28 или базис
+          №12/№13/№27) — без роли матрица пунктов 006 не определена. */}
       <div className="ch-btns">
         <button
           type="button"
@@ -563,6 +582,34 @@ export function ChatHeader({
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M18 16v-5a6 6 0 0 0-12 0v5l-1.5 2.5h15L18 16z" />
             <path d="M10 20a2 2 0 0 0 4 0" />
+          </svg>
+        </button>
+        {/* 009 US1 (T023; FR-001): старт звонка из чата — №44 с
+            mode=video|audio и переход /conference/{id}?mode=… у
+            страницы (onStartCall); иконки — лексика штриха .ch-btn. */}
+        <button
+          type="button"
+          className="ch-btn"
+          title="Видеозвонок"
+          onClick={() => {
+            onStartCall?.('video')
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="2" y="6" width="13" height="12" rx="2" />
+            <path d="M15 10.5 20.5 7.5v9L15 13.5z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="ch-btn"
+          title="Аудиозвонок"
+          onClick={() => {
+            onStartCall?.('audio')
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.08 4.18 2 2 0 0 1 4.06 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" />
           </svg>
         </button>
         {gearChat !== null && (

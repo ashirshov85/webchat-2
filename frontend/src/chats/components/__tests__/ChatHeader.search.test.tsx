@@ -49,7 +49,10 @@ describe('ChatHeader кнопка-лупа псевдо-поиска (T068, пр
     const children = Array.from(buttons?.children ?? [])
     expect(children[0]).toBe(searchButton())
     expect(children[1]).toBe(screen.getByRole('button', { name: 'Звуковые оповещения' }))
-    expect(children[2]).toBe(screen.getByRole('button', { name: 'Настройки чата' }))
+    // 009 US1 (T023): за колоколом — пара звонков, шестерёнка — последней.
+    expect(children[2]).toBe(screen.getByRole('button', { name: 'Видеозвонок' }))
+    expect(children[3]).toBe(screen.getByRole('button', { name: 'Аудиозвонок' }))
+    expect(children[4]).toBe(screen.getByRole('button', { name: 'Настройки чата' }))
     // прототип :443-445: circle 10.5 + ручка 15.5→21
     expect(searchButton().querySelector('svg circle')).toBeInstanceOf(SVGElement)
   })
