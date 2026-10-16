@@ -1,0 +1,83 @@
+/*
+ * ЕДИНЫЙ ФАЙЛ СТИЛЕЙ МОДУЛЯ CONFERENCES (009, plan.md Structure):
+ * медиа-комната T027 (сетка тайлов, статус-строка, тайлы экранов),
+ * далее pre-join (T030), панели модерации/участников (US3) и гостевая
+ * страница (US4) дополняют этот же файл. Стили — на токенах
+ * дизайн-системы «Aethergram» (theme/tokens.css, FR-002): панельные
+ * подложки --panel-bg/--input-bg, кремовый текст --cream, латунные
+ * подписи --muted, радиусы --r-frame/--r-panel, шрифт тела --font-body.
+ * Видеоповерхность — глубокий тёмный фон (контраст видео, не обои).
+ */
+
+/* Каркас комнаты: статус-строка + тайлы + слот MediaControls (T028). */
+.conference-room {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-frame);
+  min-width: 0;
+}
+
+/* Нейтральная статус-строка фаз подключения/реконнекта (T027;
+   индикация потери связи — T060). */
+.conference-room-status {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+  font: italic 12.5px var(--font-body);
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Сетка тайлов камер: адаптивные колонки от ширины, тайл 16:9. */
+.conference-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+/* Демонстрации экрана — широкие тайлы на всю ширину комнаты. */
+.conference-screens {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Тайл: тёмная видеоповерхность, имя участника поверх нижней кромки.
+   ParticipantTile (T027) и тайл экрана share общей геометрией. */
+.conference-tile {
+  position: relative;
+  margin: 0;
+  aspect-ratio: 16 / 9;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: #060503;
+}
+
+.conference-tile video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Подпись тайла экрана (figcaption); у ParticipantTile имя — своё
+   встроенное (data-lk-participant-name). */
+.conference-tile-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 4px 10px;
+  background: linear-gradient(transparent, rgba(6, 5, 3, 0.85));
+  font: 12px var(--font-body);
+  color: var(--cream);
+  pointer-events: none;
+}
+
+/* Широкий тайл демонстрации — просторнее по высоте для контента экрана. */
+.conference-tile-screen {
+  aspect-ratio: 21 / 9;
+}

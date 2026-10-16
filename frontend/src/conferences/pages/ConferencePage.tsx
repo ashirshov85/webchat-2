@@ -12,15 +12,18 @@
  * Кнопка «Подключиться» — до pre-join (T034 встраивает PreJoinScreen
  * перед №47 для всех точек входа: слот квоты не занимается до
  * «Войти», FR-007); e2e T029 на фазе US1 меряет SC-001 от неё.
- * Блок joined — точка монтирования ConferenceRoom (T027): пока медиа
- * нет, экран показывает факт подключения (identity тикета) и выход.
- * Сообщения об ошибках — нейтральные, без раскрытия деталей
- * (существование не раскрывается, api-contract §1): ветвление UX по
- * коду Problem, а не HTTP-статусу (конвенция 002).
+ * Блок joined монтирует медиа-комнату ConferenceRoom (T027):
+ * подключение по JoinTicket, тайлы участников и адаптация качества
+ * (FR-004); identity тикета и «Покинуть» — временная рамка до
+ * MediaControls (T028). Сообщения об ошибках — нейтральные, без
+ * раскрытия деталей (существование не раскрывается, api-contract
+ * §1): ветвление UX по коду Problem, а не HTTP-статусу (конвенция
+ * 002).
  */
 import { conferenceErrorCode } from '../api/conferences'
 import type { ConferenceErrorCode, ConferenceMode, JoinTicket } from '../api/conferences'
 import { useConference } from '../hooks/useConference'
+import ConferenceRoom from '../components/ConferenceRoom'
 
 /** Props экрана конференции: id из маршрута /conference/:id. */
 export interface ConferencePageProps {
@@ -60,18 +63,30 @@ function loadErrorMessage(code: ConferenceErrorCode | null): string {
     : 'Не удалось загрузить конференцию'
 }
 
-/** Блок подключенной вкладки (T026): точка монтирования ConferenceRoom (T027). */
+/** Блок подключенной вкладки (T026/T027): медиа-комната + временная рамка (identity, «Покинуть» — до MediaControls T028). */
 function JoinedPanel({
+  conferenceId,
   ticket,
+  mode,
+  refreshTicket,
   onLeave,
 }: {
+  readonly conferenceId: string
   readonly ticket: JoinTicket
+  readonly mode: ConferenceMode
+  readonly refreshTicket: () => Promise<JoinTicket | null>
   readonly onLeave: () => void
 }) {
   return (
     <div className="conference-joined">
       <p role="status">Вы в конференции</p>
       <p className="conference-identity">{ticket.identity}</p>
+      <ConferenceRoom
+        conferenceId={conferenceId}
+        ticket={ticket}
+        mode={mode}
+        refreshTicket={refreshTicket}
+      />
       <button type="button" onClick={onLeave}>
         Покинуть
       </button>
@@ -91,6 +106,7 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
     ticket,
     ended,
     join,
+    refreshTicket,
     leave,
   } = useConference(conferenceId)
 
@@ -129,7 +145,13 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
                 </button>
               )}
               {joinStatus === 'joined' && ticket !== null && (
-                <JoinedPanel ticket={ticket} onLeave={leave} />
+                <JoinedPanel
+                  conferenceId={conferenceId}
+                  ticket={ticket}
+                  mode={conference.mode}
+                  refreshTicket={refreshTicket}
+                  onLeave={leave}
+                />
               )}
               {joinStatus === 'error' && (
                 <div className="conference-error">
