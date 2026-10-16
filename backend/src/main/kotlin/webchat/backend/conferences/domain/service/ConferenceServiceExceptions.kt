@@ -31,3 +31,17 @@ class ConferenceForbiddenException : RuntimeException("the caller is not a membe
 class ConferenceE2eeUnsupportedException : RuntimeException("an E2EE chat cannot host a conference in v1") {
     val code: String = "conference_e2ee_unsupported"
 }
+
+/**
+ * 409 (api-contract.md 009 №47/№55, FR-015, Q23=A): the SHARED
+ * participant quota of members and guests is exhausted — the mint-time
+ * `ListParticipants` pre-check against the conference's
+ * `max_participants` snapshot. Raised by
+ * [JoinTokenService.mintMember] (T018) BEFORE the principal row and
+ * the token: a refused join leaves no trace. A slot freeing up (a
+ * participant disconnects) makes the very next №47 succeed — no ban,
+ * no cooldown.
+ */
+class ConferenceFullException : RuntimeException("the conference participant quota is exhausted") {
+    val code: String = "conference_full"
+}
