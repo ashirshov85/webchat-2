@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ConfirmRegistrationPage } from './auth/pages/ConfirmRegistrationPage'
 import { ForgotPasswordPage } from './auth/pages/ForgotPasswordPage'
@@ -11,6 +11,17 @@ import { isSessionExpired } from './auth/session'
 import { MessengerPage } from './chats/pages/MessengerPage'
 import { PresenceSettingsPage } from './settings/pages/PresenceSettingsPage'
 import { SecurityPage } from './settings/pages/SecurityPage'
+
+/**
+ * Экран конференции (009 US1, T025) — ленивый чанк: динамический
+ * импорт выносит модуль `conferences/` (и тянущийся в него
+ * `livekit-client`) из основного бандла (research §10); чанк
+ * запрашивается только когда protected-роут действительно отрендерен.
+ */
+const ConferencePage = lazy(() => import('./conferences/pages/ConferencePage'))
+
+/** `/conference/{id}` — единственный сегмент-id после префикса. */
+const CONFERENCE_ROUTE = /^\/conference\/([^/]+)$/
 
 /**
  * Protected route (T025): a visitor without a refresh token (no
@@ -33,6 +44,25 @@ function ProtectedRoute({ children, pathname }: { children: ReactNode; pathname:
 }
 
 function renderRoute(pathname: string): ReactNode {
+  /**
+   * `/conference/:id` (009 US1, T025): protected-роут с ленивым чанком
+   * `conferences/pages/ConferencePage` — без сессии редирект на
+   * `/login?returnTo=…` (чат-поверхность недоступна гостям, FR-010),
+   * под auth грузится чанк и рендерится экран конференции; query
+   * (`?mode=…` от кнопок заголовка T023 и карточки T024) в матчинге не
+   * участвует — pathname его не содержит, mode читает страница (T034).
+   */
+  const conferenceRoute = CONFERENCE_ROUTE.exec(pathname)
+  const conferenceId = conferenceRoute?.[1]
+  if (conferenceRoute !== null && conferenceId !== undefined) {
+    return (
+      <ProtectedRoute pathname={pathname}>
+        <Suspense fallback={<p>Загрузка конференции…</p>}>
+          <ConferencePage conferenceId={conferenceId} />
+        </Suspense>
+      </ProtectedRoute>
+    )
+  }
   switch (pathname) {
     case '/':
     case '/chat':

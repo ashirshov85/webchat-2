@@ -87,3 +87,41 @@ describe('App protected messenger route', () => {
     expect(assignMock).not.toHaveBeenCalled()
   })
 })
+
+describe('App conference route /conference/:id (009 US1, T025)', () => {
+  it('redirects an unauthenticated visitor to the login page with returnTo', () => {
+    navigate('/conference/c-1')
+    render(<App />)
+
+    expect(assignMock).toHaveBeenCalledWith('/login?returnTo=%2Fconference%2Fc-1')
+    expect(screen.queryByRole('region', { name: 'Конференция' })).not.toBeInTheDocument()
+  })
+
+  it('renders the lazy conference page for an authenticated user', async () => {
+    authenticate()
+    navigate('/conference/11111111-2222-3333-4444-555555555555')
+    render(<App />)
+
+    const conference = await screen.findByRole('region', { name: 'Конференция' })
+    expect(conference).toHaveAttribute('data-conference-id', '11111111-2222-3333-4444-555555555555')
+    expect(assignMock).not.toHaveBeenCalled()
+  })
+
+  it('matches the route with a mode query and keeps it out of returnTo', async () => {
+    authenticate()
+    window.history.pushState({}, '', '/conference/c-1?mode=video')
+    render(<App />)
+
+    expect(await screen.findByRole('region', { name: 'Конференция' })).toBeInTheDocument()
+    expect(assignMock).not.toHaveBeenCalled()
+  })
+
+  it('does not claim /conference/ without an id', () => {
+    authenticate()
+    navigate('/conference/')
+    render(<App />)
+
+    expect(screen.queryByRole('region', { name: 'Конференция' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Create an account' })).toBeInTheDocument()
+  })
+})
