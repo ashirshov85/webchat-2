@@ -14,7 +14,7 @@ import java.util.UUID
  * impossible for an authenticated chat member by the 002/006 foreign
  * keys; the mint treats it as the invariant breach it is.
  */
-interface MemberNameReader {
+fun interface MemberNameReader {
     /** The `users.username` of [userId], or `null` when the row does not exist. */
     fun usernameOf(userId: UUID): String?
 }

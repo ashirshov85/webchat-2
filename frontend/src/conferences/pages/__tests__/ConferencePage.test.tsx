@@ -103,7 +103,7 @@ describe('ConferencePage (009 US1 T026)', () => {
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
 
     const ended = await screen.findByText('Конференция завершена')
-    expect(ended).toHaveAttribute('role', 'status')
+    expect(ended.tagName).toBe('OUTPUT')
     expect(screen.queryByRole('button', { name: 'Подключиться' })).not.toBeInTheDocument()
     expect(conferences.joinConference).not.toHaveBeenCalled()
   })
@@ -117,7 +117,7 @@ describe('ConferencePage (009 US1 T026)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Подключиться' }))
 
     const joined = await screen.findByText('Вы в конференции')
-    expect(joined).toHaveAttribute('role', 'status')
+    expect(joined.tagName).toBe('OUTPUT')
     expect(screen.getByText(`u:${ME}:conn-1`)).toBeInTheDocument()
     expect(conferences.joinConference).toHaveBeenCalledWith(CONFERENCE_ID)
 
@@ -137,7 +137,7 @@ describe('ConferencePage (009 US1 T026)', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Подключиться' }))
 
     const ended = await screen.findByText('Конференция завершена')
-    expect(ended).toHaveAttribute('role', 'status')
+    expect(ended.tagName).toBe('OUTPUT')
     expect(screen.queryByRole('button', { name: 'Подключиться' })).not.toBeInTheDocument()
   })
 
@@ -155,7 +155,7 @@ describe('ConferencePage (009 US1 T026)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
 
     const joined = await screen.findByText('Вы в конференции')
-    expect(joined).toHaveAttribute('role', 'status')
+    expect(joined.tagName).toBe('OUTPUT')
   })
 
   it('renders a neutral load error and «Повторить» re-runs the №45+№46 bundle', async () => {

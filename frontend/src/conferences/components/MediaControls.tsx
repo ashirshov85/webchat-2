@@ -23,7 +23,7 @@
  * остальные видят выход (departure_timeout). Доступность — стандарты
  * 008: aria-pressed тумблеров (стабильное aria-label + визуальный
  * индикатор «вкл/выкл» aria-hidden), focus-visible (conferences.css),
- * role=group семантика панели.
+ * fieldset-семантика группы панели (implicit role=group).
  */
 import { useConnectionState, useLocalParticipant } from '@livekit/components-react'
 import { ConnectionState } from 'livekit-client'
@@ -47,9 +47,20 @@ interface SlotToggle {
 
 /** Нейтральное сообщение об отказе переключения (детали причин не раскрываются). */
 function toggleFailureText(slot: MediaSlot, enable: boolean): string {
-  const noun =
-    slot === 'microphone' ? 'микрофон' : slot === 'camera' ? 'камеру' : 'демонстрацию экрана'
+  const noun = slotNoun(slot)
   return enable ? `Не удалось включить ${noun}` : `Не удалось выключить ${noun}`
+}
+
+/** Существительное слота для строки отказа переключения. */
+function slotNoun(slot: MediaSlot): string {
+  switch (slot) {
+    case 'microphone':
+      return 'микрофон'
+    case 'camera':
+      return 'камеру'
+    default:
+      return 'демонстрацию экрана'
+  }
 }
 
 /** Отмена браузерного пикера экрана самим пользователем (AbortError) — не ошибка. */
@@ -117,7 +128,7 @@ export default function MediaControls({ onLeave }: MediaControlsProps) {
   }
 
   return (
-    <div className="conference-controls" role="group" aria-label="Управление конференцией">
+    <fieldset className="conference-controls" aria-label="Управление конференцией">
       {toggles.map((toggle) => (
         <button
           key={toggle.slot}
@@ -139,11 +150,7 @@ export default function MediaControls({ onLeave }: MediaControlsProps) {
       <button type="button" className="conference-controls-leave" onClick={onLeave}>
         Покинуть
       </button>
-      {notice !== null && (
-        <p className="conference-controls-notice" role="status">
-          {notice}
-        </p>
-      )}
-    </div>
+      {notice !== null && <output className="conference-controls-notice">{notice}</output>}
+    </fieldset>
   )
 }

@@ -5,8 +5,8 @@ import io.livekit.server.CanPublish
 import io.livekit.server.CanPublishData
 import io.livekit.server.CanPublishSources
 import io.livekit.server.CanSubscribe
-import io.livekit.server.Room
 import io.livekit.server.RoomJoin
+import io.livekit.server.RoomName
 import org.springframework.stereotype.Component
 import webchat.backend.conferences.domain.model.PublicationSource
 import webchat.backend.conferences.domain.port.ClientTokenRequest
@@ -50,7 +50,7 @@ class LiveKitServerTokenMinter(
                 ttl = request.ttl.toLiveKitTtlMillis()
                 addGrants(
                     RoomJoin(true),
-                    Room(request.roomName),
+                    RoomName(request.roomName),
                     CanSubscribe(true),
                     CanPublish(request.grants.canPublish),
                     CanPublishSources(request.grants.canPublishSources.map { it.wireName() }),

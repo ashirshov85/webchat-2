@@ -104,9 +104,9 @@ export function ConferenceInviteCard({ conferenceId, mode, createdAt }: Conferen
       <div className="sys-title">{inviteTitle(mode)}</div>
       <div className="sys-row">
         {state === 'ended' || state === 'missing' ? (
-          <span className="sys-status" role="status">
+          <output className="sys-status">
             {state === 'ended' ? 'Конференция завершена' : 'Конференция недоступна'}
-          </span>
+          </output>
         ) : (
           <>
             {state === 'error' && (

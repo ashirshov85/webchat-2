@@ -26,7 +26,7 @@ import java.util.UUID
  *    (the service validation of data-model §Сущность 4); [caption] is the
  *    FR-003-normalized placeholder/heading of the card (the DB `text`).
  */
-interface SystemMessagePort {
+fun interface SystemMessagePort {
     /**
      * Appends the widget row and returns the stored record (with its
      * allocated `seq`). The addressee snapshot — the chat's ACTIVE

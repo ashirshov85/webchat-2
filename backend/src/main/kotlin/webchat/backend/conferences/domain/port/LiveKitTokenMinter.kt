@@ -45,7 +45,7 @@ data class ClientTokenRequest(
  * a CLIENT token minted here carries `roomJoin` only and NEVER any
  * admin grant (FR-008 — all moderation is server-side).
  */
-interface LiveKitTokenMinter {
+fun interface LiveKitTokenMinter {
     /**
      * Signs one short-lived client JWT (HS256, `iss = LIVEKIT_API_KEY`)
      * for [request.roomName]: `sub`/`name`/`metadata` + the `video`

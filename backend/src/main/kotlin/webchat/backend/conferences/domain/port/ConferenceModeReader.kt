@@ -19,7 +19,7 @@ import java.util.UUID
  * a conference service never touches the chats message store
  * directly — the same seam discipline as [ChatMembershipChecker]).
  */
-interface ConferenceModeReader {
+fun interface ConferenceModeReader {
     /**
      * The pre-join mode of the invite widget of [conferenceId] within
      * [chatId], or `null` when the chat history holds no such widget.

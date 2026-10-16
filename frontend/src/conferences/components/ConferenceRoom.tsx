@@ -330,22 +330,14 @@ export default function ConferenceRoom({
   if (room === null) {
     return (
       <div className="conference-room" data-conference-room={conferenceId}>
-        {statusText !== null && (
-          <p className="conference-room-status" role="status">
-            {statusText}
-          </p>
-        )}
+        {statusText !== null && <output className="conference-room-status">{statusText}</output>}
       </div>
     )
   }
   return (
     <RoomContext.Provider value={room}>
       <div className="conference-room" data-conference-room={conferenceId}>
-        {statusText !== null && (
-          <p className="conference-room-status" role="status">
-            {statusText}
-          </p>
-        )}
+        {statusText !== null && <output className="conference-room-status">{statusText}</output>}
         {(phase === 'connected' || phase === 'reconnecting') && <ConferenceMedia />}
         {children}
       </div>
