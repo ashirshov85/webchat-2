@@ -2,6 +2,7 @@
 #   PostgreSQL 17 :5432, Redis 7 :6379, Mailpit :8025 (UI) / :1025 (SMTP),
 #   SonarQube LTS :9000 (static analysis) + dedicated PostgreSQL for it
 #   + dex IdP :5556 behind the `sso` profile (003-sso quickstart, T042)
+#   + LiveKit SFU :7880 (009-video-conferences quickstart §2, T003)
 # Usage: docker compose -f deploy/local/docker-compose.yml up -d
 #        docker compose -f deploy/local/docker-compose.yml --profile sso up -d
 # SonarQube on Linux requires: sudo sysctl -w vm.max_map_count=524288
@@ -90,6 +91,52 @@ services:
       timeout: 5s
       retries: 30
       start_period: 60s
+    restart: unless-stopped
+
+  # LiveKit media server for video conferences (009-video-conferences,
+  # contracts/livekit-integration.md §1, research.md §11). Single node `--dev`
+  # (no Redis), placeholder API pair devkey/secret — backend env of quickstart §2:
+  # LIVEKIT_URL=http://localhost:7880, LIVEKIT_API_KEY=devkey, LIVEKIT_API_SECRET=secret.
+  # `enable_remote_unmute` is required for server-side MutePublishedTrack (FR-008);
+  # webhooks are signed with `devkey` and delivered to the backend running on the
+  # host (`backend` resolves to the docker host via host-gateway).
+  livekit:
+    image: livekit/livekit-server:v1.13.10
+    container_name: webchat-livekit
+    # --dev: single node, debug logging; full config via LIVEKIT_CONFIG env
+    # (supported alternative to a mounted config file, container-friendly)
+    command: ["--dev"]
+    environment:
+      LIVEKIT_CONFIG: |
+        port: 7880
+        bind_addresses:
+          - 0.0.0.0
+        keys:
+          devkey: secret
+        webhook:
+          api_key: devkey
+          urls:
+            - http://backend:8080/api/internal/conferences/livekit/webhook
+        room:
+          enable_remote_unmute: true
+        rtc:
+          tcp_port: 7881
+          udp_port:
+            start: 7882
+            end: 7882
+    ports:
+      - "7880:7880" # HTTP signaling (ws) + Twirp RoomService
+      - "7881:7881" # ICE/TCP
+      - "7882:7882/udp" # ICE/UDP (mux)
+    extra_hosts:
+      # backend runs on the host (./gradlew bootRun, quickstart §2) — the webhook
+      # target http://backend:8080 must resolve to the docker host
+      - "backend:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:7880/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
   # Local dex IdP for manual SSO verification (003-sso-identity-providers
