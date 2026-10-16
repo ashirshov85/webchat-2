@@ -3,6 +3,21 @@ package webchat.backend.conferences.domain.port
 import java.util.UUID
 
 /**
+ * The №44 chat projection of the conferences domain (T017): the bare
+ * existence + the V18 `chats.e2ee` boundary flag of a chat — the two
+ * attributes of the chat row the create path needs BEFORE anything is
+ * written. [e2ee] answers the FR-001/010 v1 boundary («E2EE-чаты не
+ * порождают конференций»); the id round-trips only to keep the
+ * projection self-describing. No kind, no title, no roster — the
+ * minimum the caller reads (constitution V: nothing else crosses the
+ * seam).
+ */
+data class ChatInfo(
+    val id: UUID,
+    val e2ee: Boolean,
+)
+
+/**
  * The chat-membership read port of the conferences domain (DIP: the
  * adapter lives in
  * `webchat.backend.conferences.repository.ChatMembershipCheckerImpl`,
@@ -19,6 +34,16 @@ import java.util.UUID
  * existence (FR-003, SC-002; privacy discipline of 006 FR-008).
  */
 interface ChatMembershipChecker {
+    /**
+     * The №44 create resolution of the chat row (T017): `null` → the
+     * contract `404 chat_not_found` — an unknown id is answered BEFORE
+     * the membership gate and BEFORE any media-plane probe or write.
+     * A found row carries the [ChatInfo.e2ee] flag of the v1 boundary
+     * with 010 (FR-001: `409 conference_e2ee_unsupported`), read for
+     * BOTH chat kinds. One row read, no mutation.
+     */
+    fun findChatInfo(chatId: UUID): ChatInfo?
+
     /**
      * The EVERY-JOIN authorization gate (T017 create + T019 №47,
      * FR-003/SC-002): is [userId] an ACTIVE member of the chat RIGHT

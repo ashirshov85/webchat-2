@@ -3,10 +3,14 @@ package webchat.backend.conferences.repository
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.RowMapper
 import webchat.backend.chats.domain.model.ChatParticipant
 import webchat.backend.chats.domain.port.ParticipantRepository
+import webchat.backend.conferences.domain.port.ChatInfo
 import webchat.backend.groups.domain.model.MemberRole
 import webchat.backend.groups.domain.model.MembershipState
+import java.sql.ResultSet
 import java.time.Instant
 import java.util.UUID
 
@@ -41,7 +45,61 @@ import java.util.UUID
 class ChatMembershipCheckerImplTest {
     private val participants = Mockito.mock(ParticipantRepository::class.java)
 
-    private val checker = ChatMembershipCheckerImpl(participants)
+    private val jdbcTemplate = Mockito.mock(JdbcTemplate::class.java)
+
+    private val checker =
+        ChatMembershipCheckerImpl(
+            participants = participants,
+            jdbcTemplate = jdbcTemplate,
+        )
+
+    @Test
+    fun `findChatInfo projects the chats row id and e2ee flag`() {
+        val chatId = UUID.randomUUID()
+        stubChatRow(chatId, e2ee = false)
+
+        assertThat(checker.findChatInfo(chatId))
+            .overridingErrorMessage("a plain chat resolves with the V18 default e2ee=false")
+            .isEqualTo(ChatInfo(id = chatId, e2ee = false))
+    }
+
+    @Test
+    fun `findChatInfo projects the e2ee boundary flag of an E2EE chat`() {
+        val chatId = UUID.randomUUID()
+        stubChatRow(chatId, e2ee = true)
+
+        assertThat(checker.findChatInfo(chatId))
+            .overridingErrorMessage("the 010 boundary flag the №44 create gate reads (FR-001)")
+            .isEqualTo(ChatInfo(id = chatId, e2ee = true))
+    }
+
+    @Test
+    fun `findChatInfo of an unknown chat is null - the 404 chat_not_found leg`() {
+        val chatId = UUID.randomUUID()
+        Mockito
+            .`when`(
+                jdbcTemplate.query(
+                    Mockito.anyString(),
+                    Mockito.any<RowMapper<ChatInfo>>(),
+                    Mockito.eq(chatId),
+                ),
+            ).thenReturn(emptyList())
+
+        assertThat(checker.findChatInfo(chatId)).isNull()
+    }
+
+    @Test
+    fun `findChatInfo is one chats row read - the 006 membership port stays untouched`() {
+        val chatId = UUID.randomUUID()
+        stubChatRow(chatId, e2ee = false)
+
+        checker.findChatInfo(chatId)
+
+        Mockito
+            .verify(jdbcTemplate)
+            .query(Mockito.anyString(), Mockito.any<RowMapper<ChatInfo>>(), Mockito.eq(chatId))
+        Mockito.verifyNoInteractions(participants)
+    }
 
     @Test
     fun `active group membership projects true`() {
@@ -174,6 +232,27 @@ class ChatMembershipCheckerImplTest {
             .thenReturn(emptyList())
 
         assertThat(checker.activeMemberIds(chatId)).isEmpty()
+    }
+
+    /** Stubs the single `SELECT id, e2ee FROM chats WHERE id = ?` read of the T017 leg. */
+    private fun stubChatRow(
+        chatId: UUID,
+        e2ee: Boolean,
+    ) {
+        val row = Mockito.mock(ResultSet::class.java)
+        Mockito.`when`(row.getObject("id", UUID::class.java)).thenReturn(chatId)
+        Mockito.`when`(row.getBoolean("e2ee")).thenReturn(e2ee)
+        Mockito
+            .`when`(
+                jdbcTemplate.query(
+                    Mockito.anyString(),
+                    Mockito.any<RowMapper<ChatInfo>>(),
+                    Mockito.eq(chatId),
+                ),
+            ).thenAnswer { invocation ->
+                val mapper = invocation.getArgument<RowMapper<ChatInfo>>(1)
+                listOf(mapper.mapRow(row, 0))
+            }
     }
 
     private companion object {
