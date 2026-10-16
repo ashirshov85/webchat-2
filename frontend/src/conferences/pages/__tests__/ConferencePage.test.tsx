@@ -121,7 +121,9 @@ describe('ConferencePage (009 US1 T026)', () => {
     expect(screen.getByText(`u:${ME}:conn-1`)).toBeInTheDocument()
     expect(conferences.joinConference).toHaveBeenCalledWith(CONFERENCE_ID)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Покинуть' }))
+    // комната (и панель управления в её слоте) появляется следующим
+    // коммитом — Room создаётся эффектом жизненного цикла тикета (T027)
+    fireEvent.click(await screen.findByRole('button', { name: 'Покинуть' }))
 
     expect(await screen.findByRole('button', { name: 'Подключиться' })).toBeInTheDocument()
     expect(screen.queryByText('Вы в конференции')).not.toBeInTheDocument()

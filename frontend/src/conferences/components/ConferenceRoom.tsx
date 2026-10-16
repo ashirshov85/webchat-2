@@ -14,8 +14,17 @@
  * другой конференции той же вкладкой рвут медиа-подключение, остальные
  * участники видят выход (departure_timeout, livekit-integration §2).
  *
+ * Room создаётся ЗАНОВО на каждый прогон эффекта подключения (паттерн
+ * useLiveKitRoom @livekit/components-react): повторное использование
+ * экземпляра после прерванного в полёте connect (StrictMode-перемонтаж
+ * dev-сервера: cleanup рвёт подключение, повторный монтаж подключается
+ * снова) оставляет Room в поломанном состоянии («skipping incoming
+ * track after Room disconnected») — свежая комната на жизненный цикл
+ * тикета надёжна и в dev, и в проде: смена ticket.token (реконнект,
+ * FR-014) = новая комната, старая корректно разрывается cleanup'ом.
+ *
  * Стартовая публикация — дефолты по mode конференции (№44: video →
- * камера+микрофон, audio → только микрофон, Q3=A soft); T034 (US2)
+ * камера+микрофон, audio — только микрофон, Q3=A soft); T034 (US2)
  * передаст явное стартовое состояние из pre-join (оба выкл — «только
  * слушаю», FR-006). Отказ браузера в доступе к устройствам не рушит
  * вход — участник остаётся слушателем (повторный запрос в звонке —
@@ -28,10 +37,10 @@
  * токен сам (livekit-integration §3); при ПОЛНОМ разрыве после
  * успешного подключения компонент единожды обновляет тикет повторным
  * №47 (refreshTicket useConference, свежий connId) и переподключается
- * — эффект connect срабатывает по смене ticket.token. Серверные
- * разрывы (RemoveParticipant/удаление комнаты/дубль identity/нет
- * прав) — терминальное «Вы отключены» без авто-возврата: кик ≠ бан,
- * но повторный вход — осознанное действие по действующей ссылке (edge
+ * — смена ticket.token пересоздаёт комнату. Серверные разрывы
+ * (RemoveParticipant/удаление комнаты/дубль identity/нет прав) —
+ * терминальное «Вы отключены» без авто-возврата: кик ≠ бан, но
+ * повторный вход — осознанное действие по действующей ссылке (edge
  * spec.md). Полное окно reconnect-window с индикацией и ретраями —
  * T060 (US5).
  */
@@ -42,7 +51,7 @@ import {
   VideoTrack,
   useTracks,
 } from '@livekit/components-react'
-import { ConnectionState, DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
+import { DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConferenceMode, JoinTicket } from '../api/conferences'
@@ -210,7 +219,8 @@ export default function ConferenceRoom({
   refreshTicket,
   children,
 }: ConferenceRoomProps) {
-  const [room] = useState(createConferenceRoom)
+  /** Комната текущего жизненного цикла тикета (создаётся эффектом, T027). */
+  const [room, setRoom] = useState<Room | null>(null)
   const [phase, setPhase] = useState<ConferenceRoomPhase>('connecting')
   /** Разрыв инициирован выходом (слот вкладки/размонтирование) — без авто-возврата. */
   const intentionalRef = useRef(false)
@@ -224,16 +234,32 @@ export default function ConferenceRoom({
   const startMicrophone = initialMedia?.microphone ?? true
   const startCamera = initialMedia?.camera ?? mode === 'video'
 
-  // Слушатели комнаты + привязка разрыва к слоту вкладки (Q10=A):
+  // Жизненный цикл тикета = жизненный цикл комнаты: СВЕЖАЯ Room на каждый
+  // прогон эффекта (паттерн useLiveKitRoom — см. комментарий модуля),
+  // слушатели + подключение + привязка разрыва к слоту вкладки (Q10=A):
   // leaveActiveConference (leave/pagehide/join другой конференции)
-  // вызывает bound-disconnect — флаг intentional гасит авто-реконнект.
-  // StrictMode-перемонтаж сбрасывает флаг: «ложный» cleanup-разрыв
-  // не должен блокировать подключение повторного монтажа.
+  // вызывает bound-disconnect — флаг intentional гасит авто-реконнект;
+  // cleanup (смена тикета/размонтирование/StrictMode-перемонтаж) рвёт
+  // подключение ЭТОЙ комнаты, повторный прогон строит свежую.
   useEffect(() => {
     intentionalRef.current = false
-    const handleReconnecting = () => setPhase('reconnecting')
-    const handleReconnected = () => setPhase('connected')
+    let disposed = false
+    const active = createConferenceRoom()
+
+    const handleReconnecting = () => {
+      if (!disposed) {
+        setPhase('reconnecting')
+      }
+    }
+    const handleReconnected = () => {
+      if (!disposed) {
+        setPhase('connected')
+      }
+    }
     const handleDisconnected = (reason?: DisconnectReason) => {
+      if (disposed) {
+        return
+      }
       if (intentionalRef.current || reason === DisconnectReason.CLIENT_INITIATED) {
         return
       }
@@ -247,69 +273,71 @@ export default function ConferenceRoom({
       }
       reconnectSpentRef.current = true
       setPhase('reconnecting')
-      // Свежий тикет меняет prop → эффект connect переподключает; null
-      // (сбой/устаревание/конференция завершена) — контролируемое
+      // Свежий тикет пересоздаёт комнату (смена ticket.token → эффект);
+      // null (сбой/устаревание/конференция завершена) — контролируемое
       // «не удалось» (полное окно и ретраи — T060).
       void refreshTicketRef
         .current()
         .then((fresh) => {
-          if (fresh === null && !intentionalRef.current) {
+          if (fresh === null && !disposed && !intentionalRef.current) {
             setPhase('failed')
           }
         })
         .catch(() => {
-          if (!intentionalRef.current) {
+          if (!disposed && !intentionalRef.current) {
             setPhase('failed')
           }
         })
     }
-    room.on(RoomEvent.Reconnecting, handleReconnecting)
-    room.on(RoomEvent.Reconnected, handleReconnected)
-    room.on(RoomEvent.Disconnected, handleDisconnected)
+    active.on(RoomEvent.Reconnecting, handleReconnecting)
+    active.on(RoomEvent.Reconnected, handleReconnected)
+    active.on(RoomEvent.Disconnected, handleDisconnected)
     bindConferenceDisconnect(conferenceId, () => {
       intentionalRef.current = true
-      safeDisconnect(room)
+      safeDisconnect(active)
     })
-    return () => {
-      intentionalRef.current = true
-      room.removeAllListeners()
-      safeDisconnect(room)
-    }
-  }, [room, conferenceId])
-
-  // Подключение по тикету: смена ticket.token (реконнект после
-  // разрыва) переподключает ту же комнату; уже подключённым повторный
-  // вызов не нужен (токен подключённому продлевает LiveKit, §3).
-  useEffect(() => {
-    if (room.state === ConnectionState.Connected) {
-      setPhase('connected')
-      return
-    }
-    let cancelled = false
+    setRoom(active)
     setPhase('connecting')
     void (async () => {
       try {
-        await room.connect(ticket.wsUrl, ticket.token)
-        if (cancelled) {
+        await active.connect(ticket.wsUrl, ticket.token)
+        if (disposed) {
           return
         }
         everConnectedRef.current = true
         reconnectSpentRef.current = false
         setPhase('connected')
-        await publishInitialTracks(room, startMicrophone, startCamera)
+        await publishInitialTracks(active, startMicrophone, startCamera)
       } catch {
-        if (!cancelled) {
+        if (!disposed) {
           setPhase('failed')
         }
       }
     })()
     return () => {
-      cancelled = true
+      disposed = true
+      intentionalRef.current = true
+      active.removeAllListeners()
+      safeDisconnect(active)
     }
-  }, [room, ticket.wsUrl, ticket.token, startMicrophone, startCamera])
+  }, [conferenceId, ticket.wsUrl, ticket.token, startMicrophone, startCamera])
 
   const statusText = phaseStatusText(phase)
 
+  // До создания комнаты (первый рендер до эффекта) — только статус-оболочка:
+  // children (MediaControls и панели US3/US4) живут ВНУТРИ RoomContext —
+  // хуки @livekit/components-react без комнаты нерендерибельны.
+  if (room === null) {
+    return (
+      <div className="conference-room" data-conference-room={conferenceId}>
+        {statusText !== null && (
+          <p className="conference-room-status" role="status">
+            {statusText}
+          </p>
+        )}
+      </div>
+    )
+  }
   return (
     <RoomContext.Provider value={room}>
       <div className="conference-room" data-conference-room={conferenceId}>
