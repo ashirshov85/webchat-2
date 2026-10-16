@@ -33,6 +33,32 @@ class ConferenceE2eeUnsupportedException : RuntimeException("an E2EE chat cannot
 }
 
 /**
+ * 404 (api-contract.md 009 §1/№45–№53): the conferenceId resolves to
+ * nothing — OR, for the member reads №45/№46, the caller is not an
+ * ACTIVE member of the conference's chat: both answer the SAME uniform
+ * `conference_not_found`, so the existence of a conference is never
+ * disclosed to a stranger or a №32/№33-former member (the 006 privacy
+ * precedent; only №44/№47 split their non-member refusal into the
+ * explicit `403 conference_forbidden` the FR-003/US1-3 scenario names).
+ * Resolved by the T019 controller on every `{conferenceId}` route.
+ */
+class ConferenceNotFoundException : RuntimeException("the requested conference does not exist") {
+    val code: String = "conference_not_found"
+}
+
+/**
+ * 409 (api-contract.md 009 №47/№48/№52/№53/№55): the conference row is
+ * already `ended` — the «конференция завершена» answer of an old link.
+ * Raised BEFORE the mint (T019 №47) and before every mutating
+ * moderation/invite leg (T038/T045/T046): nothing is written, the
+ * finalized row survives for exactly this answer (Q18=A — the FACT of
+ * a conference outlives its roster).
+ */
+class ConferenceEndedException : RuntimeException("the conference has already been ended") {
+    val code: String = "conference_ended"
+}
+
+/**
  * 409 (api-contract.md 009 №47/№55, FR-015, Q23=A): the SHARED
  * participant quota of members and guests is exhausted — the mint-time
  * `ListParticipants` pre-check against the conference's
