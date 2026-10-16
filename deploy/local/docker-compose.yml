@@ -121,9 +121,10 @@ services:
           enable_remote_unmute: true
         rtc:
           tcp_port: 7881
-          udp_port:
-            start: 7882
-            end: 7882
+          # scalar mux port: the {start,end} map form is silently ignored by
+          # livekit-server v1.13 and it falls back to the default ICE range
+          # 50000-60000/udp, which is not published here (T004 finding)
+          udp_port: 7882
     ports:
       - "7880:7880" # HTTP signaling (ws) + Twirp RoomService
       - "7881:7881" # ICE/TCP

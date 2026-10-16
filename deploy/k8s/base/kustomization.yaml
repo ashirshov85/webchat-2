@@ -7,3 +7,6 @@ resources:
   - frontend-deployment.yaml
   - frontend-service.yaml
   - ingress.yaml
+  # LiveKit SFU (009-video-conferences T004): media plane — env-agnostic base,
+  # per-stand config/keys come from overlays (research.md §11)
+  - livekit.yaml
