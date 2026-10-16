@@ -315,10 +315,15 @@ class RedisRealtimePublisher(
 
     /**
      * The payload is the contract `MessageCreatedEvent`
-     * (realtime-channel.md §3.1): exactly `chatId` + `message`, the inner
-     * `message` re-shaped through the SAME [MessageView] projection as
-     * the №16/№15 REST bodies (one schema, US6) — including the plain
-     * FR-003 text string, never the domain `MessageText` wrapper.
+     * (realtime-channel.md §3.1; since 009 — realtime-conference-events.md
+     * §the message.created extension): exactly `chatId` + `message`, the
+     * inner `message` re-shaped through the SAME [MessageView] projection
+     * as the №16/№15 REST bodies (one schema, US6) — including the plain
+     * FR-003 text string, never the domain `MessageText` wrapper, and the
+     * 009 widget fields: `kind` on every frame, the jsonb `payload` object
+     * and the NULL `senderId` of a system card (additive; old clients
+     * ignore the unknown fields, the `payload.type`-agnostic placeholder
+     * rule is the client's OCP business).
      */
     private fun messageCreatedPayload(event: MessageCreatedEvent): Map<String, Any> =
         mapOf(
@@ -331,6 +336,8 @@ class RedisRealtimePublisher(
                     text = event.message.text.value,
                     seq = event.message.seq,
                     createdAt = event.message.createdAt,
+                    kind = event.message.kindLabel(),
+                    payload = event.message.payload,
                 ),
         )
 

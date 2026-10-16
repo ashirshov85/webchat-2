@@ -620,7 +620,7 @@ class ChatListIT(
                 "soundEnabled",
             )
         val PUBLIC_USER_FIELDS = listOf("id", "username", "email", "status", "createdAt")
-        val MESSAGE_FIELDS = listOf("id", "chatId", "senderId", "text", "seq", "createdAt")
+        val MESSAGE_FIELDS = listOf("id", "chatId", "senderId", "text", "seq", "createdAt", "kind")
 
         val STAGE_DELETION_SQL =
             """

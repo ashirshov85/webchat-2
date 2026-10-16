@@ -618,7 +618,7 @@ class GroupRepositoryIT : AbstractIntegrationTest() {
                 assertThat(UUID.fromString(data["chatId"].asText())).isEqualTo(groupId)
                 assertThat(fieldNames(data["message"]))
                     .overridingErrorMessage("the fanned-out message keeps the contract Message shape (§3.7)")
-                    .containsExactlyInAnyOrder("id", "chatId", "senderId", "text", "seq", "createdAt")
+                    .containsExactlyInAnyOrder("id", "chatId", "senderId", "text", "seq", "createdAt", "kind")
                 assertThat(data["message"]["text"].asText()).isEqualTo("привет, группа")
                 assertThat(data["message"]["seq"].asLong()).isEqualTo(GROUP_MESSAGE_SEQ)
             }

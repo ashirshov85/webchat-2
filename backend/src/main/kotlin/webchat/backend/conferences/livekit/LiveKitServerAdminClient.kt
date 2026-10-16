@@ -222,31 +222,38 @@ class LiveKitServerAdminClient
                     )
             }
 
-        /** The retry loop of [twirp]: a finished try returns, a loud try or an interrupted backoff aborts it. */
-        private fun <T> runAttempts(callFactory: () -> Call<T>): RetryResult<T> {
-            var lastFailure: Exception? = null
-            var loudFailure: TwirpFailure? = null
-            for (attempt in 1..maxAttempts) {
-                if (attempt > 1 && !backoffBefore(attempt)) break
-                when (val attemptResult = attemptOnce(callFactory)) {
-                    is AttemptResult.Done -> return RetryResult.Completed(attemptResult.outcome)
-                    is AttemptResult.Transient -> lastFailure = attemptResult.failure
-                    is AttemptResult.Loud -> {
-                        loudFailure = attemptResult.failure
-                        break
+        /**
+         * The retry loop of [twirp]: a finished try returns, a loud try or
+         * an interrupted backoff aborts it. The exits are labeled
+         * `return@run` jumps (a single unlabeled exit point per outcome —
+         * no `break`/`continue` juggling, detekt
+         * LoopWithTooManyJumpStatements).
+         */
+        private fun <T> runAttempts(callFactory: () -> Call<T>): RetryResult<T> =
+            run {
+                var lastFailure: Exception? = null
+                var loudFailure: TwirpFailure? = null
+                for (attempt in 1..maxAttempts) {
+                    if (attempt > 1 && !backoffBefore(attempt)) {
+                        return@run RetryResult.Aborted(loudFailure, lastFailure)
+                    }
+                    when (val attemptResult = attemptOnce(callFactory)) {
+                        is AttemptResult.Done -> return@run RetryResult.Completed(attemptResult.outcome)
+                        is AttemptResult.Transient -> lastFailure = attemptResult.failure
+                        is AttemptResult.Loud ->
+                            return@run RetryResult.Aborted(attemptResult.failure, lastFailure)
+                    }
+                    if (attempt < maxAttempts) {
+                        log.warn(
+                            "LiveKit Twirp call failed (attempt {}/{}), retrying: {}",
+                            attempt,
+                            maxAttempts,
+                            lastFailure.message,
+                        )
                     }
                 }
-                if (attempt < maxAttempts) {
-                    log.warn(
-                        "LiveKit Twirp call failed (attempt {}/{}), retrying: {}",
-                        attempt,
-                        maxAttempts,
-                        lastFailure.message,
-                    )
-                }
+                RetryResult.Aborted(loudFailure, lastFailure)
             }
-            return RetryResult.Aborted(loudFailure, lastFailure)
-        }
 
         /**
          * One executed try of the retry loop: a 2xx body resolves as

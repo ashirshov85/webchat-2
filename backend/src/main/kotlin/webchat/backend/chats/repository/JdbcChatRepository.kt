@@ -1,5 +1,7 @@
 package webchat.backend.chats.repository
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
@@ -9,6 +11,7 @@ import webchat.backend.chats.domain.model.ChatKind
 import webchat.backend.chats.domain.model.ChatListEntry
 import webchat.backend.chats.domain.model.ChatPeerSnapshot
 import webchat.backend.chats.domain.model.Message
+import webchat.backend.chats.domain.model.MessageKind
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.port.ChatEnsureResult
 import webchat.backend.chats.domain.port.ChatListRepository
@@ -41,6 +44,7 @@ import java.util.UUID
 @Repository
 class JdbcChatRepository(
     private val jdbcTemplate: JdbcTemplate,
+    private val objectMapper: ObjectMapper,
 ) : ChatRepository,
     ChatListRepository {
     override fun findById(chatId: UUID): Chat? =
@@ -125,9 +129,65 @@ class JdbcChatRepository(
     override fun listForUser(callerId: UUID): List<ChatListEntry> =
         jdbcTemplate.query(
             LIST_FOR_USER_SQL,
-            CHAT_LIST_ROW_MAPPER,
+            chatListRowMapper,
             callerId,
         )
+
+    /**
+     * T016 (009): the №12 `lastMessage` projection ALSO carries the
+     * system-widget shape — `kind`/`payload` of the top-1 row (the
+     * invite card IS a legitimate list `lastMessage`), so the mapper
+     * needs the adapter's [ObjectMapper] for the jsonb read and lives
+     * at the instance level (the [CHAT_ROW_MAPPER] discipline stays
+     * companion — the `chats` row has no jsonb).
+     */
+    private val chatListRowMapper =
+        RowMapper { rs: ResultSet, _: Int ->
+            val kind = ChatKind.valueOf(rs.getString("chat_kind").uppercase())
+            ChatListEntry(
+                chatId = rs.getObject("chat_id", UUID::class.java),
+                kind = kind,
+                title = rs.getString("chat_title"),
+                memberCount = rs.getLong("member_count").takeIf { kind == ChatKind.GROUP },
+                myRole = rs.getString("my_role")?.let { role -> MemberRole.valueOf(role.uppercase()) },
+                peer =
+                    rs.getObject("peer_id", UUID::class.java)?.let { peerId ->
+                        ChatPeerSnapshot(
+                            id = peerId,
+                            username = rs.getString("peer_username"),
+                            email = rs.getString("peer_email"),
+                            status = rs.getString("peer_status"),
+                            createdAt = rs.getTimestamp("peer_created_at").toInstant(),
+                            displayName = rs.getString("peer_display_name"),
+                        )
+                    },
+                lastMessage =
+                    rs.getObject("last_message_id", UUID::class.java)?.let { messageId ->
+                        Message(
+                            id = messageId,
+                            chatId = rs.getObject("chat_id", UUID::class.java),
+                            senderId = rs.getObject("last_message_sender_id", UUID::class.java),
+                            text = MessageText.normalize(rs.getString("last_message_text")),
+                            seq = rs.getLong("last_message_seq"),
+                            createdAt = rs.getTimestamp("last_message_created_at").toInstant(),
+                            kind =
+                                if (rs.getString("last_message_kind") == "system") {
+                                    MessageKind.SYSTEM
+                                } else {
+                                    MessageKind.USER
+                                },
+                            payload =
+                                rs.getString("last_message_payload")?.let(objectMapper::readTree)
+                                    as ObjectNode?,
+                        )
+                    },
+                unreadCount = rs.getLong("unread_count"),
+                blockedByMe = rs.getObject("blocked_by_me")?.let { (it as Boolean) },
+                // 008a (V16, data-model §1.3): the caller's own sound
+                // switch rides the same single №12 aggregate query.
+                soundEnabled = rs.getBoolean("sound_enabled"),
+            )
+        }
 
     private companion object {
         /**
@@ -148,45 +208,6 @@ class JdbcChatRepository(
                     description = rs.getString("description"),
                     createdAt = rs.getTimestamp("created_at").toInstant(),
                     lastSeq = rs.getLong("last_seq"),
-                )
-            }
-
-        val CHAT_LIST_ROW_MAPPER =
-            RowMapper { rs: ResultSet, _: Int ->
-                val kind = ChatKind.valueOf(rs.getString("chat_kind").uppercase())
-                ChatListEntry(
-                    chatId = rs.getObject("chat_id", UUID::class.java),
-                    kind = kind,
-                    title = rs.getString("chat_title"),
-                    memberCount = rs.getLong("member_count").takeIf { kind == ChatKind.GROUP },
-                    myRole = rs.getString("my_role")?.let { role -> MemberRole.valueOf(role.uppercase()) },
-                    peer =
-                        rs.getObject("peer_id", UUID::class.java)?.let { peerId ->
-                            ChatPeerSnapshot(
-                                id = peerId,
-                                username = rs.getString("peer_username"),
-                                email = rs.getString("peer_email"),
-                                status = rs.getString("peer_status"),
-                                createdAt = rs.getTimestamp("peer_created_at").toInstant(),
-                                displayName = rs.getString("peer_display_name"),
-                            )
-                        },
-                    lastMessage =
-                        rs.getObject("last_message_id", UUID::class.java)?.let { messageId ->
-                            Message(
-                                id = messageId,
-                                chatId = rs.getObject("chat_id", UUID::class.java),
-                                senderId = rs.getObject("last_message_sender_id", UUID::class.java),
-                                text = MessageText.normalize(rs.getString("last_message_text")),
-                                seq = rs.getLong("last_message_seq"),
-                                createdAt = rs.getTimestamp("last_message_created_at").toInstant(),
-                            )
-                        },
-                    unreadCount = rs.getLong("unread_count"),
-                    blockedByMe = rs.getObject("blocked_by_me")?.let { (it as Boolean) },
-                    // 008a (V16, data-model §1.3): the caller's own sound
-                    // switch rides the same single №12 aggregate query.
-                    soundEnabled = rs.getBoolean("sound_enabled"),
                 )
             }
 
@@ -237,6 +258,8 @@ class JdbcChatRepository(
                 lm.text AS last_message_text,
                 lm.seq AS last_message_seq,
                 lm.created_at AS last_message_created_at,
+                lm.kind AS last_message_kind,
+                lm.payload AS last_message_payload,
                 (SELECT count(*)
                     FROM messages um
                    WHERE um.chat_id = c.id
@@ -256,7 +279,7 @@ class JdbcChatRepository(
                                  THEN c.user_high_id
                                  ELSE c.user_low_id END
             LEFT JOIN LATERAL (
-                SELECT m.id, m.sender_id, m.text, m.seq, m.created_at
+                SELECT m.id, m.sender_id, m.text, m.seq, m.created_at, m.kind, m.payload
                   FROM messages m
                  WHERE m.chat_id = c.id
                    AND m.seq > me.deleted_up_to_seq

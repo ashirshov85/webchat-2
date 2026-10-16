@@ -1,6 +1,7 @@
 package webchat.backend.chats.api.dto
 
 import com.fasterxml.jackson.annotation.JsonInclude
+import com.fasterxml.jackson.databind.node.ObjectNode
 import java.time.Instant
 import java.util.UUID
 
@@ -22,20 +23,29 @@ data class SendMessageRequest(
 
 /**
  * Contract №16/№15 success body — the `Message` schema (openapi.yaml
- * 0.4.0): `id` IS the client-supplied `clientMessageId` (FR-004 — the
+ * 0.11.0): `id` IS the client-supplied `clientMessageId` (FR-004 — the
  * public identifier and deduplication key), `seq` is the server-side
  * per-chat order cursor, `text` the FR-003-normalized value with internal
  * whitespace intact, `createdAt` the durable record moment («доставлено»,
  * FR-005). The SAME shape serves the №16 answer, the №15 pages and the
  * `message.created` realtime payload (one schema, US6).
+ *
+ * Since 009 (T016, additive) the schema carries the system-widget fields:
+ * [senderId] is NULL for a system row (nullable transition — the 006
+ * `peer` precedent), [kind] rides every answer (`"user"|"system"`; the
+ * rows created before 009 are semantically `user`) and [payload] — the
+ * jsonb widget object — is present ONLY for a system row (omitted for
+ * `kind='user'`, never an explicit `null`).
  */
 data class MessageView(
     val id: UUID,
     val chatId: UUID,
-    val senderId: UUID,
+    val senderId: UUID?,
     val text: String,
     val seq: Long,
     val createdAt: Instant,
+    val kind: String,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val payload: ObjectNode? = null,
 )
 
 /**

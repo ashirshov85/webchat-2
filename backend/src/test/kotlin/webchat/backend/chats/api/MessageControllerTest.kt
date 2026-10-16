@@ -38,6 +38,7 @@ import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
+import webchat.backend.chats.domain.port.NewSystemMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.chats.domain.port.TypingEvent
@@ -352,6 +353,10 @@ class MessageControllerTest {
         val afterPageCalls = mutableListOf<AfterPageCall>()
 
         override fun findById(id: UUID): Message? = null
+
+        /** T016: the №16 REST surface never appends system rows. */
+        override fun insertSystem(message: NewSystemMessage): Message =
+            error("the №16 endpoint never appends system rows")
 
         override fun insert(message: NewMessage): MessageInsertResult {
             inserts += message

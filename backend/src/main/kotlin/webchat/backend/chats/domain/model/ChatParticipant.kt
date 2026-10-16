@@ -86,9 +86,15 @@ data class ChatParticipant(
     /** Message visibility for this participant (FR-021 watermark). */
     fun isVisible(seq: Long): Boolean = seq > deletedUpToSeq
 
-    /** Unread badge contribution (FR-014): incoming, visible, above the read watermark. */
+    /**
+     * Unread badge contribution (FR-014): incoming, visible, above the read
+     * watermark. Since 009 (T016) a [MessageKind.SYSTEM] widget has NO peer
+     * sender — it never contributes to the badge, the exact semantics of
+     * the №12 `unread_count` SQL (`sender_id <> me` excludes the NULL
+     * sender of a system row).
+     */
     fun isUnread(message: Message): Boolean {
-        val fromPeer = message.senderId != userId
+        val fromPeer = message.kind == MessageKind.USER && message.senderId != userId
         return fromPeer && isVisible(message.seq) && message.seq > lastReadSeq
     }
 

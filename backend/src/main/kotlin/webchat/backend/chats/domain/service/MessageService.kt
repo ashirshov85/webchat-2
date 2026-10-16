@@ -405,11 +405,19 @@ class MessageService(
         message: Message,
     ) {
         val event = MessageCreatedEvent(chatId = chat.id, message = message)
+        // T016: this leg serves the №16 USER send only — the sender is
+        // never NULL here (the system append rides its own port), so the
+        // nullable-UUID evolution is resolved with the same
+        // impossible-by-construction check as below.
+        val senderId =
+            checkNotNull(message.senderId) {
+                "the user send path publishes a sender-carrying record"
+            }
         val recipientId =
-            checkNotNull(chat.peerOf(message.senderId)) {
+            checkNotNull(chat.peerOf(senderId)) {
                 "the sender passed the membership gate, so the peer must resolve"
             }
-        publishIsolated(message.senderId, event)
+        publishIsolated(senderId, event)
         publishIsolated(recipientId, event)
     }
 
