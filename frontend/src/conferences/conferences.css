@@ -1,6 +1,7 @@
 /*
  * ЕДИНЫЙ ФАЙЛ СТИЛЕЙ МОДУЛЯ CONFERENCES (009, plan.md Structure):
  * медиа-комната T027 (сетка тайлов, статус-строка, тайлы экранов),
+ * панель управления T028 (тумблеры микрофона/камеры/экрана, «Покинуть»),
  * далее pre-join (T030), панели модерации/участников (US3) и гостевая
  * страница (US4) дополняют этот же файл. Стили — на токенах
  * дизайн-системы «Aethergram» (theme/tokens.css, FR-002): панельные
@@ -80,4 +81,73 @@
 /* Широкий тайл демонстрации — просторнее по высоте для контента экрана. */
 .conference-tile-screen {
   aspect-ratio: 21 / 9;
+}
+
+/* Панель управления конференцией (T028): тумблеры микрофона/камеры/экрана
+   («вкл/выкл» — визуальный индикатор внутри кнопки) и «Покинуть» —
+   в слоте children ConferenceRoom, под сеткой тайлов. */
+.conference-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+}
+
+/* Тумблер: aria-pressed — золотая рамка активной публикации (008:
+   состояние дублируется визуалом, не только цветом — текст «вкл/выкл»). */
+.conference-controls-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+.conference-controls-toggle[aria-pressed='true'] {
+  border-color: var(--gold);
+  color: var(--cream-bright);
+}
+
+.conference-controls-state {
+  font: italic 11px var(--font-body);
+  color: var(--muted);
+}
+
+.conference-controls-leave {
+  margin-left: auto;
+  padding: 7px 14px;
+  border: 1px solid var(--err);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--err);
+  cursor: pointer;
+}
+
+/* Конвенция 008 FR-035: видимый фокус с клавиатуры. */
+.conference-controls button:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+.conference-controls button[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Нейтральная строка отказа переключения (детали не раскрываются). */
+.conference-controls-notice {
+  flex-basis: 100%;
+  margin: 0;
+  font: italic 12px var(--font-body);
+  color: var(--muted);
 }

@@ -14,8 +14,9 @@
  * «Войти», FR-007); e2e T029 на фазе US1 меряет SC-001 от неё.
  * Блок joined монтирует медиа-комнату ConferenceRoom (T027):
  * подключение по JoinTicket, тайлы участников и адаптация качества
- * (FR-004); identity тикета и «Покинуть» — временная рамка до
- * MediaControls (T028). Сообщения об ошибках — нейтральные, без
+ * (FR-004); в слоте children — MediaControls (T028): тумблеры
+ * микрофона/камеры/экрана и «Покинуть» (выход — leave слота вкладки,
+ * Q10=A). Сообщения об ошибках — нейтральные, без
  * раскрытия деталей (существование не раскрывается, api-contract
  * §1): ветвление UX по коду Problem, а не HTTP-статусу (конвенция
  * 002).
@@ -24,6 +25,7 @@ import { conferenceErrorCode } from '../api/conferences'
 import type { ConferenceErrorCode, ConferenceMode, JoinTicket } from '../api/conferences'
 import { useConference } from '../hooks/useConference'
 import ConferenceRoom from '../components/ConferenceRoom'
+import MediaControls from '../components/MediaControls'
 
 /** Props экрана конференции: id из маршрута /conference/:id. */
 export interface ConferencePageProps {
@@ -63,7 +65,7 @@ function loadErrorMessage(code: ConferenceErrorCode | null): string {
     : 'Не удалось загрузить конференцию'
 }
 
-/** Блок подключенной вкладки (T026/T027): медиа-комната + временная рамка (identity, «Покинуть» — до MediaControls T028). */
+/** Блок подключенной вкладки (T026/T027/T028): медиа-комната + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
 function JoinedPanel({
   conferenceId,
   ticket,
@@ -86,10 +88,9 @@ function JoinedPanel({
         ticket={ticket}
         mode={mode}
         refreshTicket={refreshTicket}
-      />
-      <button type="button" onClick={onLeave}>
-        Покинуть
-      </button>
+      >
+        <MediaControls onLeave={onLeave} />
+      </ConferenceRoom>
     </div>
   )
 }
