@@ -27,7 +27,7 @@ Self-hosting) на 2026-10-15.
 | Аспект | Правило |
 |---|---|
 | Имя | `c:{conferenceId}` — непрозрачно, без PII |
-| Создание | при создании конференции (№44): `CreateRoom(name, empty_timeout=60, departure_timeout=60, max_participants={conferences.max-participants})` — Q19/Q23; self-heal: sweeper досоздаёт при утере |
+| Создание | при создании конференции (№44): `CreateRoom(name, empty_timeout={conferences.empty-room-timeout}, departure_timeout={conferences.departure-timeout}, max_participants={conferences.max-participants})` — Q19/Q23; self-heal: sweeper досоздаёт при утере |
 | Завершение | `DeleteRoom` (модератор/лимит длительности) либо автоматически LiveKit (последний вышел + `departure_timeout`); следствие — вебхук `room_finished` |
 | Источник истины подключений | LiveKit (`Room.num_participants`); БД подключений не хранит |
 

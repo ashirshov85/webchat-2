@@ -4,7 +4,8 @@
 
 Новое долговременное состояние — PostgreSQL 17, миграция **V18__conferences.sql** (3 новые
 таблицы `conferences`, `conference_participants`, `conference_guest_invites` + эволюция
-`messages` до системных виджетов; конвенции 002/004/006: snake_case, `uuid PK`,
+`messages` до системных виджетов и `chats.e2ee` (default false, граница v1 с 010); конвенции
+002/004/006: snake_case, `uuid PK`,
 `timestamptz DEFAULT now()`, CHECK-инварианты, частичные уникальные индексы). Redis 7 —
 только rate-limit-бакеты публичных endpoints (`rl:ip:conferences-*`, паттерн 002) и keyspace
 LiveKit (dev — общий инстанс, prod — отдельный logical DB; [research.md §11](./research.md)).
@@ -39,7 +40,7 @@ LiveKit (не в БД): room c:{conferenceId}, participants u:{userId}:{connId} 
 | Поле | Тип | Валидация / инварианты |
 |---|---|---|
 | `id` | uuid PK | серверный; имя комнаты LiveKit = `c:{id}`; публичный `conferenceId` |
-| `chat_id` | uuid FK → chats `ON DELETE CASCADE` | конференция умирает вместе с чатом; E2EE-чатов (010) в v1 не бывает — проверка сервисом (граница v1) |
+| `chat_id` | uuid FK → chats `ON DELETE CASCADE` | конференция умирает вместе с чатом; E2EE-чаты отклоняются на create по `chats.e2ee` (V18, default false; граница v1 с 010) |
 | `created_by` | uuid FK → users `ON DELETE CASCADE` | инициатор; его первая строка в `conference_participants` — `role='moderator'` (модератор по умолчанию, FR-008) |
 | `status` | varchar(16) NOT NULL | CHECK `IN ('created','active','ended')`; переходы только вперёд (см. ниже), conditional UPDATE — идемпотентность finalize |
 | `max_participants` | int NOT NULL | CHECK `> 0`; снапшот `conferences.max-participants` при создании (FR-015: применяется и как `max_participants` комнаты LiveKit, и в pre-check минта) |
