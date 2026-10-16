@@ -222,6 +222,7 @@ import { resolveDisplayName } from '../../ui/names'
 import { formatDate, formatTime } from '../../ui/time'
 import { TypingRow, renderableTyping } from './TypingRow'
 import type { TypingParticipant } from './TypingRow'
+import { ConferenceInviteCard, isConferenceInvitePayload } from './ConferenceInviteCard'
 import './message-list.css'
 import './states.css'
 
@@ -1110,6 +1111,49 @@ const FeedRow = memo(function FeedRow({
   )
 })
 
+/**
+ * 009 (T024, FR-002, api-contract §4): системная строка ленты —
+ * `kind='system'` (senderId=null) без отправителя и аватара:
+ * известный виджет `conference_invite` — карточка-приглашение
+ * ConferenceInviteCard с кнопкой «Подключиться» (проверка №45 при
+ * клике); любой ДРУГОЙ payload (в т.ч. отсутствующий/сломанный) —
+ * нейтральный плейсхолдер «Системное сообщение» (OCP, конституция
+ * IV: новые типы виджетов добавляются аддитивно, неизвестные
+ * клиентам не ломают ленту). Строка несёт те же `data-mid` (прыжок
+ * поиска T068) и `data-seat-anchor` (T092), что и пользовательские:
+ * системное сообщение входит в непрочитанный блок на общих
+ * основаниях (senderId ≠ me).
+ */
+const SystemRow = memo(function SystemRow({
+  message,
+  seatAnchor,
+}: {
+  readonly message: Message
+  readonly seatAnchor: ScrollLogicalPosition | undefined
+}) {
+  const payload = message.payload ?? null
+  return (
+    <li
+      className="message system-message msg system"
+      data-mid={message.id}
+      data-seat-anchor={seatAnchor}
+    >
+      {isConferenceInvitePayload(payload) ? (
+        <ConferenceInviteCard
+          conferenceId={payload.conferenceId}
+          mode={payload.mode}
+          createdAt={message.createdAt}
+        />
+      ) : (
+        <div className="sys-placeholder">
+          <span className="sys-text">Системное сообщение</span>
+          <span className="sys-time">{formatTime(message.createdAt)}</span>
+        </div>
+      )}
+    </li>
+  )
+})
+
 /** One local outgoing row — optimistic `pending` or an outbox record. */
 interface LocalRowProps {
   readonly clientMessageId: string
@@ -1221,9 +1265,10 @@ function incomingAvatarInitials(ctx: FeedRowContext, senderId: string): string |
 /** One server-message map entry: date divider, unread divider, row. */
 function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) {
   const outgoing = message.senderId === ctx.currentUserId
-  // 009 (T006): системный виджет (senderId=null, kind='system') — без
-  // отправителя: нейтральная строка («?»-аватар, без подписи); рендер
-  // карточки-виджета по payload.type — T024.
+  // 009 (T006/T024): системный виджет (senderId=null, kind='system') —
+  // без отправителя: SystemRow ниже рендерит карточку-приглашение по
+  // payload.type='conference_invite' либо нейтральный плейсхолдер
+  // (OCP, api-contract §4).
   const senderId = message.senderId
   const system = senderId === null
   const read = outgoing && message.seq <= ctx.readUpToSeq
@@ -1272,16 +1317,20 @@ function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) 
           {'Непрочитанные сообщения'}
         </li>
       )}
-      <FeedRow
-        message={message}
-        outgoing={outgoing}
-        read={read}
-        sender={sender}
-        avatarSource={avatarSource}
-        avatarInitials={avatarInitials}
-        stampAnim={ctx.localIds.has(message.id)}
-        seatAnchor={rowSeatAnchor(message.id, ctx.seat)}
-      />
+      {system ? (
+        <SystemRow message={message} seatAnchor={rowSeatAnchor(message.id, ctx.seat)} />
+      ) : (
+        <FeedRow
+          message={message}
+          outgoing={outgoing}
+          read={read}
+          sender={sender}
+          avatarSource={avatarSource}
+          avatarInitials={avatarInitials}
+          stampAnim={ctx.localIds.has(message.id)}
+          seatAnchor={rowSeatAnchor(message.id, ctx.seat)}
+        />
+      )}
     </Fragment>
   )
 }
