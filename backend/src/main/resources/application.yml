@@ -410,6 +410,44 @@ presence:
     # no-op toggle still draws its token, and a refusal performs no V15 write
     settings-writes-per-minute: 30
 
+conferences:
+  # 009 research.md §9 / api-contract.md §5 (FR-015, Q19=A): per-env quotas
+  # and timers of the video-conference feature — every value overridable via
+  # env / SPRING_APPLICATION_JSON (quickstart §2 lowers them the 006 way)
+  max-participants: ${CONFERENCES_MAX_PARTICIPANTS:16}
+  # self-hosted LiveKit does not revoke tokens — the short client-token TTL
+  # is mandatory (livekit-integration.md §3); connected clients get a silent
+  # token refresh, mid-call expiry re-mints via №47/№55
+  token-ttl: ${CONFERENCES_TOKEN_TTL:900s}
+  # FR-012 (Q19=A): guest invite-link nonce horizon
+  guest-invite-ttl: ${CONFERENCES_GUEST_INVITE_TTL:24h}
+  # SC-007: both empty-room borders of the LiveKit room created by №44
+  # (livekit-integration.md §2): «никто не вошёл» and «последний вышел»
+  empty-room-timeout: ${CONFERENCES_EMPTY_ROOM_TIMEOUT:60s}
+  departure-timeout: ${CONFERENCES_DEPARTURE_TIMEOUT:60s}
+  # FR-015 (Q16=B): max lifetime of an active conference + the warning
+  # head start before the controlled end
+  max-duration: ${CONFERENCES_MAX_DURATION:4h}
+  warning-before-end: ${CONFERENCES_WARNING_BEFORE_END:5m}
+  # plan.md Constraints (Q15=B): client re-mint window after an expired
+  # token before the controlled leave
+  reconnect-window: ${CONFERENCES_RECONNECT_WINDOW:120s}
+  # FR-012 (Q7/Q19=A): guest display-name cap after trim
+  guest-name-max-length: ${CONFERENCES_GUEST_NAME_MAX_LENGTH:50}
+  # SC-007: sweeper tick + the `room_lost` grace for `active` conferences
+  # without a room (default grace ≥ 2× empty-room-timeout — never races the
+  # regular LiveKit closure of an empty room)
+  sweep-interval: ${CONFERENCES_SWEEP_INTERVAL:60s}
+  room-lost-grace: ${CONFERENCES_ROOM_LOST_GRACE:120s}
+  livekit:
+    # livekit-integration.md §1: media-plane ingress + the API pair of the
+    # server config. Dev defaults mirror deploy/local/docker-compose.yml
+    # (the public `--dev` placeholder pair); real credentials come from
+    # env / K8s Secrets only (SC-005, quickstart §2)
+    url: ${LIVEKIT_URL:http://localhost:7880}
+    api-key: ${LIVEKIT_API_KEY:devkey}
+    api-secret: ${LIVEKIT_API_SECRET:secret}
+
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)
   observations:
