@@ -1240,6 +1240,18 @@ function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) 
     previous === undefined
       ? !ctx.hasOlder
       : dayKeyOf(message.createdAt) !== dayKeyOf(previous.createdAt)
+  let avatarSource: string
+  let avatarInitials: string | undefined
+  if (outgoing) {
+    avatarSource = ctx.meAvatarSource
+    avatarInitials = ctx.meAvatarInitials
+  } else if (system) {
+    avatarSource = ''
+    avatarInitials = undefined
+  } else {
+    avatarSource = incomingAvatarSource(ctx, senderId)
+    avatarInitials = incomingAvatarInitials(ctx, senderId)
+  }
   return (
     <Fragment key={message.id}>
       {startsNewDay && <li className="date-divider">{formatDate(message.createdAt)}</li>}
@@ -1265,16 +1277,8 @@ function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) 
         outgoing={outgoing}
         read={read}
         sender={sender}
-        avatarSource={
-          outgoing ? ctx.meAvatarSource : system ? '' : incomingAvatarSource(ctx, senderId)
-        }
-        avatarInitials={
-          outgoing
-            ? ctx.meAvatarInitials
-            : system
-              ? undefined
-              : incomingAvatarInitials(ctx, senderId)
-        }
+        avatarSource={avatarSource}
+        avatarInitials={avatarInitials}
         stampAnim={ctx.localIds.has(message.id)}
         seatAnchor={rowSeatAnchor(message.id, ctx.seat)}
       />

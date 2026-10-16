@@ -213,45 +213,70 @@ class LiveKitServerAdminClient
          * «unavailable», and exhausted retries surfacing as
          * [ConferenceMediaUnavailableException].
          */
-        @Suppress("NestedBlockDepth") // the retry classification IS the nesting: attempt → answer → terminal kind
-        private fun <T> twirp(callFactory: () -> Call<T>): TwirpOutcome<T> {
+        private fun <T> twirp(callFactory: () -> Call<T>): TwirpOutcome<T> =
+            when (val result = runAttempts(callFactory)) {
+                is RetryResult.Completed -> result.outcome
+                is RetryResult.Aborted ->
+                    throw result.loudFailure ?: ConferenceMediaUnavailableException(
+                        result.lastFailure ?: error("the retry loop must record a failure before aborting"),
+                    )
+            }
+
+        /** The retry loop of [twirp]: a finished try returns, a loud try or an interrupted backoff aborts it. */
+        private fun <T> runAttempts(callFactory: () -> Call<T>): RetryResult<T> {
             var lastFailure: Exception? = null
             var loudFailure: TwirpFailure? = null
-            run twirpAttempts@{
-                for (attempt in 1..maxAttempts) {
-                    if (attempt > 1 && !backoffBefore(attempt)) return@twirpAttempts
-                    try {
-                        val response = callFactory().execute()
-                        if (response.isSuccessful) return TwirpOutcome.Success(response.body())
-                        val failure = response.asFailure()
-                        when {
-                            failure.absent -> return TwirpOutcome.TargetAbsent
-                            failure.transient -> lastFailure = failure
-                            else ->
-                                // non-transient — the misconfiguration
-                                // fails fast, never retried, never
-                                // «unavailable»
-                                loudFailure = failure
-                        }
-                    } catch (failure: IOException) {
-                        // connection refused / reset / timeout — the
-                        // media plane answer that IS retried
-                        lastFailure = failure
-                    }
-                    if (loudFailure != null) return@twirpAttempts
-                    if (attempt < maxAttempts) {
-                        log.warn(
-                            "LiveKit Twirp call failed (attempt {}/{}), retrying: {}",
-                            attempt,
-                            maxAttempts,
-                            lastFailure?.message,
-                        )
+            for (attempt in 1..maxAttempts) {
+                if (attempt > 1 && !backoffBefore(attempt)) break
+                when (val attemptResult = attemptOnce(callFactory)) {
+                    is AttemptResult.Done -> return RetryResult.Completed(attemptResult.outcome)
+                    is AttemptResult.Transient -> lastFailure = attemptResult.failure
+                    is AttemptResult.Loud -> {
+                        loudFailure = attemptResult.failure
+                        break
                     }
                 }
+                if (attempt < maxAttempts) {
+                    log.warn(
+                        "LiveKit Twirp call failed (attempt {}/{}), retrying: {}",
+                        attempt,
+                        maxAttempts,
+                        lastFailure.message,
+                    )
+                }
             }
-            throw loudFailure ?: ConferenceMediaUnavailableException(
-                lastFailure ?: error("the retry loop must record a failure before aborting"),
-            )
+            return RetryResult.Aborted(loudFailure, lastFailure)
+        }
+
+        /**
+         * One executed try of the retry loop: a 2xx body resolves as
+         * [AttemptResult.Done], a network [IOException] folds into the
+         * retried [AttemptResult.Transient].
+         */
+        private fun <T> attemptOnce(callFactory: () -> Call<T>): AttemptResult<T> =
+            try {
+                val response = callFactory().execute()
+                if (response.isSuccessful) {
+                    AttemptResult.Done(TwirpOutcome.Success(response.body()))
+                } else {
+                    classifyFailure(response)
+                }
+            } catch (failure: IOException) {
+                AttemptResult.Transient(failure)
+            }
+
+        /** The non-2xx answer of one try: `not_found` — Done, transient — retried, the rest — loud. */
+        private fun <T> classifyFailure(response: Response<T>): AttemptResult<T> {
+            val failure = response.asFailure()
+            return when {
+                failure.absent -> AttemptResult.Done(TwirpOutcome.TargetAbsent)
+                failure.transient -> AttemptResult.Transient(failure)
+                else ->
+                    // non-transient — the misconfiguration
+                    // fails fast, never retried, never
+                    // «unavailable»
+                    AttemptResult.Loud(failure)
+            }
         }
 
         /**
@@ -309,6 +334,33 @@ class LiveKitServerAdminClient
             ) : TwirpOutcome<T>
 
             data object TargetAbsent : TwirpOutcome<Nothing>
+        }
+
+        /** The terminal shape of the retry loop: a completed call, or the failure pair the loop aborted with. */
+        private sealed interface RetryResult<out T> {
+            data class Completed<out T>(
+                val outcome: TwirpOutcome<T>,
+            ) : RetryResult<T>
+
+            data class Aborted(
+                val loudFailure: TwirpFailure?,
+                val lastFailure: Exception?,
+            ) : RetryResult<Nothing>
+        }
+
+        /** One classified try of the retry loop. */
+        private sealed interface AttemptResult<out T> {
+            data class Done<out T>(
+                val outcome: TwirpOutcome<T>,
+            ) : AttemptResult<T>
+
+            data class Transient(
+                val failure: Exception,
+            ) : AttemptResult<Nothing>
+
+            data class Loud(
+                val failure: TwirpFailure,
+            ) : AttemptResult<Nothing>
         }
 
         /**
