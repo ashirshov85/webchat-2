@@ -56,7 +56,7 @@ description: "Task list for feature implementation: Видеоконференц
 - [X] T011 [P] Реализовать `JdbcGuestInviteRepository` в `backend/src/main/kotlin/webchat/backend/conferences/repository/` (инвариант «одна active» в одной транзакции revoke+insert, Q17)
 - [X] T012 Реализовать адаптер `LiveKitServerAdminClient` в `backend/src/main/kotlin/webchat/backend/conferences/livekit/LiveKitServerAdminClient.kt`: минт админ-токена (roomCreate+roomList+roomAdmin, в памяти адаптера), все методы контракта livekit-integration §4 с retry+backoff (SET-семантика, идемпотентность)
 - [X] T013 [P] Реализовать адаптер `ChatMembershipCheckerImpl` в `backend/src/main/kotlin/webchat/backend/conferences/repository/` поверх membership-механизма 006 (`GroupMembershipGate`/`ParticipantRepository`); unit-тесты member/non-member/left-member
-- [ ] T014 [P] Создать `backend/src/main/kotlin/webchat/backend/conferences/ConferenceMetrics.kt`: метрики `webchat_conference_*` — активные конференции/участники (gauge по `ix_conferences_status`), события жизненного цикла, применение квот, отказы гостевого входа (FR-018, SC-009)
+- [X] T014 [P] Создать `backend/src/main/kotlin/webchat/backend/conferences/ConferenceMetrics.kt`: метрики `webchat_conference_*` — активные конференции/участники (gauge по `ix_conferences_status`), события жизненного цикла, применение квот, отказы гостевого входа (FR-018, SC-009)
 
 **Checkpoint**: Фундамент готов — реализации user stories могут идти параллельно
 
