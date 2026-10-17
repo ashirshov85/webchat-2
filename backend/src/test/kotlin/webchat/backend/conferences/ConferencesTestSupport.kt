@@ -2,6 +2,7 @@ package webchat.backend.conferences
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.nimbusds.jwt.SignedJWT
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -9,6 +10,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.assertj.core.api.Assertions.assertThat
 import org.awaitility.Awaitility.await
+import org.junit.jupiter.api.AfterEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.web.client.TestRestTemplate
 import org.springframework.http.HttpEntity
@@ -60,7 +62,10 @@ import java.util.concurrent.TimeUnit
  *  * the HTTP legs of №44–№47 and the №21/№27/№32/№33 group fixtures
  *    the FR-003 edge rides on, plus the JdbcTemplate probes of the
  *    durable invariants (the conference row, the `kind='system'`
- *    invite widget, the principal rows).
+ *    invite widget, the principal rows);
+ *  * the №48–№51 moderation HTTP legs (T040) and the №47 ticket claim
+ *    probes (`videoClaimsOf`/`ticketMetadataOf`) — the US3 story IT
+ *    legs of the persisted restrictions/role.
  */
 @Suppress("TooManyFunctions") // T021: fixture library — one helper per leg of the story ITs
 abstract class ConferencesTestSupport : MessagingTestSupport() {
@@ -76,6 +81,15 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
     /** The production Twirp adapter — the room/roster probe surface of the story assertions. */
     @Autowired
     protected lateinit var liveKitAdmin: LiveKitAdminClient
+
+    /** The signal connections opened by the running test — closed by [closeFixtureConnections]. */
+    private val openConnections = mutableListOf<RoomConnection>()
+
+    @AfterEach
+    fun closeFixtureConnections() {
+        openConnections.forEach(RoomConnection::close)
+        openConnections.clear()
+    }
 
     /** Contract №44 `POST /api/v1/chats/{chatId}/conferences` — raw response. */
     protected fun createConference(
@@ -117,6 +131,62 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
             String::class.java,
         )
     }
+
+    /** Contract №48 `POST /api/v1/conferences/{conferenceId}/end` — raw response (T039). */
+    protected fun endConference(
+        user: MessagingUser,
+        conferenceId: UUID,
+    ): ResponseEntity<String> = sendAuthorized(HttpMethod.POST, "/api/v1/conferences/$conferenceId/end", user)
+
+    /**
+     * Contract №49 `PUT /api/v1/conferences/{conferenceId}/participants/{identity}/restrictions`
+     * (T039) — raw response; the body is the FULL SET of the four
+     * flags, so a `false` default IS an explicit reset
+     * (api-contract.md 009 §2).
+     */
+    @Suppress("LongParameterList") // the four №49 flags of one fixture leg (api-contract.md 009 §2)
+    protected fun setParticipantRestrictions(
+        user: MessagingUser,
+        conferenceId: UUID,
+        identity: String,
+        micRestricted: Boolean = false,
+        cameraRestricted: Boolean = false,
+        screenRestricted: Boolean = false,
+        speechRestricted: Boolean = false,
+    ): ResponseEntity<String> =
+        sendAuthorized(
+            HttpMethod.PUT,
+            "/api/v1/conferences/$conferenceId/participants/$identity/restrictions",
+            user,
+            mapOf(
+                MIC_RESTRICTED_FIELD to micRestricted,
+                CAMERA_RESTRICTED_FIELD to cameraRestricted,
+                SCREEN_RESTRICTED_FIELD to screenRestricted,
+                SPEECH_RESTRICTED_FIELD to speechRestricted,
+            ),
+        )
+
+    /** Contract №50 `PUT …/participants/{identity}/role` (T039) — raw response. */
+    protected fun setParticipantRole(
+        user: MessagingUser,
+        conferenceId: UUID,
+        identity: String,
+        role: String,
+    ): ResponseEntity<String> =
+        sendAuthorized(
+            HttpMethod.PUT,
+            "/api/v1/conferences/$conferenceId/participants/$identity/role",
+            user,
+            mapOf(ROLE_FIELD to role),
+        )
+
+    /** Contract №51 `DELETE …/participants/{identity}` (T039) — raw response. */
+    protected fun kickConferenceParticipant(
+        user: MessagingUser,
+        conferenceId: UUID,
+        identity: String,
+    ): ResponseEntity<String> =
+        sendAuthorized(HttpMethod.DELETE, "/api/v1/conferences/$conferenceId/participants/$identity", user)
 
     /** Contract №21 `POST /api/v1/contacts` — fixture contact of the №27/№31 gates. */
     protected fun addContact(
@@ -192,18 +262,22 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
     }
 
     /**
-     * The RFC 9457 problem code of a refused №44–№47 answer — the
-     * `errors: {conference: [<code>]}` shape of api-contract.md 009 §1
-     * (the ChatAccessIT convention over the conferences field).
+     * The RFC 9457 problem code of a refused №44–№55 answer — the
+     * `errors: {field: [<code>]}` shape of api-contract.md 009 §1
+     * (the ChatAccessIT convention); the moderation target refusals
+     * ride the `participant` field, the rest — `conference`.
      */
-    protected fun problemCode(response: ResponseEntity<String>): String? {
+    protected fun problemCode(
+        response: ResponseEntity<String>,
+        field: String = CONFERENCE_FIELD,
+    ): String? {
         assertThat(response.headers.contentType?.toString())
             .overridingErrorMessage("a refused conferences answer must be RFC 9457 application/problem+json")
             .contains(PROBLEM_JSON_MEDIA_TYPE)
         return objectMapper
             .readTree(response.body)
             .get(ERRORS_FIELD)
-            ?.get(CONFERENCE_FIELD)
+            ?.get(field)
             ?.get(FIRST_ELEMENT)
             ?.asText()
     }
@@ -233,6 +307,80 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
     /** The principal rows of [conferenceId] — the SC-002 «no row before the refusal» probe. */
     protected fun participantRowsOf(conferenceId: UUID): List<Map<String, Any>> =
         jdbcTemplate.queryForList(PARTICIPANTS_OF_CONFERENCE_SQL, conferenceId)
+
+    /** №44 happy-path fixture → the conferenceId of the created row. */
+    protected fun createConferenceOk(
+        user: MessagingUser,
+        chatId: UUID,
+        mode: String = VIDEO_MODE,
+    ): UUID {
+        val response = createConference(user, chatId, mode)
+        assertThat(response.statusCode)
+            .overridingErrorMessage("fixture №44 must answer 201, got <%s>: %s", response.statusCode, response.body)
+            .isEqualTo(HttpStatus.CREATED)
+        return UUID.fromString(conferenceViewOf(response)[ID_FIELD].asText())
+    }
+
+    /** №47 happy-path fixture → the raw 200 response (the parsed ticket via [ticketOf]). */
+    protected fun joinConferenceOk(
+        user: MessagingUser,
+        conferenceId: UUID,
+    ): ResponseEntity<String> {
+        val response = joinConference(user, conferenceId)
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "fixture №47 of member <${user.username}> must answer 200, got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.OK)
+        return response
+    }
+
+    /** №47 + a joined signal connection of the minted ticket — the media-plane actor of the story legs. */
+    protected fun connectMember(
+        user: MessagingUser,
+        conferenceId: UUID,
+    ): RoomConnection = connectTicket(ticketOf(joinConferenceOk(user, conferenceId)))
+
+    /** Opens and registers a signal connection of a minted ticket — the fixture closes it after the test. */
+    protected fun connectTicket(ticket: JsonNode): RoomConnection {
+        val connection =
+            RoomConnection(
+                wsUrl = ticket[WS_URL_FIELD].asText(),
+                token = ticket[TOKEN_FIELD].asText(),
+            )
+        openConnections.add(connection)
+        connection.awaitJoined()
+        return connection
+    }
+
+    /**
+     * The decoded `video` claim map of a minted №47 ticket — the
+     * grants-table probe of the moderation legs (the ticket SIGNATURE
+     * is proven by the plane accepting the connection, the T021 note).
+     */
+    @Suppress("UNCHECKED_CAST")
+    protected fun videoClaimsOf(response: ResponseEntity<String>): Map<String, Any> =
+        SignedJWT.parse(ticketOf(response)[TOKEN_FIELD].asText()).jwtClaimsSet.getClaim(VIDEO_FIELD) as Map<String, Any>
+
+    /** The `metadata` claim of a minted №47 ticket — the persisted role surface (Q9=A). */
+    protected fun ticketMetadataOf(response: ResponseEntity<String>): String? =
+        SignedJWT.parse(ticketOf(response)[TOKEN_FIELD].asText()).jwtClaimsSet.getStringClaim(METADATA_FIELD)
+
+    /** The moderation `{identity}` path segment of a member principal — `u:{userId}`. */
+    protected fun memberPrincipalOf(userId: UUID): String = "u:$userId"
+
+    /** The principal row of one member — the durable Q5/Q9/Q22 state probe, `null` before his first join. */
+    protected fun memberRowOf(
+        conferenceId: UUID,
+        userId: UUID,
+    ): Map<String, Any>? = participantRowsOf(conferenceId).singleOrNull { it[USER_ID_COLUMN] == userId }
+
+    /** The LiveKit room name of a conference — `c:{conferenceId}` (livekit-integration.md §2). */
+    protected fun roomNameOf(conferenceId: UUID): String = "$ROOM_PREFIX$conferenceId"
+
+    /** The connection-identity prefix of one member — `u:{userId}:` (every tab matches it, edge Q10). */
+    protected fun memberPrefixOf(userId: UUID): String = "u:$userId:"
 
     /**
      * Stages SOURCE moderation restrictions on a member's principal row
@@ -313,6 +461,21 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
             HttpEntity<Void>(null, HttpHeaders().apply { setBearerAuth(user.accessToken) }),
             String::class.java,
         )
+
+    /** The №48–№51 authorized request leg — an optional JSON body over any method. */
+    private fun sendAuthorized(
+        method: HttpMethod,
+        path: String,
+        user: MessagingUser,
+        payload: Map<String, Any>? = null,
+    ): ResponseEntity<String> {
+        val headers =
+            HttpHeaders().apply {
+                setBearerAuth(user.accessToken)
+                payload?.let { contentType = MediaType.APPLICATION_JSON }
+            }
+        return restTemplate.exchange(path, method, HttpEntity(payload, headers), String::class.java)
+    }
 
     private fun postJsonAuthorized(
         user: MessagingUser,
@@ -472,6 +635,15 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
         @JvmStatic
         fun conferenceITProperties(registry: DynamicPropertyRegistry) {
             registry.add("conferences.livekit.url") {
+                // T021's last leg KILLS the shared plane, and every
+                // distinct context configuration (the T040 recording
+                // config, the later US4/US5 sets) caches its own Spring
+                // context — a class scheduled AFTER the kill would bind
+                // against a dead container ("Mapped port … after the
+                // container is started"). The supplier self-heals:
+                // Testcontainers re-creates the container (a FRESH
+                // mapped port) and the new context binds the live URL.
+                if (!livekit.isRunning) livekit.start()
                 "http://${livekit.host}:${livekit.getMappedPort(LIVEKIT_HTTP_PORT)}"
             }
             // research §13: the quota legs run on a lowered
@@ -508,9 +680,59 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
 
         const val CONFERENCE_FIELD = "conference"
 
+        const val PARTICIPANT_FIELD = "participant"
+
+        const val MODERATOR_REQUIRED_CODE = "moderator_required"
+
         const val FIRST_ELEMENT = 0
 
         const val MODE_FIELD = "mode"
+
+        const val ROLE_FIELD = "role"
+
+        const val ID_FIELD = "id"
+
+        const val IDENTITY_FIELD = "identity"
+
+        const val NAME_FIELD = "name"
+
+        const val WS_URL_FIELD = "wsUrl"
+
+        const val TOKEN_FIELD = "token"
+
+        const val METADATA_FIELD = "metadata"
+
+        const val VIDEO_FIELD = "video"
+
+        const val CAN_PUBLISH_FIELD = "canPublish"
+
+        const val CAN_PUBLISH_SOURCES_FIELD = "canPublishSources"
+
+        const val MIC_RESTRICTED_FIELD = "micRestricted"
+
+        const val CAMERA_RESTRICTED_FIELD = "cameraRestricted"
+
+        const val SCREEN_RESTRICTED_FIELD = "screenRestricted"
+
+        const val SPEECH_RESTRICTED_FIELD = "speechRestricted"
+
+        const val ONLINE_FIELD = "online"
+
+        const val MODERATOR_ROLE = "moderator"
+
+        const val PARTICIPANT_ROLE = "participant"
+
+        const val VIDEO_MODE = "video"
+
+        const val AUDIO_MODE = "audio"
+
+        const val CAMERA_SOURCE = "camera"
+
+        const val ROOM_PREFIX = "c:"
+
+        const val USER_ID_COLUMN = "user_id"
+
+        const val ROLE_COLUMN = "role"
 
         const val USER_ID_FIELD = "userId"
 
