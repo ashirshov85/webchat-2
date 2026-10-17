@@ -39,7 +39,7 @@
  */
 import { useCallback, useState } from 'react'
 import { conferenceErrorCode } from '../api/conferences'
-import type { ConferenceErrorCode, ConferenceMode, JoinTicket } from '../api/conferences'
+import type { ConferenceErrorCode, ConferenceMode, JoinTicket, MeView } from '../api/conferences'
 import { useConference } from '../hooks/useConference'
 import type { ConferenceDeviceSelection } from '../hooks/useDevices'
 import ConferenceRoom from '../components/ConferenceRoom'
@@ -108,6 +108,8 @@ function JoinedPanel({
   initialMedia,
   initialDevices,
   refreshTicket,
+  restrictions,
+  onRestrictionsSync,
   onLeave,
 }: {
   readonly conferenceId: string
@@ -118,6 +120,14 @@ function JoinedPanel({
   /** Стартовый выбор устройств pre-join (T034) — применение в useDevices комнаты. */
   readonly initialDevices?: ConferenceDeviceSelection | null
   readonly refreshTicket: () => Promise<JoinTicket | null>
+  /**
+   * Собственные ограничения №46 MeView (T043): снимок для блокировки
+   * тумблеров MediaControls (live-гранты — сама комната); null —
+   * ограничений нет.
+   */
+  readonly restrictions?: MeView | null
+  /** Повторный №46 по permission-событию LiveKit (T043 — useConference.refreshMe). */
+  readonly onRestrictionsSync: () => void
   readonly onLeave: () => void
 }) {
   return (
@@ -134,7 +144,11 @@ function JoinedPanel({
       >
         <ParticipantsPanel />
         <ModerationPanel conferenceId={conferenceId} />
-        <MediaControls onLeave={onLeave} />
+        <MediaControls
+          restrictions={restrictions}
+          onRestrictionsSync={onRestrictionsSync}
+          onLeave={onLeave}
+        />
       </ConferenceRoom>
     </div>
   )
@@ -147,6 +161,7 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
     status,
     error,
     reload,
+    refreshMe,
     joinStatus,
     joinError,
     ticket,
@@ -224,6 +239,8 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
                   }
                   initialDevices={selection?.devices}
                   refreshTicket={refreshTicket}
+                  restrictions={me}
+                  onRestrictionsSync={refreshMe}
                   onLeave={leave}
                 />
               )}

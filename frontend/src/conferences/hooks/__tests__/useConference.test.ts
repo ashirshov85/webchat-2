@@ -255,4 +255,71 @@ describe('useConference (009 US1 T026)', () => {
     expect(activeConferenceId()).toBeNull()
     expect(disconnect).not.toHaveBeenCalled()
   })
+
+  it('T043: refreshMe re-runs №46 and replaces the me snapshot without touching №45', async () => {
+    api.getConference.mockResolvedValue(conferenceView())
+    api.getConferenceMe.mockResolvedValueOnce(meView())
+
+    const { result } = renderHook(() => useConference(CONFERENCE_A))
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+
+    // сервер применил ограничение (№49) → permission-событие → повторный №46
+    api.getConferenceMe.mockResolvedValueOnce(meView({ role: 'participant', micRestricted: true }))
+    act(() => result.current.refreshMe())
+
+    await waitFor(() => expect(result.current.me?.micRestricted).toBe(true))
+    expect(result.current.me?.role).toBe('participant')
+    expect(result.current.status).toBe('ready')
+    // вспомогательная синхронизация не перезапускает пакет №45+№46
+    expect(api.getConference).toHaveBeenCalledTimes(1)
+    expect(api.getConferenceMe).toHaveBeenCalledTimes(2)
+  })
+
+  it('T043: refreshMe failure is silent — the me snapshot and screen stay intact', async () => {
+    api.getConference.mockResolvedValue(conferenceView())
+    api.getConferenceMe.mockResolvedValueOnce(meView())
+
+    const { result } = renderHook(() => useConference(CONFERENCE_A))
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+
+    api.getConferenceMe.mockRejectedValueOnce(problem(503, 'unavailable'))
+    act(() => result.current.refreshMe())
+
+    await waitFor(() => expect(api.getConferenceMe).toHaveBeenCalledTimes(2))
+    // снимок остаётся прежним, экран не переводится в error
+    expect(result.current.me).toEqual(meView())
+    expect(result.current.status).toBe('ready')
+    expect(result.current.error).toBeNull()
+  })
+
+  it('T043: a refreshMe answer hanging across a conferenceId change is not applied', async () => {
+    api.getConference.mockResolvedValue(conferenceView({ id: CONFERENCE_A }))
+    api.getConferenceMe.mockResolvedValueOnce(meView())
+
+    const { result, rerender } = renderHook(({ id }) => useConference(id), {
+      initialProps: { id: CONFERENCE_A },
+    })
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+
+    let resolveRefresh: (value: MeView) => void = () => {}
+    api.getConferenceMe.mockReturnValueOnce(
+      new Promise<MeView>((resolve) => {
+        resolveRefresh = resolve
+      }),
+    )
+    act(() => result.current.refreshMe())
+
+    // вкладка ушла на другую конференцию, пока №46 в полёте
+    api.getConference.mockResolvedValue(conferenceView({ id: CONFERENCE_B }))
+    api.getConferenceMe.mockResolvedValue(meView({ role: 'participant' }))
+    rerender({ id: CONFERENCE_B })
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+
+    resolveRefresh(meView({ micRestricted: true }))
+    await waitFor(() => expect(api.getConferenceMe).toHaveBeenCalledTimes(3))
+
+    // устаревший ответ конференции A не показан на экране конференции B
+    expect(result.current.me?.micRestricted).toBe(false)
+    expect(result.current.me?.role).toBe('participant')
+  })
 })

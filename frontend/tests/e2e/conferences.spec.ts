@@ -11,6 +11,11 @@ import { expect, request, test, type APIRequestContext, type Page } from '@playw
  * подключение сохраняется без обрыва, после снятия троттлинга звонок
  * продолжается.
  *
+ * 009, US3, T043 — e2e модерации (quickstart §3.3): мьют микрофона
+ * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
+ * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
+ * (SET-семантика №49, live-обновление permission-событием + refetch №46).
+ *
  * Стенд (quickstart §2): docker compose postgres redis mailpit livekit,
  * backend :8080 (LIVEKIT_URL/KEY/SECRET), SPA :5173 (webServer конфига).
  * Аккаунты готовятся через REST (register → письмо Mailpit → confirm →
@@ -25,6 +30,8 @@ const RUN_ID = process.env.E2E_RUN_ID ?? Date.now().toString(36)
 const PASSWORD = `E2e-conference-${RUN_ID}`
 /** SC-001: от «Войти» на pre-join до медиа (каноничная форма — после T034). */
 const SC001_MS = 5_000
+/** SC-005: модерационное действие применяется и становится видно ≤ 2 c. */
+const SC005_MS = 2_000
 
 interface TestAccount {
   readonly username: string
@@ -331,5 +338,86 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       tilesSection(alicePage).getByText(bobNow.username, { exact: true }).first(),
     ).toBeVisible()
     await cdp.detach()
+  })
+})
+
+test.describe.serial('модерация US3 e2e (009 T043)', () => {
+  let api: APIRequestContext
+  let alice: TestAccount
+  let bob: TestAccount
+  let chatId: string
+  /** Страницы теста — закрываются в afterEach (контексты LiveKit-вкладок). */
+  let openedPages: Page[]
+
+  test.beforeAll(async () => {
+    api = await request.newContext({ baseURL: API_URL })
+    alice = await ensureAccount(api, `mod${RUN_ID}a`)
+    bob = await ensureAccount(api, `mod${RUN_ID}b`)
+    chatId = await ensureDirectChat(api, alice, bob)
+  })
+
+  test.afterAll(() => {
+    void api.dispose()
+  })
+
+  test.beforeEach(() => {
+    openedPages = []
+  })
+
+  test.afterEach(async () => {
+    for (const page of openedPages) {
+      await page.context().close()
+    }
+  })
+
+  test('SC-005: мьют микрофона модератором блокирует тумблер цели с пояснением ≤ 2 c и виден всем; снятие разблокирует', async ({
+    browser,
+  }) => {
+    // alice — создатель = модератор (T017); обе стороны в звонке,
+    // микрофон bob опубликован (дефолты mode=video)
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
+      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+    ])
+
+    // №49: alice глушит bob'у микрофон (строка панели модерации цели)
+    const startedAt = Date.now()
+    await alicePage
+      .getByRole('group', { name: bobNow.username })
+      .getByRole('button', { name: 'Отключить микрофон' })
+      .click()
+
+    // у bob тумблер заблокирован с пояснением (T043) ≤ 2 c от клика
+    await expect(bobPage.getByText('Микрофон отключён модератором')).toBeVisible({
+      timeout: SC005_MS,
+    })
+    expect(
+      Date.now() - startedAt,
+      `SC-005: применение мьюта ${Date.now() - startedAt} мс`,
+    ).toBeLessThanOrEqual(SC005_MS)
+    await expect(bobPage.getByRole('button', { name: 'Микрофон' })).toBeDisabled()
+    // состояние видно всем: строка bob в панели участников alice
+    await expect(alicePage.getByText('микрофон отключён', { exact: true }).first()).toBeVisible({
+      timeout: SC005_MS,
+    })
+
+    // снятие ограничения (SET false, Q22=A): блокировка у цели снята ≤ 2 c
+    await alicePage
+      .getByRole('group', { name: bobNow.username })
+      .getByRole('button', { name: 'Включить микрофон' })
+      .click()
+    await expect(bobPage.getByText('Микрофон отключён модератором')).toHaveCount(0, {
+      timeout: SC005_MS,
+    })
+    await expect(bobPage.getByRole('button', { name: 'Микрофон' })).toBeEnabled({
+      timeout: SC005_MS,
+    })
   })
 })
