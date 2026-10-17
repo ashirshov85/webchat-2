@@ -23,15 +23,25 @@
  * звонке (T027) — pre-join не держит микрофон лишним индикатором
  * записи браузера. Камерный трек живёт только пока тумблер включён:
  * выключение тумблера, «Войти» и размонтирование останавливают трек
- * (устройство освобождается — «без следов», FR-007). Отказ браузера
- * в доступе к камере (Q6=A) не блокирует вход: нейтральное
- * предупреждение + вход «только слушаю» доступен (полный UX отказа
- * в PreJoinScreen/ConferenceRoom — T032; блокировка тумблеров по
- * ограничениям №46 MeView — T033).
+ * (устройство освобождается — «без следов», FR-007).
  *
- * Выбор устройств: перечисление MediaDevices + сигналы devicechange
- * (подключение/отключение устройств обновляет списки). Камера
- * переключяется сразу — setDeviceId локального трека (превью
+ * Отказ браузера в доступе к устройствам (T032, Q6=A) НЕ блокирует
+ * вход: понятное предупреждение + «Войти» остаётся доступной, выборка
+ * уезжает без недоступных треков («только слушаю», FR-006), повторный
+ * запрос доступа — уже в звонке тумблерами T028. Источники отказа
+ * (списки устройств и состояния разрешений — хук useDevices T031,
+ * единая точка): микрофон — явный 'denied' permissions API (трек на
+ * pre-join не запрашивается, acquisition-пути нет); камера — 'denied'
+ * permissions API ИЛИ отказ acquisition превью (Safari без permissions
+ * API покрывается acquisition-веткой); оба — объединённое
+ * предупреждение «как слушатель». Тумблеры остаются доступными:
+ * повторное включение камеры здесь — новая попытка acquisition
+ * (успех убирает предупреждение), микрофон — выбор на звонок.
+ * Блокировка тумблеров по ограничениям №46 MeView — T033.
+ *
+ * Выбор устройств: перечисление MediaDevices + сигналы devicechange —
+ * useDevices (T031; подключение/отключение устройств обновляет списки).
+ * Камера переключяется сразу — setDeviceId локального трека (превью
  * обновляется); микрофон/динамики — выбор запоминается и уезжает в
  * onJoin-выборке (применение в звонке — T031/T034:
  * Room.switchActiveDevice/setSinkId). Метки устройств браузер
@@ -50,6 +60,7 @@ import type { LocalVideoTrack } from 'livekit-client'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import type { ConferenceMode } from '../api/conferences'
+import { useDevices } from '../hooks/useDevices'
 import '../conferences.css'
 
 /** Выбранные устройства pre-join (применение в звонке — T031/T034); null — системное устройство по умолчанию. */
@@ -81,14 +92,23 @@ export interface PreJoinScreenProps {
   readonly joining?: boolean
 }
 
-/** Списки устройств по видам (enumerateDevices, метки — после разрешения). */
-interface DeviceKinds {
-  readonly audioInputs: readonly MediaDeviceInfo[]
-  readonly videoInputs: readonly MediaDeviceInfo[]
-  readonly audioOutputs: readonly MediaDeviceInfo[]
+/**
+ * Предупреждение об отказе доступа (T032, Q6=A): микрофон — явный
+ * 'denied' permissions API, камера — 'denied' ИЛИ отказ acquisition
+ * превью; текст нейтральный, вход остаётся доступным («только слушаю»).
+ */
+function denialNotice(micDenied: boolean, cameraDenied: boolean): string | null {
+  if (micDenied && cameraDenied) {
+    return 'Нет доступа к камере и микрофону — можно войти как слушатель'
+  }
+  if (micDenied) {
+    return 'Нет доступа к микрофону — можно войти без звука'
+  }
+  if (cameraDenied) {
+    return 'Нет доступа к камере — можно войти без видео'
+  }
+  return null
 }
-
-const EMPTY_DEVICES: DeviceKinds = { audioInputs: [], videoInputs: [], audioOutputs: [] }
 
 /** Дефолт камеры по mode точки входа (FR-005, Q3=A): микрофон включён в обоих режимах, камера — только в video. */
 function initialCamera(mode: ConferenceMode): boolean {
@@ -111,15 +131,29 @@ export default function PreJoinScreen({
   const cameraSelectId = useId()
   const speakerSelectId = useId()
 
-  /** Тумблеры стартового состояния: микрофон (вкл в обоих режимах, FR-005) — чистый выбор (трек не держим), камера — живой локальный трек превью. */
+  /** Тумблеры стартового состояния: микрофон (вкл в обоих режимах, FR-005) — чистый выбор (трек не держим), камера — живой локальный трек превью (НЕ оптимистично: включён только при живом треке — отказ acquisition возвращает «выкл», T032). */
   const [micOn, setMicOn] = useState(true)
-  const [cameraOn, setCameraOn] = useState(() => initialCamera(mode))
+  const [cameraOn, setCameraOn] = useState(false)
   /** Камера в полёте acquisition/переключения — тумблер недоступен, плейсхолдер «Включение камеры…». */
   const [cameraPending, setCameraPending] = useState(false)
-  /** Нейтральное предупреждение (отказ доступа/переключения устройства; детали не раскрываются). */
+  /** Отказ acquisition камеры (T032: Safari без permissions API; сбрасывается новой попыткой/выключением). */
+  const [cameraFailed, setCameraFailed] = useState(false)
+  /** Нейтральное предупреждение переключения устройства (детали не раскрываются). */
   const [notice, setNotice] = useState<string | null>(null)
 
-  const [devices, setDevices] = useState<DeviceKinds>(EMPTY_DEVICES)
+  /**
+   * Устройства и разрешения — useDevices (T031, единая точка):
+   * перечисление + devicechange и состояния permissions API.
+   */
+  const {
+    audioInputs,
+    videoInputs,
+    audioOutputs,
+    microphonePermission,
+    cameraPermission,
+    refresh: refreshDevices,
+  } = useDevices()
+
   /** '' — системное устройство по умолчанию (FR-005: выбор ввода/вывода). */
   const [audioInputId, setAudioInputId] = useState('')
   const [videoInputId, setVideoInputId] = useState('')
@@ -133,31 +167,14 @@ export default function PreJoinScreen({
   const cameraPendingRef = useRef(false)
   const videoInputIdRef = useRef('')
   videoInputIdRef.current = videoInputId
-  /** Стартовый дефолт камеры фиксируется на монтаж (mode точки входа — FR-005). */
-  const initialCameraRef = useRef(cameraOn)
-
-  /** Пере-перечисление устройств: начальный список, devicechange, unlock меток после разрешения камеры. */
-  const refreshDevices = useCallback(async (): Promise<void> => {
-    const media = navigator.mediaDevices
-    if (media === undefined || typeof media.enumerateDevices !== 'function') {
-      return
-    }
-    try {
-      const list = await media.enumerateDevices()
-      setDevices({
-        audioInputs: list.filter((device) => device.kind === 'audioinput'),
-        videoInputs: list.filter((device) => device.kind === 'videoinput'),
-        audioOutputs: list.filter((device) => device.kind === 'audiooutput'),
-      })
-    } catch {
-      // перечисление недоступно — селекты остаются с «По умолчанию»
-    }
-  }, [])
+  /** Стартовый дефолт камеры фиксируется на монтаж (mode точки входа — FR-005): интент включения, а не состояние. */
+  const initialCameraRef = useRef(initialCamera(mode))
 
   /**
    * Включение камеры: acquisition локального трека превью (по выбранному
-   * устройству, если уже выбрано). Отказ браузера (Q6=A) — предупреждение
-   * и возврат тумблера: вход «только слушаю» остаётся доступным.
+   * устройству, если уже выбрано). Отказ браузера (T032, Q6=A) —
+   * cameraFailed → предупреждение (вход «только слушаю» остаётся
+   * доступным), успешная повторная попытка предупреждение снимает.
    */
   const enableCamera = useCallback(async (): Promise<void> => {
     if (cameraPendingRef.current) {
@@ -166,7 +183,7 @@ export default function PreJoinScreen({
     const seq = ++cameraSeqRef.current
     cameraPendingRef.current = true
     setCameraPending(true)
-    setNotice(null)
+    setCameraFailed(false)
     try {
       const preferred = videoInputIdRef.current
       const track = await createLocalVideoTrack(
@@ -182,7 +199,7 @@ export default function PreJoinScreen({
       void refreshDevices()
     } catch {
       if (seq === cameraSeqRef.current) {
-        setNotice('Нет доступа к камере — можно войти без видео')
+        setCameraFailed(true)
       }
     } finally {
       if (seq === cameraSeqRef.current) {
@@ -200,29 +217,24 @@ export default function PreJoinScreen({
     cameraTrackRef.current?.stop()
     cameraTrackRef.current = null
     setCameraOn(false)
+    setCameraFailed(false)
   }, [])
 
   // Монтаж экрана: стартовое приобретение превью по дефолту mode
-  // (FR-005), перечисление устройств + сигналы devicechange. Размонтиро-
-  // вание/закрытие pre-join — трек остановлен, «без следов» (FR-007).
+  // (FR-005); перечисление устройств, devicechange и подписка разрешений
+  // — useDevices (T031). Размонтирование/закрытие pre-join — трек
+  // остановлен, «без следов» (FR-007).
   useEffect(() => {
-    void refreshDevices()
     if (initialCameraRef.current) {
       void enableCamera()
     }
-    const media = navigator.mediaDevices
-    const onDeviceChange = (): void => {
-      void refreshDevices()
-    }
-    media?.addEventListener('devicechange', onDeviceChange)
     return () => {
-      media?.removeEventListener('devicechange', onDeviceChange)
       // eslint-disable-next-line react-hooks/exhaustive-deps -- намеренная инвалидация висящих acquisition камеры при размонтировании: монотонный счётчик поколений (не DOM-ref), инкремент в cleanup — сам механизм устаревания (устаревший трек останавливается сам себя, конституция III)
       cameraSeqRef.current++
       cameraTrackRef.current?.stop()
       cameraTrackRef.current = null
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- монтаж экрана: стартовые acquisition/слушатель живут весь жизненный цикл pre-join; дефолт mode зафиксирован в initialCameraRef (mode точки входа неизменен для одного экрана)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- монтаж экрана: стартовое acquisition живёт весь жизненный цикл pre-join; дефолт mode зафиксирован в initialCameraRef (mode точки входа неизменен для одного экрана)
   }, [])
 
   // Превью: attach локального трека к video-элементу только при
@@ -280,6 +292,12 @@ export default function PreJoinScreen({
     releaseCamera()
     onJoin(selection)
   }
+
+  /** Отказ доступа (T032, Q6=A): микрофон — permissions API 'denied', камера — 'denied' или отказ acquisition превью. */
+  const accessNotice = denialNotice(
+    microphonePermission === 'denied',
+    cameraPermission === 'denied' || cameraFailed,
+  )
 
   return (
     <dialog open className="conference-prejoin" aria-labelledby={titleId}>
@@ -342,7 +360,7 @@ export default function PreJoinScreen({
             }}
           >
             <option value="">По умолчанию</option>
-            {devices.audioInputs.map((device, index) => (
+            {audioInputs.map((device, index) => (
               <option key={device.deviceId || `audio-in-${index}`} value={device.deviceId}>
                 {deviceLabel(device, 'Микрофон', index)}
               </option>
@@ -353,7 +371,7 @@ export default function PreJoinScreen({
           <label htmlFor={cameraSelectId}>Камера</label>
           <select id={cameraSelectId} value={videoInputId} onChange={handleVideoInputChange}>
             <option value="">По умолчанию</option>
-            {devices.videoInputs.map((device, index) => (
+            {videoInputs.map((device, index) => (
               <option key={device.deviceId || `video-in-${index}`} value={device.deviceId}>
                 {deviceLabel(device, 'Камера', index)}
               </option>
@@ -370,7 +388,7 @@ export default function PreJoinScreen({
             }}
           >
             <option value="">По умолчанию</option>
-            {devices.audioOutputs.map((device, index) => (
+            {audioOutputs.map((device, index) => (
               <option key={device.deviceId || `audio-out-${index}`} value={device.deviceId}>
                 {deviceLabel(device, 'Динамик', index)}
               </option>
@@ -394,6 +412,9 @@ export default function PreJoinScreen({
           Войти
         </button>
       </div>
+      {accessNotice !== null && (
+        <output className="conference-prejoin-notice">{accessNotice}</output>
+      )}
       {notice !== null && <output className="conference-prejoin-notice">{notice}</output>}
     </dialog>
   )

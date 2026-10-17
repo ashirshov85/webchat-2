@@ -27,11 +27,14 @@
  * камера+микрофон, audio — только микрофон, Q3=A soft); T034 (US2)
  * передаст явное стартовое состояние из pre-join (оба выкл — «только
  * слушаю», FR-006). Отказ браузера в доступе к устройствам не рушит
- * вход — участник остаётся слушателем (повторный запрос в звонке —
- * T028/T032); ограничения права/источников уже срезаны в grants токена
- * сервером (FR-007) — публикация просто не проходит. Своя демонстрация
- * экрана публикуется тумблером MediaControls (T028), удалённые
- * рендерятся широкими тайлами над сеткой камер.
+ * вход — участник остаётся слушателем с понятным предупреждением
+ * (T032, Q6=A); повторный запрос доступа — уже в звонке тумблерами
+ * MediaControls (T028): успешная публикация слота (LocalTrackPublished)
+ * снимает свою часть предупреждения; ограничения права/источников уже
+ * срезаны в grants токена сервером (FR-007) — публикация просто не
+ * проходит. Своя демонстрация экрана публикуется тумблером
+ * MediaControls (T028), удалённые рендерятся широкими тайлами над
+ * сеткой камер.
  *
  * Реконнект (фундамент T060, FR-014): подключённому LiveKit продлевает
  * токен сам (livekit-integration §3); при ПОЛНОМ разрыве после
@@ -66,6 +69,14 @@ export interface ConferenceRoomInitialMedia {
   readonly microphone: boolean
   readonly camera: boolean
 }
+
+/** Слоты стартовой публикации, недоступные из-за отказа браузера (T032, Q6=A). */
+interface MediaDenied {
+  readonly microphone: boolean
+  readonly camera: boolean
+}
+
+const MEDIA_DENIED_NONE: MediaDenied = { microphone: false, camera: false }
 
 export interface ConferenceRoomProps {
   /** Привязка disconnect к слоту вкладки (Q10=A) — useConference. */
@@ -126,24 +137,28 @@ function safeDisconnect(room: Room): void {
  * Стартовая публикация: микрофон/камера по стартовому состоянию.
  * Отказ браузера в доступе (нет устройств/запрет) не рушит вход —
  * участник остаётся слушателем (FR-006; повторный запрос уже в звонке
- * — T028/T032); право слова/ограничения источников срезаны в grants
+ * — тумблеры T028, Q6=A): сбой включения помечается в возвращаемом
+ * флаге слота → предупреждение; намеренно выключенный старт отказом
+ * НЕ считается. Право слова/ограничения источников срезаны в grants
  * токена сервером (FR-007) — публикация молча не проходит.
  */
 async function publishInitialTracks(
   room: Room,
   microphone: boolean,
   camera: boolean,
-): Promise<void> {
+): Promise<MediaDenied> {
+  const denied: { microphone: boolean; camera: boolean } = { microphone: false, camera: false }
   try {
     await room.localParticipant.setMicrophoneEnabled(microphone)
   } catch {
-    // микрофон недоступен — вход «только слушаю»
+    denied.microphone = microphone
   }
   try {
     await room.localParticipant.setCameraEnabled(camera)
   } catch {
-    // камера недоступна — аудио-участие сохраняется
+    denied.camera = camera
   }
+  return denied
 }
 
 /** Отображаемое имя участника тайла: name тикета/метаданных, иначе identity. */
@@ -165,6 +180,24 @@ function phaseStatusText(phase: ConferenceRoomPhase): string | null {
     default:
       return null
   }
+}
+
+/**
+ * Предупреждение об отказе доступа к устройствам (T032, Q6=A): вход
+ * сохранён («только слушаю», FR-006), повторный запрос — тумблерами
+ * уже в звонке (T028); текст нейтральный, без раскрытия причин отказа.
+ */
+function mediaFailureNotice(denied: MediaDenied): string | null {
+  if (denied.microphone && denied.camera) {
+    return 'Нет доступа к камере и микрофону — можно включить их в звонке'
+  }
+  if (denied.microphone) {
+    return 'Нет доступа к микрофону — можно включить его в звонке'
+  }
+  if (denied.camera) {
+    return 'Нет доступа к камере — можно включить её в звонке'
+  }
+  return null
 }
 
 /**
@@ -222,6 +255,8 @@ export default function ConferenceRoom({
   /** Комната текущего жизненного цикла тикета (создаётся эффектом, T027). */
   const [room, setRoom] = useState<Room | null>(null)
   const [phase, setPhase] = useState<ConferenceRoomPhase>('connecting')
+  /** Слоты стартовой публикации, недоступные из-за отказа браузера (T032). */
+  const [mediaDenied, setMediaDenied] = useState<MediaDenied>(MEDIA_DENIED_NONE)
   /** Разрыв инициирован выходом (слот вкладки/размонтирование) — без авто-возврата. */
   const intentionalRef = useRef(false)
   /** Успешное подключение уже было — реконнект с новым тикетом допустим (FR-014). */
@@ -245,6 +280,7 @@ export default function ConferenceRoom({
     intentionalRef.current = false
     let disposed = false
     const active = createConferenceRoom()
+    setMediaDenied(MEDIA_DENIED_NONE)
 
     const handleReconnecting = () => {
       if (!disposed) {
@@ -254,6 +290,23 @@ export default function ConferenceRoom({
     const handleReconnected = () => {
       if (!disposed) {
         setPhase('connected')
+      }
+    }
+    /**
+     * Повторный запрос доступа уже в звонке (T032, Q6=A): успешное
+     * включение слота тумблером MediaControls (T028) публикует трек —
+     * LocalTrackPublished снимает свою часть предупреждения об отказе.
+     */
+    const handleLocalTrackPublished = (publication: { source: Track.Source }) => {
+      if (disposed) {
+        return
+      }
+      if (publication.source === Track.Source.Microphone) {
+        setMediaDenied((current) =>
+          current.microphone ? { ...current, microphone: false } : current,
+        )
+      } else if (publication.source === Track.Source.Camera) {
+        setMediaDenied((current) => (current.camera ? { ...current, camera: false } : current))
       }
     }
     const handleDisconnected = (reason?: DisconnectReason) => {
@@ -292,6 +345,7 @@ export default function ConferenceRoom({
     active.on(RoomEvent.Reconnecting, handleReconnecting)
     active.on(RoomEvent.Reconnected, handleReconnected)
     active.on(RoomEvent.Disconnected, handleDisconnected)
+    active.on(RoomEvent.LocalTrackPublished, handleLocalTrackPublished)
     bindConferenceDisconnect(conferenceId, () => {
       intentionalRef.current = true
       safeDisconnect(active)
@@ -307,7 +361,10 @@ export default function ConferenceRoom({
         everConnectedRef.current = true
         reconnectSpentRef.current = false
         setPhase('connected')
-        await publishInitialTracks(active, startMicrophone, startCamera)
+        const denied = await publishInitialTracks(active, startMicrophone, startCamera)
+        if (!disposed) {
+          setMediaDenied(denied)
+        }
       } catch {
         if (!disposed) {
           setPhase('failed')
@@ -323,6 +380,7 @@ export default function ConferenceRoom({
   }, [conferenceId, ticket.wsUrl, ticket.token, startMicrophone, startCamera])
 
   const statusText = phaseStatusText(phase)
+  const mediaNotice = mediaFailureNotice(mediaDenied)
 
   // До создания комнаты (первый рендер до эффекта) — только статус-оболочка:
   // children (MediaControls и панели US3/US4) живут ВНУТРИ RoomContext —
@@ -338,6 +396,7 @@ export default function ConferenceRoom({
     <RoomContext.Provider value={room}>
       <div className="conference-room" data-conference-room={conferenceId}>
         {statusText !== null && <output className="conference-room-status">{statusText}</output>}
+        {mediaNotice !== null && <output className="conference-room-media">{mediaNotice}</output>}
         {(phase === 'connected' || phase === 'reconnecting') && <ConferenceMedia />}
         {children}
       </div>

@@ -3,12 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { JoinTicket } from '../../api/conferences'
 
 /**
- * 009, US1, T029 — ConferenceRoom (T027, FR-004/FR-006): подключение по
- * JoinTicket (wsUrl+token), стартовая публикация по mode/initialMedia,
- * отказ устройств не рушит вход («только слушаю»), серверные разрывы —
- * терминальные без авто-возврата, полный разрыв после успешного
- * подключения — единственная попытка refreshTicket (№47) и
- * переподключение свежим тикетом (FR-014); размонтирование рвёт
+ * 009, US1, T029 (+ T032, US2, Q6=A) — ConferenceRoom (T027,
+ * FR-004/FR-006): подключение по JoinTicket (wsUrl+token), стартовая
+ * публикация по mode/initialMedia, отказ устройств не рушит вход
+ * («только слушаю») — понятное предупреждение и снятие при успешном
+ * повторном включении уже в звонке (LocalTrackPublished, тумблеры T028);
+ * серверные разрывы — терминальные без авто-возврата, полный разрыв
+ * после успешного подключения — единственная попытка refreshTicket (№47)
+ * и переподключение свежим тикетом (FR-014); размонтирование рвёт
  * подключение (best-effort). livekit-client и примитивы
  * @livekit/components-react заменены фейками: предмет теста — связка
  * нашей комнаты с SDK-контрактом (connect/disconnect/события/сеттеры).
@@ -30,6 +32,7 @@ const lk = vi.hoisted(() => {
     Reconnecting: 'reconnecting',
     Reconnected: 'reconnected',
     Disconnected: 'disconnected',
+    LocalTrackPublished: 'localTrackPublished',
   } as const
   const Track = {
     Source: { Camera: 'camera', Microphone: 'microphone', ScreenShare: 'screen_share' },
@@ -50,14 +53,14 @@ const lk = vi.hoisted(() => {
     connectImpl: ((wsUrl: string, token: string) => Promise<void>) | null = null
     micImpl: ((enabled: boolean) => Promise<void>) | null = null
     cameraImpl: ((enabled: boolean) => Promise<void>) | null = null
-    private readonly listeners = new Map<string, Set<(reason?: number) => void>>()
+    private readonly listeners = new Map<string, Set<(payload?: unknown) => void>>()
 
     constructor(options: unknown) {
       this.constructorOptions = options
       FakeRoom.instances.push(this)
     }
 
-    on(event: string, listener: (reason?: number) => void): this {
+    on(event: string, listener: (payload?: unknown) => void): this {
       let set = this.listeners.get(event)
       if (set === undefined) {
         set = new Set()
@@ -67,9 +70,9 @@ const lk = vi.hoisted(() => {
       return this
     }
 
-    emit(event: string, reason?: number): void {
+    emit(event: string, payload?: unknown): void {
       this.listeners.get(event)?.forEach((listener) => {
-        listener(reason)
+        listener(payload)
       })
     }
 
@@ -252,7 +255,7 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     })
   })
 
-  it('отказ браузера в доступе к устройствам не рушит вход — участник остаётся слушателем', async () => {
+  it('отказ браузера в доступе к устройствам не рушит вход — слушатель + понятное предупреждение (Q6=A, T032)', async () => {
     render(
       <ConferenceRoom
         conferenceId="c-1"
@@ -274,11 +277,97 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     await waitFor(() => {
       expect(room.cameraCalls).toEqual([true])
     })
-    // вход сохранён: подключение не разорвано, ошибки на экране нет
-    await waitFor(() => {
-      expect(screen.queryByRole('status')).toBeNull()
-    })
+    // вход сохранён: подключение не разорвано; отказ — предупреждение
+    // «только слушаю» с подсказкой повторного запроса в звонке
+    expect(
+      await screen.findByText('Нет доступа к камере и микрофону — можно включить их в звонке'),
+    ).toBeVisible()
     expect(room.disconnectCalls).toBe(0)
+  })
+
+  it('отказ только микрофона (mode=audio) — предупреждение про микрофон, вход сохранён (T032)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="audio"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+    room.micImpl = () => Promise.reject(new Error('NotAllowedError'))
+
+    await waitFor(() => {
+      expect(room.micCalls).toEqual([true])
+    })
+    expect(
+      await screen.findByText('Нет доступа к микрофону — можно включить его в звонке'),
+    ).toBeVisible()
+    // камера не запрашивалась (mode=audio) — её части в предупреждении нет
+    expect(screen.queryByText(/Нет доступа к камере/)).toBeNull()
+    expect(room.disconnectCalls).toBe(0)
+  })
+
+  it('намеренно выключенный старт не считается отказом — предупреждения нет (FR-006)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        initialMedia={{ microphone: false, camera: false }}
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+
+    await waitFor(() => {
+      expect(room.micCalls).toEqual([false])
+    })
+    await waitFor(() => {
+      expect(room.cameraCalls).toEqual([false])
+    })
+    await waitFor(() => {
+      expect(screen.queryByText(/Нет доступа/)).toBeNull()
+    })
+  })
+
+  it('повторный запрос уже в звонке: успешная публикация (LocalTrackPublished) снимает предупреждение слота (Q6=A, T032)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+    room.micImpl = () => Promise.reject(new Error('NotAllowedError'))
+    room.cameraImpl = () => Promise.reject(new Error('NotAllowedError'))
+
+    await waitFor(() => {
+      expect(room.cameraCalls).toEqual([true])
+    })
+    // оба слота недоступны — объединённое предупреждение
+    expect(
+      await screen.findByText('Нет доступа к камере и микрофону — можно включить их в звонке'),
+    ).toBeVisible()
+
+    // пользователь повторно запросил микрофон тумблером (T028) — успех:
+    // LocalTrackPublished микрофона снимает только свою часть
+    room.emit(lk.RoomEvent.LocalTrackPublished, { source: lk.Track.Source.Microphone })
+    expect(
+      await screen.findByText('Нет доступа к камере — можно включить её в звонке'),
+    ).toBeVisible()
+
+    // успешное включение камеры убирает предупреждение полностью
+    room.emit(lk.RoomEvent.LocalTrackPublished, { source: lk.Track.Source.Camera })
+    await waitFor(() => {
+      expect(screen.queryByText(/Нет доступа/)).toBeNull()
+    })
+
+    // публикация экрана предупреждений не порождает и не трогает
+    room.emit(lk.RoomEvent.LocalTrackPublished, { source: lk.Track.Source.ScreenShare })
+    expect(screen.queryByText(/Нет доступа/)).toBeNull()
   })
 
   it('серверный разрыв (PARTICIPANT_REMOVED) — терминальный «Вы отключены», без refreshTicket', async () => {
