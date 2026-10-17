@@ -271,6 +271,7 @@ class GuestInviteServiceTest {
                 sweepInterval = Duration.ofSeconds(60),
                 roomLostGrace = Duration.ofSeconds(120),
                 livekit = ConferencesProperties.LiveKit("http://livekit:7880", "devkey", "secret"),
+                rateLimit = ConferencesProperties.RateLimit("30/1m", "10/1m"),
             )
 
         val CONFERENCE_ID: UUID = UUID.fromString("00000000-0000-4000-8000-00000000044c")

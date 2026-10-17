@@ -22,6 +22,7 @@ import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.auth.security.AuthEventRecorder
 import webchat.backend.auth.security.AuthEventType
 import webchat.backend.config.AuthRateLimitProperties
+import webchat.backend.config.ConferencesProperties
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Duration
@@ -72,11 +73,28 @@ import java.time.Duration
  * `rl:user:pwdchange:{userId}`) is enforced in the controller via
  * UserRateLimiter: the Bearer subject is not visible to this pre-auth
  * guard.
+ *
+ * The 009 T047 extension (research.md §6 of
+ * specs/009-video-conferences, FR-009/FR-012): the two PUBLIC guest
+ * routes of the `conferences` tag join the same table —
+ * `GET /api/v1/conferences/invite-info` (`rl:ip:conferences-invite-info:<ip>`
+ * 30/1m — the join-page status probe) and `POST
+ * /api/v1/conferences/join-by-invite`
+ * (`rl:ip:conferences-join-by-invite:<ip>` 10/1m — stricter: it creates
+ * guest rows and mints tickets; the canon of both numbers is
+ * api-contract.md 009 №54/№55, per-env overridable through
+ * `conferences.rate-limit.*`). IP-only like the SSO rows (no subject
+ * exists pre-auth) and intervally refilled for the same burst-proof
+ * reason: a nonce-probing flood can never win tokens back mid-window,
+ * so the N+1-th request inside the window is deterministically the
+ * uniform 429 (the T048 flood legs). The webhook row of T053 joins
+ * this table together with its controller — never before.
  */
 @Suppress("LargeClass", "LongParameterList", "TooManyFunctions")
 class RateLimitFilter(
     redisClient: RedisClient,
     properties: AuthRateLimitProperties,
+    conferencesProperties: ConferencesProperties,
     private val clientIpResolver: ClientIpResolver,
     private val objectMapper: ObjectMapper,
     private val loginThrottle: LoginThrottle,
@@ -109,6 +127,18 @@ class RateLimitFilter(
             "/api/v1/auth/sso/callback" to ssoRoute("sso-callback", properties.sso.callback),
             "/api/v1/auth/sso/token" to ssoRoute("sso-token", properties.sso.token),
             "/api/v1/auth/sso/link/authorize" to ssoRoute("sso-link-authorize", properties.sso.linkAuthorize),
+            "/api/v1/conferences/invite-info" to
+                conferenceRoute(
+                    GET_METHOD,
+                    CONFERENCES_INVITE_INFO_ROUTE_NAME,
+                    conferencesProperties.rateLimit.inviteInfo,
+                ),
+            "/api/v1/conferences/join-by-invite" to
+                conferenceRoute(
+                    POST_METHOD,
+                    CONFERENCES_JOIN_BY_INVITE_ROUTE_NAME,
+                    conferencesProperties.rateLimit.joinByInvite,
+                ),
         )
 
     override fun doFilterInternal(
@@ -313,6 +343,28 @@ class RateLimitFilter(
             identifierBucket = null,
         )
 
+    /**
+     * A PUBLIC guest route of 009 (T047, research.md §6): IP-only — the
+     * caller has NO subject at all (the guest owns no token before the
+     * mint) — and refilled intervally like the SSO rows: one portion per
+     * window, so a nonce-probing or ticket-minting flood can never win
+     * tokens back mid-window and the N+1-th request inside the window is
+     * deterministically the uniform 429 (the T048 flood legs, SC-004).
+     * The spec comes per-env from `conferences.rate-limit.*` — the canon
+     * of the numbers is api-contract.md 009 №54/№55.
+     */
+    private fun conferenceRoute(
+        method: String,
+        name: String,
+        spec: String,
+    ): LimitedRoute =
+        LimitedRoute(
+            method = method,
+            name = name,
+            ipLimit = parseRateLimit(spec, intervallyRefill = true),
+            identifierBucket = null,
+        )
+
     private fun limitedRoute(
         method: String,
         name: String,
@@ -379,6 +431,8 @@ class RateLimitFilter(
         const val PASSWORD_CHANGE_ROUTE_NAME = "password-change"
         const val SSO_PROVIDERS_ROUTE_NAME = "sso-providers"
         const val SSO_CALLBACK_ROUTE_NAME = "sso-callback"
+        const val CONFERENCES_INVITE_INFO_ROUTE_NAME = "conferences-invite-info"
+        const val CONFERENCES_JOIN_BY_INVITE_ROUTE_NAME = "conferences-join-by-invite"
         const val REASON_DETAIL = "reason"
         const val LOCKOUT_REASON = "lockout"
         const val RETRY_AFTER_DETAIL = "retryAfterSec"

@@ -359,6 +359,7 @@ class GuestJoinControllerTest {
                         "testkey",
                         "0123456789abcdef0123456789abcdef",
                     ),
+                rateLimit = ConferencesProperties.RateLimit("30/1m", "10/1m"),
             )
     }
 }

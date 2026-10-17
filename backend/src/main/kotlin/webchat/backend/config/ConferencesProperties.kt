@@ -24,9 +24,10 @@ import java.time.Duration
  * (SC-007; the default grace ≥ 2× the empty-room timeout, so it never
  * races the regular LiveKit closure of an empty room). [livekit] is the
  * media-plane connection of the admin adapter (livekit-integration.md
- * §1). Consumed by ConferenceService/JoinTokenService/
- * ConferenceLifecycleScheduler/T012 adapter; asserted by the binding
- * unit test and the IT set T021+.
+ * §1). [rateLimit] carries the per-IP bucket specs of the two PUBLIC
+ * guest routes №54/№55 (T047). Consumed by ConferenceService/
+ * JoinTokenService/ConferenceLifecycleScheduler/T012 adapter; asserted
+ * by the binding unit test and the IT set T021+.
  */
 @ConfigurationProperties(prefix = "conferences")
 data class ConferencesProperties(
@@ -54,7 +55,31 @@ data class ConferencesProperties(
     val roomLostGrace: Duration,
     /** livekit-integration.md §1: media-plane ingress and the API pair of the server config. */
     val livekit: LiveKit,
+    /** T047 (009, US4, FR-009): per-IP bucket specs of the public guest routes №54/№55. */
+    val rateLimit: RateLimit,
 ) {
+    /**
+     * The T047 flood guard of the ONLY public `conferences` surface
+     * (api-contract.md 009 §3 — canon of the numbers): [inviteInfo] and
+     * [joinByInvite] are `"<count>/<window>"` Bucket4j specs, IP-only
+     * like the SSO rows of the filter table (research.md §6 of 009 —
+     * the pre-auth guard sees no subject). Enforced by the shared
+     * `RateLimitFilter` (pattern 002) under the `rl:ip:conferences-*`
+     * Redis family (data-model.md §Redis of 009); parsed fail-fast at
+     * startup by the filter, intervally refilled so N/1m reads as
+     * exactly N admissions per window. The webhook row of T053 joins
+     * this table later, with its own spec.
+     */
+    data class RateLimit(
+        /** №54 `GET /api/v1/conferences/invite-info` — the join-page status probe, default 30/1m per IP. */
+        val inviteInfo: String,
+        /**
+         * №55 `POST /join-by-invite` — the ticket mint, default 10/1m
+         * per IP (stricter: it mints guest rows and tokens).
+         */
+        val joinByInvite: String,
+    )
+
     /**
      * LiveKit connection of the backend: [url] is the signaling/Twirp
      * ingress, [apiKey]/[apiSecret] the server pair that signs client

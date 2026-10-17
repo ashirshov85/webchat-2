@@ -57,12 +57,18 @@ class SecurityConfig {
      * T048 `login:fail` brute-force lockout of research.md §8 — the counter
      * verdict runs FIRST on `/auth/login`, before the buckets, and answers
      * with the uniform 429 + `Retry-After` = the remaining counter TTL.
+     * Since 009 T047 the same guard also carries the per-IP buckets of the
+     * two PUBLIC guest routes №54/№55 (`conferences.rate-limit.*`,
+     * api-contract.md 009 §3) — the specs arrive via
+     * [ConferencesProperties] so the numbers stay owned by the conferences
+     * domain while the enforcement rides the ONE shared filter.
      */
     @Suppress("LongParameterList") // the guard's collaborators are the wiring itself (tasks.md T047–T048)
     @Bean
     fun rateLimitFilter(
         rateLimitRedisClient: RedisClient,
         properties: AuthRateLimitProperties,
+        conferencesProperties: ConferencesProperties,
         clientIpResolver: ClientIpResolver,
         objectMapper: ObjectMapper,
         loginThrottle: LoginThrottle,
@@ -72,6 +78,7 @@ class SecurityConfig {
         RateLimitFilter(
             rateLimitRedisClient,
             properties,
+            conferencesProperties,
             clientIpResolver,
             objectMapper,
             loginThrottle,
@@ -127,6 +134,17 @@ class SecurityConfig {
                 authorize("/api/v1/auth/sso/authorize", permitAll)
                 authorize("/api/v1/auth/sso/callback", permitAll)
                 authorize("/api/v1/auth/sso/token", permitAll)
+                // T047 (009, US4, FR-009): the ONLY public `conferences`
+                // surface — the guest pair №54/№55 (exact paths, no
+                // wildcards, the T017 discipline). They stand permitAll
+                // WITHOUT any bearer expectation; their flood guard is the
+                // per-IP bucket pair `rl:ip:conferences-invite-info` 30/1m
+                // and `rl:ip:conferences-join-by-invite` 10/1m in the
+                // RateLimitFilter above. The webhook route stays CLOSED
+                // here until its controller opens it in T053 — a public
+                // path must never precede its handler
+                authorize("/api/v1/conferences/invite-info", permitAll)
+                authorize("/api/v1/conferences/join-by-invite", permitAll)
                 authorize("/actuator/health/**", permitAll)
                 authorize("/actuator/prometheus", permitAll)
                 authorize("/actuator/metrics/**", permitAll)

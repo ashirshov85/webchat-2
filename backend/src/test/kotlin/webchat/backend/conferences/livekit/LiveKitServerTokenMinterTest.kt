@@ -166,6 +166,7 @@ class LiveKitServerTokenMinterTest {
                 sweepInterval = Duration.ofSeconds(60),
                 roomLostGrace = Duration.ofSeconds(120),
                 livekit = ConferencesProperties.LiveKit("http://localhost:7880", API_KEY, API_SECRET),
+                rateLimit = ConferencesProperties.RateLimit("30/1m", "10/1m"),
             )
     }
 }

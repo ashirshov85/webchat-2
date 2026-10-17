@@ -33,6 +33,10 @@ class ConferencesPropertiesTest {
                 assertThat(properties.livekit.url).isEqualTo("http://localhost:7880")
                 assertThat(properties.livekit.apiKey).isEqualTo("devkey")
                 assertThat(properties.livekit.apiSecret).isEqualTo("secret")
+                // T047: the per-IP bucket specs of the public guest pair
+                // №54/№55 (api-contract.md 009 §3 canon)
+                assertThat(properties.rateLimit.inviteInfo).isEqualTo("30/1m")
+                assertThat(properties.rateLimit.joinByInvite).isEqualTo("10/1m")
             }
     }
 
@@ -57,6 +61,8 @@ class ConferencesPropertiesTest {
                 "conferences.livekit.url=http://livekit:7880",
                 "conferences.livekit.api-key=prodkey",
                 "conferences.livekit.api-secret=prodsecret",
+                "conferences.rate-limit.invite-info=60/1m",
+                "conferences.rate-limit.join-by-invite=20/1m",
             ).run { context ->
                 val properties = context.getBean(ConferencesProperties::class.java)
 
@@ -74,6 +80,10 @@ class ConferencesPropertiesTest {
                 assertThat(properties.livekit.url).isEqualTo("http://livekit:7880")
                 assertThat(properties.livekit.apiKey).isEqualTo("prodkey")
                 assertThat(properties.livekit.apiSecret).isEqualTo("prodsecret")
+                // T047 per-env overrides — the k6 flood profile of T058 rides
+                // exactly these knobs (2× the default buckets)
+                assertThat(properties.rateLimit.inviteInfo).isEqualTo("60/1m")
+                assertThat(properties.rateLimit.joinByInvite).isEqualTo("20/1m")
             }
     }
 
@@ -106,6 +116,8 @@ class ConferencesPropertiesTest {
                 "conferences.livekit.url=http://localhost:7880",
                 "conferences.livekit.api-key=devkey",
                 "conferences.livekit.api-secret=secret",
+                "conferences.rate-limit.invite-info=30/1m",
+                "conferences.rate-limit.join-by-invite=10/1m",
             )
     }
 }
