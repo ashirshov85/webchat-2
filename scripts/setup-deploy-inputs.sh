@@ -30,7 +30,8 @@ GitHub repository configuration (skipped with --skip-github):
 Cluster configuration, one-time and outside git (skipped with --skip-cluster):
   - namespace <dev> (created if missing)
   - ServiceAccount <github-actions-deployer> + Role + RoleBinding
-    (RBAC scoped to the dev namespace ONLY: deployments, services, ingresses)
+     (RBAC scoped to the dev namespace ONLY: deployments, services, ingresses,
+      configmaps, secrets, persistentvolumeclaims)
   - restricted kubeconfig for that ServiceAccount -> base64 -> KUBE_CONFIG
   - pull secret `regcred` in the dev namespace (idempotent upsert)
 
@@ -244,6 +245,11 @@ rules:
     verbs: [get, list, watch, create, update, patch]
   - apiGroups: [networking.k8s.io]
     resources: [ingresses]
+    verbs: [get, list, watch, create, update, patch]
+  # dev-stand extras beyond the core app footprint: postgres/redis PVCs and
+  # credentials (feature 002), LiveKit config (009) — namespace-scoped anyway
+  - apiGroups: [""]
+    resources: [configmaps, secrets, persistentvolumeclaims]
     verbs: [get, list, watch, create, update, patch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
