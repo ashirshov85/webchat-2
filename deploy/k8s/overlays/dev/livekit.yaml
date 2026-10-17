@@ -1,0 +1,23 @@
+# Dev-stand resources of the LiveKit deployment (009-video-conferences T004,
+# research.md §11). The base (deploy/k8s/base/livekit.yaml) is already
+# stand-compatible: single UDP mux 7882, shared dev Redis instance (acceptable
+# on dev per research §11 alternative (в); prod isolates a dedicated
+# instance/logical DB), no TURN (stand nodes are directly reachable).
+# LIVEKIT_KEYS carries the dev-only placeholder pair `devkey: secret` —
+# byte-identical to deploy/local/docker-compose.yml (T003) and to the backend
+# dev env (LIVEKIT_API_KEY/SECRET, LIVEKIT_URL=http://livekit:7880): the pair
+# signs join/admin tokens and the webhook JWT (api_key name `devkey` in the
+# base config). A documented placeholder, not a real secret
+# (postgres-credentials precedent; no real secrets in the repo — gitleaks).
+# Prod overlays keep the Secret out of the repo instead:
+#   kubectl -n <env> create secret generic livekit-keys \
+#     --from-literal=keys='<api key>: <api secret>'
+apiVersion: v1
+kind: Secret
+metadata:
+  name: livekit-keys
+  labels:
+    app: livekit
+type: Opaque
+stringData:
+  keys: "devkey: secret"

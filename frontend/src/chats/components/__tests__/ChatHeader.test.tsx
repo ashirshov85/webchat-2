@@ -719,11 +719,14 @@ describe('ChatHeader bell-колокол звука (008a US4, T057; FR-012, ui-
     expect(buttons).not.toBeNull()
     // 008a Phase 11 (T068, ревизия FR-016): лупа псевдо-поиска —
     // ПЕРВОЙ (#btnSearch прототипа), колокол — за ней, шестерёнка —
-    // последней.
+    // последней; 009 US1 (T023): пара «видеозвонок»/«аудиозвонок» —
+    // между колоколом и шестернёнкой.
     const children = Array.from(buttons?.children ?? [])
     expect(children[0]).toBe(screen.getByRole('button', { name: 'Поиск' }))
     expect(children[1]).toBe(bell())
-    expect(children[2]).toBe(screen.getByRole('button', { name: 'Настройки чата' }))
+    expect(children[2]).toBe(screen.getByRole('button', { name: 'Видеозвонок' }))
+    expect(children[3]).toBe(screen.getByRole('button', { name: 'Аудиозвонок' }))
+    expect(children[4]).toBe(screen.getByRole('button', { name: 'Настройки чата' }))
     expect(bell().querySelector('svg path')).toBeInstanceOf(SVGElement)
   })
 

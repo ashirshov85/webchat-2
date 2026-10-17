@@ -1,0 +1,111 @@
+package webchat.backend.config
+
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Test
+import org.springframework.boot.context.properties.ConfigurationPropertiesBindException
+import org.springframework.boot.context.properties.EnableConfigurationProperties
+import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import java.time.Duration
+
+class ConferencesPropertiesTest {
+    private val contextRunner =
+        ApplicationContextRunner()
+            .withUserConfiguration(ConferencesPropertiesConfiguration::class.java)
+
+    @Test
+    fun bindsQ19DefaultsFromConfiguration() {
+        contextRunner
+            .withPropertyValues(*Q19_DEFAULTS)
+            .run { context ->
+                val properties = context.getBean(ConferencesProperties::class.java)
+
+                assertThat(properties.maxParticipants).isEqualTo(16)
+                assertThat(properties.tokenTtl).isEqualTo(Duration.ofSeconds(900))
+                assertThat(properties.guestInviteTtl).isEqualTo(Duration.ofHours(24))
+                assertThat(properties.emptyRoomTimeout).isEqualTo(Duration.ofSeconds(60))
+                assertThat(properties.departureTimeout).isEqualTo(Duration.ofSeconds(60))
+                assertThat(properties.maxDuration).isEqualTo(Duration.ofHours(4))
+                assertThat(properties.warningBeforeEnd).isEqualTo(Duration.ofMinutes(5))
+                assertThat(properties.reconnectWindow).isEqualTo(Duration.ofSeconds(120))
+                assertThat(properties.guestNameMaxLength).isEqualTo(50)
+                assertThat(properties.sweepInterval).isEqualTo(Duration.ofSeconds(60))
+                assertThat(properties.roomLostGrace).isEqualTo(Duration.ofSeconds(120))
+                assertThat(properties.livekit.url).isEqualTo("http://localhost:7880")
+                assertThat(properties.livekit.apiKey).isEqualTo("devkey")
+                assertThat(properties.livekit.apiSecret).isEqualTo("secret")
+            }
+    }
+
+    @Test
+    fun bindsPerEnvOverrides() {
+        // quickstart.md §2: per-env overrides win over the Q19 defaults —
+        // the lowered timeout profile (SPRING_APPLICATION_JSON accepts the
+        // same ISO-8601 PT-forms) plus the real LiveKit env pair
+        contextRunner
+            .withPropertyValues(
+                "conferences.max-participants=3",
+                "conferences.token-ttl=30s",
+                "conferences.guest-invite-ttl=PT1H",
+                "conferences.empty-room-timeout=10s",
+                "conferences.departure-timeout=15s",
+                "conferences.max-duration=PT2M",
+                "conferences.warning-before-end=PT30S",
+                "conferences.reconnect-window=60s",
+                "conferences.guest-name-max-length=10",
+                "conferences.sweep-interval=5s",
+                "conferences.room-lost-grace=30s",
+                "conferences.livekit.url=http://livekit:7880",
+                "conferences.livekit.api-key=prodkey",
+                "conferences.livekit.api-secret=prodsecret",
+            ).run { context ->
+                val properties = context.getBean(ConferencesProperties::class.java)
+
+                assertThat(properties.maxParticipants).isEqualTo(3)
+                assertThat(properties.tokenTtl).isEqualTo(Duration.ofSeconds(30))
+                assertThat(properties.guestInviteTtl).isEqualTo(Duration.ofHours(1))
+                assertThat(properties.emptyRoomTimeout).isEqualTo(Duration.ofSeconds(10))
+                assertThat(properties.departureTimeout).isEqualTo(Duration.ofSeconds(15))
+                assertThat(properties.maxDuration).isEqualTo(Duration.ofMinutes(2))
+                assertThat(properties.warningBeforeEnd).isEqualTo(Duration.ofSeconds(30))
+                assertThat(properties.reconnectWindow).isEqualTo(Duration.ofSeconds(60))
+                assertThat(properties.guestNameMaxLength).isEqualTo(10)
+                assertThat(properties.sweepInterval).isEqualTo(Duration.ofSeconds(5))
+                assertThat(properties.roomLostGrace).isEqualTo(Duration.ofSeconds(30))
+                assertThat(properties.livekit.url).isEqualTo("http://livekit:7880")
+                assertThat(properties.livekit.apiKey).isEqualTo("prodkey")
+                assertThat(properties.livekit.apiSecret).isEqualTo("prodsecret")
+            }
+    }
+
+    @Test
+    fun missingKeyFailsStartup() {
+        contextRunner.run { context ->
+            assertThat(context).hasFailed()
+            assertThat(context.startupFailure).isInstanceOf(ConfigurationPropertiesBindException::class.java)
+        }
+    }
+
+    @EnableConfigurationProperties(ConferencesProperties::class)
+    private class ConferencesPropertiesConfiguration
+
+    private companion object {
+        /** The Q19 application.yml block, canonical property names (T005). */
+        val Q19_DEFAULTS =
+            arrayOf(
+                "conferences.max-participants=16",
+                "conferences.token-ttl=900s",
+                "conferences.guest-invite-ttl=24h",
+                "conferences.empty-room-timeout=60s",
+                "conferences.departure-timeout=60s",
+                "conferences.max-duration=4h",
+                "conferences.warning-before-end=5m",
+                "conferences.reconnect-window=120s",
+                "conferences.guest-name-max-length=50",
+                "conferences.sweep-interval=60s",
+                "conferences.room-lost-grace=120s",
+                "conferences.livekit.url=http://localhost:7880",
+                "conferences.livekit.api-key=devkey",
+                "conferences.livekit.api-secret=secret",
+            )
+    }
+}

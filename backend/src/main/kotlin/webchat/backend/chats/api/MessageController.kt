@@ -165,6 +165,8 @@ class MessageController(
             text = message.text.value,
             seq = message.seq,
             createdAt = message.createdAt,
+            kind = message.kindLabel(),
+            payload = message.payload,
         )
 }
 

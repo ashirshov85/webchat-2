@@ -9,6 +9,9 @@ resources:
   - postgres.yaml
   - redis.yaml
   - mailpit.yaml
+  # LiveKit API key pair (009-video-conferences T004): dev placeholder
+  # devkey/secret of the local compose — see livekit.yaml header
+  - livekit.yaml
 
 namespace: dev
 
@@ -47,3 +50,8 @@ images:
     newTag: placeholder
   - name: frontend
     newTag: placeholder
+  # Media-plane version pinned independently of app releases (research §11);
+  # same tag as deploy/local/docker-compose.yml (T003)
+  - name: livekit
+    newName: livekit/livekit-server
+    newTag: v1.13.10

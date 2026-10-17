@@ -1,5 +1,6 @@
 package webchat.backend.chats.domain.port
 
+import com.fasterxml.jackson.databind.node.ObjectNode
 import webchat.backend.chats.domain.model.Message
 import webchat.backend.chats.domain.model.MessageText
 import java.util.UUID
@@ -16,6 +17,23 @@ data class NewMessage(
     val chatId: UUID,
     val senderId: UUID,
     val text: MessageText,
+)
+
+/**
+ * T016 (009, data-model §Сущность 4): a SYSTEM widget append candidate —
+ * the SERVER-generated [id] (a fresh UUID: the row is created inside the
+ * operation transaction of its trigger — e.g. the №44 conference create —
+ * whose own idempotency, the `ux_conferences_chat_active` partial index,
+ * keeps a retry from ever reaching a second INSERT), the FR-003-normalized
+ * placeholder/caption [text] and the widget [payload] jsonb object
+ * (`payload.type` dispatches the card; the ≤ 4 KB service validation is
+ * owned by the append port, [SystemMessagePort]).
+ */
+data class NewSystemMessage(
+    val id: UUID,
+    val chatId: UUID,
+    val text: MessageText,
+    val payload: ObjectNode,
 )
 
 /**
@@ -72,6 +90,22 @@ interface MessageRepository {
      * falls back to a SELECT by id → [MessageInsertResult.Duplicate].
      */
     fun insert(message: NewMessage): MessageInsertResult
+
+    /**
+     * T016 (009, research §8): the SYSTEM widget write — a plain INSERT (a
+     * server UUID, no client dedup key: the idempotency of the TRIGGERING
+     * operation — e.g. `ux_conferences_chat_active` of the №44 create —
+     * owns the exactly-once discipline) folded into the SAME side-effect
+     * transaction as the user write: the `chats.last_seq` advance and the
+     * `hidden = false` reset for the participants ride along, so the
+     * widget takes part in the per-chat seq order, the pagination cursors
+     * and the FR-021 list revival EXACTLY like a user record. The
+     * `@Transactional` adapter method JOINS the ambient transaction of the
+     * caller (the operation transaction of the trigger, data-model
+     * §Сущность 4: «в транзакции создания конференции») and returns the
+     * stored row with its allocated `seq`.
+     */
+    fun insertSystem(message: NewSystemMessage): Message
 
     /**
      * History page (№15, T015): chat messages VISIBLE to the viewer —

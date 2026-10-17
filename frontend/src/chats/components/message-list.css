@@ -373,3 +373,121 @@
   text-align: center;
   padding: 4px 0 10px;
 }
+
+/* ============ СИСТЕМНЫЕ ВИДЖЕТЫ 009 (US1, T024; FR-002) ============ */
+
+/* Карточка-приглашение конференции (payload.type='conference_invite')
+   и нейтральный плейсхолдер неизвестных виджетов (OCP, api-contract
+   §4). Системная строка — ни своя, ни чужая: центрируется колонкой
+   без аватара (SystemRow). Карточка — тёмная панель лексики входящего
+   пузыря (.msg.them .bubble, design-tokens §5) с гравированным
+   заголовком режима (.sender-лексика) и машинной кнопкой «Подключиться»
+   (.m-btn-лексика .message-actions); в статическом прототипе 008
+   виджета нет — собран из лексик дизайн-системы (исключение SC-001,
+   как локальные статусы 005). Плейсхолдер — курсив muted встроенной
+   подписи ленты (лексика .date-divider/.message-history): нейтрален,
+   не интерактивен, деталей неизвестного payload не раскрывает. */
+
+.message-list .msg.system {
+  flex-direction: column;
+  align-items: center;
+}
+
+.message-list .sys-card {
+  min-width: min(260px, 72%);
+  padding: 10px 14px 8px;
+  background: var(--input-bg);
+  color: var(--cream);
+  border: 1px solid var(--gold-dark);
+  border-radius: 12px;
+  box-shadow:
+    0 3px 8px rgba(0, 0, 0, 0.45),
+    inset 0 0 18px rgba(0, 0, 0, 0.35);
+}
+
+.message-list .sys-title {
+  font: 700 10.5px var(--font-heading);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--gold-light);
+  margin-bottom: 8px;
+}
+
+.message-list .sys-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Кнопка «Подключиться» — компактная машинная кнопка (лексика
+   .message-actions button / .m-btn прототипа) */
+.message-list .sys-join {
+  padding: 5px 12px;
+  border-radius: var(--r-field);
+  cursor: pointer;
+  transition: 0.15s;
+  border: 1px solid var(--gold-dark);
+  color: var(--gold-light);
+  background: var(--input-bg);
+  font: 700 10px var(--font-heading);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.message-list .sys-join:hover:not(:disabled) {
+  color: var(--gold-light);
+  border-color: var(--gold-light);
+  background: rgba(232, 200, 119, 0.08);
+}
+
+.message-list .sys-join:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.message-list .sys-join:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: -2px;
+}
+
+.message-list .sys-join:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* Подпись-исход клика: «Конференция завершена» (№45 status='ended' —
+   ответ по старой ссылке, Q20=A) и «Конференция недоступна» (единый
+   404 conference_not_found, существование не раскрывается) —
+   нейтральный muted; транспортный сбой «Не удалось подключиться» —
+   гравированная опасность (лексика .message-status-failed) */
+.message-list .sys-status {
+  font: 10.5px var(--font-heading);
+  letter-spacing: 1px;
+  color: var(--muted);
+}
+
+.message-list .sys-status-error {
+  color: var(--err);
+}
+
+.message-list .msg.system .b-time {
+  color: rgba(232, 220, 192, 0.55);
+  text-align: right;
+  margin-top: 6px;
+}
+
+.message-list .sys-placeholder {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font: italic 12.5px var(--font-body);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.message-list .sys-placeholder .sys-time {
+  font: 10.5px var(--font-heading);
+  letter-spacing: 1px;
+  font-style: normal;
+  color: rgba(232, 220, 192, 0.55);
+}

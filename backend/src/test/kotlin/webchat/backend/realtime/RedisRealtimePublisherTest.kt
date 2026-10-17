@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyEmitter
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter
 import webchat.backend.chats.domain.model.Message
+import webchat.backend.chats.domain.model.MessageKind
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.port.ChatReadEvent
 import webchat.backend.chats.domain.port.MessageCreatedEvent
@@ -83,7 +84,7 @@ class RedisRealtimePublisherTest {
         val message = payload["message"]
         assertThat(fieldNames(message))
             .overridingErrorMessage("the inner message must be exactly the Message schema")
-            .containsExactlyInAnyOrder("id", "chatId", "senderId", "text", "seq", "createdAt")
+            .containsExactlyInAnyOrder("id", "chatId", "senderId", "text", "seq", "createdAt", "kind")
         assertThat(message["id"].asText()).isEqualTo(MESSAGE_ID.toString())
         assertThat(message["senderId"].asText()).isEqualTo(ALICE.toString())
         assertThat(message["text"].asText())
@@ -91,6 +92,34 @@ class RedisRealtimePublisherTest {
             .isEqualTo(TEXT)
         assertThat(message["seq"].asLong()).isEqualTo(SEQ)
         assertThat(message["createdAt"].asText()).isEqualTo(CREATED_AT.toString())
+        assertThat(message["kind"].asText())
+            .overridingErrorMessage("a user record carries kind='user' on every frame (009, additive)")
+            .isEqualTo("user")
+        assertThat(message.has("payload"))
+            .overridingErrorMessage("a user record NEVER carries a payload field (009: only kind=system does)")
+            .isFalse
+    }
+
+    @Test
+    fun `a system message frame carries null senderId, kind system and the widget payload object`() {
+        publisher.publishMessageCreated(ALICE, SYSTEM_MESSAGE_CREATED)
+
+        val (_, json) = pubSub.published.single()
+        val message = MAPPER.readTree(json)["data"]["message"]
+
+        assertThat(fieldNames(message))
+            .containsExactlyInAnyOrder("id", "chatId", "senderId", "text", "seq", "createdAt", "kind", "payload")
+        assertThat(message["senderId"].isNull)
+            .overridingErrorMessage("senderId is NULL exactly for a kind='system' row (009 nullable transition)")
+            .isTrue
+        assertThat(message["kind"].asText()).isEqualTo("system")
+        assertThat(message["payload"].isObject)
+            .overridingErrorMessage("payload must ride the frame as a JSON OBJECT, never a quoted string")
+            .isTrue
+        assertThat(message["payload"]["type"].asText()).isEqualTo("conference_invite")
+        assertThat(message["payload"]["conferenceId"].asText()).isEqualTo(CONFERENCE_ID.toString())
+        assertThat(message["payload"]["mode"].asText()).isEqualTo("video")
+        assertThat(message["text"].asText()).isEqualTo(SYSTEM_CAPTION)
     }
 
     @Test
@@ -325,6 +354,27 @@ class RedisRealtimePublisherTest {
                 createdAt = CREATED_AT,
             )
         val MESSAGE_CREATED = MessageCreatedEvent(chatId = CHAT_ID, message = MESSAGE)
+
+        /** T016 (009): the system invite-card record — data-model §Сущность 4 payload v1. */
+        val CONFERENCE_ID = UUID.fromString("c0a10000-0000-4000-8000-00000000c0a1")
+        const val SYSTEM_CAPTION = "Видеозвонок"
+        val SYSTEM_MESSAGE =
+            Message(
+                id = UUID.fromString("0b0f0000-0000-4000-8000-0000000000ab"),
+                chatId = CHAT_ID,
+                senderId = null,
+                text = MessageText.normalize(SYSTEM_CAPTION),
+                seq = SEQ + 1,
+                createdAt = CREATED_AT,
+                kind = MessageKind.SYSTEM,
+                payload =
+                    MAPPER
+                        .createObjectNode()
+                        .put("type", "conference_invite")
+                        .put("conferenceId", CONFERENCE_ID.toString())
+                        .put("mode", "video"),
+            )
+        val SYSTEM_MESSAGE_CREATED = MessageCreatedEvent(chatId = CHAT_ID, message = SYSTEM_MESSAGE)
         val CHAT_READ = ChatReadEvent(chatId = CHAT_ID, readUpToSeq = SEQ, byUserId = BOB)
 
         /** T029 (realtime-events.md 008a §1): ALICE types in the chat, BOB/CAROL observe. */

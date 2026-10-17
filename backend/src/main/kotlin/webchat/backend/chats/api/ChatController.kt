@@ -292,6 +292,8 @@ class ChatController(
                         text = message.text.value,
                         seq = message.seq,
                         createdAt = message.createdAt,
+                        kind = message.kindLabel(),
+                        payload = message.payload,
                     )
                 },
             unreadCount = entry.unreadCount,

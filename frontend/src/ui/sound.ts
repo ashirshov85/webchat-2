@@ -53,8 +53,10 @@ export interface IncomingMessageEvent {
    * (per-chat mute — отдельный параметр soundEnabled, 008a US4). */
   readonly chatId: string
   readonly message: {
-    /** Отправитель: собственные сообщения (senderId === me) сигналом не сопровождаются. */
-    readonly senderId: string
+    /** Отправитель: собственные сообщения (senderId === me) сигналом не сопровождаются.
+     * null — системный виджет (009, kind='system'): звуком не сопровождается
+     * (рингтон/оповещение о звонке вне v1 — Q12=A, только индикатор №18). */
+    readonly senderId: string | null
   }
 }
 
@@ -154,6 +156,7 @@ export const chimeOnRealtimeIncoming = (
   meUserId: string,
   soundEnabled?: boolean,
 ): void => {
+  if (event.message.senderId === null) return
   if (event.message.senderId === meUserId) return
   if (soundEnabled === false) return
   playBellTone()

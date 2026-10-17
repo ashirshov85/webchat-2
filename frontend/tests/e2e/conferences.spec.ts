@@ -1,0 +1,331 @@
+import { expect, request, test, type APIRequestContext, type Page } from '@playwright/test'
+
+/**
+ * 009, US1, T029 — e2e звонка двух вкладок против локального LiveKit
+ * (quickstart §3.1): fake media (`--use-fake-device-for-media-stream`),
+ * SC-001 на фазе US1 — от клика «Подключиться» до медиа ≤ 5 c (каноничная
+ * форма «от "Войти" на pre-join» — после T034); устойчивость к деградации
+ * сети (FR-004): CDP network throttling на вкладке — подключение
+ * сохраняется без обрыва, после снятия троттлинга звонок продолжается.
+ *
+ * Стенд (quickstart §2): docker compose postgres redis mailpit livekit,
+ * backend :8080 (LIVEKIT_URL/KEY/SECRET), SPA :5173 (webServer конфига).
+ * Аккаунты готовятся через REST (register → письмо Mailpit → confirm →
+ * password → login): e2e не зависит от состояния БД, имена уникальны за
+ * прогон. Сессия страницы — localStorage `webchat.auth.refreshToken`
+ * (свежий login на каждый тест: refresh-токен одноразовый при ротации).
+ */
+
+const API_URL = process.env.E2E_API_URL ?? 'http://localhost:8080'
+const MAILPIT_URL = process.env.E2E_MAILPIT_URL ?? 'http://localhost:8025'
+const RUN_ID = process.env.E2E_RUN_ID ?? Date.now().toString(36)
+const PASSWORD = `E2e-conference-${RUN_ID}`
+/** SC-001 на фазе US1: от «Подключиться» до медиа (T029). */
+const SC001_MS = 5_000
+
+interface TestAccount {
+  readonly username: string
+  readonly email: string
+  readonly userId: string
+  /** Bearer для REST-вызовов настройки (короткоживущий access JWT). */
+  readonly accessToken: string
+  /** localStorage-сессия вкладки (`webchat.auth.refreshToken`). */
+  readonly refreshToken: string
+}
+
+interface ConferenceView {
+  readonly id: string
+  readonly status: string
+}
+
+/** Обёртка REST-вызова с Bearer; бросает тело Problem при не-2xx. */
+async function apiCall<T>(
+  api: APIRequestContext,
+  method: 'get' | 'post',
+  path: string,
+  options: { readonly data?: unknown; readonly token?: string } = {},
+): Promise<T> {
+  const response = await api.fetch(path, {
+    method,
+    headers: {
+      ...(options.data !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.token !== undefined ? { Authorization: `Bearer ${options.token}` } : {}),
+    },
+    data: options.data !== undefined ? JSON.stringify(options.data) : undefined,
+  })
+  if (!response.ok()) {
+    throw new Error(
+      `${method.toUpperCase()} ${path} → ${response.status()}: ${await response.text()}`,
+    )
+  }
+  if (response.status() === 204) {
+    return undefined as T
+  }
+  // 202/204 с пустым телом (register, password) не парсим как JSON
+  const raw = await response.text()
+  return raw === '' ? (undefined as T) : (JSON.parse(raw) as T)
+}
+
+/** Одноразовый токен из письма Mailpit (ссылка …?token=…, 43 символа base64url). */
+async function tokenFromMailpit(api: APIRequestContext, email: string): Promise<string> {
+  const deadline = Date.now() + 15_000
+  while (Date.now() < deadline) {
+    const search = await api.get(`${MAILPIT_URL}/api/v1/search`, {
+      params: { query: `to:${email}` },
+    })
+    if (search.ok()) {
+      const { messages } = (await search.json()) as {
+        messages: ReadonlyArray<{ ID: string }>
+      }
+      const latest = messages[0]
+      if (latest !== undefined) {
+        // NB: детали письма — /message/{ID} (единственное число), не /messages
+        const details = await api.get(`${MAILPIT_URL}/api/v1/message/${latest.ID}`)
+        const { Text, HTML } = (await details.json()) as { Text: string; HTML: string }
+        const token = /token=([A-Za-z0-9_-]{43})/.exec(`${Text}\n${HTML}`)
+        if (token !== null) {
+          return token[1] as string
+        }
+      }
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, 500)
+    })
+  }
+  throw new Error(`письмо для ${email} не пришло в Mailpit за 15 c`)
+}
+
+/** Полный цикл 002: register → подтверждение email → пароль → активный аккаунт. */
+async function ensureAccount(api: APIRequestContext, username: string): Promise<TestAccount> {
+  const email = `${username}@e2e.local`
+  await apiCall(api, 'post', '/api/v1/auth/register', { data: { username, email } })
+  const emailToken = await tokenFromMailpit(api, email)
+  const confirm = await apiCall<{ setupToken: string }>(
+    api,
+    'post',
+    '/api/v1/auth/register/confirm',
+    {
+      data: { token: emailToken },
+    },
+  )
+  await apiCall(api, 'post', '/api/v1/auth/register/password', {
+    data: { setupToken: confirm.setupToken, password: PASSWORD, confirmPassword: PASSWORD },
+  })
+  return login(api, username)
+}
+
+/** Свежая пара токенов (refresh одноразовый — логинимся на каждый тест). */
+async function login(api: APIRequestContext, username: string): Promise<TestAccount> {
+  const answer = await apiCall<{
+    accessToken: string
+    refreshToken: string
+    user: { id: string }
+  }>(api, 'post', '/api/v1/auth/login', {
+    data: { identifier: username, password: PASSWORD },
+  })
+  return {
+    username,
+    email: `${username}@e2e.local`,
+    userId: answer.user.id,
+    accessToken: answer.accessToken,
+    refreshToken: answer.refreshToken,
+  }
+}
+
+/** №11: личный диалог пары (идемпотентный ensure). */
+async function ensureDirectChat(
+  api: APIRequestContext,
+  owner: TestAccount,
+  peer: TestAccount,
+): Promise<string> {
+  const chat = await apiCall<{ chatId: string }>(api, 'post', '/api/v1/chats/ensure', {
+    data: { peerUserId: peer.userId },
+    token: owner.accessToken,
+  })
+  return chat.chatId
+}
+
+/** №44: старт конференции из чата (201 новой; 200 активной — без различения). */
+async function createConference(
+  api: APIRequestContext,
+  owner: TestAccount,
+  chatId: string,
+): Promise<ConferenceView> {
+  return apiCall<ConferenceView>(api, 'post', `/api/v1/chats/${chatId}/conferences`, {
+    data: { mode: 'video' },
+    token: owner.accessToken,
+  })
+}
+
+function tilesSection(page: Page) {
+  return page.getByRole('region', { name: 'Участники конференции' })
+}
+
+/** Вкладка участника: localStorage-сессия + экран /conference/:id. */
+async function openConferencePage(
+  browser: import('@playwright/test').Browser,
+  account: TestAccount,
+  conferenceId: string,
+): Promise<Page> {
+  const context = await browser.newContext()
+  await context.addInitScript((refreshToken) => {
+    window.localStorage.setItem('webchat.auth.refreshToken', refreshToken)
+  }, account.refreshToken)
+  const page = await context.newPage()
+  await page.goto(`/conference/${conferenceId}`)
+  return page
+}
+
+/** Клик «Подключиться» и ожидание полного медиа: свой статус + удалённый тайл. */
+async function connectAndAwaitMedia(
+  page: Page,
+  ownStatus: string,
+  remoteUsername: string,
+): Promise<number> {
+  const startedAt = Date.now()
+  await page.getByRole('button', { name: 'Подключиться' }).click()
+  await expect(page.getByText(ownStatus)).toBeVisible({ timeout: 15_000 })
+  // медиа обеих сторон: тайл собеседника (ParticipantName; имя может
+  // встретиться в нескольких тайлах метаданных — достаточно первого) +
+  // прикреплённый video
+  await expect(tilesSection(page).getByText(remoteUsername, { exact: true }).first()).toBeVisible({
+    timeout: SC001_MS,
+  })
+  await expect(tilesSection(page).locator('video').first()).toBeAttached({ timeout: SC001_MS })
+  return Date.now() - startedAt
+}
+
+test.describe.serial('конференции US1 e2e (009 T029)', () => {
+  let api: APIRequestContext
+  let alice: TestAccount
+  let bob: TestAccount
+  let chatId: string
+  /** Страницы теста — закрываются в afterEach (контексты LiveKit-вкладок). */
+  let openedPages: Page[]
+
+  test.beforeAll(async () => {
+    api = await request.newContext({ baseURL: API_URL })
+    alice = await ensureAccount(api, `alice${RUN_ID}`)
+    bob = await ensureAccount(api, `bob${RUN_ID}`)
+    chatId = await ensureDirectChat(api, alice, bob)
+  })
+
+  test.afterAll(() => {
+    void api.dispose()
+  })
+
+  test.beforeEach(() => {
+    openedPages = []
+  })
+
+  test.afterEach(async () => {
+    for (const page of openedPages) {
+      await page.context().close()
+    }
+  })
+
+  test('SC-001 (US1-фаза): звонок двух вкладок — обе стороны видят медиа ≤ 5 c от «Подключиться»', async ({
+    browser,
+  }) => {
+    // свежие refresh-токены: ротация одноразовая, контексты стартуют с действующим
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+    expect(conference.status).toMatch(/created|active/)
+
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+
+    // защищённый маршрут грузит экран и пакет №45+№46 (ленивый чанк conferences)
+    await expect(alicePage.getByRole('region', { name: 'Конференция' })).toBeVisible()
+    await expect(bobPage.getByRole('region', { name: 'Конференция' })).toBeVisible()
+    await expect(alicePage.getByRole('button', { name: 'Подключиться' })).toBeVisible()
+    await expect(bobPage.getByRole('button', { name: 'Подключиться' })).toBeVisible()
+
+    // обе вкладки подключаются параллельно: каждая — от своего клика
+    // «Подключиться» до медиа (свой статус + тайл собеседника) ≤ 5 c
+    const [aliceElapsed, bobElapsed] = await Promise.all([
+      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
+      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+    ])
+
+    expect(
+      aliceElapsed,
+      `SC-001: alice от «Подключиться» до медиа ${aliceElapsed} мс`,
+    ).toBeLessThanOrEqual(SC001_MS)
+    expect(
+      bobElapsed,
+      `SC-001: bob от «Подключиться» до медиа ${bobElapsed} мс`,
+    ).toBeLessThanOrEqual(SC001_MS)
+
+    // корректный выход (Q10=A): «Покинуть» возвращает к «Подключиться» без следов
+    await bobPage.getByRole('button', { name: 'Покинуть' }).click()
+    await expect(bobPage.getByRole('button', { name: 'Подключиться' })).toBeVisible()
+    await expect(bobPage.getByText('Вы в конференции')).toHaveCount(0)
+  })
+
+  test('FR-004: деградация сети одной вкладки (CDP throttling) не рвёт звонок; после снятия — продолжается', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
+      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+    ])
+
+    // деградация сети на вкладке bob: CDP network throttling (quickstart §3.1
+    // шаг 4 — DevTools throttle; e2e — программно через CDP-сессию)
+    const cdp = await bobPage.context().newCDPSession(bobPage)
+    await cdp.send('Network.enable')
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency: 400,
+      downloadThroughput: (60 * 1024) / 8, // ~60 kbps
+      uploadThroughput: (30 * 1024) / 8,
+    })
+
+    await bobPage.waitForTimeout(4_000)
+
+    // подключение сохраняется без обрыва: статус подключения и тайлы живы,
+    // терминальных/аварийных строк нет
+    await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
+    await expect(
+      tilesSection(bobPage).getByText(aliceNow.username, { exact: true }).first(),
+    ).toBeVisible()
+    for (const failure of [
+      'Вы отключены от конференции',
+      'Соединение потеряно — переподключение',
+      'Не удалось подключиться',
+    ]) {
+      await expect(bobPage.getByText(failure)).toHaveCount(0)
+    }
+
+    // снятие троттлинга — звонок продолжается
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false,
+      latency: 0,
+      downloadThroughput: -1,
+      uploadThroughput: -1,
+    })
+    await bobPage.waitForTimeout(2_000)
+
+    await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
+    await expect(
+      tilesSection(bobPage).getByText(aliceNow.username, { exact: true }).first(),
+    ).toBeVisible()
+    await expect(alicePage.getByText('Вы в конференции')).toBeVisible()
+    await expect(
+      tilesSection(alicePage).getByText(bobNow.username, { exact: true }).first(),
+    ).toBeVisible()
+    await cdp.detach()
+  })
+})

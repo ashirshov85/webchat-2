@@ -151,7 +151,7 @@ class RealtimeSseIT(
                         .overridingErrorMessage(
                             "event.message for <%s> must have exactly the Message schema fields",
                             participant.username,
-                        ).containsExactlyInAnyOrder("id", "chatId", "senderId", "text", "seq", "createdAt")
+                        ).containsExactlyInAnyOrder("id", "chatId", "senderId", "text", "seq", "createdAt", "kind")
                     assertThat(UUID.fromString(message["id"].asText()))
                         .overridingErrorMessage("message.id must be the clientMessageId UUID (FR-004)")
                         .isEqualTo(UUID.fromString(stored["id"].asText()))

@@ -34,6 +34,7 @@ import webchat.backend.chats.domain.port.MessageCreatedEvent
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.MessageRepository
 import webchat.backend.chats.domain.port.NewMessage
+import webchat.backend.chats.domain.port.NewSystemMessage
 import webchat.backend.chats.domain.port.ParticipantRepository
 import webchat.backend.chats.domain.port.RealtimeEventPublisher
 import webchat.backend.chats.domain.port.TypingEvent
@@ -599,6 +600,10 @@ class MessageServiceTest {
             timeline += "insert"
             return outcome
         }
+
+        /** T016: the system append belongs to SystemMessageService — never called here. */
+        override fun insertSystem(message: NewSystemMessage): Message =
+            error("the №16 send path never appends system rows")
 
         override fun findVisiblePage(
             chatId: UUID,

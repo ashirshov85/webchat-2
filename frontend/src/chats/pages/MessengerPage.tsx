@@ -248,6 +248,15 @@
  * (scrollIntoView center + вспышка .flash, MessageList jumpTo); на
  * узком экране сайдбар закрывается. Контракт не меняется — операции
  * №12–№16/№18 не затрагиваются.
+ *
+ * 009 US1 (T023; FR-001/FR-002): кнопки «видеозвонок»/«аудиозвонок»
+ * заголовка — handleStartConference: №44 по открытому чату (`201`
+ * новой / `200` уже активной — идемпотентность «одна активная на
+ * чат», карточка не дублируется) → полный переход
+ * /conference/{id}?mode=… (роут и ленивая страница конференции —
+ * T025; mode из ответа — источник дефолтов pre-join T034). Сбой —
+ * инлайн-ошибка окна (409 conference_e2ee_unsupported, 503
+ * conference_media_unavailable, 403 conference_forbidden).
  */
 import {
   useCallback,
@@ -274,6 +283,8 @@ import {
   unblockUser,
 } from '../../api/chats'
 import type { ChatListItem, ChatView, ContactView, Message } from '../../api/chats'
+import { createConference } from '../../conferences/api/conferences'
+import type { ConferenceMode } from '../../conferences/api/conferences'
 import { problemMessage } from '../../auth/problem'
 import { clearTokens, getRefreshToken } from '../../auth/session'
 import { getAckBatcher } from '../../sync/ack'
@@ -791,6 +802,9 @@ function useTypingParticipants(
     }
     return realtime.onMessageCreated(activeChatId, (event) => {
       const senderId = event.message.senderId
+      if (senderId === null) {
+        return
+      }
       setTypingDeadlines((previous) => {
         if (!previous.has(senderId)) {
           return previous
@@ -1951,6 +1965,36 @@ function MessengerMachine() {
   )
 
   /**
+   * Кнопки «видеозвонок»/«аудиозвонок» заголовка (009 US1, T023;
+   * FR-001/FR-002): №44 по открытому чату — `201` новой или `200` уже
+   * активной (идемпотентность «одна активная на чат», карточка-
+   * приглашение не дублируется); обе ветки возвращают ConferenceView —
+   * переход /conference/{id}?mode=… без различения. mode — из ОТВЕТА:
+   * существующая конференция может идти не с тем режимом, что нажат
+   * кнопкой, а дефолты pre-join (T034) следуют режиму конференции.
+   * Ошибка — инлайн-ошибка окна (паттерн шестерёнки T054):
+   * 409 conference_e2ee_unsupported (граница 010), 503
+   * conference_media_unavailable, 403 conference_forbidden.
+   */
+  const handleStartConference = useCallback(
+    (mode: ConferenceMode) => {
+      const target = activeChat
+      if (target === null) {
+        return
+      }
+      void (async () => {
+        try {
+          const view = await createConference(target.chatId, mode)
+          window.location.assign(`/conference/${view.id}?mode=${view.mode}`)
+        } catch (cause) {
+          setActionError(cause)
+        }
+      })()
+    },
+    [activeChat],
+  )
+
+  /**
    * «Добавить в контакты» строки модали «Участники» (T055/T057,
    * FR-012): №21 с id участника — идемпотентно 201/200 без дублей,
    * один тост прототипа addContact (имя — из живого №28-ростра),
@@ -2561,6 +2605,7 @@ function MessengerMachine() {
                   onToggleSound={handleToggleChatSound}
                   searchActive={searchMode}
                   onToggleSearch={handleToggleSearch}
+                  onStartCall={handleStartConference}
                   onAddContact={handleGearAddContact}
                   onToggleBlock={handleGearToggleBlock}
                   onDeleteChat={handleGearDeleteChat}

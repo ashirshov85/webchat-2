@@ -1,13 +1,16 @@
 package webchat.backend.chats.repository
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.jdbc.core.JdbcTemplate
 import webchat.backend.AbstractIntegrationTest
+import webchat.backend.chats.domain.model.MessageKind
 import webchat.backend.chats.domain.model.MessageText
 import webchat.backend.chats.domain.port.MessageInsertResult
 import webchat.backend.chats.domain.port.NewMessage
+import webchat.backend.chats.domain.port.NewSystemMessage
 import java.util.UUID
 
 /**
@@ -39,6 +42,8 @@ class JdbcMessageRepositoryIT : AbstractIntegrationTest() {
 
     @Autowired
     private lateinit var jdbcTemplate: JdbcTemplate
+
+    private val objectMapper = ObjectMapper()
 
     @Test
     fun `insert stores the record and advances chats last_seq in the same transaction`() {
@@ -189,6 +194,117 @@ class JdbcMessageRepositoryIT : AbstractIntegrationTest() {
         assertThat(messageRepository.findVisiblePage(chat, alice, before = null, limit = 50)).isEmpty()
     }
 
+    @Test
+    fun `a user record persists and reads back as kind user without payload`() {
+        val (chat, alice, _) = dialog()
+
+        val stored =
+            (messageRepository.insert(newMessage(chat, alice, "обычное")) as MessageInsertResult.Inserted).message
+
+        assertThat(stored.kind).isEqualTo(MessageKind.USER)
+        assertThat(stored.payload).isNull()
+        val row = rawRow(stored.id)
+        assertThat(row["kind"]).isEqualTo("user")
+        assertThat(row["payload"]).isNull()
+    }
+
+    /**
+     * T016 (009, data-model §Сущность 4): the SYSTEM widget write — the
+     * plain INSERT with the IDENTICAL side-effect transaction: the card
+     * takes a per-chat `seq`, advances `chats.last_seq` and resets
+     * `hidden` for BOTH participants (FR-021) exactly like a user record.
+     */
+    @Test
+    fun `insertSystem stores the widget row with the same side-effect transaction`() {
+        val (chat, alice, bob) = dialog()
+        val payload = conferenceInvitePayload()
+
+        val stored =
+            messageRepository.insertSystem(
+                NewSystemMessage(
+                    id = UUID.randomUUID(),
+                    chatId = chat,
+                    text = MessageText.normalize("Видеозвонок"),
+                    payload = payload,
+                ),
+            )
+
+        assertThat(stored.kind).isEqualTo(MessageKind.SYSTEM)
+        assertThat(stored.senderId).isNull()
+        assertThat(stored.payload).isEqualTo(payload)
+        assertThat(stored.seq).isGreaterThanOrEqualTo(1)
+        assertThat(messageRepository.findById(stored.id)).isEqualTo(stored)
+        assertThat(chatLastSeq(chat)).isEqualTo(stored.seq)
+        assertThat(hidden(chat, alice)).isFalse
+        assertThat(hidden(chat, bob)).isFalse
+
+        val row = rawRow(stored.id)
+        assertThat(row["kind"]).isEqualTo("system")
+        assertThat(row["sender_id"]).isNull()
+        assertThat(row["payload"] as String).contains("\"conference_invite\"")
+    }
+
+    @Test
+    fun `insertSystem un-hides a deleted dialog like a user incoming does`() {
+        val (chat, alice, bob) = dialog()
+        messageRepository.insert(newMessage(chat, alice, "было"))
+        jdbcTemplate.update(HIDE_ALL_SQL, chat)
+        assertThat(hidden(chat, bob)).isTrue()
+
+        messageRepository.insertSystem(newSystemMessage(chat))
+
+        assertThat(hidden(chat, alice)).isFalse
+        assertThat(hidden(chat, bob)).isFalse
+    }
+
+    @Test
+    fun `the system card rides the seq order and the pages of every participant`() {
+        val (chat, alice, bob) = dialog()
+        val first = (messageRepository.insert(newMessage(chat, alice, "до")) as MessageInsertResult.Inserted).message
+        val card = messageRepository.insertSystem(newSystemMessage(chat))
+        val last = (messageRepository.insert(newMessage(chat, bob, "после")) as MessageInsertResult.Inserted).message
+
+        val alicePage = messageRepository.findVisiblePage(chat, alice, before = null, limit = 50)
+        val bobPage = messageRepository.findVisiblePage(chat, bob, before = null, limit = 50)
+
+        assertThat(alicePage.map { it.seq }).containsExactly(last.seq, card.seq, first.seq)
+        assertThat(bobPage.map { it.seq }).containsExactly(last.seq, card.seq, first.seq)
+        val paged = alicePage.single { it.id == card.id }
+        assertThat(paged.kind).isEqualTo(MessageKind.SYSTEM)
+        assertThat(paged.senderId).isNull()
+        assertThat(paged.payload?.get("type")?.asText()).isEqualTo("conference_invite")
+        assertThat(paged.payload?.get("conferenceId")?.asText()).isEqualTo(CONFERENCE_ID.toString())
+        assertThat(paged.payload?.get("mode")?.asText()).isEqualTo("video")
+
+        val catchUp = messageRepository.findVisiblePageAfter(chat, alice, first.seq, 50)
+        assertThat(catchUp.map { it.id }).containsExactly(card.id, last.id)
+    }
+
+    private fun conferenceInvitePayload() =
+        objectMapper
+            .createObjectNode()
+            .put("type", "conference_invite")
+            .put("conferenceId", CONFERENCE_ID.toString())
+            .put("mode", "video")
+
+    private fun newSystemMessage(chatId: UUID) =
+        NewSystemMessage(
+            id = UUID.randomUUID(),
+            chatId = chatId,
+            text = MessageText.normalize("Видеозвонок"),
+            payload = conferenceInvitePayload(),
+        )
+
+    private fun rawRow(messageId: UUID): Map<String, Any?> =
+        jdbcTemplate.queryForMap(
+            """
+            SELECT sender_id, kind, payload::text AS payload
+            FROM messages
+            WHERE id = ?
+            """.trimIndent(),
+            messageId,
+        )
+
     private fun dialog(): Triple<UUID, UUID, UUID> {
         val alice = newUser()
         val bob = newUser()
@@ -256,6 +372,7 @@ class JdbcMessageRepositoryIT : AbstractIntegrationTest() {
     private companion object {
         const val PAGE_MESSAGES = 5
         const val DELETED_MESSAGES = 3
+        val CONFERENCE_ID = UUID.fromString("00000000-0000-0000-0000-00000000c0a1")
 
         val INSERT_USER_SQL =
             """

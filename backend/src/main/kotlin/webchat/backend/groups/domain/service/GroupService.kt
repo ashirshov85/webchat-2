@@ -1,6 +1,7 @@
 package webchat.backend.groups.domain.service
 
 import org.slf4j.LoggerFactory
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
@@ -118,6 +119,7 @@ class GroupService(
     private val realtime: RealtimeEventPublisher,
     private val metrics: GroupMetrics,
     private val properties: GroupsProperties,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(GroupService::class.java)
 
@@ -568,10 +570,12 @@ class GroupService(
             listOf(targetUserId),
             GroupYouRemovedEvent(group.id, GroupRemovalReason.KICKED),
         )
+        val memberRemoved = GroupMemberRemovedEvent(group.id, targetUserId, callerId)
+        publishMemberRemovedInProcess(memberRemoved)
         fanoutGroupEventAfterCommit(
             group.id,
             survivors.map(ChatParticipant::userId),
-            GroupMemberRemovedEvent(group.id, targetUserId, callerId),
+            memberRemoved,
         )
     }
 
@@ -628,10 +632,12 @@ class GroupService(
             listOf(callerId),
             GroupYouRemovedEvent(group.id, GroupRemovalReason.LEFT),
         )
+        val memberRemoved = GroupMemberRemovedEvent(group.id, callerId, actorId = null)
+        publishMemberRemovedInProcess(memberRemoved)
         fanoutGroupEventAfterCommit(
             group.id,
             survivors.map(ChatParticipant::userId),
-            GroupMemberRemovedEvent(group.id, callerId, actorId = null),
+            memberRemoved,
         )
     }
 
@@ -906,6 +912,22 @@ class GroupService(
                 )
             }
         }
+    }
+
+    /**
+     * T020 (009, FR-003 edge): the IN-PROCESS leg of the №32/№33
+     * removal — the SAME [GroupMemberRemovedEvent] handed to the
+     * Spring event bus INSIDE the still-open scenario transaction;
+     * the conferences domain's AFTER_COMMIT listener
+     * (`webchat.backend.conferences.domain.service.GroupMemberRemovedListener`)
+     * picks it up only once the removal is durable and disconnects
+     * the removed member's live conference connections
+     * (`RemoveParticipant` by the `u:{userId}:` connection prefix).
+     * BOTH removal reasons ride the one type — the disconnect leg
+     * never reads [GroupMemberRemovedEvent.actorId].
+     */
+    private fun publishMemberRemovedInProcess(event: GroupMemberRemovedEvent) {
+        eventPublisher.publishEvent(event)
     }
 
     /**

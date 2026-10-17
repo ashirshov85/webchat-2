@@ -481,7 +481,37 @@ export interface paths {
         };
         /**
          * Поток событий пользователя — SSE (№18, Bearer)
-         * @description Единый realtime-поток событий пользователя (FR-022, US6): мультиплекс всех диалогов; каждое устройство/сессия открывает свой поток. Канал строго server→client: отправка — REST №16 (подтверждение = HTTP-ответ). Подключение: Authorization Bearer (тот же access JWT, что и REST; токен в URL запрещён) + Accept: text/event-stream. Фрейминг WHATWG SSE: первая строка потока — retry: 3000 (подсказка реконнекта); heartbeat-комментарий :ka каждые 15 с. Кадры: event: message.created | chat.read, за которым одна data:-строка с JSON-полем одной строкой, UTF-8. Событие message.created (FR-007) публикуется обоим участникам после коммита записи: payload {chatId, message: Message}; отправитель рендерит свои исходящие с других устройств сразу «доставлено»; клиент дедуплицирует по message.id. Событие chat.read (FR-010): payload {chatId, readUpToSeq, byUserId} — собеседник прочитал до readUpToSeq включительно; монотонно (повторные/меньшие не публикуются). Канал at-most-once: при (пере)подключении клиент выполняет рефетч REST (№12/№15); порядок/дубли исключены серверным seq и дедупом по id. Неизвестные клиенту event:-типы обязаны игнорироваться (прямая совместимость, US6-3). События групп (006): event: group.updated | group.member.added | group.member.removed | group.role.changed | group.you_removed | group.deleted — payloads Group*Event; идентификатор группы — поле groupId (= chatId). Адресат — активный участник группы на момент публикации (снимок состава в транзакции операции, публикация post-commit). group.you_removed — финальное событие группы в канале адресата: после него события группы не публикуются (окно прекращения ≤5 с, FR-010); клиент обязан удалить группу из «Чатов», игнорировать последующие события этой группы (гонка порядка — сообщение, закоммиченное до исключения, может прийти позже) и исключить её из отложенных ack-батчей №25. Обработка групповых событий идемпотентна: применяется состояние (состав/роли/ метаданные), а не дельты (FR-015); события группы не создают системных сообщений в истории. В группах message.created публикуется всем активным участникам, кроме отправителя (FR-011); chat.read — всем активным, кроме читавшего. Присутствие (007): сразу после retry: 3000 сервер отправляет opening-фрейм event: connected с payload ConnectedEvent {connectionId} — идентификатор регистрации подключения, используется клиентом в heartbeat №37; живёт вместе с потоком: реконнект выдаёт новый connectionId, старая регистрация самоистекает по TTL. Событие event: presence.updated с payload PresenceUpdatedEvent {userId, status, rev} публикуется каждому члену аудитории видимости субъекта (общий чат ∪ «субъект в контактах наблюдающего» − блок-пары − сам субъект) ровно один раз на переход, независимо от числа общих чатов; userId — субъект смены (не наблюдатель); status — опубликованное online | offline (online — немедленно, offline — гистерезис-задержано окном 45 c); rev — монотонная ревизия per-user: применять только строго большее rev (дубль/задержавшийся кадр — no-op); режим «невидимки» замораживает исходящие события субъекта. Терминология keepalive: transport-keepalive :ka — кадр- комментарий каждые 15 с, удерживает TCP-соединение и к регистрации присутствия не относится; presence-heartbeat №37 — прикладное продление регистрации каждые 30 c (отдельный REST- вызов); 404/429 на №37 не влияют на :ka, и наоборот. Социальные сигналы (008a): event: typing.started | typing.stopped с payload TypingStartedEvent/TypingStoppedEvent {chatId, userId} — эфемерный сигнал набора текста; публикуется активным участникам чата кроме отправителя сигнала при каждом валидном start №41 (включая продления — окно повтора клиента 3 с) и при завершении: stop №41 (только при активном состоянии — идемпотентность), успешной отправке сообщения №16 печатающим, серверном истечении состояния (TTL 8 с, poller 1 с — событие stopped ≤ TTL + poll-interval). Нормативные константы: окно повтора клиента 3 с, окно молчания клиента 5 с, серверный TTL состояния 8 с, страховой таймаут наблюдателя 10 с, флуд-лимит сигналов 60/мин. DIRECT-блок-пара — без публикации в обе стороны (сигнал принимается 204); состояние не читается, не сохраняется и не реплеится при (пере)подключении (эфемерность). event: chat.sound.updated с payload ChatSoundUpdatedEvent {chatId, soundEnabled} — только в собственный канал пользователя при успешной смене №42 (мультидевайс ≤ 2 с; повтор того же значения — без события); другие участники чата событие не получают (приватность). presence.updated (007) с 008a может нести опциональное lastSeenAt при offline-переходе субъекта в рамках аудитории видимости (правила раскрытия и точность — в схеме PresenceUpdatedEvent). Неизвестные клиенту event:-типы обязаны игнорироваться (прямая совместность, US6-3) — механизм аддитивности новых событий.
+         * @description Единый realtime-поток событий пользователя (FR-022, US6): мультиплекс всех диалогов; каждое устройство/сессия открывает свой поток. Канал строго server→client: отправка — REST №16 (подтверждение = HTTP-ответ). Подключение: Authorization Bearer (тот же access JWT, что и REST; токен в URL запрещён) + Accept: text/event-stream. Фрейминг WHATWG SSE: первая строка потока — retry: 3000 (подсказка реконнекта); heartbeat-комментарий :ka каждые 15 с. Кадры: event: message.created | chat.read, за которым одна data:-строка с JSON-полем одной строкой, UTF-8. Событие message.created (FR-007) публикуется обоим участникам после коммита записи: payload {chatId, message: Message}; отправитель рендерит свои исходящие с других устройств сразу «доставлено»; клиент дедуплицирует по message.id. Событие chat.read (FR-010): payload {chatId, readUpToSeq, byUserId} — собеседник прочитал до readUpToSeq включительно; монотонно (повторные/меньшие не публикуются). Канал at-most-once: при (пере)подключении клиент выполняет рефетч REST (№12/№15); порядок/дубли исключены серверным seq и дедупом по id. Неизвестные клиенту event:-типы обязаны игнорироваться (прямая совместимость, US6-3). События групп (006): event: group.updated | group.member.added | group.member.removed | group.role.changed | group.you_removed | group.deleted — payloads Group*Event; идентификатор группы — поле groupId (= chatId). Адресат — активный участник группы на момент публикации (снимок состава в транзакции операции, публикация post-commit). group.you_removed — финальное событие группы в канале адресата: после него события группы не публикуются (окно прекращения ≤5 с, FR-010); клиент обязан удалить группу из «Чатов», игнорировать последующие события этой группы (гонка порядка — сообщение, закоммиченное до исключения, может прийти позже) и исключить её из отложенных ack-батчей №25. Обработка групповых событий идемпотентна: применяется состояние (состав/роли/ метаданные), а не дельты (FR-015); события группы не создают системных сообщений в истории. В группах message.created публикуется всем активным участникам, кроме отправителя (FR-011); chat.read — всем активным, кроме читавшего. Присутствие (007): сразу после retry: 3000 сервер отправляет opening-фрейм event: connected с payload ConnectedEvent {connectionId} — идентификатор регистрации подключения, используется клиентом в heartbeat №37; живёт вместе с потоком: реконнект выдаёт новый connectionId, старая регистрация самоистекает по TTL. Событие event: presence.updated с payload PresenceUpdatedEvent {userId, status, rev} публикуется каждому члену аудитории видимости субъекта (общий чат ∪ «субъект в контактах наблюдающего» − блок-пары − сам субъект) ровно один раз на переход, независимо от числа общих чатов; userId — субъект смены (не наблюдатель); status — опубликованное online | offline (online — немедленно, offline — гистерезис-задержано окном 45 c); rev — монотонная ревизия per-user: применять только строго большее rev (дубль/задержавшийся кадр — no-op); режим «невидимки» замораживает исходящие события субъекта. Терминология keepalive: transport-keepalive :ka — кадр- комментарий каждые 15 с, удерживает TCP-соединение и к регистрации присутствия не относится; presence-heartbeat №37 — прикладное продление регистрации каждые 30 c (отдельный REST- вызов); 404/429 на №37 не влияют на :ka, и наоборот. Социальные сигналы (008a): event: typing.started | typing.stopped с payload TypingStartedEvent/TypingStoppedEvent {chatId, userId} — эфемерный сигнал набора текста; публикуется активным участникам чата кроме отправителя сигнала при каждом валидном start №41 (включая продления — окно повтора клиента 3 с) и при завершении: stop №41 (только при активном состоянии — идемпотентность), успешной отправке сообщения №16 печатающим, серверном истечении состояния (TTL 8 с, poller 1 с — событие stopped ≤ TTL + poll-interval). Нормативные константы: окно повтора клиента 3 с, окно молчания клиента 5 с, серверный TTL состояния 8 с, страховой таймаут наблюдателя 10 с, флуд-лимит сигналов 60/мин. DIRECT-блок-пара — без публикации в обе стороны (сигнал принимается 204); состояние не читается, не сохраняется и не реплеится при (пере)подключении (эфемерность). event: chat.sound.updated с payload ChatSoundUpdatedEvent {chatId, soundEnabled} — только в собственный канал пользователя при успешной смене №42 (мультидевайс ≤ 2 с; повтор того же значения — без события); другие участники чата событие не получают (приватность). presence.updated (007) с 008a может нести опциональное lastSeenAt при offline-переходе субъекта в рамках аудитории видимости (правила раскрытия и точность —
+         *      в схеме PresenceUpdatedEvent).
+         *      Конференции (009): event: conference.started |
+         *      conference.ended с payload ConferenceStartedEvent/
+         *      ConferenceEndedEvent; адресат — активные члены чата
+         *      конференции на момент перехода статуса (снимок членства в
+         *      транзакции, публикация post-commit; НЕ только участники
+         *      звонка — член чата видит «звонок идёт», даже не открывая его,
+         *      US5-1). conference.started — первый фактический вход
+         *      участника (первый вебхук participant_joined при статусе
+         *      created → переход created→active), ровно один раз на
+         *      конференцию; conference.ended — любой путь завершения
+         *      (последний вышел + таймаут пустой комнаты / модератор №48 /
+         *      максимум длительности / потеря медиа-комнаты / удаление
+         *      чата) — единый идемпотентный finalize, ровно один раз;
+         *      reason — last_left|moderator|max_duration|room_lost|
+         *      chat_deleted. Доставка at-least-once ≤ 2 с (SC-006); дубли
+         *      безопасны: клиент применяет событие как функцию статуса
+         *      («звонок идёт / не идёт»), а не накапливает; порядок per-user
+         *      канала сохраняется (started раньше ended одной конференции);
+         *      потеря события компенсируется REST №45 (ConferenceView.status
+         *      — источник истины индикатора при переподключении SSE).
+         *      Гостям события не доставляются (нет userId/SSE-канала): их
+         *      канал оповещений — data-пакеты LiveKit и Disconnected
+         *      комнаты. События конференции не являются пользовательскими
+         *      сообщениями и в историю чата не пишутся (FR-013); системное
+         *      сообщение-приглашение №44 — отдельно, через message.created
+         *      (Message с kind='system' и payload-виджетом).
+         *      Неизвестные клиенту event:-типы обязаны игнорироваться
+         *      (прямая совместность, US6-3) — механизм аддитивности новых
+         *      событий.
          */
         get: operations["streamUserEvents"];
         put?: never;
@@ -912,6 +942,230 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/chats/{chatId}/conferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Создать конференцию в чате (№44, Bearer)
+         * @description Старт видеоконференции из чата (FR-001/FR-002): запись конференции + медиа-комната c:{conferenceId} (таймауты пустой комнаты 60 c, max_participants per-env), в той же транзакции — системное сообщение-приглашение в историю чата (kind='system', payload.type='conference_invite' — карточка с кнопкой «Подключиться», видна всем членам чата). mode задаёт стартовые дефолты pre-join (video — камера+микрофон, audio — только микрофон; soft — тумблеры на pre-join доступны). Требует active-членства в чате (FR-003): не-член (включая бывшего) — 403 conference_forbidden без деталей конференции. Идемпотентность «одна активная конференция на чат»: при уже активной — 200 существующей ConferenceView, сообщение-приглашение не дублируется. E2EE-чат (010) — граница v1: 409 conference_e2ee_unsupported, не создаётся ничего. Недоступность медиа-плоскости (pre-flight probe до транзакции) — 503 conference_media_unavailable без записи в БД; медиа-комната создаётся post-commit (осиротевшие записи лечит компенсирующий sweeper). SSE conference.started публикуется не при создании, а при фактическом входе первого участника (№18, US5-1).
+         */
+        post: operations["createConference"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/invite-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Статус гостевой ссылки (№54, публичный)
+         * @description Статус ссылки-приглашения для гостевой join-страницы до ввода имени (FR-009, SC-003 ≤ 3 действий до входа). Публичный endpoint (без Bearer) — единственное контролируемое исключение из «все API только для аутентифицированных», закрыт per-IP бакетом (дефолт 30/мин per-env): 429 rate_limited + Retry-After. Минимум раскрытия: только валидность, причина и live-флаг — без деталей чата/конференции; подделанный nonce — единообразный {valid:false} без причины (не различаются и причины подделки, edge). valid=true только для действующей ссылки живой (не завершённой) конференции; live — конференция идёт прямо сейчас (для UX-подсказки на join-странице).
+         */
+        get: operations["getConferenceInviteInfo"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/join-by-invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Гостевой вход по ссылке (№55, публичный)
+         * @description Вход внешнего участника без аккаунта (FR-009/FR-010): валидация nonce → статус ссылки → жива ли конференция → квота; строка гостя создаётся при выдаче JoinTicket; минт LiveKit JWT identity g:{connId} (свежий connId на каждый вход — ссылка многоразовая, кик/отзыв не блокируют повторный вход, пока действует; радикальная мера — отзыв №53). name: серверный trim, 1–50 символов (Q19/Q7) — иначе 422 name_invalid. Гость — только экран конференции: прав модерации нет, доступ к API чатов закрыт (FR-010); стартовое состояние клиента — «только микрофон» (soft: тумблер камеры доступен, Q1=C/Q3=A); источники публикации не урезаются. TTL токена — как у членов (conferences.token-ttl, дефолт 900 c). Отказы: подделка — единообразный 404 invite_invalid (без различения причин); ссылка не найдена — 404 invite_not_found; истёкшая — 409 invite_expired; отозванная — 409 invite_revoked; конференция завершена — 409 conference_ended; квота (общая с членами чата, Q23=A) — 409 conference_full. Публичный endpoint (без Bearer), закрыт per-IP бакетом (дефолт 10/мин per-env): 429 rate_limited + Retry-After.
+         */
+        post: operations["joinConferenceByInvite"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/{conferenceId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Статус конференции (№45, Bearer)
+         * @description ConferenceView конференции, включая status='ended' — по нему клик «Подключиться» по старой ссылке показывает «конференция завершена» (без деталей, как долго прошла). REST-фолбэк индикатора «звонок идёт» при переподключении SSE (источник истины — status). activeParticipants — число фактических подключений из медиа-плоскости на момент запроса. Авторизация — active-членство в чате конференции на каждом запросе (FR-003): не-члену (включая бывшего) и для несуществующей конференции — единый 404 conference_not_found, существование не раскрывается (прецедент 006).
+         */
+        get: operations["getConference"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/{conferenceId}/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Мои роль и ограничения в конференции (№46, Bearer)
+         * @description MeView — роль и ограничения принципала для блокировки тумблеров pre-join и звонка (FR-007): restricted-поля — серверный мьют микрофона/камеры/экрана и «право слова» (speechRestricted блокирует ВСЕ публикации, включая data). Ограничения персистентны до конца конференции и применяются к новому минту при каждом переподключении; live-обновление в звонке — также permission-событиями медиа-плоскости. Гостям операция не нужна: их ограничения применяются live-правами медиа-плоскости, на pre-join ограничений нет (строка гостя создаётся при входе). Авторизация и единый 404 — как №45.
+         */
+        get: operations["getConferenceMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/{conferenceId}/join": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Вход в конференцию — JoinTicket (№47, Bearer)
+         * @description Membership-check на каждой выдаче токена (FR-003): не-член чата (включая бывшего — исключён/вышел) — 403 conference_forbidden, токен не минтится. Успех — короткоживый JoinTicket: LiveKit JWT (HS256, TTL conferences.token-ttl, дефолт 900 c; self-hosted LiveKit не ревоцирует токены — компенсируется TTL и повторным минтом при реконнекте), wsUrl медиа-ингресса и identity u:{userId}:{connId} (connId свежий на каждый минт: два устройства одного пользователя — два слота квоты). Grants вычисляются из роли и ограничений принципала: право слова → canPublish=false, ограниченные источники исключаются из canPublishSources; админ-grants клиентам не выдаются никогда — вся модерация серверная (FR-008). Завершённая — 409 conference_ended; квота подключений (общая с гостями, Q23=A) исчерпана — 409 conference_full; медиа-плоскость недоступна — 503 conference_media_unavailable. Истёкший в середине конференции токен обновляется повторным вызовом (окно реконнекта reconnect-window, дефолт 120 с per-env).
+         */
+        post: operations["joinConference"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/{conferenceId}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Завершить конференцию (№48, Bearer)
+         * @description Завершение модератором (FR-008): медиа-комната удаляется, все подключения (члены и гости) разрываются немедленно, активным членам чата публикуется SSE conference.ended (reason='moderator', №18). Модераторы равноправны (Q21=A): завершение доступно любому модератору, включая назначенных №50; отдельной роли «владелец» нет. Повтор для завершённой — 409 conference_ended. Требует роли модератора: иначе 403 moderator_required. Штатная финализация статуса — вебхук room_finished медиа-плоскости; компенсация потери — sweeper (внутренний контракт, в API не входит).
+         */
+        post: operations["endConference"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/{conferenceId}/participants/{identity}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Кик участника (№51, Bearer)
+         * @description Немедленный разрыв подключения участника (≤ 2 с, SC-005); ограничений/роли цели не меняет. Кик ≠ бан: переподключение по действующей ссылке (№47 для членов, №55 для гостей) допустимо, строка принципала не трогается (edge). Модераторы равноправны (Q21=A): кик применим к любому участнику, включая других модераторов и создателя. Требует роли модератора: иначе 403 moderator_required; цель не найдена — 404 participant_not_found.
+         */
+        delete: operations["kickConferenceParticipant"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/{conferenceId}/participants/{identity}/restrictions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Ограничения участника — SET-состояние (№49, Bearer)
+         * @description Серверная модерация источников участника (FR-008): полное SET-состояние четырёх ограничений (идемпотентно; для сброса — false в соответствующем поле; частичное обновление невозможно — передаются все поля). speechRestricted («право слова») блокирует ВСЕ публикации (canPublish=false), прочие — только свой источник (исключение из canPublishSources). Применяется немедленно ≤ 2 с (SC-005): живому подключению — обновление grants + мьют уже опубликованных треков; персистентно в БД до конца конференции — переживает переподключение (права нового минта из БД, Q5/Q22=A). Модераторы равноправны (Q21=A): ограничения применимы к любому участнику, включая других модераторов и создателя. Требует роли модератора: иначе 403 moderator_required; цель не найдена — 404 participant_not_found.
+         */
+        put: operations["setParticipantRestrictions"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/{conferenceId}/participants/{identity}/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Назначить или снять модератора (№50, Bearer)
+         * @description Смена роли участника (FR-008): moderator (назначение) или participant (снятие). Роль персистентна до конца конференции, включая переподключение (Q9=A; права нового минта из БД). Модераторы равноправны (Q21=A): смена применима к любому участнику, включая других модераторов и создателя; отдельной роли «владелец» нет — создатель стартует модератором. Немедленное применение ≤ 2 с (SC-005): обновление metadata живого подключения (broadcast роли в UI). Требует роли модератора: иначе 403 moderator_required; цель не найдена — 404 participant_not_found.
+         */
+        put: operations["setParticipantRole"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/conferences/{conferenceId}/guest-invite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Сгенерировать гостевую ссылку (№52, Bearer)
+         * @description Приглашение внешнего участника без аккаунта (FR-009): подписанный nonce (JWT ES256, sub=inviteId, TTL гостевой ссылки — дефолт 24 ч per-env) + строка в БД для отзыва. Инвариант «одна активная ссылка на конференцию»: генерация отзывает предыдущую в той же транзакции (Q17=A; вошедшие по старой отключаются немедленно). В чат ссылка не постится — доступ только передачей ссылки модератором. Гости и члены делят общую квоту подключений (Q23=A). Требует роли модератора: иначе 403 moderator_required; завершённая — 409 conference_ended.
+         */
+        post: operations["createGuestInvite"];
+        /**
+         * Отозвать гостевую ссылку (№53, Bearer)
+         * @description Отзыв активной ссылки (FR-012): вошедшие по ней гости отключаются немедленно (по metadata.inviteId, Q13=B), новые входы блокируются (№54 — {valid:false, reason:'revoked'}, №55 — 409 invite_revoked). Активной ссылки нет — 404 guest_invite_not_found. Требует роли модератора: иначе 403 moderator_required.
+         */
+        delete: operations["revokeGuestInvite"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1139,10 +1393,10 @@ export interface components {
             chatId: string;
             /**
              * Format: uuid
-             * @description Отправитель (участник диалога)
+             * @description Отправитель (участник диалога); null у системной записи kind=system (009: конференция-приглашение и последующие виджеты; nullable-переход — прецедент 006 с peer)
              */
-            senderId: string;
-            /** @description Триммированный по краям текст (FR-003); внутренние пробелы сохраняются; ≤4096 символов после trim */
+            senderId: string | null;
+            /** @description Триммированный по краям текст (FR-003); внутренние пробелы сохраняются; ≤4096 символов после trim; у kind=system — пустая строка (содержание виджета — в payload) */
             text: string;
             /**
              * Format: int64
@@ -1151,6 +1405,13 @@ export interface components {
             seq: number;
             /** Format: date-time */
             createdAt: string;
+            /**
+             * @description Тип записи (009): user — обычное сообщение участника (senderId не null); system — системный виджет (senderId=null, payload обязателен, создаётся сервером в транзакции операции — например, карточка-приглашение конференции №44). Default "user": записи, созданные до 009, семантически user; новые типы виджетов добавляются аддитивно (OCP, конституция IV)
+             * @enum {string}
+             */
+            kind?: "user" | "system";
+            /** @description Виджет системного сообщения (009; присутствует только у kind=system, у kind=user — null/отсутствует): первый тип {"type":"conference_invite","conferenceId":uuid,"mode":"video"|"audio"} — карточка-приглашение с кнопкой «Подключиться»; размер ≤ 4 КБ; неизвестные клиентам payload.type обязаны рендериться нейтральным плейсхолдером (OCP), новые типы — аддитивно */
+            payload?: Record<string, never> | null;
         };
         /** @description Элемент единого списка «Чаты» (№12, 006): direct-диалог или группа — type-дискриминация; group-поля присутствуют только при type=group, peer-поля у group-элемента — null */
         ChatListItem: {
@@ -1690,6 +1951,216 @@ export interface components {
             chatId: string;
             /** @description Новое значение звуковых оповещений вызывающего в этом чате */
             soundEnabled: boolean;
+        };
+        CreateConferenceRequest: {
+            /**
+             * @description Стартовые дефолты pre-join (FR-001): video — камера+микрофон, audio — только микрофон (тумблер камеры доступен — soft, Q3=A); режим влияет только на стартовое состояние клиента
+             * @enum {string}
+             */
+            mode: "video" | "audio";
+        };
+        /** @description Конференция глазами члена чата (009): статус жизненного цикла, режим, квоты; activeParticipants — из медиа-плоскости на момент запроса (БД подключения не хранит); после завершения остаётся доступной по старой ссылке (status=ended → «конференция завершена») */
+        ConferenceView: {
+            /**
+             * Format: uuid
+             * @description Идентификатор конференции
+             */
+            id: string;
+            /**
+             * Format: uuid
+             * @description Чат-владелец (direct или группа)
+             */
+            chatId: string;
+            /**
+             * @description Жизненный цикл: created — создана, никто ещё не вошёл; active — первый участник фактически вошёл (SSE conference.started); ended — завершена (любой путь, см. endReason). Переходы только вперёд
+             * @enum {string}
+             */
+            status: "created" | "active" | "ended";
+            /**
+             * @description Стартовые дефолты, заданные при создании №44
+             * @enum {string}
+             */
+            mode: "video" | "audio";
+            /**
+             * Format: uuid
+             * @description Создатель (стартует модератором)
+             */
+            createdBy: string;
+            /** Format: date-time */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description Фактический вход первого участника (переход created→active); отсутствует для status=created
+             */
+            startedAt?: string;
+            /**
+             * Format: date-time
+             * @description Момент финализации; отсутствует до завершения
+             */
+            endedAt?: string;
+            /**
+             * @description Причина завершения: последний вышел (+таймаут пустой комнаты) / модератор №48 / максимум длительности / потеря медиа-комнаты (sweeper) / удаление чата; отсутствует до завершения
+             * @enum {string}
+             */
+            endReason?: "last_left" | "moderator" | "max_duration" | "room_lost" | "chat_deleted";
+            /** @description Квота подключений per-env (conferences.max-participants, дефолт 16); общая для членов чата и гостей (Q23=A) */
+            maxParticipants: number;
+            /** @description Число фактических подключений из медиа-плоскости на момент запроса */
+            activeParticipants: number;
+        };
+        /** @description Роль и ограничения принципала в конференции (009, №46): для блокировки тумблеров pre-join/звонка (FR-007); ограничения персистентны до конца конференции и применяются к каждому новому минту (Q5/Q22=A) */
+        MeView: {
+            /**
+             * @description Роль принципала (создатель стартует модератором; смена — №50)
+             * @enum {string}
+             */
+            role: "moderator" | "participant";
+            /** @description Серверный мьют микрофона (модерация №49) */
+            micRestricted: boolean;
+            /** @description Серверное отключение камеры (модерация №49) */
+            cameraRestricted: boolean;
+            /** @description Серверное отключение демонстрации экрана (модерация №49) */
+            screenRestricted: boolean;
+            /** @description «Право слова»: блокирует ВСЕ публикации принципала, включая data (Q4=A) */
+            speechRestricted: boolean;
+        };
+        /** @description Участник конференции (009): принципал строки conference_participants (член чата или гость); online — есть ли живое подключение в медиа-плоскости */
+        ParticipantView: {
+            /** @description LiveKit identity принципала: u:{userId}:{connId} (член чата) или g:{connId} (гость); без PII */
+            identity: string;
+            /** @description Отображаемое имя (username члена или введённое гостем) */
+            name: string;
+            /**
+             * @description Роль в конференции (не путать с ролями группы 006)
+             * @enum {string}
+             */
+            role: "moderator" | "participant";
+            /** @description Гость (вошёл по ссылке №55, без аккаунта) */
+            guest: boolean;
+            /** @description Серверный мьют микрофона */
+            micRestricted: boolean;
+            /** @description Серверное отключение камеры */
+            cameraRestricted: boolean;
+            /** @description Серверное отключение демонстрации экрана */
+            screenRestricted: boolean;
+            /** @description «Право слова»: блокирует все публикации */
+            speechRestricted: boolean;
+            /** @description Есть живое подключение (источник — медиа-плоскость) */
+            online: boolean;
+        };
+        /** @description Краткосрочный билет подключения к медиа-плоскости (009, №47/№55): токен+wsUrl+identity; self-hosted LiveKit не ревоцирует токены — TTL короткий (conferences.token-ttl, дефолт 900 c), истёкший в середине конференции токен обновляется повторным №47/№55 в окне реконнекта (reconnect-window, дефолт 120 с); админ-grants в токене отсутствуют — вся модерация серверная (FR-008) */
+        JoinTicket: {
+            /** @description LiveKit JWT (HS256, TTL conferences.token-ttl, дефолт 900 c), grants вычислены из роли/ограничений принципала */
+            token: string;
+            /**
+             * Format: uri
+             * @description WS/WSS-ингресс медиа-плоскости для подключения клиента
+             */
+            wsUrl: string;
+            /** @description u:{userId}:{connId} (член чата; connId свежий на каждый минт — два устройства = два слота квоты) или g:{connId} (гость) */
+            identity: string;
+            /** @description Отображаемое имя (username члена или введённое гостем) */
+            name: string;
+            /**
+             * Format: date-time
+             * @description Момент истечения токена
+             */
+            expiresAt: string;
+        };
+        /** @description Полное SET-состояние ограничений участника (009, №49): идемпотентно, передаются все четыре поля (частичное обновление невозможно; сброс — false) */
+        UpdateParticipantRestrictionsRequest: {
+            /** @description Заблокировать микрофон (мьют уже опубликованного трека + запрет публикации) */
+            micRestricted: boolean;
+            /** @description Заблокировать камеру */
+            cameraRestricted: boolean;
+            /** @description Заблокировать демонстрацию экрана */
+            screenRestricted: boolean;
+            /** @description «Право слова»: блокирует ВСЕ публикации, включая data (Q4=A) */
+            speechRestricted: boolean;
+        };
+        UpdateParticipantRoleRequest: {
+            /**
+             * @description Назначение модератора или снятие (равноправие модераторов — Q21=A; отдельной роли «владелец» нет)
+             * @enum {string}
+             */
+            role: "moderator" | "participant";
+        };
+        /** @description Гостевая ссылка (009, №52): подписанный nonce в URL; одна активная на конференцию — генерация отзывает предыдущую (Q17=A); в чат не постится */
+        GuestInviteView: {
+            /**
+             * Format: uri
+             * @description Ссылка-приглашение публичного маршрута SPA (/join/{inviteToken}) с подписанным nonce; передача — только средствами модератора
+             */
+            inviteUrl: string;
+            /**
+             * Format: date-time
+             * @description Истечение срока ссылки (TTL дефолт 24 ч per-env)
+             */
+            expiresAt: string;
+        };
+        GuestJoinRequest: {
+            /** @description nonce из гостевой ссылки (№52) */
+            inviteToken: string;
+            /** @description Отображаемое имя гостя: серверный trim, 1–50 символов (Q19/Q7) — иначе 422 name_invalid; в чате не раскрывается (гость виден только внутри конференции) */
+            name: string;
+        };
+        /** @description Статус гостевой ссылки (009, №54): минимум раскрытия — без деталей чата/конференции; подделанный nonce — единообразный {valid:false} без причины (edge) */
+        InviteInfoView: {
+            /** @description true только для действующей ссылки живой (не завершённой) конференции */
+            valid: boolean;
+            /**
+             * @description Понятная причина невалидности для join-страницы: истёкшая / отозванная / конференция завершена; отсутствует при valid=true и при подделке (не различаются)
+             * @enum {string}
+             */
+            reason?: "expired" | "revoked" | "ended";
+            /** @description Конференция идёт прямо сейчас (UX-подсказка join-страницы) */
+            live?: boolean;
+        };
+        /** @description SSE-событие №18 conference.started (009, FR-013/US5-1): конференция фактически началась — первый участник вошёл (первый вебхук participant_joined при статусе created → переход created→active), ровно один раз на конференцию (повторные/дублированные вебхуки не порождают повторных событий — условный переход статуса); room_started eager-создания комнаты №44 началом НЕ считается. Адресат — активные члены чата на момент входа первого участника (НЕ только участники звонка); публикация post-commit по снимку членства. Действие клиента: индикатор «звонок идёт» у чата (список чатов + заголовок), активная кнопка входа. Дубли безопасны: применение — как функция статуса; потеря компенсируется REST №45; гостям не доставляется; в историю чата не пишется; клиенты, не знающие события, игнорируют его */
+        ConferenceStartedEvent: {
+            /**
+             * Format: uuid
+             * @description Идентификатор конференции
+             */
+            conferenceId: string;
+            /**
+             * Format: uuid
+             * @description Чат конференции (индикатор «звонок идёт»)
+             */
+            chatId: string;
+            /**
+             * Format: date-time
+             * @description Момент фактического входа первого участника
+             */
+            startedAt: string;
+            /**
+             * @description Стартовые дефолты конференции
+             * @enum {string}
+             */
+            mode: "video" | "audio";
+        };
+        /** @description SSE-событие №18 conference.ended (009, FR-013/US5): конференция завершена — любой путь (последний вышел + таймаут пустой комнаты / модератор №48 / максимум длительности / потеря медиа-комнаты / удаление чата), единый идемпотентный finalize, ровно один раз на конференцию. Адресат — активные члены чата на момент завершения (снимок членства в транзакции, публикация post-commit). Действие клиента: снять индикатор «звонок идёт»; участнику в звонке — UX-сообщение причины (само подключение закрывается Disconnected медиа-плоскости; событие дублирует причину). История чата не изменяется (Q20=A): след завершения — только это событие и ответ «конференция завершена» по старой ссылке (№45 status=ended). Дубли безопасны (функция статуса); гостям не доставляется; клиенты, не знающие события, игнорируют его */
+        ConferenceEndedEvent: {
+            /**
+             * Format: uuid
+             * @description Идентификатор конференции
+             */
+            conferenceId: string;
+            /**
+             * Format: uuid
+             * @description Чат конференции (снятие индикатора «звонок идёт»)
+             */
+            chatId: string;
+            /**
+             * Format: date-time
+             * @description Момент финализации
+             */
+            endedAt: string;
+            /**
+             * @description Причина завершения: последний вышел / модератор №48 / максимум длительности / потеря медиа-комнаты (sweeper) / удаление чата
+             * @enum {string}
+             */
+            reason: "last_left" | "moderator" | "max_duration" | "room_lost" | "chat_deleted";
         };
     };
     responses: never;
@@ -2933,7 +3404,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, opening-фрейм connected (007), события message.created, chat.read, presence.updated (007), события групп (group.updated, group.member.added, group.member.removed, group.role.changed, group.you_removed, group.deleted), typing.started, typing.stopped, chat.sound.updated (008a); фрейминг и payloads — в описании операции */
+            /** @description SSE-поток событий пользователя (text/event-stream): retry: 3000 в первом кадре, heartbeat :ka каждые 15 с, opening-фрейм connected (007), события message.created, chat.read, presence.updated (007), события групп (group.updated, group.member.added, group.member.removed, group.role.changed, group.you_removed, group.deleted), typing.started, typing.stopped, chat.sound.updated (008a), conference.started, conference.ended (009); фрейминг и payloads — в описании операции */
             200: {
                 headers: {
                     /** @description no — отключение буферизации прокси (кадры доставляются немедленно, без агрегации за ingress) */
@@ -4357,6 +4828,758 @@ export interface operations {
                 headers: {
                     /** @description Секунды до доступного токена */
                     "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createConference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор чата (direct или группы) */
+                chatId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateConferenceRequest"];
+            };
+        };
+        responses: {
+            /** @description В чате уже есть активная конференция — существующая ConferenceView (идемпотентность: сообщение-приглашение не дублируется) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConferenceView"];
+                };
+            };
+            /** @description Конференция создана (status=created): ConferenceView; в историю чата добавлено системное сообщение-приглашение */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConferenceView"];
+                };
+            };
+            /** @description mode отсутствует или вне video|audio (errors: {mode: [invalid_mode]}); не-UUID chatId (errors: {chatId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не active-член чата (errors: {conference: [conference_forbidden]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Чат не найден (errors: {chat: [chat_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description E2EE-чат — конференции не поддерживаются в v1 (errors: {conference: [conference_e2ee_unsupported]}) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Медиа-плоскость недоступна (pre-flight probe до транзакции; ничего не создаётся) (errors: {conference: [conference_media_unavailable]}) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getConferenceInviteInfo: {
+        parameters: {
+            query: {
+                /** @description nonce гостевой ссылки из №52 */
+                inviteToken: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Статус ссылки: InviteInfoView {valid, reason?, live?} */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InviteInfoView"];
+                };
+            };
+            /** @description inviteToken отсутствует или пуст (errors: {inviteToken: [malformed_request]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Per-IP бакет 30/мин (дефолт per-env; errors: {request: [rate_limited]}) */
+            429: {
+                headers: {
+                    /** @description Секунды до доступного токена */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    joinConferenceByInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GuestJoinRequest"];
+            };
+        };
+        responses: {
+            /** @description Гостевой JoinTicket: токен, wsUrl, identity g:{connId}, имя, expiresAt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JoinTicket"];
+                };
+            };
+            /** @description Подделанный nonce — единообразный отказ без раскрытия причин (errors: {inviteToken: [invite_invalid]}); ссылка не найдена (errors: {inviteToken: [invite_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Истёкшая (errors: {inviteToken: [invite_expired]}); отозванная (errors: {inviteToken: [invite_revoked]}); конференция завершена (errors: {conference: [conference_ended]}); квота подключений исчерпана — общая с членами чата (errors: {conference: [conference_full]}) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Имя: пустое после trim или длиннее 50 символов (errors: {name: [name_invalid]}) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Per-IP бакет 10/мин (дефолт per-env; errors: {request: [rate_limited]}) */
+            429: {
+                headers: {
+                    /** @description Секунды до доступного токена */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getConference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор конференции */
+                conferenceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description ConferenceView (включая завершённые: status=ended, endReason) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConferenceView"];
+                };
+            };
+            /** @description Не-UUID conferenceId (errors: {conferenceId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция не найдена или недоступна вызывающему — единый ответ (errors: {conference: [conference_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    getConferenceMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор конференции */
+                conferenceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MeView: роль и 4 ограничения принципала */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeView"];
+                };
+            };
+            /** @description Не-UUID conferenceId (errors: {conferenceId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция не найдена или недоступна вызывающему — единый ответ (errors: {conference: [conference_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    joinConference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор конференции */
+                conferenceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description JoinTicket: токен, wsUrl, identity u:{userId}:{connId}, имя, expiresAt */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JoinTicket"];
+                };
+            };
+            /** @description Не-UUID conferenceId (errors: {conferenceId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не active-член чата конференции (errors: {conference: [conference_forbidden]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция не найдена (errors: {conference: [conference_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция завершена (errors: {conference: [conference_ended]}); квота подключений исчерпана — общая с гостями (errors: {conference: [conference_full]}) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Медиа-плоскость недоступна (errors: {conference: [conference_media_unavailable]}) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    endConference: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор конференции */
+                conferenceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Конференция завершается: подключения разрываются, активным членам чата — SSE conference.ended (reason=moderator) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не-UUID conferenceId (errors: {conferenceId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не модератор конференции (errors: {conference: [moderator_required]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция не найдена или недоступна вызывающему — единый ответ (errors: {conference: [conference_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция уже завершена (errors: {conference: [conference_ended]}) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    kickConferenceParticipant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор конференции */
+                conferenceId: string;
+                /** @description LiveKit identity принципала: u:{userId}:{connId} члена чата или g:{connId} гостя */
+                identity: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Подключение участника разорвано (переподключение по действующей ссылке допустимо — кик ≠ бан) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не-UUID conferenceId (errors: {conferenceId: [invalid_uuid]}); пустой identity (errors: {identity: [malformed_request]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не модератор конференции (errors: {conference: [moderator_required]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция не найдена или недоступна вызывающему — единый ответ (errors: {conference: [conference_not_found]}); участник с identity не найден (errors: {participant: [participant_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    setParticipantRestrictions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор конференции */
+                conferenceId: string;
+                /** @description LiveKit identity принципала: u:{userId}:{connId} члена чата или g:{connId} гостя */
+                identity: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateParticipantRestrictionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Применённое состояние: ParticipantView (немедленное действие + персистентность до конца конференции) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParticipantView"];
+                };
+            };
+            /** @description Не-UUID conferenceId (errors: {conferenceId: [invalid_uuid]}); пустой identity (errors: {identity: [malformed_request]}); тело не является полным SET-состоянием четырёх boolean (errors: {restrictions: [malformed_request]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не модератор конференции (errors: {conference: [moderator_required]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция не найдена или недоступна вызывающему — единый ответ (errors: {conference: [conference_not_found]}); участник с identity не найден (errors: {participant: [participant_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    setParticipantRole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор конференции */
+                conferenceId: string;
+                /** @description LiveKit identity принципала: u:{userId}:{connId} члена чата или g:{connId} гостя */
+                identity: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateParticipantRoleRequest"];
+            };
+        };
+        responses: {
+            /** @description Применённое состояние: ParticipantView с новой ролью */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParticipantView"];
+                };
+            };
+            /** @description Не-UUID conferenceId (errors: {conferenceId: [invalid_uuid]}); пустой identity (errors: {identity: [malformed_request]}); role вне moderator|participant (errors: {role: [invalid_role]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не модератор конференции (errors: {conference: [moderator_required]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция не найдена или недоступна вызывающему — единый ответ (errors: {conference: [conference_not_found]}); участник с identity не найден (errors: {participant: [participant_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    createGuestInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор конференции */
+                conferenceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ссылка сгенерирована (предыдущая отозвана): GuestInviteView {inviteUrl, expiresAt} */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GuestInviteView"];
+                };
+            };
+            /** @description Не-UUID conferenceId (errors: {conferenceId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не модератор конференции (errors: {conference: [moderator_required]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция не найдена или недоступна вызывающему — единый ответ (errors: {conference: [conference_not_found]}) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция уже завершена (errors: {conference: [conference_ended]}) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+        };
+    };
+    revokeGuestInvite: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Идентификатор конференции */
+                conferenceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ссылка отозвана: вошедшие гости отключаются, новые входы блокируются */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Не-UUID conferenceId (errors: {conferenceId: [invalid_uuid]}) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Не аутентифицирован (нет токена / истёк / отозван / недействителен — единообразно) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Вызывающий — не модератор конференции (errors: {conference: [moderator_required]}) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Конференция не найдена или недоступна вызывающему — единый ответ (errors: {conference: [conference_not_found]}); активной гостевой ссылки нет (errors: {invite: [guest_invite_not_found]}) */
+            404: {
+                headers: {
                     [name: string]: unknown;
                 };
                 content: {

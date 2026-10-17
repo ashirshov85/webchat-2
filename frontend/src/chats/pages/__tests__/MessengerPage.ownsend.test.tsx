@@ -324,7 +324,7 @@ describe('реалтайм-подъём строки отправителя (T05
     expect(groupRowButton.querySelector('.c-prev')?.textContent).toBe('Вы: привет группа')
     expect(groupRowButton.querySelector('.chat-item-badge')).toBeNull()
     // Живая сессия — без №12-рефетча и без reconnect (кадров не было).
-    expect(mockChats.listChats.mock.calls.length).toBe(listChatsCalls)
+    expect(mockChats.listChats.mock.calls).toHaveLength(listChatsCalls)
   })
 
   it('direct: confirm + затем own-echo кадр — единичное применение, затем входящий кадр растит бейдж (регресс)', async () => {
