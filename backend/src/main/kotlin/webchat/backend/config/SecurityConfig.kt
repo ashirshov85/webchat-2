@@ -1,7 +1,5 @@
 package webchat.backend.config
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import io.lettuce.core.RedisClient
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.boot.web.servlet.FilterRegistrationBean
@@ -22,11 +20,7 @@ import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter
 import org.springframework.security.web.savedrequest.NullRequestCache
-import webchat.backend.auth.domain.port.UserRepository
-import webchat.backend.auth.ratelimit.ClientIpResolver
-import webchat.backend.auth.ratelimit.LoginThrottle
 import webchat.backend.auth.ratelimit.RateLimitFilter
-import webchat.backend.auth.security.AuthEventRecorder
 import webchat.backend.auth.security.AuthJwtDecoder
 import webchat.backend.auth.security.JwtService
 
@@ -52,41 +46,8 @@ class SecurityConfig {
     ): JwtDecoder = AuthJwtDecoder(jwtService, redisTemplate)
 
     /**
-     * The US5 guard of the public auth routes (FR-009): Bucket4j limits per
-     * source and per request identifier (T047, research.md §2/§11) plus the
-     * T048 `login:fail` brute-force lockout of research.md §8 — the counter
-     * verdict runs FIRST on `/auth/login`, before the buckets, and answers
-     * with the uniform 429 + `Retry-After` = the remaining counter TTL.
-     * Since 009 T047 the same guard also carries the per-IP buckets of the
-     * two PUBLIC guest routes №54/№55 (`conferences.rate-limit.*`,
-     * api-contract.md 009 §3) — the specs arrive via
-     * [ConferencesProperties] so the numbers stay owned by the conferences
-     * domain while the enforcement rides the ONE shared filter.
-     */
-    @Suppress("LongParameterList") // the guard's collaborators are the wiring itself (tasks.md T047–T048)
-    @Bean
-    fun rateLimitFilter(
-        rateLimitRedisClient: RedisClient,
-        properties: AuthRateLimitProperties,
-        conferencesProperties: ConferencesProperties,
-        clientIpResolver: ClientIpResolver,
-        objectMapper: ObjectMapper,
-        loginThrottle: LoginThrottle,
-        authEventRecorder: AuthEventRecorder,
-        userRepository: UserRepository,
-    ): RateLimitFilter =
-        RateLimitFilter(
-            rateLimitRedisClient,
-            properties,
-            conferencesProperties,
-            clientIpResolver,
-            objectMapper,
-            loginThrottle,
-            authEventRecorder,
-            userRepository,
-        )
-
-    /**
+     * The US5 rate-limit guard bean is wired by [RateLimitFilterConfig].
+     *
      * The filter lives ONLY in the security chain (added before
      * [UsernamePasswordAuthenticationFilter]) — this registration disables
      * Boot's automatic servlet-container registration so it cannot run twice.

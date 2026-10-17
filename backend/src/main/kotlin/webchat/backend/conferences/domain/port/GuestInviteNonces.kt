@@ -17,7 +17,7 @@ import webchat.backend.conferences.domain.model.GuestInvite
  * is safe to repeat and never fails on its own (a keyring breach is a
  * startup-time configuration failure, not a runtime answer).
  */
-interface GuestInviteNonces {
+fun interface GuestInviteNonces {
     /**
      * Signs the nonce of [invite] — `sub = inviteId`, `cid =
      * conferenceId`, `typ = "guest-invite"`, `exp = expiresAt`

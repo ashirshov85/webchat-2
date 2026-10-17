@@ -46,7 +46,7 @@
  * live-права MediaControls (T043), снимок №46 у гостя отсутствует.
  */
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { SubmitEvent } from 'react'
 import { guestErrorCode, getInviteInfo, joinConferenceByInvite } from '../api/conferences'
 import type { InviteInvalidReason, JoinTicket } from '../api/conferences'
 import {
@@ -242,7 +242,7 @@ export default function GuestJoinPage({ inviteToken }: GuestJoinPageProps) {
    * отказ ДО №55; трим фиксируется (сервер тримит так же).
    */
   const submitName = useCallback(
-    (event: FormEvent<HTMLFormElement>): void => {
+    (event: SubmitEvent<HTMLFormElement>): void => {
       event.preventDefault()
       const trimmed = name.trim()
       if (trimmed === '') {
