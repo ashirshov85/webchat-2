@@ -65,7 +65,13 @@ import java.util.concurrent.TimeUnit
  *    invite widget, the principal rows);
  *  * the №48–№51 moderation HTTP legs (T040) and the №47 ticket claim
  *    probes (`videoClaimsOf`/`ticketMetadataOf`) — the US3 story IT
- *    legs of the persisted restrictions/role.
+ *    legs of the persisted restrictions/role;
+ *  * the №52–№55 guest HTTP legs (T045/T046) — the authorized
+ *    moderator surface of the invite links and the PUBLIC
+ *    no-Bearer surface whose per-IP buckets of T047 the [sourceIp]
+ *    parameter pins (the flood legs of the US4 story IT, T048), plus
+ *    the invite/guest-row JdbcTemplate probes and the «истёкшая
+ *    ссылка» staging of the TTL no IT can wait out.
  */
 @Suppress("TooManyFunctions") // T021: fixture library — one helper per leg of the story ITs
 abstract class ConferencesTestSupport : MessagingTestSupport() {
@@ -187,6 +193,105 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
         identity: String,
     ): ResponseEntity<String> =
         sendAuthorized(HttpMethod.DELETE, "/api/v1/conferences/$conferenceId/participants/$identity", user)
+
+    /** Contract №52 `POST /api/v1/conferences/{conferenceId}/guest-invite` (T045) — raw response. */
+    protected fun createGuestInvite(
+        user: MessagingUser,
+        conferenceId: UUID,
+    ): ResponseEntity<String> = sendAuthorized(HttpMethod.POST, "/api/v1/conferences/$conferenceId/guest-invite", user)
+
+    /** Contract №53 `DELETE /api/v1/conferences/{conferenceId}/guest-invite` (T045) — raw response. */
+    protected fun revokeGuestInvite(
+        user: MessagingUser,
+        conferenceId: UUID,
+    ): ResponseEntity<String> =
+        sendAuthorized(
+            HttpMethod.DELETE,
+            "/api/v1/conferences/$conferenceId/guest-invite",
+            user,
+        )
+
+    /**
+     * Contract №54 `GET /api/v1/conferences/invite-info?inviteToken={nonce}`
+     * (T046) — the PUBLIC status probe: no Bearer, only the per-IP bucket of
+     * T047, so [sourceIp] pins the `rl:ip:conferences-invite-info` bucket the
+     * flood legs need (a `null` [nonce] is the missing query-parameter 400
+     * leg of the contract table).
+     */
+    protected fun inviteInfo(
+        nonce: String?,
+        sourceIp: String,
+    ): ResponseEntity<String> {
+        val path = if (nonce == null) INVITE_INFO_PATH else "$INVITE_INFO_PATH?$INVITE_TOKEN_PARAM=$nonce"
+        return restTemplate.exchange(
+            path,
+            HttpMethod.GET,
+            HttpEntity<Void>(null, HttpHeaders().apply { set(X_FORWARDED_FOR_HEADER, sourceIp) }),
+            String::class.java,
+        )
+    }
+
+    /**
+     * Contract №55 `POST /api/v1/conferences/join-by-invite` (T046) — the
+     * PUBLIC mint: no Bearer required, and an optional [asUser] Bearer rides
+     * the Q14=A leg — the endpoint must treat an authenticated chat member
+     * as a guest anyway. [sourceIp] pins the stricter
+     * `rl:ip:conferences-join-by-invite` bucket (10/1m canon).
+     */
+    protected fun joinByInvite(
+        nonce: String?,
+        name: String?,
+        sourceIp: String,
+        asUser: MessagingUser? = null,
+    ): ResponseEntity<String> {
+        val headers =
+            HttpHeaders().apply {
+                contentType = MediaType.APPLICATION_JSON
+                set(X_FORWARDED_FOR_HEADER, sourceIp)
+                asUser?.let { setBearerAuth(it.accessToken) }
+            }
+        return restTemplate.postForEntity(
+            JOIN_BY_INVITE_PATH,
+            HttpEntity(mapOf(INVITE_TOKEN_FIELD to nonce, NAME_FIELD to name), headers),
+            String::class.java,
+        )
+    }
+
+    /** №52 happy-path fixture → the `GuestInviteView` body (`inviteUrl`/`expiresAt`, api-contract.md 009 §4). */
+    protected fun createGuestInviteOk(
+        user: MessagingUser,
+        conferenceId: UUID,
+    ): JsonNode {
+        val response = createGuestInvite(user, conferenceId)
+        assertThat(response.statusCode)
+            .overridingErrorMessage("fixture №52 must answer 201, got <%s>: %s", response.statusCode, response.body)
+            .isEqualTo(HttpStatus.CREATED)
+        return objectMapper.readTree(response.body)
+    }
+
+    /** The nonce segment of a №52 `inviteUrl` — the `/join/{nonce}` public route payload (T050). */
+    protected fun nonceOfInviteUrl(inviteUrl: String): String = inviteUrl.substringAfterLast("/")
+
+    /** The guest principal rows of [conferenceId] — `user_id IS NULL`, one `g:{connId}` row per №55 entry (Q7=A). */
+    protected fun guestRowsOf(conferenceId: UUID): List<Map<String, Any>> =
+        jdbcTemplate.queryForList(GUEST_ROWS_OF_CONFERENCE_SQL, conferenceId)
+
+    /** The invite status rows of [conferenceId] — the Q13/Q17 ladder probes of the story ITs. */
+    protected fun inviteRowsOf(conferenceId: UUID): List<Map<String, Any>> =
+        jdbcTemplate.queryForList(GUEST_INVITES_OF_CONFERENCE_SQL, conferenceId)
+
+    /**
+     * Stages the ACTIVE invite row of [conferenceId] past its horizon — the
+     * «истёкшая ссылка» fixture: the JWT `exp` equals the row `expires_at` BY
+     * CONSTRUCTION (T044 mints from the stored row), so moving both row
+     * timestamps into the past (CHECKs kept: `expires_at > created_at`) is
+     * exactly the passage of the 24 h TTL no IT can wait out.
+     */
+    protected fun stageExpiredInvite(conferenceId: UUID) {
+        assertThat(jdbcTemplate.update(STAGE_EXPIRED_INVITE_SQL, conferenceId))
+            .overridingErrorMessage("the expiry fixture must touch the ACTIVE invite row of <$conferenceId>")
+            .isEqualTo(1)
+    }
 
     /** Contract №21 `POST /api/v1/contacts` — fixture contact of the №27/№31 gates. */
     protected fun addContact(
@@ -750,6 +855,38 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
 
         const val PAYLOAD_TEXT_FIELD = "payload_text"
 
+        const val X_FORWARDED_FOR_HEADER = "X-Forwarded-For"
+
+        const val INVITE_TOKEN_FIELD = "inviteToken"
+
+        const val INVITE_URL_FIELD = "inviteUrl"
+
+        const val EXPIRES_AT_FIELD = "expiresAt"
+
+        const val VALID_FIELD = "valid"
+
+        const val REASON_FIELD = "reason"
+
+        const val LIVE_FIELD = "live"
+
+        const val GUEST_FIELD = "guest"
+
+        const val INVITE_ID_FIELD = "inviteId"
+
+        const val INVITE_FIELD = "invite"
+
+        const val STATUS_COLUMN = "status"
+
+        const val REVOKED_AT_COLUMN = "revoked_at"
+
+        const val DISPLAY_NAME_COLUMN = "display_name"
+
+        const val INVITE_INFO_PATH = "/api/v1/conferences/invite-info"
+
+        const val JOIN_BY_INVITE_PATH = "/api/v1/conferences/join-by-invite"
+
+        const val INVITE_TOKEN_PARAM = "inviteToken"
+
         val CONFERENCES_OF_CHAT_SQL =
             """
             SELECT * FROM conferences WHERE chat_id = ?
@@ -764,6 +901,23 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
         val PARTICIPANTS_OF_CONFERENCE_SQL =
             """
             SELECT * FROM conference_participants WHERE conference_id = ?
+            """.trimIndent()
+
+        val GUEST_ROWS_OF_CONFERENCE_SQL =
+            """
+            SELECT * FROM conference_participants WHERE conference_id = ? AND user_id IS NULL
+            """.trimIndent()
+
+        val GUEST_INVITES_OF_CONFERENCE_SQL =
+            """
+            SELECT * FROM conference_guest_invites WHERE conference_id = ?
+            """.trimIndent()
+
+        val STAGE_EXPIRED_INVITE_SQL =
+            """
+            UPDATE conference_guest_invites
+            SET created_at = now() - interval '2 days', expires_at = now() - interval '1 day'
+            WHERE conference_id = ? AND status = 'active'
             """.trimIndent()
 
         /** The «право слова» staging shape (Q4=A): speech alone, every source flag reset. */
