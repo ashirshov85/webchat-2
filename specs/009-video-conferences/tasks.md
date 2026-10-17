@@ -103,7 +103,7 @@ description: "Task list for feature implementation: Видеоконференц
 - [X] T032 [US2] Обработать отказ браузера в доступе к камере/микрофону в `frontend/src/conferences/components/PreJoinScreen.tsx` и `ConferenceRoom.tsx`: понятное предупреждение, вход без недоступных треков («только слушаю»), повторный запрос доступа уже в звонке (Q6=A)
 - [X] T033 [US2] Отразить ограничения прав на pre-join: данные №46 `MeView` (`micRestricted`/`cameraRestricted`/`screenRestricted`/`speechRestricted`) → недоступные источники скрыты/заблокированы с пояснением (FR-007); «право слова» блокирует все тумблеры публикации (Q4=A)
 - [X] T034 [US2] Интегрировать `PreJoinScreen` в `frontend/src/conferences/pages/ConferencePage.tsx` перед подключением для всех точек входа (mode из маршрута/карточки), передача стартового состояния в `ConferenceRoom` (вход с обоими выкл — FR-006); выход из pre-join без «Войти» отменяет подключение без последствий
-- [ ] T035 [US2] Тесты US2 (Vitest, `frontend/src/conferences/`): дефолты тумблеров для каждой точки входа; блокировка тумблеров по `MeView` (гость: на pre-join ограничений нет — строка гостя создаётся при входе, data-model §2); предупреждение при запрете устройств; «Войти» с обоими выкл → connect без публикации; закрытие pre-join → disconnect без следов
+- [X] T035 [US2] Тесты US2 (Vitest, `frontend/src/conferences/`): дефолты тумблеров для каждой точки входа; блокировка тумблеров по `MeView` (гость: на pre-join ограничений нет — строка гостя создаётся при входе, data-model §2); предупреждение при запрете устройств; «Войти» с обоими выкл → connect без публикации; закрытие pre-join → disconnect без следов
 
 **Checkpoint**: US1 и US2 работают независимо; все точки входа членов чата дают единый pre-join
 

@@ -378,6 +378,17 @@ export default function PreJoinScreen({
     onJoin(selection)
   }
 
+  /**
+   * «Отмена» — закрытие pre-join без «Войти» (US2-6, FR-007): превью-трек
+   * освобождается СРАЗУ (устройство свободно, «без следов» — не только
+   * при выгрузке страницы навигацией родителя), подключение отменяет
+   * родитель (T034/T049 — возврат без последствий).
+   */
+  function handleCancel(): void {
+    releaseCamera()
+    onCancel?.()
+  }
+
   /** Отказ доступа (T032, Q6=A): микрофон — permissions API 'denied', камера — 'denied' или отказ acquisition превью. */
   const accessNotice = denialNotice(
     microphonePermission === 'denied',
@@ -500,7 +511,7 @@ export default function PreJoinScreen({
       </div>
       <div className="conference-prejoin-actions">
         {onCancel !== undefined && (
-          <button type="button" className="conference-prejoin-cancel" onClick={onCancel}>
+          <button type="button" className="conference-prejoin-cancel" onClick={handleCancel}>
             Отмена
           </button>
         )}

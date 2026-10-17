@@ -22,7 +22,7 @@ vi.mock('livekit-client', () => ({
 }))
 
 import PreJoinScreen from '../PreJoinScreen'
-import type { PreJoinSelection } from '../PreJoinScreen'
+import type { PreJoinRestrictions, PreJoinSelection } from '../PreJoinScreen'
 
 /** Fake-трек превью: контракт stop/attach/detach/setDeviceId. */
 function fakeVideoTrack(): {
@@ -81,18 +81,49 @@ const DEVICES = [device('audioinput', 'mic-1'), device('videoinput', 'cam-1')]
 
 function renderScreen(props: Partial<Parameters<typeof PreJoinScreen>[0]> = {}): {
   onJoin: ReturnType<typeof vi.fn>
+  onCancel: ReturnType<typeof vi.fn>
 } {
   const onJoin = vi.fn()
-  render(<PreJoinScreen mode="video" onJoin={onJoin} {...props} />)
-  return { onJoin }
+  const onCancel = vi.fn()
+  render(<PreJoinScreen mode="video" onJoin={onJoin} onCancel={onCancel} {...props} />)
+  return { onJoin, onCancel }
 }
 
 function joinButton(): HTMLElement {
   return screen.getByRole('button', { name: 'Войти' })
 }
 
+function micToggle(): HTMLElement {
+  return screen.getByRole('button', { name: 'Микрофон' })
+}
+
 function cameraToggle(): HTMLElement {
   return screen.getByRole('button', { name: 'Камера' })
+}
+
+/** Стандартное окружение браузера тестов pre-join: устройства + чистый createLocalVideoTrack. */
+function resetMediaEnv(): void {
+  installMediaDevices(DEVICES.slice())
+  camera.createLocalVideoTrack.mockReset()
+}
+
+/** Уборка подмен браузера после теста (паттерн describe'а T032). */
+function clearMediaEnv(): void {
+  cleanup()
+  delete (navigator as { mediaDevices?: unknown }).mediaDevices
+  delete (navigator as { permissions?: unknown }).permissions
+  vi.clearAllMocks()
+}
+
+/** Ограничения №46 MeView для pre-join (T033): четыре поля, точечно переопределяются тестом. */
+function restrictions(overrides: Partial<PreJoinRestrictions> = {}): PreJoinRestrictions {
+  return {
+    micRestricted: false,
+    cameraRestricted: false,
+    screenRestricted: false,
+    speechRestricted: false,
+    ...overrides,
+  }
 }
 
 describe('PreJoinScreen — отказ доступа к устройствам (009 US2 T032, Q6=A)', () => {
@@ -173,5 +204,214 @@ describe('PreJoinScreen — отказ доступа к устройствам 
       expect(cameraToggle()).toHaveAttribute('aria-pressed', 'true')
     })
     expect(screen.queryByText(/Нет доступа/)).toBeNull()
+  })
+})
+
+describe('PreJoinScreen — дефолты тумблеров по mode точки входа (009 US2 T035, FR-005)', () => {
+  beforeEach(() => {
+    resetMediaEnv()
+  })
+
+  afterEach(() => {
+    clearMediaEnv()
+  })
+
+  it('mode=video (кнопка «видеозвонок»): камера+микрофон — превью запрашивается сразу', async () => {
+    const track = fakeVideoTrack()
+    camera.createLocalVideoTrack.mockResolvedValue(track)
+    renderScreen({ mode: 'video' })
+
+    // микрофон включён по умолчанию (трек не держим — чистый выбор, FR-005)
+    expect(micToggle()).toHaveAttribute('aria-pressed', 'true')
+    // камера: acquisition локального превью (ДО «Войти» — без подключения и публикации, FR-007)
+    await waitFor(() => {
+      expect(camera.createLocalVideoTrack).toHaveBeenCalledTimes(1)
+    })
+    await waitFor(() => {
+      expect(cameraToggle()).toHaveAttribute('aria-pressed', 'true')
+    })
+    await waitFor(() => {
+      expect(track.attach).toHaveBeenCalled()
+    })
+  })
+
+  it('mode=audio (кнопка «аудиозвонок»/гостевая ссылка): только микрофон, камера не запрашивается', () => {
+    camera.createLocalVideoTrack.mockResolvedValue(fakeVideoTrack())
+    renderScreen({ mode: 'audio' })
+
+    expect(micToggle()).toHaveAttribute('aria-pressed', 'true')
+    // камера НЕ запрашивается вовсе — тумблер «выкл», но доступен (soft, Q3=A:
+    // включение камеры уже здесь — новая попытка acquisition)
+    expect(camera.createLocalVideoTrack).not.toHaveBeenCalled()
+    expect(cameraToggle()).toHaveAttribute('aria-pressed', 'false')
+    expect(cameraToggle()).toBeEnabled()
+  })
+})
+
+describe('PreJoinScreen — блокировка тумблеров по №46 MeView (009 US2 T033/T035, FR-007)', () => {
+  beforeEach(() => {
+    resetMediaEnv()
+  })
+
+  afterEach(() => {
+    clearMediaEnv()
+  })
+
+  it('micRestricted: тумблер микрофона заблокирован и «выкл», пояснение; выборка без микрофона', () => {
+    const { onJoin } = renderScreen({
+      mode: 'audio',
+      restrictions: restrictions({ micRestricted: true }),
+    })
+
+    const mic = micToggle()
+    expect(mic).toBeDisabled()
+    expect(mic).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByText('Микрофон отключён модератором')).toBeVisible()
+    expect(cameraToggle()).toBeEnabled()
+
+    fireEvent.click(joinButton())
+    const selection = onJoin.mock.calls[0]?.[0] as PreJoinSelection | undefined
+    if (selection === undefined) {
+      throw new Error('onJoin не вызван')
+    }
+    expect(selection.microphone).toBe(false)
+    expect(selection.camera).toBe(false)
+  })
+
+  it('cameraRestricted: камера не запрашивается вовсе, тумблер заблокирован, пояснение', async () => {
+    camera.createLocalVideoTrack.mockResolvedValue(fakeVideoTrack())
+    const { onJoin } = renderScreen({
+      mode: 'video',
+      restrictions: restrictions({ cameraRestricted: true }),
+    })
+
+    // превью НЕ запрашивается даже в video (запрещённый источник не обещается UI)
+    await waitFor(() => {
+      expect(joinButton()).toBeEnabled()
+    })
+    expect(camera.createLocalVideoTrack).not.toHaveBeenCalled()
+    const cam = cameraToggle()
+    expect(cam).toBeDisabled()
+    expect(cam).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByText('Камера недоступна')).toBeVisible()
+    expect(screen.getByText('Камера отключена модератором')).toBeVisible()
+    expect(micToggle()).toBeEnabled()
+
+    fireEvent.click(joinButton())
+    const selection = onJoin.mock.calls[0]?.[0] as PreJoinSelection | undefined
+    if (selection === undefined) {
+      throw new Error('onJoin не вызван')
+    }
+    expect(selection.camera).toBe(false)
+    expect(selection.microphone).toBe(true)
+  })
+
+  it('speechRestricted («право слова», Q4=A): заблокированы ВСЕ тумблеры, одно объединяющее пояснение', () => {
+    camera.createLocalVideoTrack.mockResolvedValue(fakeVideoTrack())
+    const { onJoin } = renderScreen({
+      mode: 'video',
+      restrictions: restrictions({ speechRestricted: true }),
+    })
+
+    expect(micToggle()).toBeDisabled()
+    expect(cameraToggle()).toBeDisabled()
+    expect(micToggle()).toHaveAttribute('aria-pressed', 'false')
+    expect(camera.createLocalVideoTrack).not.toHaveBeenCalled()
+    expect(
+      screen.getByText('Публикация отключена модератором (право слова) — вы войдёте как слушатель'),
+    ).toBeVisible()
+    // отдельные per-source пояснения не дублируются
+    expect(screen.queryByText('Микрофон отключён модератором')).toBeNull()
+    expect(screen.queryByText('Камера отключена модератором')).toBeNull()
+
+    fireEvent.click(joinButton())
+    const selection = onJoin.mock.calls[0]?.[0] as PreJoinSelection | undefined
+    if (selection === undefined) {
+      throw new Error('onJoin не вызван')
+    }
+    // выборка уезжает без каких-либо публикаций — «как слушатель»
+    expect(selection.microphone).toBe(false)
+    expect(selection.camera).toBe(false)
+  })
+
+  it('screenRestricted: только строка-пояснение (тумблера экрана на pre-join нет — T028)', () => {
+    renderScreen({ mode: 'audio', restrictions: restrictions({ screenRestricted: true }) })
+
+    expect(screen.getByText('Демонстрация экрана отключена модератором')).toBeVisible()
+    expect(micToggle()).toBeEnabled()
+    expect(cameraToggle()).toBeEnabled()
+  })
+
+  it('гость: ограничения не передаются — на pre-join блокировок нет (data-model §2)', () => {
+    // GuestJoinPage (T049) не передаёт restrictions: строка гостя создаётся
+    // при входе, применённые модератором ограничения придут live-правами́
+    // уже в звонке — pre-join гостя чист (FR-007, FR-011: старт «только микрофон»)
+    for (const absent of [undefined, null] as const) {
+      cleanup()
+      renderScreen({ mode: 'audio', restrictions: absent })
+
+      expect(screen.queryByText(/отключён модератором/)).toBeNull()
+      expect(micToggle()).toBeEnabled()
+      expect(micToggle()).toHaveAttribute('aria-pressed', 'true')
+      expect(cameraToggle()).toBeEnabled()
+      expect(cameraToggle()).toHaveAttribute('aria-pressed', 'false')
+    }
+  })
+})
+
+describe('PreJoinScreen — закрытие без «Войти»: отключение без следов (009 US2 T035/US2-6, FR-007)', () => {
+  beforeEach(() => {
+    resetMediaEnv()
+  })
+
+  afterEach(() => {
+    clearMediaEnv()
+  })
+
+  it('«Отмена» с живым превью: трек остановлен, onJoin не вызван', async () => {
+    const track = fakeVideoTrack()
+    camera.createLocalVideoTrack.mockResolvedValue(track)
+    const { onJoin, onCancel } = renderScreen({ mode: 'video' })
+    await waitFor(() => {
+      expect(cameraToggle()).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
+
+    expect(onCancel).toHaveBeenCalledTimes(1)
+    expect(track.stop).toHaveBeenCalledTimes(1)
+    expect(onJoin).not.toHaveBeenCalled()
+  })
+
+  it('размонтирование (закрытие pre-join) останавливает трек — устройство освобождено', async () => {
+    const track = fakeVideoTrack()
+    camera.createLocalVideoTrack.mockResolvedValue(track)
+    const view = render(<PreJoinScreen mode="video" onJoin={vi.fn()} />)
+    await waitFor(() => {
+      expect(camera.createLocalVideoTrack).toHaveBeenCalledTimes(1)
+    })
+
+    view.unmount()
+
+    expect(track.stop).toHaveBeenCalledTimes(1)
+  })
+
+  it('«Войти» освобождает превью сразу: устройство свободно под публикацию звонка', async () => {
+    const track = fakeVideoTrack()
+    camera.createLocalVideoTrack.mockResolvedValue(track)
+    const { onJoin } = renderScreen({ mode: 'video' })
+    await waitFor(() => {
+      expect(cameraToggle()).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    fireEvent.click(joinButton())
+
+    expect(track.stop).toHaveBeenCalledTimes(1)
+    const selection = onJoin.mock.calls[0]?.[0] as PreJoinSelection | undefined
+    if (selection === undefined) {
+      throw new Error('onJoin не вызван')
+    }
+    // включённая на входе камера уезжает в выборке — публикация уже звонком (T034)
+    expect(selection.camera).toBe(true)
   })
 })
