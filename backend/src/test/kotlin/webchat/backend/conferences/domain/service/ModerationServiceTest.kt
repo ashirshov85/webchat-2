@@ -26,18 +26,20 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * T036 unit regression (tasks.md US3): the №49 moderation leg pinned
- * against research.md §5 — the durable SET write, the immediate
- * media-plane application and the refusal ladder, port fakes all the
- * way down (the `ConferenceServiceTest` convention):
+ * T036/T037 unit regression (tasks.md US3): the №49/№50/№51
+ * moderation legs pinned against research.md §5 — the durable SET
+ * writes, the immediate media-plane application and the refusal
+ * ladder, port fakes all the way down (the `ConferenceServiceTest`
+ * convention):
  *
- *  * **the durable SET** — the target folds through the principal
- *    prefix (a FULL member connection identity of the roster panel
- *    included), the repository receives the verbatim four-flag body
- *    and the answer carries the updated row (the `ParticipantView`
- *    source of T039) plus the observed `online` flag;
- *  * **the immediate application** — every LIVE connection of the
- *    principal (two tabs of one member, edge Q10) gets
+ *  * **the durable SET (№49/№50)** — the target folds through the
+ *    principal prefix (a FULL member connection identity of the
+ *    roster panel included), the repository receives the verbatim
+ *    body (the four flags / the role) and the answer carries the
+ *    updated row (the `ParticipantView` source of T039) plus the
+ *    observed `online` flag;
+ *  * **the immediate application (№49)** — every LIVE connection of
+ *    the principal (two tabs of one member, edge Q10) gets
  *    `UpdateParticipant` with the grants recomputed from the row (the
  *    SAME single computation as the mint, Q5=A — `speech_restricted`
  *    gates the whole publish side, Q4=A) and the full metadata JSON
@@ -46,14 +48,24 @@ import java.util.UUID
  *    removes BOTH screen kinds, Q22=A); «право слова» and lifted
  *    restrictions mute nothing — the permission push alone carries
  *    them;
+ *  * **the role broadcast (№50)** — the same `UpdateParticipant`
+ *    push rides the metadata change (`ParticipantMetadataChanged`)
+ *    with the grants UNTOUCHED and no track mutes: the role writes
+ *    no restriction (Q9=A — persistence is the row, re-applied at
+ *    every re-mint);
+ *  * **the kick (№51)** — `RemoveParticipant` of every live
+ *    connection with NO row write of any kind (кик ≠ бан: the
+ *    principal row survives verbatim, re-entry by the active link
+ *    stays possible), counted once disconnected;
  *  * **the refusals** — an unknown and a malformed target answer the
  *    SAME `404 participant_not_found` with nothing written; a
- *    media-plane failure never fails the durable №49 answer (the T017
- *    post-commit rule) — the SET stays, `online` degrades to `false`,
- *    and every applied action counts
- *    `webchat_conference_moderation_actions_total{action=set_restrictions}`.
+ *    media-plane failure never fails the durable №49/№50 answer (the
+ *    T017 post-commit rule) — the SET stays, `online` degrades to
+ *    `false` — but FAILS the kick №51: no durable fact outranks the
+ *    disconnect (Q2=A edge semantics), and every applied action
+ *    counts its `webchat_conference_moderation_actions_total{action}`.
  */
-@Suppress("TooManyFunctions") // one leg per №49 rule of research.md §5
+@Suppress("TooManyFunctions") // one leg per №49/№50/№51 rule of research.md §5
 class ModerationServiceTest {
     private val participants = Mockito.mock(ParticipantRepository::class.java)
     private val liveKit = Mockito.mock(LiveKitAdminClient::class.java)
@@ -298,10 +310,239 @@ class ModerationServiceTest {
         verifyNoLiveApplication()
     }
 
+    @Test
+    fun `the role write persists and answers the updated row`() {
+        stubTargetOnline(memberConnection())
+        stubRoleWrite(ParticipantRole.MODERATOR)
+
+        val update = service.changeRole(conference, TARGET_PRINCIPAL, ParticipantRole.MODERATOR)
+
+        assertThat(update.participant.role).isEqualTo(ParticipantRole.MODERATOR)
+        assertThat(update.online).isTrue
+        assertThat(actionCount(SET_ROLE)).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `a full member connection identity folds to its principal for the role write`() {
+        stubTargetOnline(memberConnection())
+        stubRoleWrite(ParticipantRole.MODERATOR)
+
+        service.changeRole(conference, "u:$TARGET_USER_ID:$CONN_ID", ParticipantRole.MODERATOR)
+
+        Mockito
+            .verify(participants)
+            .updateRole(eqNotNull(CONFERENCE_ID), eqNotNull(TARGET_PRINCIPAL), eqNotNull(ParticipantRole.MODERATOR))
+    }
+
+    @Test
+    fun `the live connection gets the new role broadcast with the grants untouched`() {
+        val connection = memberConnection()
+        stubTargetOnline(connection)
+        stubRoleWrite(ParticipantRole.MODERATOR)
+
+        service.changeRole(conference, TARGET_PRINCIPAL, ParticipantRole.MODERATOR)
+
+        val permission = grantsCaptor()
+        val metadata = ArgumentCaptor.forClass(String::class.java)
+        Mockito.verify(liveKit).updateParticipant(
+            eqNotNull(conference.roomName),
+            eqNotNull(connection.identity),
+            permission.capture() ?: DUMMY_GRANTS,
+            metadata.capture() ?: "",
+        )
+        // the broadcast rides ParticipantMetadataChanged (№50, Q9=A)
+        assertThat(metadata.value).isEqualTo("""{"role":"moderator","guest":false}""")
+        // the role writes no restriction: the permission recomputes verbatim
+        assertThat(permission.value.canPublish).isTrue
+        assertThat(permission.value.canPublishSources).isEqualTo(PublicationSource.entries.toSet())
+        Mockito.verify(liveKit, Mockito.never()).mutePublishedTrack(anyNotNull(), anyNotNull(), anyNotNull())
+        Mockito.verify(liveKit).listParticipants(conference.roomName)
+        Mockito.verifyNoMoreInteractions(liveKit)
+    }
+
+    @Test
+    fun `both tabs of one member get the role broadcast`() {
+        val first = memberConnection()
+        val second = memberConnection()
+        stubTargetOnline(first, second)
+        stubRoleWrite(ParticipantRole.MODERATOR)
+
+        val update = service.changeRole(conference, TARGET_PRINCIPAL, ParticipantRole.MODERATOR)
+
+        assertThat(update.online).isTrue
+        listOf(first, second).forEach { connection ->
+            Mockito.verify(liveKit).updateParticipant(
+                eqNotNull(conference.roomName),
+                eqNotNull(connection.identity),
+                anyNotNull(),
+                anyNotNull(),
+            )
+        }
+    }
+
+    @Test
+    fun `an offline role target persists the row and answers online false`() {
+        stubRoleWrite(ParticipantRole.MODERATOR)
+
+        val update = service.changeRole(conference, TARGET_PRINCIPAL, ParticipantRole.MODERATOR)
+
+        assertThat(update.participant.role).isEqualTo(ParticipantRole.MODERATOR)
+        assertThat(update.online).isFalse
+        assertThat(actionCount(SET_ROLE)).isEqualTo(1.0)
+        verifyNoLiveApplication()
+    }
+
+    @Test
+    fun `an unknown role target answers participant_not_found with nothing counted`() {
+        Mockito
+            .`when`(participants.updateRole(anyNotNull(), anyNotNull(), anyNotNull()))
+            .thenReturn(null)
+
+        assertThatThrownBy { service.changeRole(conference, TARGET_PRINCIPAL, ParticipantRole.MODERATOR) }
+            .isInstanceOfSatisfying(ParticipantNotFoundException::class.java) {
+                assertThat(it.code).isEqualTo("participant_not_found")
+            }
+
+        verifyNoLiveApplication()
+        assertThat(actionCount(SET_ROLE)).isZero()
+    }
+
+    @Test
+    fun `a malformed role target identity answers the same participant_not_found`() {
+        assertThatThrownBy { service.changeRole(conference, "not-an-identity", ParticipantRole.MODERATOR) }
+            .isInstanceOf(ParticipantNotFoundException::class.java)
+
+        Mockito.verifyNoInteractions(participants)
+        Mockito.verifyNoInteractions(liveKit)
+        assertThat(actionCount(SET_ROLE)).isZero()
+    }
+
+    @Test
+    fun `a media-plane failure never fails the durable role answer`() {
+        stubRoleWrite(ParticipantRole.MODERATOR)
+        Mockito
+            .`when`(liveKit.listParticipants(ArgumentMatchers.anyString()))
+            .thenThrow(ConferenceMediaUnavailableException(IllegalStateException("plane down")))
+
+        val update = service.changeRole(conference, TARGET_PRINCIPAL, ParticipantRole.MODERATOR)
+
+        // the committed row outranks the plane (Q9=A: every re-mint
+        // re-applies the role), `online` degrades to false
+        assertThat(update.participant.role).isEqualTo(ParticipantRole.MODERATOR)
+        assertThat(update.online).isFalse
+        assertThat(actionCount(SET_ROLE)).isEqualTo(1.0)
+        verifyNoLiveApplication()
+    }
+
+    @Test
+    fun `the kick removes every live connection of the member target`() {
+        val first = memberConnection()
+        val second = memberConnection()
+        stubTargetOnline(first, second)
+        stubTargetRow()
+
+        service.kick(conference, TARGET_PRINCIPAL)
+
+        Mockito.verify(liveKit).removeParticipant(conference.roomName, first.identity)
+        Mockito.verify(liveKit).removeParticipant(conference.roomName, second.identity)
+        assertThat(actionCount(KICK)).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `the kick touches no principal row — re-entry by the active link stays possible`() {
+        stubTargetOnline(memberConnection())
+        stubTargetRow()
+
+        service.kick(conference, TARGET_PRINCIPAL)
+
+        // кик ≠ бан: the row is resolved and NOTHING is written — the
+        // role and restrictions survive verbatim for the re-mint
+        Mockito.verify(participants).findByIdentity(eqNotNull(CONFERENCE_ID), eqNotNull(TARGET_PRINCIPAL))
+        Mockito.verifyNoMoreInteractions(participants)
+    }
+
+    @Test
+    fun `a guest kick removes the exact guest connection only`() {
+        val guest = guestConnection()
+        val unrelatedMember = LiveKitParticipant("u:${UUID.randomUUID()}:${UUID.randomUUID()}", null)
+        Mockito
+            .`when`(liveKit.listParticipants(eqNotNull(conference.roomName)))
+            .thenReturn(listOf(guest, unrelatedMember))
+        Mockito
+            .`when`(participants.findByIdentity(eqNotNull(CONFERENCE_ID), eqNotNull(TARGET_GUEST_PRINCIPAL)))
+            .thenReturn(updatedGuestRow(ParticipantRestrictions()))
+
+        service.kick(conference, TARGET_GUEST_PRINCIPAL)
+
+        Mockito.verify(liveKit).removeParticipant(conference.roomName, guest.identity)
+        Mockito.verify(liveKit, Mockito.never()).removeParticipant(anyNotNull(), eqNotNull(unrelatedMember.identity))
+    }
+
+    @Test
+    fun `an offline kick target is a counted success`() {
+        stubTargetRow()
+
+        service.kick(conference, TARGET_PRINCIPAL)
+
+        Mockito.verify(liveKit, Mockito.never()).removeParticipant(anyNotNull(), anyNotNull())
+        assertThat(actionCount(KICK)).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `an unknown kick target answers participant_not_found with nothing counted`() {
+        Mockito
+            .`when`(participants.findByIdentity(anyNotNull(), anyNotNull()))
+            .thenReturn(null)
+
+        assertThatThrownBy { service.kick(conference, TARGET_PRINCIPAL) }
+            .isInstanceOfSatisfying(ParticipantNotFoundException::class.java) {
+                assertThat(it.code).isEqualTo("participant_not_found")
+            }
+
+        Mockito.verifyNoInteractions(liveKit)
+        assertThat(actionCount(KICK)).isZero()
+    }
+
+    @Test
+    fun `a malformed kick target identity answers the same participant_not_found`() {
+        assertThatThrownBy { service.kick(conference, "not-an-identity") }
+            .isInstanceOf(ParticipantNotFoundException::class.java)
+
+        Mockito.verifyNoInteractions(participants)
+        Mockito.verifyNoInteractions(liveKit)
+        assertThat(actionCount(KICK)).isZero()
+    }
+
+    @Test
+    fun `a media-plane failure fails the kick — no durable fact outranks the disconnect`() {
+        stubTargetRow()
+        Mockito
+            .`when`(liveKit.listParticipants(ArgumentMatchers.anyString()))
+            .thenThrow(ConferenceMediaUnavailableException(IllegalStateException("plane down")))
+
+        assertThatThrownBy { service.kick(conference, TARGET_PRINCIPAL) }
+            .isInstanceOf(ConferenceMediaUnavailableException::class.java)
+
+        // nothing happened yet — the idempotent №51 retry IS the convergence
+        assertThat(actionCount(KICK)).isZero()
+    }
+
     private fun stubMemberRowWrite(restrictions: ParticipantRestrictions) {
         Mockito
             .`when`(participants.updateRestrictions(anyNotNull(), eqNotNull(TARGET_PRINCIPAL), anyNotNull()))
             .thenReturn(updatedMemberRow(restrictions))
+    }
+
+    private fun stubRoleWrite(role: ParticipantRole) {
+        Mockito
+            .`when`(participants.updateRole(anyNotNull(), eqNotNull(TARGET_PRINCIPAL), eqNotNull(role)))
+            .thenReturn(updatedMemberRow(ParticipantRestrictions(), role))
+    }
+
+    private fun stubTargetRow() {
+        Mockito
+            .`when`(participants.findByIdentity(eqNotNull(CONFERENCE_ID), eqNotNull(TARGET_PRINCIPAL)))
+            .thenReturn(updatedMemberRow(ParticipantRestrictions()))
     }
 
     private fun stubTargetOnline(vararg connections: LiveKitParticipant) {
@@ -310,13 +551,16 @@ class ModerationServiceTest {
             .thenReturn(connections.toList())
     }
 
-    private fun updatedMemberRow(restrictions: ParticipantRestrictions): ConferenceParticipant =
+    private fun updatedMemberRow(
+        restrictions: ParticipantRestrictions,
+        role: ParticipantRole = ParticipantRole.PARTICIPANT,
+    ): ConferenceParticipant =
         ConferenceParticipant(
             id = UUID.randomUUID(),
             conferenceId = CONFERENCE_ID,
             identity = ConferenceIdentity.member(TARGET_USER_ID),
             displayName = null,
-            role = ParticipantRole.PARTICIPANT,
+            role = role,
             restrictions = restrictions,
             firstSeenAt = NOW,
         )
@@ -341,10 +585,10 @@ class ModerationServiceTest {
 
     private fun grantsCaptor(): ArgumentCaptor<PublishGrants> = ArgumentCaptor.forClass(PublishGrants::class.java)
 
-    private fun actionCount(): Double =
+    private fun actionCount(action: String = SET_RESTRICTIONS): Double =
         meterRegistry
             .find(MODERATION_ACTIONS)
-            .tag("action", "set_restrictions")
+            .tag("action", action)
             .counter()
             ?.count() ?: 0.0
 
@@ -380,6 +624,12 @@ class ModerationServiceTest {
         const val MAX_PARTICIPANTS = 16
 
         const val MODERATION_ACTIONS = "webchat_conference_moderation_actions_total"
+
+        const val SET_RESTRICTIONS = "set_restrictions"
+
+        const val SET_ROLE = "set_role"
+
+        const val KICK = "kick"
 
         /** The capture() null-fallback of the non-null Kotlin parameters (the SessionServiceTest elvis seam). */
         val DUMMY_GRANTS = PublishGrants(canPublish = true, canPublishSources = emptySet())
