@@ -5,6 +5,7 @@ import org.springframework.http.ProblemDetail
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import webchat.backend.conferences.api.dto.InvalidConferenceModeException
+import webchat.backend.conferences.api.dto.InvalidGuestNameException
 import webchat.backend.conferences.api.dto.InvalidParticipantIdentityException
 import webchat.backend.conferences.api.dto.InvalidParticipantRestrictionsException
 import webchat.backend.conferences.api.dto.InvalidParticipantRoleException
@@ -16,6 +17,10 @@ import webchat.backend.conferences.domain.service.ConferenceForbiddenException
 import webchat.backend.conferences.domain.service.ConferenceFullException
 import webchat.backend.conferences.domain.service.ConferenceNotFoundException
 import webchat.backend.conferences.domain.service.GuestInviteNotFoundException
+import webchat.backend.conferences.domain.service.InviteExpiredException
+import webchat.backend.conferences.domain.service.InviteInvalidException
+import webchat.backend.conferences.domain.service.InviteNotFoundException
+import webchat.backend.conferences.domain.service.InviteRevokedException
 import webchat.backend.conferences.domain.service.ModeratorRequiredException
 import webchat.backend.conferences.domain.service.ParticipantNotFoundException
 
@@ -31,7 +36,10 @@ import webchat.backend.conferences.domain.service.ParticipantNotFoundException
  * The table this handler pins (one @ExceptionHandler per contract
  * failure code of the №44–№47 surface of T019; the moderation codes
  * `403 moderator_required` / `404 participant_not_found` /
- * `404 guest_invite_not_found` join with their T039/T045 carriers):
+ * `404 guest_invite_not_found` join with their T039/T045 carriers, and
+ * the public №54/№55 family — `404 invite_invalid|invite_not_found`,
+ * `409 invite_expired|invite_revoked`, `422 name_invalid`, the №54
+ * missing-parameter 400 — with its T046 carrier):
  * `404 chat_not_found` on the `chat` field, the conferences family on
  * the `conference` field (`403 conference_forbidden`, `404
  * conference_not_found`, `409 conference_e2ee_unsupported |
@@ -140,7 +148,7 @@ class ConferencesExceptionHandler {
             .apply { setProperty(ERRORS_PROPERTY, mapOf(PARTICIPANT_FIELD to listOf(PARTICIPANT_NOT_FOUND_CODE))) }
 
     /**
-     * 404 (api-contract.md 009 №53, T045): the conference has no
+     * 404 (api-contract.md 009 §53, T045): the conference has no
      * ACTIVE guest link — never issued, already revoked (the №53
      * repeat), or the finalized conference whose invite rows are gone
      * (Q18=A — indistinguishable by design, nothing echoed).
@@ -149,6 +157,70 @@ class ConferencesExceptionHandler {
     fun onGuestInviteNotFound(): ProblemDetail =
         problem(HttpStatus.NOT_FOUND, GUEST_INVITE_NOT_FOUND_DETAIL)
             .apply { setProperty(ERRORS_PROPERTY, mapOf(INVITE_FIELD to listOf(GUEST_INVITE_NOT_FOUND_CODE))) }
+
+    /**
+     * 404 (api-contract.md 009 §3 №54, T046): the `inviteToken` query
+     * parameter is absent or blank — `errors: {inviteToken:
+     * [malformed_request]}`.
+     */
+    @ExceptionHandler(MissingInviteTokenException::class)
+    fun onMissingInviteToken(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, MISSING_INVITE_TOKEN_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(INVITE_TOKEN_FIELD to listOf(MALFORMED_REQUEST_CODE))) }
+
+    /**
+     * 404 (api-contract.md 009 §3 №55, SC-003, T046): the uniform
+     * forgery fold — unparseable, foreign-key, tampered, mistyped or
+     * blank nonce, every mode the SAME refusal without distinguishing
+     * causes (the «без раскрытия причин подделки» edge, api-contract
+     * §1); nothing is echoed.
+     */
+    @ExceptionHandler(InviteInvalidException::class)
+    fun onInviteInvalid(): ProblemDetail =
+        problem(HttpStatus.NOT_FOUND, INVITE_INVALID_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(INVITE_TOKEN_FIELD to listOf(INVITE_INVALID_CODE))) }
+
+    /**
+     * 404 (api-contract.md 009 §3 №55, T046): the nonce signature is
+     * authentic but no witness row resolves the link — the invite row
+     * is gone without an ended conference. Nothing is echoed.
+     */
+    @ExceptionHandler(InviteNotFoundException::class)
+    fun onInviteNotFound(): ProblemDetail =
+        problem(HttpStatus.NOT_FOUND, INVITE_NOT_FOUND_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(INVITE_TOKEN_FIELD to listOf(INVITE_NOT_FOUND_CODE))) }
+
+    /**
+     * 409 (api-contract.md 009 §3 №55, SC-003, T046): the link's TTL
+     * horizon has passed — a disclosable lifecycle state, not a
+     * forgery; nothing is written.
+     */
+    @ExceptionHandler(InviteExpiredException::class)
+    fun onInviteExpired(): ProblemDetail =
+        problem(HttpStatus.CONFLICT, INVITE_EXPIRED_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(INVITE_TOKEN_FIELD to listOf(INVITE_EXPIRED_CODE))) }
+
+    /**
+     * 409 (api-contract.md 009 §3 №55, SC-003, T046): the link was
+     * revoked by №53 or replaced by a fresh №52 (Q17=A) — a disclosable
+     * lifecycle state, not a forgery; nothing is written.
+     */
+    @ExceptionHandler(InviteRevokedException::class)
+    fun onInviteRevoked(): ProblemDetail =
+        problem(HttpStatus.CONFLICT, INVITE_REVOKED_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(INVITE_TOKEN_FIELD to listOf(INVITE_REVOKED_CODE))) }
+
+    /**
+     * 422 (api-contract.md 009 §3 №55, Q19/Q7=A, T046): the guest
+     * display name is blank after the server trim or longer than
+     * `conferences.guest-name-max-length` (50 default) — `errors:
+     * {name: [name_invalid]}`; the submitted value is never echoed
+     * (constitution V).
+     */
+    @ExceptionHandler(InvalidGuestNameException::class)
+    fun onInvalidGuestName(): ProblemDetail =
+        problem(HttpStatus.UNPROCESSABLE_ENTITY, INVALID_GUEST_NAME_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(NAME_FIELD to listOf(NAME_INVALID_CODE))) }
 
     /** 400 (api-contract.md 009 №49/№50/№51): the PATH `{identity}` segment is blank. */
     @ExceptionHandler(InvalidParticipantIdentityException::class)
@@ -212,6 +284,8 @@ class ConferencesExceptionHandler {
         const val PARTICIPANT_RESTRICTIONS_FIELD = "restrictions"
         const val PARTICIPANT_ROLE_FIELD = "role"
         const val INVITE_FIELD = "invite"
+        const val INVITE_TOKEN_FIELD = "inviteToken"
+        const val NAME_FIELD = "name"
         const val CHAT_NOT_FOUND_CODE = "chat_not_found"
         const val FORBIDDEN_CODE = "conference_forbidden"
         const val NOT_FOUND_CODE = "conference_not_found"
@@ -222,6 +296,11 @@ class ConferencesExceptionHandler {
         const val MODERATOR_REQUIRED_CODE = "moderator_required"
         const val PARTICIPANT_NOT_FOUND_CODE = "participant_not_found"
         const val GUEST_INVITE_NOT_FOUND_CODE = "guest_invite_not_found"
+        const val INVITE_INVALID_CODE = "invite_invalid"
+        const val INVITE_NOT_FOUND_CODE = "invite_not_found"
+        const val INVITE_EXPIRED_CODE = "invite_expired"
+        const val INVITE_REVOKED_CODE = "invite_revoked"
+        const val NAME_INVALID_CODE = "name_invalid"
         const val INVALID_MODE_CODE = "invalid_mode"
         const val INVALID_UUID_CODE = "invalid_uuid"
         const val MALFORMED_REQUEST_CODE = "malformed_request"
@@ -237,6 +316,13 @@ class ConferencesExceptionHandler {
         const val MODERATOR_REQUIRED_DETAIL = "The caller is not a moderator of the conference"
         const val PARTICIPANT_NOT_FOUND_DETAIL = "The requested conference participant does not exist"
         const val GUEST_INVITE_NOT_FOUND_DETAIL = "The conference has no active guest invite"
+        const val MISSING_INVITE_TOKEN_DETAIL = "inviteToken must not be blank"
+        const val INVITE_INVALID_DETAIL = "The guest invite link is invalid"
+        const val INVITE_NOT_FOUND_DETAIL = "The guest invite link does not exist"
+        const val INVITE_EXPIRED_DETAIL = "The guest invite link has expired"
+        const val INVITE_REVOKED_DETAIL = "The guest invite link has been revoked"
+        const val INVALID_GUEST_NAME_DETAIL =
+            "name must be 1 to conferences.guest-name-max-length characters long after trim"
         const val INVALID_MODE_DETAIL = "mode must be one of: video, audio"
         const val INVALID_CHAT_ID_DETAIL = "chatId must be a UUID"
         const val INVALID_CONFERENCE_ID_DETAIL = "conferenceId must be a UUID"

@@ -55,4 +55,47 @@ class ConferenceDtosTest {
             "chat_deleted",
         )
     }
+
+    @Test
+    fun `invite info reason labels match the contract enum`() {
+        assertThat(InviteInfoReason.entries.map(::inviteInfoReasonLabel)).containsExactly(
+            "expired",
+            "revoked",
+            "ended",
+        )
+    }
+
+    @Test
+    fun `guest name is server-trimmed and admitted up to the configured max`() {
+        assertThat(GuestJoinRequest(inviteToken = "nonce", name = "  carol  ").validatedName(50))
+            .overridingErrorMessage("the server trim runs before the length gate (Q7=A)")
+            .isEqualTo("carol")
+        assertThat(GuestJoinRequest(inviteToken = "nonce", name = "c".repeat(50)).validatedName(50)).hasSize(50)
+        assertThat(GuestJoinRequest(inviteToken = "nonce", name = "  ".repeat(25) + "c").validatedName(50))
+            .isEqualTo("c")
+    }
+
+    @Test
+    fun `absent and blank guest names are rejected as name_invalid`() {
+        assertThatThrownBy { GuestJoinRequest(inviteToken = "nonce", name = null).validatedName(50) }
+            .isInstanceOf(InvalidGuestNameException::class.java)
+        assertThatThrownBy { GuestJoinRequest(inviteToken = "nonce", name = "   ").validatedName(50) }
+            .isInstanceOf(InvalidGuestNameException::class.java)
+    }
+
+    @Test
+    fun `an over-length guest name is rejected as name_invalid without echo`() {
+        val tooLong = "c".repeat(51)
+
+        assertThatThrownBy { GuestJoinRequest(inviteToken = "nonce", name = tooLong).validatedName(50) }
+            .isInstanceOf(InvalidGuestNameException::class.java)
+            .hasMessageNotContaining(tooLong)
+    }
+
+    @Test
+    fun `the trim happens before the length gate - a padded max-length name stays valid`() {
+        val padded = "  " + "c".repeat(50) + "  "
+
+        assertThat(GuestJoinRequest(inviteToken = "nonce", name = padded).validatedName(50)).hasSize(50)
+    }
 }

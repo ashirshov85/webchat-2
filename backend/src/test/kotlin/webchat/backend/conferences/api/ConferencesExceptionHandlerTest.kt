@@ -94,6 +94,20 @@ class ConferencesExceptionHandlerTest {
                 case("guest_invite_not_found", HttpStatus.NOT_FOUND, FIELD_INVITE) {
                     handler.onGuestInviteNotFound()
                 },
+                // T046 №54 — the missing public query parameter
+                case("malformed_request", HttpStatus.BAD_REQUEST, FIELD_INVITE_TOKEN) {
+                    handler.onMissingInviteToken()
+                },
+                // T046 №55 — the uniform forgery fold and the no-witness row (SC-003)
+                case("invite_invalid", HttpStatus.NOT_FOUND, FIELD_INVITE_TOKEN) { handler.onInviteInvalid() },
+                case("invite_not_found", HttpStatus.NOT_FOUND, FIELD_INVITE_TOKEN) { handler.onInviteNotFound() },
+                // T046 №55 — the disclosable link lifecycle states (SC-003)
+                case("invite_expired", HttpStatus.CONFLICT, FIELD_INVITE_TOKEN) { handler.onInviteExpired() },
+                case("invite_revoked", HttpStatus.CONFLICT, FIELD_INVITE_TOKEN) { handler.onInviteRevoked() },
+                // T046 №55 — the guest name shape (server trim, 1..50 — Q19/Q7=A)
+                case("name_invalid", HttpStatus.UNPROCESSABLE_ENTITY, FIELD_NAME) {
+                    handler.onInvalidGuestName()
+                },
                 // T039 №49/№50/№51 request shape — the identity segment and the two bodies
                 case("malformed_request", HttpStatus.BAD_REQUEST, FIELD_PARTICIPANT_IDENTITY) {
                     handler.onInvalidParticipantIdentity()
@@ -128,5 +142,7 @@ class ConferencesExceptionHandlerTest {
         private const val FIELD_PARTICIPANT_RESTRICTIONS = "restrictions"
         private const val FIELD_PARTICIPANT_ROLE = "role"
         private const val FIELD_INVITE = "invite"
+        private const val FIELD_INVITE_TOKEN = "inviteToken"
+        private const val FIELD_NAME = "name"
     }
 }

@@ -209,6 +209,81 @@ data class GuestInviteView(
 )
 
 /**
+ * The №54 invalidity reason (api-contract.md 009 §3, the
+ * `InviteInfoView.reason` enum expired|revoked|ended): a LIFECYCLE
+ * state of the link — decidable from the status row/ended conference
+ * and disclosable to the join page. A FORGED nonce carries NO reason:
+ * the forgery modes are never distinguished (api-contract §1 edge).
+ */
+enum class InviteInfoReason {
+    EXPIRED,
+    REVOKED,
+    ENDED,
+}
+
+/** The lowercase contract label of an [InviteInfoReason] (schema enum expired|revoked|ended). */
+fun inviteInfoReasonLabel(reason: InviteInfoReason): String = reason.name.lowercase()
+
+/**
+ * Contract №54 success body — `InviteInfoView` (api-contract.md §3): the
+ * minimum-disclosure status answer of the PUBLIC link probe, BEFORE the
+ * guest enters a name (SC-003 ≤ 3 действий, FR-009): the [valid] flag,
+ * an optional [reason] for a LIFECYCLE refusal and the optional [live]
+ * UX hint. A forged nonce answers `{valid:false}` with NO reason (the
+ * forgery modes are indistinguishable, api-contract §1 edge) and NO
+ * chat/conference details are ever disclosed; [reason] is absent when
+ * [valid] is `true`, [live] is carried only for a valid link
+ * (`status='active'` of the conference row — the first join has
+ * happened and finalize has not).
+ */
+data class InviteInfoView(
+    val valid: Boolean,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val reason: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val live: Boolean? = null,
+)
+
+/**
+ * 422 (api-contract.md 009 §3 №55, Q19/Q7=A): the guest display name is
+ * blank after the server trim or longer than
+ * `conferences.guest-name-max-length` (50 default) — `errors: {name:
+ * [name_invalid]}`. The submitted value is never echoed (constitution
+ * V); rendered by [webchat.backend.conferences.api.ConferencesExceptionHandler]
+ * as a typed problem.
+ */
+class InvalidGuestNameException :
+    RuntimeException("name must be 1 to conferences.guest-name-max-length characters long after trim")
+
+/**
+ * Contract №55 request body — `GuestJoinRequest` (api-contract.md §3,
+ * openapi.yaml 0.11.0): exactly `{inviteToken, name}` — the nonce of
+ * the guest link and the display name the guest enters. The
+ * raw-string-then-validate discipline of [CreateConferenceRequest]: the
+ * name is checked HERE as the contract `422 name_invalid` (the
+ * server-side trim, 1..max — Q19/Q7=A), while the `inviteToken` needs
+ * the ES256 SIGNATURE layer before any lifecycle decision and stays a
+ * raw string for the nonce ladder of
+ * [webchat.backend.conferences.api.GuestJoinController] (T046).
+ */
+data class GuestJoinRequest(
+    val inviteToken: String? = null,
+    val name: String? = null,
+) {
+    /**
+     * №55 name shape check: the server-side trim, then `1..maxLength`
+     * ([webchat.backend.config.ConferencesProperties.guestNameMaxLength],
+     * 50 default) — [InvalidGuestNameException] (`422 name_invalid`)
+     * otherwise, without echoing the submitted value.
+     */
+    fun validatedName(maxLength: Int): String {
+        val trimmed = name?.trim().orEmpty()
+        if (trimmed.isEmpty() || trimmed.length > maxLength) {
+            throw InvalidGuestNameException()
+        }
+        return trimmed
+    }
+}
+
+/**
  * Contract №49 request body — `UpdateParticipantRestrictionsRequest`
  * (api-contract.md §4, openapi.yaml 0.11.0): the FULL SET-state of the
  * four moderation flags, all four required (a partial update is

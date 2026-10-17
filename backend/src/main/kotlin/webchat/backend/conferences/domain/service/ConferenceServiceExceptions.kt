@@ -117,3 +117,49 @@ class ParticipantNotFoundException : RuntimeException("the requested conference 
 class GuestInviteNotFoundException : RuntimeException("the conference has no active guest invite") {
     val code: String = "guest_invite_not_found"
 }
+
+/**
+ * 404 (api-contract.md 009 §3 №55, SC-003): the submitted nonce is
+ * FORGED — unparseable, foreign-key, tampered, mistyped or a blank
+ * token: every forgery mode answers the SAME uniform refusal without
+ * distinguishing causes (the «без раскрытия причин подделки» edge —
+ * api-contract §1), so the exception carries no distinguishing state
+ * by design. Raised by [webchat.backend.conferences.api.GuestJoinController]
+ * (T046) when the ES256 nonce layer
+ * ([webchat.backend.conferences.livekit.GuestInviteTokens.verify], T044)
+ * refuses the token; nothing is looked up and nothing is written.
+ */
+class InviteInvalidException : RuntimeException("the guest invite nonce is invalid") {
+    val code: String = "invite_invalid"
+}
+
+/**
+ * 404 (api-contract.md 009 §3 №55): the nonce carried a VERIFIABLE
+ * signature but its status row resolves to nothing the ladder can use —
+ * the invite row is gone without an ended conference (the row and its
+ * conference are read atomically enough for the guest surface; the
+ * finalize-fold answer of a deleted row + ended conference is the
+ * [ConferenceEndedException] twin). Nothing is written.
+ */
+class InviteNotFoundException : RuntimeException("the guest invite link does not exist") {
+    val code: String = "invite_not_found"
+}
+
+/**
+ * 409 (api-contract.md 009 §3 №55, SC-003): the link's TTL horizon has
+ * passed — `now >= expiresAt` of the status row (the JWT `exp` equals
+ * it by construction, T044): a legitimately signed but EXPIRED link is
+ * a disclosable lifecycle state, not a forgery. Nothing is written.
+ */
+class InviteExpiredException : RuntimeException("the guest invite link has expired") {
+    val code: String = "invite_expired"
+}
+
+/**
+ * 409 (api-contract.md 009 §3 №55, SC-003): the link was revoked — by
+ * №53 or by the Q17=A replacement of a №52 issue; a REVOKED row is a
+ * disclosable lifecycle state, not a forgery. Nothing is written.
+ */
+class InviteRevokedException : RuntimeException("the guest invite link has been revoked") {
+    val code: String = "invite_revoked"
+}
