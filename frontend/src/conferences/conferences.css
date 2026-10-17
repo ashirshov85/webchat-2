@@ -318,3 +318,90 @@
   flex-direction: column;
   gap: 4px;
 }
+
+/* ============================================================
+ * Панель участников (T041, US3; FR-008): список подключённых из
+ * LiveKit — имя (fallback identity)/«вы», identity (ключ действий
+ * модерации №49–№51), «гость» (US4/T051), роль, online, индикация
+ * ограничений. Индикаторы — текстом, не только цветом (008).
+ * ============================================================ */
+
+.conference-participants {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+}
+
+.conference-participants-title {
+  margin: 0;
+  font: 15px var(--font-heading);
+  letter-spacing: 0.04em;
+  color: var(--cream-bright);
+}
+
+.conference-participants-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Строка: baseline-цепочка пометок, перенос по ширине (панель узкая). */
+.conference-participants-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 4px 6px;
+  border-radius: var(--r-panel);
+}
+
+.conference-participants-name {
+  font: 13px var(--font-body);
+  color: var(--cream);
+}
+
+/* identity — ключ модерации (u:{userId}:{connId}/g:{connId}, без PII):
+   моно-шрифт машины, тише имени. */
+.conference-participants-identity {
+  font: italic 11px var(--font-mono);
+  color: var(--muted-2);
+}
+
+.conference-participants-you {
+  font: italic 11px var(--font-body);
+  color: var(--muted);
+}
+
+/* Бейдж «гость» — латунная рамка, отличим и без цвета (текст). */
+.conference-participants-guest {
+  padding: 1px 8px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-field);
+  font: italic 11px var(--font-body);
+  color: var(--gold-light);
+}
+
+.conference-participants-role {
+  font: italic 11px var(--font-body);
+  color: var(--muted);
+}
+
+/* online: присутствие в LiveKit — мягкая зелень токена --ok. */
+.conference-participants-online {
+  font: italic 11px var(--font-body);
+  color: var(--ok);
+}
+
+/* Индикация ограничений (право слова/точечные источники, Q4/Q22=A). */
+.conference-participants-restricted {
+  font: italic 11px var(--font-body);
+  color: var(--err);
+}

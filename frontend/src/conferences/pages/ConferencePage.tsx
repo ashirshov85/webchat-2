@@ -26,8 +26,10 @@
  * conference_ended` — терминальное состояние без pre-join и кнопки
  * входа. Блок joined монтирует медиа-комнату ConferenceRoom (T027):
  * подключение по JoinTicket, тайлы участников и адаптация качества
- * (FR-004); в слоте children — MediaControls (T028): тумблеры
- * микрофона/камеры/экрана и «Покинуть» (выход — leave слота вкладки,
+ * (FR-004); в слоте children — ParticipantsPanel (T041): список
+ * участников из LiveKit (identity/name, роль, online, ограничения),
+ * и MediaControls (T028): тумблеры микрофона/камеры/экрана и «Покинуть»
+ * (выход — leave слота вкладки,
  * Q10=A, возврат на pre-join для возможного повторного входа).
  * Сообщения об ошибках — нейтральные, без раскрытия деталей
  * (существование не раскрывается, api-contract §1): ветвление UX по
@@ -41,6 +43,7 @@ import type { ConferenceDeviceSelection } from '../hooks/useDevices'
 import ConferenceRoom from '../components/ConferenceRoom'
 import type { ConferenceRoomInitialMedia } from '../components/ConferenceRoom'
 import MediaControls from '../components/MediaControls'
+import ParticipantsPanel from '../components/ParticipantsPanel'
 import PreJoinScreen from '../components/PreJoinScreen'
 import type { PreJoinSelection } from '../components/PreJoinScreen'
 
@@ -94,7 +97,7 @@ function loadErrorMessage(code: ConferenceErrorCode | null): string {
     : 'Не удалось загрузить конференцию'
 }
 
-/** Блок подключенной вкладки (T026/T027/T028): медиа-комната + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
+/** Блок подключенной вкладки (T026/T027/T028 + панель участников T041): медиа-комната + список участников + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
 function JoinedPanel({
   conferenceId,
   ticket,
@@ -126,6 +129,7 @@ function JoinedPanel({
         initialDevices={initialDevices}
         refreshTicket={refreshTicket}
       >
+        <ParticipantsPanel />
         <MediaControls onLeave={onLeave} />
       </ConferenceRoom>
     </div>
