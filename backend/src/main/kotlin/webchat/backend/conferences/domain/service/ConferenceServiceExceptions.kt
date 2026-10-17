@@ -71,3 +71,18 @@ class ConferenceEndedException : RuntimeException("the conference has already be
 class ConferenceFullException : RuntimeException("the conference participant quota is exhausted") {
     val code: String = "conference_full"
 }
+
+/**
+ * 404 (api-contract.md 009 №49/№50/№51): the moderation target
+ * `{identity}` resolves to no principal of the conference — unknown,
+ * malformed or never joined, or the conference is already finalized
+ * (all rows deleted, Q18=A — indistinguishable by design, the 006
+ * privacy precedent). Raised by the moderation legs
+ * ([ModerationService], T036/T037) on BOTH the identity-fold and the
+ * row-write refusals; the problem+json rendering joins with its T039
+ * carrier in
+ * [webchat.backend.conferences.api.ConferencesExceptionHandler].
+ */
+class ParticipantNotFoundException : RuntimeException("the requested conference participant does not exist") {
+    val code: String = "participant_not_found"
+}
