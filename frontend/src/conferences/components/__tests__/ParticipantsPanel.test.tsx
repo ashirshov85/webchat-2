@@ -10,7 +10,8 @@ import ParticipantsPanel from '../ParticipantsPanel'
  * canPublishSources — broadcast UpdateParticipant, §4). Примитивы
  * @livekit/components-react заменены фейком: предмет теста — проекция
  * состояния участника LiveKit в строку панели (критерий T041 — Vitest,
- * набор T043).
+ * набор T043). Пометка «гость» — T051 (US4): бейдж по
+ * metadata.guest=true токена №55 и отображение гостевого имени.
  */
 
 /** Wire-константы TrackSource (@livekit/protocol) — как в компоненте. */
@@ -112,10 +113,11 @@ describe('ParticipantsPanel (009 US3 T041)', () => {
     expect(screen.queryByText('модератор')).not.toBeInTheDocument()
   })
 
-  it('помечает гостя по metadata.guest (поле готово — наполняется в US4/T051)', () => {
+  it('бейдж «гость» у участников с metadata.guest=true, у членов чата бейджа нет (T051)', () => {
     lkc.useParticipants.mockReturnValue([
       participant({ identity: 'u:1:c1', name: 'alice', metadata: memberMetadata('moderator') }),
       participant({
+        // §3: {"role":"participant","guest":true,"inviteId"} — токен №55
         identity: 'g:conn-guest-1',
         name: 'Виктор',
         metadata: memberMetadata('participant', true),
@@ -124,8 +126,27 @@ describe('ParticipantsPanel (009 US3 T041)', () => {
 
     render(<ParticipantsPanel />)
 
-    expect(screen.getByText('гость')).toBeInTheDocument()
+    // ровно один бейдж — у гостя; член чата (guest:false) без пометки
+    expect(screen.getAllByText('гость')).toHaveLength(1)
+    // имя гостя — name токена №55 (введено на GuestJoinPage), метка строки
     expect(screen.getByText('Виктор')).toBeInTheDocument()
+    // identity гостя — ключ модерации №49–№51, как у членов чата
+    expect(screen.getByText('g:conn-guest-1')).toBeInTheDocument()
+  })
+
+  it('гость без имени: метка строки — identity g:{connId} (fallback как у тайлов, T051)', () => {
+    lkc.useParticipants.mockReturnValue([
+      participant({
+        identity: 'g:conn-guest-2',
+        name: '',
+        metadata: memberMetadata('participant', true),
+      }),
+    ])
+
+    render(<ParticipantsPanel />)
+
+    expect(screen.getAllByText('гость')).toHaveLength(1)
+    expect(screen.getByText('g:conn-guest-2')).toBeInTheDocument()
   })
 
   it('«право слова» (canPublish=false) — единая индикация без публикаций, точечные источники не помечаются (Q4=A)', () => {

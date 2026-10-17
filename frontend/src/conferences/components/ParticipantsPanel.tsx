@@ -15,8 +15,9 @@
  * (`u:{userId}:{connId}` / `g:{connId}`) — ключ действий модерации
  * №49–№51 (ModerationPanel T042); у локальной строки identity не
  * повторяется — блок joined уже показывает его (T026). Пометка «гость»
- * — metadata.guest: поле готово, наполняется в US4 (T051, GuestsEnter
- * по №55 минтуется с guest:true).
+ * — metadata.guest=true подключений по гостевой ссылке №55 (T051):
+ * имя гостя — введённое на GuestJoinPage (name токена минта),
+ * fallback — identity `g:{connId}`.
  *
  * Индикация ограничений (FR-008, Q22=A) — зеркало доменных
  * ParticipantRestrictions по фактическим grants (§3):
@@ -228,7 +229,7 @@ function ParticipantRow({
 
 /**
  * Панель участников: список подключённых конференции из LiveKit
- * (identity/name, роль, online, ограничения; «гость» — US4/T051).
+ * (identity/name, роль, online, ограничения; «гость» — №55/T051).
  * Рядом с ней в слоте children ConferenceRoom — MediaControls (T028)
  * и панель модерации (T042): действия №49–№51 адресуются по identity
  * строк.
