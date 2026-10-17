@@ -64,6 +64,26 @@ interface GuestInviteRepository {
     ): GuestInvite?
 
     /**
+     * №53 `DELETE …/guest-invite` (T045): the single conditional
+     * `UPDATE … SET status='revoked', revoked_at=:at WHERE
+     * conference_id = :conferenceId AND status='active' RETURNING …` —
+     * the path carries NO invite id, the conference's ONE active row
+     * (the `ux_guest_invites_active` invariant, Q17=A) is the target.
+     * Returns the revoked row, or `null` when there was nothing to
+     * revoke — never issued, already revoked (the №53 repeat) and the
+     * finalized conference whose rows are gone (Q18=A) answer
+     * identically (the caller's uniform `404
+     * guest_invite_not_found`, api-contract.md §2); the first win keeps
+     * its `revoked_at` ([GuestInvite.revoke] discipline). The
+     * post-commit disconnect of guests still connected under
+     * `metadata.inviteId = id` rides [LiveKitAdminClient] (Q13=B).
+     */
+    fun revokeActiveOf(
+        conferenceId: UUID,
+        at: Instant,
+    ): GuestInvite?
+
+    /**
      * The №54/№55 validation read (T046, api-contract.md §3): the row
      * behind a nonce's `sub = inviteId` after the SIGNATURE/`exp` layer
      * (T044) accepted the token. `null` → `404 invite_not_found`; a

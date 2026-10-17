@@ -149,6 +149,46 @@ class JdbcGuestInviteRepositoryIT : AbstractIntegrationTest() {
     }
 
     @Test
+    fun `revokeActiveOf resolves the conference's single active link - the №53 path`() {
+        val conference = newConference()
+        val invite = guestInviteRepository.issue(newInvite(conference.id, conference.createdBy)).invite
+
+        val revoked = guestInviteRepository.revokeActiveOf(conference.id, T2)
+
+        assertThat(revoked!!.id)
+            .overridingErrorMessage("the DELETE path carries no invite id — the ONE active row resolves")
+            .isEqualTo(invite.id)
+        assertThat(revoked.status).isEqualTo(GuestInviteStatus.REVOKED)
+        assertThat(revoked.revokedAt).isEqualTo(T2)
+        assertThat(rowCount(ACTIVE_OF_SQL, conference.id)).isZero
+
+        val repeated = guestInviteRepository.revokeActiveOf(conference.id, T3)
+
+        assertThat(repeated)
+            .overridingErrorMessage("the №53 repeat converges to the uniform 404 — the first revoked_at stays")
+            .isNull()
+        assertThat(guestInviteRepository.findById(invite.id)!!.revokedAt).isEqualTo(T2)
+    }
+
+    @Test
+    fun `revokeActiveOf of a conference without a link and of another conference's link answers null`() {
+        val conference = newConference()
+        val other = newConference()
+        val otherInvite = guestInviteRepository.issue(newInvite(other.id, other.createdBy)).invite
+
+        assertThat(guestInviteRepository.revokeActiveOf(conference.id, T1))
+            .overridingErrorMessage("never issued — the uniform 404 of №53")
+            .isNull()
+        assertThat(guestInviteRepository.revokeActiveOf(UUID.randomUUID(), T1))
+            .overridingErrorMessage("an unknown conference answers the same null")
+            .isNull()
+        assertThat(guestInviteRepository.findById(otherInvite.id)!!.status)
+            .overridingErrorMessage("a link of ANOTHER conference is never touched")
+            .isEqualTo(GuestInviteStatus.ACTIVE)
+        assertThat(rowCount(ACTIVE_OF_SQL, other.id)).isEqualTo(1)
+    }
+
+    @Test
     fun `findById returns the raw row regardless of status and expiry`() {
         val conference = newConference()
         val invite = guestInviteRepository.issue(newInvite(conference.id, conference.createdBy)).invite

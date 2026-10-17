@@ -10,6 +10,7 @@ import com.nimbusds.jwt.SignedJWT
 import org.springframework.stereotype.Component
 import webchat.backend.auth.security.Es256KeyRing
 import webchat.backend.conferences.domain.model.GuestInvite
+import webchat.backend.conferences.domain.port.GuestInviteNonces
 import webchat.backend.config.AuthJwtProperties
 import java.time.Instant
 import java.util.Date
@@ -54,15 +55,19 @@ class InvalidGuestInviteTokenException(
  * (`reason:"expired"`, `409 invite_expired`, …), which is why [verify]
  * returns [GuestInviteNonce.expiresAt] instead of throwing on it: a
  * legitimately signed-but-expired nonce must still resolve to its row.
+ *
+ * The domain-facing face of the signer is the [GuestInviteNonces] port
+ * (T045 — DIP, plan.md VIII): [GuestInviteService] mints through the
+ * port, this adapter stays outside the domain.
  */
 @Component
 class GuestInviteTokens(
     authJwtProperties: AuthJwtProperties,
-) {
+) : GuestInviteNonces {
     private val keyRing = Es256KeyRing(authJwtProperties)
 
     /** Signs the nonce of [invite] — the cryptographic half of the №52 link (T045 appends it to the join URL). */
-    fun mint(invite: GuestInvite): String {
+    override fun mint(invite: GuestInvite): String {
         val jwt =
             SignedJWT(
                 JWSHeader

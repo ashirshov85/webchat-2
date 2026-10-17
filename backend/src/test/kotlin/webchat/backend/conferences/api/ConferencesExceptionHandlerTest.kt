@@ -90,6 +90,10 @@ class ConferencesExceptionHandlerTest {
                 case("participant_not_found", HttpStatus.NOT_FOUND, FIELD_PARTICIPANT) {
                     handler.onParticipantNotFound()
                 },
+                // T045 №53 — the «нет активной» fold of the guest-link delete
+                case("guest_invite_not_found", HttpStatus.NOT_FOUND, FIELD_INVITE) {
+                    handler.onGuestInviteNotFound()
+                },
                 // T039 №49/№50/№51 request shape — the identity segment and the two bodies
                 case("malformed_request", HttpStatus.BAD_REQUEST, FIELD_PARTICIPANT_IDENTITY) {
                     handler.onInvalidParticipantIdentity()
@@ -123,5 +127,6 @@ class ConferencesExceptionHandlerTest {
         private const val FIELD_PARTICIPANT_IDENTITY = "identity"
         private const val FIELD_PARTICIPANT_RESTRICTIONS = "restrictions"
         private const val FIELD_PARTICIPANT_ROLE = "role"
+        private const val FIELD_INVITE = "invite"
     }
 }

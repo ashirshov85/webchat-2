@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController
 import webchat.backend.conferences.api.dto.ConferenceMode
 import webchat.backend.conferences.api.dto.ConferenceView
 import webchat.backend.conferences.api.dto.CreateConferenceRequest
+import webchat.backend.conferences.api.dto.GuestInviteView
 import webchat.backend.conferences.api.dto.InvalidParticipantIdentityException
 import webchat.backend.conferences.api.dto.JoinTicket
 import webchat.backend.conferences.api.dto.MeView
@@ -38,6 +39,7 @@ import webchat.backend.conferences.domain.service.ConferenceEndedException
 import webchat.backend.conferences.domain.service.ConferenceForbiddenException
 import webchat.backend.conferences.domain.service.ConferenceNotFoundException
 import webchat.backend.conferences.domain.service.ConferenceService
+import webchat.backend.conferences.domain.service.GuestInviteService
 import webchat.backend.conferences.domain.service.JoinTokenService
 import webchat.backend.conferences.domain.service.ModerationService
 import webchat.backend.conferences.domain.service.ModerationUpdate
@@ -45,18 +47,21 @@ import webchat.backend.conferences.domain.service.ModeratorRequiredException
 import java.util.UUID
 
 /**
- * T019 (009, US1) + T039 (009, US3) — the member surface of the
- * `conferences` tag: №44 `POST /api/v1/chats/{chatId}/conferences`,
- * №45 `GET /api/v1/conferences/{conferenceId}`, №46 `GET …/me`, №47
- * `POST …/join` (T019) and the moderation family №48 `POST …/end`,
- * №49 `PUT …/participants/{identity}/restrictions`, №50 `PUT
+ * T019 (009, US1) + T039 (009, US3) + T045 (009, US4) — the member
+ * surface of the `conferences` tag: №44 `POST
+ * /api/v1/chats/{chatId}/conferences`, №45 `GET
+ * /api/v1/conferences/{conferenceId}`, №46 `GET …/me`, №47 `POST
+ * …/join` (T019), the moderation family №48 `POST …/end`, №49 `PUT
+ * …/participants/{identity}/restrictions`, №50 `PUT
  * …/participants/{identity}/role`, №51 `DELETE
- * …/participants/{identity}` (T039) — a thin HTTP adapter in the
- * [webchat.backend.chats.api.ChatController] discipline: the owner id
- * is the token `sub` claim, the raw path segments refuse as the typed
- * 400 `invalid_uuid` problems BEFORE any collaborator is touched, and
- * every business refusal leaves as a typed exception rendered
- * problem+json by [ConferencesExceptionHandler].
+ * …/participants/{identity}` (T039) and the guest-link pair №52
+ * `POST …/guest-invite`, №53 `DELETE …/guest-invite` (T045) — a thin
+ * HTTP adapter in the [webchat.backend.chats.api.ChatController]
+ * discipline: the owner id is the token `sub` claim, the raw path
+ * segments refuse as the typed 400 `invalid_uuid` problems BEFORE any
+ * collaborator is touched, and every business refusal leaves as a
+ * typed exception rendered problem+json by
+ * [ConferencesExceptionHandler].
  *
  * The division of labor the services were built for (their KDocs pin
  * it): №44 delegates its whole gate ladder to
@@ -87,6 +92,15 @@ import java.util.UUID
  * repeat answer `409 conference_ended` must win over an undecidable
  * 403.
  *
+ * The №52/№53 guest-link ladder of T045 rides the same rails: №52
+ * shares the №48 ordering VERBATIM (the ended check BEFORE the role
+ * gate — its contract table lists `409 conference_ended`, and the
+ * finalize has deleted the gate row exactly then), while №53 — whose
+ * contract table lists NO 409 — folds an ended conference to the
+ * gate/`guest_invite_not_found` answers below; [GuestInviteService]
+ * owns the Q17=A revoke+insert transaction, the nonce URL and the
+ * Q13=B post-commit disconnect.
+ *
  * The [ConferenceView] projection: `activeParticipants` is the
  * media-plane connection truth of `ListParticipants` (the DB mirrors
  * none of it, research §4/§7) and `mode` comes from the invite widget
@@ -99,14 +113,14 @@ import java.util.UUID
  * fail the durable create).
  */
 @RestController
-// the №44–№51 collaborators, one port per leg (DIP, plan.md VIII); one
-// endpoint per №44–№51 operation plus the shared view/path helpers —
-// T045 extends the same class
+// the №44–№53 collaborators, one port per leg (DIP, plan.md VIII); one
+// endpoint per №44–№53 operation plus the shared view/path helpers
 @Suppress("LongParameterList", "TooManyFunctions")
 class ConferenceController(
     private val conferenceService: ConferenceService,
     private val joinTokenService: JoinTokenService,
     private val moderationService: ModerationService,
+    private val guestInviteService: GuestInviteService,
     private val conferenceRepository: ConferenceRepository,
     private val participantRepository: ParticipantRepository,
     private val membership: ChatMembershipChecker,
@@ -311,6 +325,63 @@ class ConferenceController(
         val conference = resolveForRead(parseConferenceId(conferenceId), callerId)
         requireModerator(conference, callerId)
         moderationService.kick(conference, identity)
+        return ResponseEntity.noContent().build()
+    }
+
+    /**
+     * №52 (api-contract.md 009 §2, T045): the guest link generation —
+     * `201 GuestInviteView {inviteUrl, expiresAt}`. The ladder: the
+     * raw `{conferenceId}` shape 400 → the uniform 404 of
+     * [resolveForRead] → `409 conference_ended` of an ALREADY-ended
+     * row (deliberately BEFORE the role gate — the №48 ordering: the
+     * finalize deleted the whole roster, Q18=A, so the gate row is
+     * gone exactly when the contract's repeat answer must win) → `403
+     * moderator_required` of [requireModerator] →
+     * [GuestInviteService.issue] (the Q17=A revoke+insert transaction,
+     * the minted nonce URL and the Q13=B post-commit disconnect of the
+     * replaced link's guests).
+     *
+     * `ThrowsCount` suppressed: the throw statement is the №52 ended
+     * leg of the contract table's refusal ladder.
+     */
+    @Suppress("ThrowsCount")
+    @PostMapping("/api/v1/conferences/{conferenceId}/guest-invite")
+    fun createGuestInvite(
+        @PathVariable conferenceId: String,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<GuestInviteView> {
+        val callerId = callerId(accessToken)
+        val conference = resolveForRead(parseConferenceId(conferenceId), callerId)
+        if (conference.isEnded) {
+            throw ConferenceEndedException()
+        }
+        requireModerator(conference, callerId)
+        return ResponseEntity
+            .status(HttpStatus.CREATED)
+            .body(guestInviteService.issue(conference, callerId))
+    }
+
+    /**
+     * №53 (api-contract.md 009 §2, T045): the revocation of the
+     * conference's ACTIVE guest link — `204`, the guests still
+     * connected under it disconnect immediately through the service's
+     * `metadata.inviteId` leg (Q13=B) and every new №54/№55 entry is
+     * blocked by the revoked row. The ladder: the shape 400 → the
+     * uniform 404 → [requireModerator] → the service's `404
+     * guest_invite_not_found` of «нет активной» — the fold an ENDED
+     * conference takes as well: its invite rows are gone (Q18=A) and
+     * the contract table of the delete lists no `conference_ended`,
+     * so №53 deliberately skips the ended check of №48/№52.
+     */
+    @DeleteMapping("/api/v1/conferences/{conferenceId}/guest-invite")
+    fun revokeGuestInvite(
+        @PathVariable conferenceId: String,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Unit> {
+        val callerId = callerId(accessToken)
+        val conference = resolveForRead(parseConferenceId(conferenceId), callerId)
+        requireModerator(conference, callerId)
+        guestInviteService.revoke(conference)
         return ResponseEntity.noContent().build()
     }
 

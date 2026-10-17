@@ -102,3 +102,18 @@ class ModeratorRequiredException : RuntimeException("the caller is not a moderat
 class ParticipantNotFoundException : RuntimeException("the requested conference participant does not exist") {
     val code: String = "participant_not_found"
 }
+
+/**
+ * 404 (api-contract.md 009 №53): the conference has NO active guest
+ * link to revoke — never issued, already revoked (the №53 repeat), or
+ * the finalized conference whose invite rows the finalize transaction
+ * deleted (Q18=A — indistinguishable by design, nothing echoed; the
+ * contract table of the delete lists no `conference_ended`, the fold
+ * IS the ended answer). Raised by
+ * [webchat.backend.conferences.domain.service.GuestInviteService.revoke]
+ * (T045) after the moderator gate; the conditional UPDATE keeps the
+ * ORIGINAL `revoked_at` of the first win.
+ */
+class GuestInviteNotFoundException : RuntimeException("the conference has no active guest invite") {
+    val code: String = "guest_invite_not_found"
+}

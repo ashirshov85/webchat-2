@@ -15,6 +15,7 @@ import webchat.backend.conferences.domain.service.ConferenceEndedException
 import webchat.backend.conferences.domain.service.ConferenceForbiddenException
 import webchat.backend.conferences.domain.service.ConferenceFullException
 import webchat.backend.conferences.domain.service.ConferenceNotFoundException
+import webchat.backend.conferences.domain.service.GuestInviteNotFoundException
 import webchat.backend.conferences.domain.service.ModeratorRequiredException
 import webchat.backend.conferences.domain.service.ParticipantNotFoundException
 
@@ -138,6 +139,17 @@ class ConferencesExceptionHandler {
         problem(HttpStatus.NOT_FOUND, PARTICIPANT_NOT_FOUND_DETAIL)
             .apply { setProperty(ERRORS_PROPERTY, mapOf(PARTICIPANT_FIELD to listOf(PARTICIPANT_NOT_FOUND_CODE))) }
 
+    /**
+     * 404 (api-contract.md 009 №53, T045): the conference has no
+     * ACTIVE guest link — never issued, already revoked (the №53
+     * repeat), or the finalized conference whose invite rows are gone
+     * (Q18=A — indistinguishable by design, nothing echoed).
+     */
+    @ExceptionHandler(GuestInviteNotFoundException::class)
+    fun onGuestInviteNotFound(): ProblemDetail =
+        problem(HttpStatus.NOT_FOUND, GUEST_INVITE_NOT_FOUND_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(INVITE_FIELD to listOf(GUEST_INVITE_NOT_FOUND_CODE))) }
+
     /** 400 (api-contract.md 009 №49/№50/№51): the PATH `{identity}` segment is blank. */
     @ExceptionHandler(InvalidParticipantIdentityException::class)
     fun onInvalidParticipantIdentity(): ProblemDetail =
@@ -199,6 +211,7 @@ class ConferencesExceptionHandler {
         const val PARTICIPANT_IDENTITY_FIELD = "identity"
         const val PARTICIPANT_RESTRICTIONS_FIELD = "restrictions"
         const val PARTICIPANT_ROLE_FIELD = "role"
+        const val INVITE_FIELD = "invite"
         const val CHAT_NOT_FOUND_CODE = "chat_not_found"
         const val FORBIDDEN_CODE = "conference_forbidden"
         const val NOT_FOUND_CODE = "conference_not_found"
@@ -208,6 +221,7 @@ class ConferencesExceptionHandler {
         const val MEDIA_UNAVAILABLE_CODE = "conference_media_unavailable"
         const val MODERATOR_REQUIRED_CODE = "moderator_required"
         const val PARTICIPANT_NOT_FOUND_CODE = "participant_not_found"
+        const val GUEST_INVITE_NOT_FOUND_CODE = "guest_invite_not_found"
         const val INVALID_MODE_CODE = "invalid_mode"
         const val INVALID_UUID_CODE = "invalid_uuid"
         const val MALFORMED_REQUEST_CODE = "malformed_request"
@@ -222,6 +236,7 @@ class ConferencesExceptionHandler {
             "The media plane is temporarily unavailable; the operation wrote nothing (conference_media_unavailable)"
         const val MODERATOR_REQUIRED_DETAIL = "The caller is not a moderator of the conference"
         const val PARTICIPANT_NOT_FOUND_DETAIL = "The requested conference participant does not exist"
+        const val GUEST_INVITE_NOT_FOUND_DETAIL = "The conference has no active guest invite"
         const val INVALID_MODE_DETAIL = "mode must be one of: video, audio"
         const val INVALID_CHAT_ID_DETAIL = "chatId must be a UUID"
         const val INVALID_CONFERENCE_ID_DETAIL = "conferenceId must be a UUID"

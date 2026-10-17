@@ -192,6 +192,23 @@ class InvalidParticipantRestrictionsException :
 class InvalidParticipantRoleException : RuntimeException("role must be one of: moderator, participant")
 
 /**
+ * Contract №52 success body — `GuestInviteView` (api-contract.md §4):
+ * the freshly minted guest link — the signed nonce inside the PUBLIC
+ * SPA route [inviteUrl] (`{FRONTEND}/join/{inviteToken}`, T050) and
+ * the [expiresAt] horizon (= `createdAt + conferences.guest-invite-ttl`,
+ * 24 h default Q19=A — the nonce `exp` and the status row share it by
+ * construction, data-model 009 §Сущность 3). ONE active link per
+ * conference: every №52 answer has already revoked its predecessor in
+ * the same transaction (Q17=A) and disconnected its connected guests
+ * (Q13=B). Never posted to the chat (FR-009) — delivery rides the
+ * moderator's own channel.
+ */
+data class GuestInviteView(
+    val inviteUrl: String,
+    val expiresAt: Instant,
+)
+
+/**
  * Contract №49 request body — `UpdateParticipantRestrictionsRequest`
  * (api-contract.md §4, openapi.yaml 0.11.0): the FULL SET-state of the
  * four moderation flags, all four required (a partial update is
