@@ -548,3 +548,136 @@
   opacity: 0.45;
   cursor: default;
 }
+
+/* ============================================================
+ * Гостевая join-страница (009, US4, T049): шаг имени, отказ
+ * ссылки, обвязка pre-join. Публичный экран /join/:inviteToken —
+ * та же тёмная лексика модуля (панель/крем/латунь, 008).
+ * ============================================================ */
+
+/* Статус проверки №54 (<output> = role=status). */
+.guest-join-status {
+  font: italic 12.5px var(--font-body);
+  color: var(--muted);
+}
+
+/* Блок ошибки/отказа (ConferencePage №45/№47 и гостевые экраны №54/№55):
+ * панель с понятным сообщением и повтором, где он допустим. */
+.conference-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 12px 16px;
+  border: 1px solid var(--err);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+}
+
+.conference-error p {
+  margin: 0;
+  font: 13px var(--font-body);
+  color: var(--err);
+}
+
+.conference-error button {
+  align-self: flex-start;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+/* Шаг имени: узкая форма по центру, как pre-join. */
+.guest-join-name {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+  color: var(--cream);
+}
+
+.guest-join-title {
+  margin: 0;
+  font: 17px var(--font-heading);
+  letter-spacing: 0.04em;
+  color: var(--cream-bright);
+}
+
+/* live-подсказка №54: конференция уже идёт (<output> = role=status). */
+.guest-join-live {
+  font: italic 12px var(--font-body);
+  color: var(--gold-light);
+}
+
+.guest-join-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.guest-join-name-field label {
+  font: italic 11px var(--font-body);
+  color: var(--muted);
+}
+
+.guest-join-name-input {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream);
+}
+
+.guest-join-name-input[aria-invalid='true'] {
+  border-color: var(--err);
+}
+
+.guest-join-name-error {
+  margin: 0;
+  font: italic 12px var(--font-body);
+  color: var(--err);
+}
+
+.guest-join-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* «Продолжить» — золотая акция (канон гостевого флоу SC-003). */
+.guest-join-submit {
+  padding: 8px 24px;
+  border: 1px solid var(--gold);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream-bright);
+  cursor: pointer;
+}
+
+/* Обвязка pre-join: повторяемая ошибка №55 над переиспользуемым экраном. */
+.guest-join-prejoin {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(560px, 100%);
+  margin: 0 auto;
+}
+
+/* Конвенция 008 FR-035: видимый фокус с клавиатуры (форма имени). */
+.guest-join-name button:focus-visible,
+.guest-join-name input:focus-visible,
+.guest-join-prejoin > .conference-error button:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}

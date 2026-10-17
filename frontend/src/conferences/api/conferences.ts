@@ -72,6 +72,37 @@ export type ModerationErrorCode =
   | 'moderator_required'
   | 'participant_not_found'
 
+/**
+ * №54 InviteInfoView: статус гостевой ссылки — минимум раскрытия
+ * (без деталей чата/конференции); `reason` отсутствует при valid=true
+ * и при подделке (причины не различаются, edge).
+ */
+export type InviteInfoView = components['schemas']['InviteInfoView']
+
+/** Понятная причина невалидности ссылки №54: истёкшая/отозванная/завершённая. */
+export type InviteInvalidReason = NonNullable<InviteInfoView['reason']>
+
+/** №55 GuestJoinRequest: nonce ссылки + отображаемое имя (trim 1–50, Q19/Q7=A). */
+export type GuestJoinRequest = components['schemas']['GuestJoinRequest']
+
+/**
+ * Коды ошибок публичной гостевой поверхности №54/№55: единообразный отказ
+ * подделки (`invite_invalid` — без различения причин), `invite_not_found`,
+ * жизненный цикл ссылки (`invite_expired`/`invite_revoked`) и конференции
+ * (`conference_ended`), общая квота с членами (`conference_full`, Q23=A),
+ * `name_invalid` (серверный trim 1–50) и per-IP `rate_limited` (429).
+ */
+export type GuestErrorCode =
+  | 'malformed_request'
+  | 'rate_limited'
+  | 'invite_invalid'
+  | 'invite_not_found'
+  | 'invite_expired'
+  | 'invite_revoked'
+  | 'conference_ended'
+  | 'conference_full'
+  | 'name_invalid'
+
 async function authedRequest(path: string, method: string, body?: unknown): Promise<Response> {
   const response = await apiFetch(path, {
     method,
@@ -116,6 +147,16 @@ export function moderationErrorCode(value: unknown): ModerationErrorCode | null 
   if (!isConferenceProblem(value)) return null
   const code = Object.values(value.errors ?? {}).flat()[0]
   return (code as ModerationErrorCode | undefined) ?? null
+}
+
+/**
+ * Единственный код ошибки из Problem публичных №54/№55
+ * (`errors: {field: [code]}`); null — не Problem (сеть/транспорт).
+ */
+export function guestErrorCode(value: unknown): GuestErrorCode | null {
+  if (!isConferenceProblem(value)) return null
+  const code = Object.values(value.errors ?? {}).flat()[0]
+  return (code as GuestErrorCode | undefined) ?? null
 }
 
 /**
@@ -243,4 +284,44 @@ export async function kickParticipant(conferenceId: string, identity: string): P
     `/conferences/${encodeURIComponent(conferenceId)}/participants/${encodeURIComponent(identity)}`,
     'DELETE',
   )
+}
+
+/**
+ * №54 `GET /conferences/invite-info?inviteToken={nonce}` (T049): статус
+ * ссылки ДО ввода имени (SC-003 ≤ 3 действий) — минимум раскрытия:
+ * `valid` (+`live` — UX-подсказка «конференция идёт»), при невалидности
+ * — понятная `reason` (expired/revoked/ended); подделанный nonce —
+ * единообразный `{valid:false}` БЕЗ причины (edge). Публичный endpoint
+ * (без Bearer, FR-009): транспорт тот же apiFetch — у гостя без токенов
+ * Authorization не выставляется вовсе; аутентифицированный член по
+ * гостевой ссылке входит гостем (Q14=A — точка входа определяет роль).
+ * Ошибки: `rate_limited` (per-IP бакет, дефолт 30/мин).
+ */
+export async function getInviteInfo(inviteToken: string): Promise<InviteInfoView> {
+  const response = await authedRequest(
+    `/conferences/invite-info?inviteToken=${encodeURIComponent(inviteToken)}`,
+    'GET',
+  )
+  return (await response.json()) as InviteInfoView
+}
+
+/**
+ * №55 `POST /conferences/join-by-invite` (T049): гостевой JoinTicket —
+ * строка гостя создаётся при выдаче (Q7=A), минт `g:{connId}` с полными
+ * canPublishSources (Q1=C — старт «только микрофон» soft, права не
+ * урезаются), metadata `{role:participant, guest:true, inviteId}`;
+ * ссылка многоразовая (Q2=A) — повторный вызов допустим (реконнект
+ * FR-014 тем же вызовом со свежим connId). Имя: серверный trim 1–50 —
+ * `422 name_invalid`. Публичный endpoint (per-IP бакет, дефолт 10/мин).
+ * Ошибки: `invite_invalid | invite_not_found`,
+ * `invite_expired | invite_revoked | conference_ended | conference_full`,
+ * `name_invalid`, `rate_limited`.
+ */
+export async function joinConferenceByInvite(
+  inviteToken: string,
+  name: string,
+): Promise<JoinTicket> {
+  const body: GuestJoinRequest = { inviteToken, name }
+  const response = await authedRequest('/conferences/join-by-invite', 'POST', body)
+  return (await response.json()) as JoinTicket
 }
