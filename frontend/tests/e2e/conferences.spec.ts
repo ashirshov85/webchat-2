@@ -1,12 +1,15 @@
 import { expect, request, test, type APIRequestContext, type Page } from '@playwright/test'
 
 /**
- * 009, US1, T029 — e2e звонка двух вкладок против локального LiveKit
- * (quickstart §3.1): fake media (`--use-fake-device-for-media-stream`),
- * SC-001 на фазе US1 — от клика «Подключиться» до медиа ≤ 5 c (каноничная
- * форма «от "Войти" на pre-join» — после T034); устойчивость к деградации
- * сети (FR-004): CDP network throttling на вкладке — подключение
- * сохраняется без обрыва, после снятия троттлинга звонок продолжается.
+ * 009, US1, T029 (+ US2, T034) — e2e звонка двух вкладок против
+ * локального LiveKit (quickstart §3.1): fake media
+ * (`--use-fake-device-for-media-stream`), SC-001 — каноничная форма
+ * «от "Войти" на pre-join» до медиа ≤ 5 c (T034 встроил единый pre-join
+ * для всех точек входа; обе вкладки открывают /conference/{id} без
+ * ?mode= — дефолты по №45 mode=video: камера+микрофон); устойчивость к
+ * деградации сети (FR-004): CDP network throttling на вкладке —
+ * подключение сохраняется без обрыва, после снятия троттлинга звонок
+ * продолжается.
  *
  * Стенд (quickstart §2): docker compose postgres redis mailpit livekit,
  * backend :8080 (LIVEKIT_URL/KEY/SECRET), SPA :5173 (webServer конфига).
@@ -20,7 +23,7 @@ const API_URL = process.env.E2E_API_URL ?? 'http://localhost:8080'
 const MAILPIT_URL = process.env.E2E_MAILPIT_URL ?? 'http://localhost:8025'
 const RUN_ID = process.env.E2E_RUN_ID ?? Date.now().toString(36)
 const PASSWORD = `E2e-conference-${RUN_ID}`
-/** SC-001 на фазе US1: от «Подключиться» до медиа (T029). */
+/** SC-001: от «Войти» на pre-join до медиа (каноничная форма — после T034). */
 const SC001_MS = 5_000
 
 interface TestAccount {
@@ -176,14 +179,14 @@ async function openConferencePage(
   return page
 }
 
-/** Клик «Подключиться» и ожидание полного медиа: свой статус + удалённый тайл. */
+/** Клик «Войти» на pre-join (T034) и ожидание полного медиа: свой статус + удалённый тайл. */
 async function connectAndAwaitMedia(
   page: Page,
   ownStatus: string,
   remoteUsername: string,
 ): Promise<number> {
   const startedAt = Date.now()
-  await page.getByRole('button', { name: 'Подключиться' }).click()
+  await page.getByRole('button', { name: 'Войти' }).click()
   await expect(page.getByText(ownStatus)).toBeVisible({ timeout: 15_000 })
   // медиа обеих сторон: тайл собеседника (ParticipantName; имя может
   // встретиться в нескольких тайлах метаданных — достаточно первого) +
@@ -224,7 +227,7 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     }
   })
 
-  test('SC-001 (US1-фаза): звонок двух вкладок — обе стороны видят медиа ≤ 5 c от «Подключиться»', async ({
+  test('SC-001: звонок двух вкладок — обе стороны видят медиа ≤ 5 c от «Войти» на pre-join', async ({
     browser,
   }) => {
     // свежие refresh-токены: ротация одноразовая, контексты стартуют с действующим
@@ -238,14 +241,16 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     ])
     openedPages.push(alicePage, bobPage)
 
-    // защищённый маршрут грузит экран и пакет №45+№46 (ленивый чанк conferences)
+    // защищённый маршрут грузит экран и пакет №45+№46 (ленивый чанк
+    // conferences); pre-join (T034) — до «Войти» слот не занимается
+    // (FR-007), дефолты тумблеров — по №45 mode=video
     await expect(alicePage.getByRole('region', { name: 'Конференция' })).toBeVisible()
     await expect(bobPage.getByRole('region', { name: 'Конференция' })).toBeVisible()
-    await expect(alicePage.getByRole('button', { name: 'Подключиться' })).toBeVisible()
-    await expect(bobPage.getByRole('button', { name: 'Подключиться' })).toBeVisible()
+    await expect(alicePage.getByRole('button', { name: 'Войти' })).toBeVisible()
+    await expect(bobPage.getByRole('button', { name: 'Войти' })).toBeVisible()
 
     // обе вкладки подключаются параллельно: каждая — от своего клика
-    // «Подключиться» до медиа (свой статус + тайл собеседника) ≤ 5 c
+    // «Войти» на pre-join до медиа (свой статус + тайл собеседника) ≤ 5 c
     const [aliceElapsed, bobElapsed] = await Promise.all([
       connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
       connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
@@ -253,16 +258,15 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
 
     expect(
       aliceElapsed,
-      `SC-001: alice от «Подключиться» до медиа ${aliceElapsed} мс`,
+      `SC-001: alice от «Войти» до медиа ${aliceElapsed} мс`,
     ).toBeLessThanOrEqual(SC001_MS)
-    expect(
-      bobElapsed,
-      `SC-001: bob от «Подключиться» до медиа ${bobElapsed} мс`,
-    ).toBeLessThanOrEqual(SC001_MS)
+    expect(bobElapsed, `SC-001: bob от «Войти» до медиа ${bobElapsed} мс`).toBeLessThanOrEqual(
+      SC001_MS,
+    )
 
-    // корректный выход (Q10=A): «Покинуть» возвращает к «Подключиться» без следов
+    // корректный выход (Q10=A): «Покинуть» возвращает на pre-join без следов
     await bobPage.getByRole('button', { name: 'Покинуть' }).click()
-    await expect(bobPage.getByRole('button', { name: 'Подключиться' })).toBeVisible()
+    await expect(bobPage.getByRole('button', { name: 'Войти' })).toBeVisible()
     await expect(bobPage.getByText('Вы в конференции')).toHaveCount(0)
   })
 

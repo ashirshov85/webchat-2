@@ -33,6 +33,7 @@ const lk = vi.hoisted(() => {
     Reconnected: 'reconnected',
     Disconnected: 'disconnected',
     LocalTrackPublished: 'localTrackPublished',
+    ActiveDeviceChanged: 'activeDeviceChanged',
   } as const
   const Track = {
     Source: { Camera: 'camera', Microphone: 'microphone', ScreenShare: 'screen_share' },
@@ -48,6 +49,8 @@ const lk = vi.hoisted(() => {
     readonly connectCalls: { wsUrl: string; token: string }[] = []
     readonly micCalls: boolean[] = []
     readonly cameraCalls: boolean[] = []
+    /** switchActiveDevice (useDevices — стартовый выбор pre-join, T034). */
+    readonly switchCalls: { kind: string; deviceId: string }[] = []
     disconnectCalls = 0
     /** Управляемое тестом поведение connect конкретной комнаты (приоритет над default). */
     connectImpl: ((wsUrl: string, token: string) => Promise<void>) | null = null
@@ -68,6 +71,16 @@ const lk = vi.hoisted(() => {
       }
       set.add(listener)
       return this
+    }
+
+    off(event: string, listener: (payload?: unknown) => void): this {
+      this.listeners.get(event)?.delete(listener)
+      return this
+    }
+
+    switchActiveDevice(kind: string, deviceId: string): Promise<boolean> {
+      this.switchCalls.push({ kind, deviceId })
+      return Promise.resolve(true)
     }
 
     emit(event: string, payload?: unknown): void {
@@ -249,6 +262,39 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     })
     await waitFor(() => {
       expect(lastRoom().micCalls).toEqual([false])
+    })
+    await waitFor(() => {
+      expect(lastRoom().cameraCalls).toEqual([false])
+    })
+  })
+
+  it('стартовый выбор устройств pre-join применяется при появлении комнаты (T034, useDevices initial)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        initialMedia={{ microphone: true, camera: false }}
+        initialDevices={{
+          audioInput: 'mic-2',
+          videoInput: 'cam-2',
+          audioOutput: 'spk-2',
+        }}
+        refreshTicket={vi.fn()}
+      />,
+    )
+
+    // комната появилась — выбор применён ДО первой публикации (null-слоты
+    // не адресуются: «По умолчанию» остаётся браузерному дефолту)
+    await waitFor(() => {
+      expect(lastRoom().switchCalls).toEqual([
+        { kind: 'audioinput', deviceId: 'mic-2' },
+        { kind: 'videoinput', deviceId: 'cam-2' },
+        { kind: 'audiooutput', deviceId: 'spk-2' },
+      ])
+    })
+    await waitFor(() => {
+      expect(lastRoom().micCalls).toEqual([true])
     })
     await waitFor(() => {
       expect(lastRoom().cameraCalls).toEqual([false])

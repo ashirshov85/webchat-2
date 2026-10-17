@@ -25,8 +25,13 @@
  *
  * Стартовая публикация — дефолты по mode конференции (№44: video →
  * камера+микрофон, audio — только микрофон, Q3=A soft); T034 (US2)
- * передаст явное стартовое состояние из pre-join (оба выкл — «только
- * слушаю», FR-006). Отказ браузера в доступе к устройствам не рушит
+ * передаёт явное стартовое состояние из pre-join (оба выкл — «только
+ * слушаю», FR-006) и стартовый выбор устройств (useDevices initial:
+ * best-effort применение при появлении комнаты — ДО первой публикации,
+ * поэтому микрофон/камера публикуются сразу выбранными на pre-join
+ * устройствами; capture-дефолты комнаты настраиваются даже до connect,
+ * смена комнаты при реконнекте применяет выбор заново). Отказ браузера
+ * в доступе к устройствам не рушит
  * вход — участник остаётся слушателем с понятным предупреждением
  * (T032, Q6=A); повторный запрос доступа — уже в звонке тумблерами
  * MediaControls (T028): успешная публикация слота (LocalTrackPublished)
@@ -59,6 +64,8 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConferenceMode, JoinTicket } from '../api/conferences'
 import { bindConferenceDisconnect } from '../hooks/useConference'
+import { useDevices } from '../hooks/useDevices'
+import type { ConferenceDeviceSelection } from '../hooks/useDevices'
 import '../conferences.css'
 
 /** Фаза медиа-подключения комнаты — статус-строка и видимость тайлов. */
@@ -87,6 +94,12 @@ export interface ConferenceRoomProps {
   readonly mode: ConferenceMode
   /** Явное стартовое состояние из pre-join (T034); по умолчанию — дефолты mode. */
   readonly initialMedia?: ConferenceRoomInitialMedia
+  /**
+   * Стартовый выбор устройств pre-join (T034): применяется best-effort
+   * при появлении комнаты (useDevices initial) — до первой публикации
+   * треков; null/undefined — системные устройства по умолчанию.
+   */
+  readonly initialDevices?: ConferenceDeviceSelection | null
   /** Повторный минт №47 при полном разрыве (useConference.refreshTicket, FR-014). */
   readonly refreshTicket: () => Promise<JoinTicket | null>
   /** Слот для MediaControls (T028) и панелей US3/US4 — внутри RoomContext. */
@@ -249,6 +262,7 @@ export default function ConferenceRoom({
   ticket,
   mode,
   initialMedia,
+  initialDevices,
   refreshTicket,
   children,
 }: ConferenceRoomProps) {
@@ -268,6 +282,12 @@ export default function ConferenceRoom({
 
   const startMicrophone = initialMedia?.microphone ?? true
   const startCamera = initialMedia?.camera ?? mode === 'video'
+
+  // Устройства — единая точка useDevices (T031): стартовый выбор pre-join
+  // (T034) применяется best-effort при появлении комнаты — switchActive-
+  // Device до connect настраивает capture-дефолты, публикация стартует
+  // выбранными устройствами; синхронизация выбора — ActiveDeviceChanged.
+  useDevices({ room, initial: initialDevices ?? undefined })
 
   // Жизненный цикл тикета = жизненный цикл комнаты: СВЕЖАЯ Room на каждый
   // прогон эффекта (паттерн useLiveKitRoom — см. комментарий модуля),
