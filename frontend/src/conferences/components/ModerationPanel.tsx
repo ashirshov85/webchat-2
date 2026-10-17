@@ -34,8 +34,9 @@
  * сами событиями LiveKit — ручной отккат состояния не нужен.
  *
  * Доступность — стандарты 008: section aria-labelledby, группы
- * действий row role=group, фокус с клавиатуры (conferences.css),
- * «в полёте» все кнопки недоступны (без гонок повторных вызовов).
+ * действий row — fieldset (implicit role=group), фокус с клавиатуры
+ * (conferences.css), «в полёте» все кнопки недоступны (без гонок
+ * повторных вызовов).
  */
 import { useLocalParticipant, useParticipants } from '@livekit/components-react'
 import type { LocalParticipant, RemoteParticipant } from 'livekit-client'
@@ -162,7 +163,7 @@ function ModerationRow({
   return (
     <li className="conference-moderation-item" data-participant-identity={participant.identity}>
       <span className="conference-moderation-name">{rowLabel}</span>
-      <div className="conference-moderation-actions" role="group" aria-label={rowLabel}>
+      <fieldset className="conference-moderation-actions" aria-label={rowLabel}>
         {restrictionButtons.map(({ field, restrict, restrictText, allowText }) => (
           <button
             key={field}
@@ -199,7 +200,7 @@ function ModerationRow({
         >
           Исключить
         </button>
-      </div>
+      </fieldset>
     </li>
   )
 }

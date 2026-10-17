@@ -98,7 +98,10 @@ export function orderParticipants(
   if (left.isLocal !== right.isLocal) {
     return left.isLocal ? -1 : 1
   }
-  return left.identity < right.identity ? -1 : left.identity > right.identity ? 1 : 0
+  if (left.identity !== right.identity) {
+    return left.identity < right.identity ? -1 : 1
+  }
+  return 0
 }
 
 /** Отображаемое имя строки: name тикета/метаданных, иначе identity (как тайлы T027). */

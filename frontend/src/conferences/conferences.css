@@ -464,11 +464,17 @@
   color: var(--cream);
 }
 
-/* Действия строки: компактная переносимая цепочка кнопок. */
+/* Действия строки: компактная переносимая цепочка кнопок. Нативная
+   fieldset-группа (implicit role=group): сбрасываем браузерные дефолты
+   fieldset (margin/min-width/padding/border) до лексики панели. */
 .conference-moderation-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 6px;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+  border: none;
 }
 
 .conference-moderation-button {
