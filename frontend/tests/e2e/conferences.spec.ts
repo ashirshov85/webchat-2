@@ -1,4 +1,11 @@
-import { expect, request, test, type APIRequestContext, type Page } from '@playwright/test'
+import {
+  expect,
+  request,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from '@playwright/test'
 
 /**
  * 009, US1, T029 (+ US2, T034) — e2e звонка двух вкладок против
@@ -15,6 +22,13 @@ import { expect, request, test, type APIRequestContext, type Page } from '@playw
  * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
  * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
  * (SET-семантика №49, live-обновление permission-событием + refetch №46).
+ *
+ * 009, US4, T052 — e2e гостевого доступа (quickstart §3.4): приватное
+ * окно БЕЗ аккаунта по инвайт-ссылке №52 (SC-003 — ≤ 3 действий от
+ * открытия ссылки до конференции: имя → «Продолжить» → «Войти»; pre-join
+ * «только микрофон», Q1=C), пометка «гость» и имя видны модератору
+ * (T051), чат-поверхность гостю недоступна (FR-010: `/` → /login),
+ * подделанный nonce — единообразный отказ без раскрытия причин (edge).
  *
  * Стенд (quickstart §2): docker compose postgres redis mailpit livekit,
  * backend :8080 (LIVEKIT_URL/KEY/SECRET), SPA :5173 (webServer конфига).
@@ -419,5 +433,154 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     await expect(bobPage.getByRole('button', { name: 'Микрофон' })).toBeEnabled({
       timeout: SC005_MS,
     })
+  })
+})
+
+test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
+  let api: APIRequestContext
+  let alice: TestAccount
+  let bob: TestAccount
+  let chatId: string
+  /** Контексты теста (модератор + приватные гостевые) — закрываются в afterEach. */
+  let openedContexts: BrowserContext[]
+
+  /**
+   * Гость входит БЕЗ аккаунта — собственная пара аккаунтов сценарию не
+   * нужна: в полном прогоне файла переиспользуем alice/bob сьюта US1
+   * (per-IP бакет регистраций auth 5/1ч из 002 не оставляет места
+   * третьей паре за прогон); standalone-запуск (--grep гостевой)
+   * регистрирует свою пару — login падает 401 до register.
+   */
+  async function ensureLogin(username: string): Promise<TestAccount> {
+    try {
+      return await login(api, username)
+    } catch {
+      return await ensureAccount(api, username)
+    }
+  }
+
+  test.beforeAll(async () => {
+    // Синтетический клиентский IP (TEST-NET-2) в X-Forwarded-For:
+    // ClientIpResolver 002 бакетит per-IP — суиты файла получают
+    // изолированные register/login-бакеты (полный прогон файла иначе
+    // упирается в auth 5/1ч регистраций: US1+US3 уже занимают 4)
+    api = await request.newContext({
+      baseURL: API_URL,
+      extraHTTPHeaders: { 'X-Forwarded-For': '198.51.100.52' },
+    })
+    alice = await ensureLogin(`alice${RUN_ID}`)
+    bob = await ensureLogin(`bob${RUN_ID}`)
+    chatId = await ensureDirectChat(api, alice, bob)
+  })
+
+  test.afterAll(() => {
+    void api.dispose()
+  })
+
+  test.beforeEach(() => {
+    openedContexts = []
+  })
+
+  test.afterEach(async () => {
+    for (const context of openedContexts) {
+      await context.close()
+    }
+  })
+
+  /**
+   * Приватный контекст гостя: без localStorage-сессии (браузер без
+   * аккаунта — quickstart §1 «дейв»), fake media наследуются от
+   * launchOptions браузера; разрешения выдаём контексту явно.
+   */
+  async function newGuestContext(
+    browser: import('@playwright/test').Browser,
+  ): Promise<BrowserContext> {
+    const context = await browser.newContext({ permissions: ['camera', 'microphone'] })
+    openedContexts.push(context)
+    return context
+  }
+
+  test('SC-003: гость без аккаунта входит по инвайт-ссылке ≤ 3 действий; «гость» виден модератору; чат недоступен (FR-010)', async ({
+    browser,
+  }) => {
+    const aliceNow = await login(api, alice.username)
+    const conference = await createConference(api, aliceNow, chatId)
+
+    // №52: генерация гостевой ссылки модератором (создателем) — в чат не постится
+    const invite = await apiCall<{ inviteUrl: string; expiresAt: string }>(
+      api,
+      'post',
+      `/api/v1/conferences/${conference.id}/guest-invite`,
+      { token: aliceNow.accessToken },
+    )
+    expect(invite.inviteUrl).toContain('/join/')
+
+    // alice (модератор) в звонке — наблюдатель входа гостя (T051)
+    const alicePage = await openConferencePage(browser, aliceNow, conference.id)
+    openedContexts.push(alicePage.context())
+    await alicePage.getByRole('button', { name: 'Войти' }).click()
+    await expect(alicePage.getByText('Вы в конференции')).toBeVisible({ timeout: 15_000 })
+
+    // приватное окно без аккаунта открывает ссылку №52 (путь — из
+    // inviteUrl; хостом остаётся baseURL стенда — app.public-base-url
+    // per-env, тест не зависит от его значения)
+    const guestName = `Гость${RUN_ID}`
+    const guestContext = await newGuestContext(browser)
+    const guestPage = await guestContext.newPage()
+    await guestPage.goto(new URL(invite.inviteUrl).pathname)
+
+    // №54 валиден → шаг имени; маршрут публичный — перенаправления на
+    // login нет (FR-009), chat-поверхность не мелькает
+    await expect(
+      guestPage.getByRole('heading', { name: 'Подключение к конференции' }),
+    ).toBeVisible()
+    expect(guestPage.url()).toContain('/join/')
+    expect(guestPage.url()).not.toContain('/login')
+
+    // SC-003 ≤ 3 действий: (1) имя → (2) «Продолжить» → (3) «Войти»
+    await guestPage.getByLabel('Ваше имя').fill(guestName)
+    await guestPage.getByRole('button', { name: 'Продолжить' }).click()
+
+    // pre-join «только микрофон» (Q1=C/Q3=A): тумблер камеры доступен
+    await expect(guestPage.getByRole('button', { name: 'Микрофон' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await expect(guestPage.getByRole('button', { name: 'Камера' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    await expect(guestPage.getByRole('button', { name: 'Камера' })).toBeEnabled()
+
+    await guestPage.getByRole('button', { name: 'Войти' }).click()
+
+    // гость в конференции с пометкой «гость» (SC-003 завершён — 3 действия)
+    await expect(guestPage.getByText('Вы в конференции как гость')).toBeVisible({
+      timeout: 15_000,
+    })
+    await expect(guestPage.getByText(guestName, { exact: true }).first()).toBeVisible()
+
+    // модератор видит имя и бейдж «гость» (metadata №55, T051)
+    await expect(alicePage.getByText(guestName, { exact: true }).first()).toBeVisible({
+      timeout: 15_000,
+    })
+    await expect(alicePage.getByText('гость', { exact: true }).first()).toBeVisible()
+
+    // FR-010: чат-поверхность гостю недоступна — `/` без сессии
+    // перенаправляет на /login (ProtectedRoute), мессенджер не рендерится
+    await guestPage.goto('/')
+    await expect(guestPage).toHaveURL(/\/login/)
+  })
+
+  test('подделанный nonce — единообразный отказ «Ссылка недействительна» без ввода имени (edge, минимум раскрытия)', async ({
+    browser,
+  }) => {
+    const guestContext = await newGuestContext(browser)
+    const guestPage = await guestContext.newPage()
+    await guestPage.goto(`/join/garbage-${RUN_ID}`)
+
+    await expect(guestPage.getByText('Ссылка недействительна')).toBeVisible()
+    await expect(guestPage.getByLabel('Ваше имя')).toHaveCount(0)
+    expect(guestPage.url()).not.toContain('/login')
   })
 })

@@ -146,7 +146,7 @@ description: "Task list for feature implementation: Видеоконференц
 - [X] T049 [US4] Реализовать `frontend/src/conferences/pages/GuestJoinPage.tsx`: №54 статус ссылки (истёк/отозван/завершён — понятные сообщения) → ввод имени → переиспользование `PreJoinScreen` (дефолт «только микрофон», тумблер камеры доступен, как у членов чата — Q1=C; у гостя на pre-join ограничений нет — строка гостя создаётся при входе, применённые модератором ограничения отражаются в звонке live-права́ми, data-model §2) → №55 «Войти» → `ConferenceRoom` по `JoinTicket`
 - [X] T050 [P] [US4] Добавить публичный маршрут `/join/:inviteToken` в `frontend/src/App.tsx`: без аутентификации, ленивый чанк, доступ к чату исключён (FR-010); критерий: `/join/:inviteToken` без аутентификации грузит ленивый чанк, чат-роуты недоступны — Vitest + Playwright T052
 - [X] T051 [US4] Пометка «гость» в `frontend/src/conferences/components/ParticipantsPanel.tsx` (метаданные участника LiveKit `guest:true`) и отображение гостевого имени; критерий: бейдж «гость» у участников с `metadata.guest=true` — Vitest T052
-- [ ] T052 [US4] Тесты US4: Vitest GuestJoinPage (валидный/невалидный инвайт, ошибки имени, пометка «гость») + Playwright гостевой сценарий (приватное окно без аккаунта, SC-003)
+- [X] T052 [US4] Тесты US4: Vitest GuestJoinPage (валидный/невалидный инвайт, ошибки имени, пометка «гость») + Playwright гостевой сценарий (приватное окно без аккаунта, SC-003)
 
 **Checkpoint**: Гости входят без аккаунта; публичная поверхность защищена rate limiting; US1–US4 независимы
 
