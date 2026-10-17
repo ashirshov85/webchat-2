@@ -5,6 +5,9 @@ import org.springframework.http.ProblemDetail
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import webchat.backend.conferences.api.dto.InvalidConferenceModeException
+import webchat.backend.conferences.api.dto.InvalidParticipantIdentityException
+import webchat.backend.conferences.api.dto.InvalidParticipantRestrictionsException
+import webchat.backend.conferences.api.dto.InvalidParticipantRoleException
 import webchat.backend.conferences.domain.port.ConferenceMediaUnavailableException
 import webchat.backend.conferences.domain.service.ConferenceChatNotFoundException
 import webchat.backend.conferences.domain.service.ConferenceE2eeUnsupportedException
@@ -12,6 +15,8 @@ import webchat.backend.conferences.domain.service.ConferenceEndedException
 import webchat.backend.conferences.domain.service.ConferenceForbiddenException
 import webchat.backend.conferences.domain.service.ConferenceFullException
 import webchat.backend.conferences.domain.service.ConferenceNotFoundException
+import webchat.backend.conferences.domain.service.ModeratorRequiredException
+import webchat.backend.conferences.domain.service.ParticipantNotFoundException
 
 /**
  * T019 — RFC 9457 rendering for the conferences API errors
@@ -109,6 +114,53 @@ class ConferencesExceptionHandler {
         problem(HttpStatus.SERVICE_UNAVAILABLE, MEDIA_UNAVAILABLE_DETAIL)
             .apply { setProperty(ERRORS_PROPERTY, mapOf(CONFERENCE_FIELD to listOf(MEDIA_UNAVAILABLE_CODE))) }
 
+    /**
+     * 403 (api-contract.md 009 §1/№48–№53, FR-008/FR-009, T039): the
+     * caller is a chat member but not a conference moderator — the
+     * role gate of every moderation/invite action; nothing was
+     * written and no media call was made. Moderators are equal, so
+     * the refusal never names or depends on the target (Q21=A).
+     */
+    @ExceptionHandler(ModeratorRequiredException::class)
+    fun onModeratorRequired(): ProblemDetail =
+        problem(HttpStatus.FORBIDDEN, MODERATOR_REQUIRED_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(CONFERENCE_FIELD to listOf(MODERATOR_REQUIRED_CODE))) }
+
+    /**
+     * 404 (api-contract.md 009 №49/№50/№51, T039): the moderation
+     * target `{identity}` resolves to no principal — unknown,
+     * malformed or never joined, or the conference is already
+     * finalized (all rows deleted, Q18=A — indistinguishable by
+     * design, nothing echoed).
+     */
+    @ExceptionHandler(ParticipantNotFoundException::class)
+    fun onParticipantNotFound(): ProblemDetail =
+        problem(HttpStatus.NOT_FOUND, PARTICIPANT_NOT_FOUND_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(PARTICIPANT_FIELD to listOf(PARTICIPANT_NOT_FOUND_CODE))) }
+
+    /** 400 (api-contract.md 009 №49/№50/№51): the PATH `{identity}` segment is blank. */
+    @ExceptionHandler(InvalidParticipantIdentityException::class)
+    fun onInvalidParticipantIdentity(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, INVALID_PARTICIPANT_IDENTITY_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(PARTICIPANT_IDENTITY_FIELD to listOf(MALFORMED_REQUEST_CODE))) }
+
+    /**
+     * 400 (api-contract.md 009 №49): the body is not the full
+     * SET-state of four booleans — a partial update is impossible.
+     */
+    @ExceptionHandler(InvalidParticipantRestrictionsException::class)
+    fun onInvalidParticipantRestrictions(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, INVALID_PARTICIPANT_RESTRICTIONS_DETAIL)
+            .apply {
+                setProperty(ERRORS_PROPERTY, mapOf(PARTICIPANT_RESTRICTIONS_FIELD to listOf(MALFORMED_REQUEST_CODE)))
+            }
+
+    /** 400 (api-contract.md 009 №50): `role` is absent or outside `moderator|participant`. */
+    @ExceptionHandler(InvalidParticipantRoleException::class)
+    fun onInvalidParticipantRole(): ProblemDetail =
+        problem(HttpStatus.BAD_REQUEST, INVALID_PARTICIPANT_ROLE_DETAIL)
+            .apply { setProperty(ERRORS_PROPERTY, mapOf(PARTICIPANT_ROLE_FIELD to listOf(INVALID_ROLE_CODE))) }
+
     /** 400 (api-contract.md 009 №44): `mode` is absent or outside `video|audio`. */
     @ExceptionHandler(InvalidConferenceModeException::class)
     fun onInvalidConferenceMode(): ProblemDetail =
@@ -143,6 +195,10 @@ class ConferencesExceptionHandler {
         const val CONFERENCE_FIELD = "conference"
         const val CONFERENCE_ID_FIELD = "conferenceId"
         const val MODE_FIELD = "mode"
+        const val PARTICIPANT_FIELD = "participant"
+        const val PARTICIPANT_IDENTITY_FIELD = "identity"
+        const val PARTICIPANT_RESTRICTIONS_FIELD = "restrictions"
+        const val PARTICIPANT_ROLE_FIELD = "role"
         const val CHAT_NOT_FOUND_CODE = "chat_not_found"
         const val FORBIDDEN_CODE = "conference_forbidden"
         const val NOT_FOUND_CODE = "conference_not_found"
@@ -150,8 +206,12 @@ class ConferencesExceptionHandler {
         const val ENDED_CODE = "conference_ended"
         const val FULL_CODE = "conference_full"
         const val MEDIA_UNAVAILABLE_CODE = "conference_media_unavailable"
+        const val MODERATOR_REQUIRED_CODE = "moderator_required"
+        const val PARTICIPANT_NOT_FOUND_CODE = "participant_not_found"
         const val INVALID_MODE_CODE = "invalid_mode"
         const val INVALID_UUID_CODE = "invalid_uuid"
+        const val MALFORMED_REQUEST_CODE = "malformed_request"
+        const val INVALID_ROLE_CODE = "invalid_role"
         const val CHAT_NOT_FOUND_DETAIL = "The requested chat does not exist"
         const val FORBIDDEN_DETAIL = "The caller is not a member of the conference chat"
         const val NOT_FOUND_DETAIL = "The requested conference does not exist or is not available to the caller"
@@ -160,8 +220,14 @@ class ConferencesExceptionHandler {
         const val FULL_DETAIL = "The conference participant quota is exhausted"
         const val MEDIA_UNAVAILABLE_DETAIL =
             "The media plane is temporarily unavailable; the operation wrote nothing (conference_media_unavailable)"
+        const val MODERATOR_REQUIRED_DETAIL = "The caller is not a moderator of the conference"
+        const val PARTICIPANT_NOT_FOUND_DETAIL = "The requested conference participant does not exist"
         const val INVALID_MODE_DETAIL = "mode must be one of: video, audio"
         const val INVALID_CHAT_ID_DETAIL = "chatId must be a UUID"
         const val INVALID_CONFERENCE_ID_DETAIL = "conferenceId must be a UUID"
+        const val INVALID_PARTICIPANT_IDENTITY_DETAIL = "identity must not be blank"
+        const val INVALID_PARTICIPANT_RESTRICTIONS_DETAIL =
+            "restrictions must be the full SET of the four booleans"
+        const val INVALID_PARTICIPANT_ROLE_DETAIL = "role must be one of: moderator, participant"
     }
 }

@@ -3,6 +3,7 @@ package webchat.backend.conferences.api.dto
 import com.fasterxml.jackson.annotation.JsonInclude
 import webchat.backend.conferences.domain.model.ConferenceEndReason
 import webchat.backend.conferences.domain.model.ConferenceStatus
+import webchat.backend.conferences.domain.model.ParticipantRestrictions
 import webchat.backend.conferences.domain.model.ParticipantRole
 import java.time.Instant
 import java.util.UUID
@@ -162,3 +163,88 @@ data class JoinTicket(
     val name: String,
     val expiresAt: Instant,
 )
+
+/**
+ * 400 (api-contract.md 009 №49/№50/№51): the PATH `{identity}` segment
+ * is blank — `errors: {identity: [malformed_request]}`. Nothing of the
+ * submitted value is echoed (constitution V); rendered by
+ * [webchat.backend.conferences.api.ConferencesExceptionHandler] as a
+ * typed problem.
+ */
+class InvalidParticipantIdentityException : RuntimeException("identity must not be blank")
+
+/**
+ * 400 (api-contract.md 009 №49): the body is not the full
+ * SET-state of four booleans — `errors: {restrictions:
+ * [malformed_request]}` (a missing flag makes a partial update, which
+ * the SET semantics forbid — api-contract.md §2 №49). The same
+ * raw-nullable-then-validate discipline as
+ * [CreateConferenceRequest].
+ */
+class InvalidParticipantRestrictionsException :
+    RuntimeException("restrictions must be the full SET of the four booleans")
+
+/**
+ * 400 (api-contract.md 009 №50): the submitted `role` is absent or
+ * outside `moderator|participant` — `errors: {role: [invalid_role]}`.
+ * The submitted value is never echoed (constitution V).
+ */
+class InvalidParticipantRoleException : RuntimeException("role must be one of: moderator, participant")
+
+/**
+ * Contract №49 request body — `UpdateParticipantRestrictionsRequest`
+ * (api-contract.md §4, openapi.yaml 0.11.0): the FULL SET-state of the
+ * four moderation flags, all four required (a partial update is
+ * impossible; a reset is an explicit `false`, api-contract.md §2 №49).
+ *
+ * The flags arrive as nullable booleans on purpose (the
+ * [CreateConferenceRequest] convention): a missing flag is rejected
+ * HERE as the contract 400 `errors: {restrictions:
+ * [malformed_request]}` instead of dying in deserialization — the
+ * reply stays a typed problem. The moderator/ended/target legs are
+ * caller-dependent and stay with the T039 controller +
+ * [webchat.backend.conferences.domain.service.ModerationService].
+ */
+data class UpdateParticipantRestrictionsRequest(
+    val micRestricted: Boolean? = null,
+    val cameraRestricted: Boolean? = null,
+    val screenRestricted: Boolean? = null,
+    val speechRestricted: Boolean? = null,
+) {
+    /** №49 shape check: the complete [ParticipantRestrictions], or `400 malformed_request`. */
+    fun validatedRestrictions(): ParticipantRestrictions =
+        ParticipantRestrictions(
+            micRestricted = requiredFlag(micRestricted),
+            cameraRestricted = requiredFlag(cameraRestricted),
+            screenRestricted = requiredFlag(screenRestricted),
+            speechRestricted = requiredFlag(speechRestricted),
+        )
+
+    private fun requiredFlag(flag: Boolean?): Boolean = flag ?: throw InvalidParticipantRestrictionsException()
+}
+
+/**
+ * Contract №50 request body — `UpdateParticipantRoleRequest`
+ * (api-contract.md §4): exactly `{role: "moderator" | "participant"}`
+ * — the elevation/demotion pair of the EQUAL moderators (Q21=A; no
+ * «владелец» role exists, the creator just STARTS as a moderator).
+ * The raw-string-then-validate discipline of [CreateConferenceRequest]:
+ * an absent/unknown label is the contract 400 `errors: {role:
+ * [invalid_role]}`.
+ */
+data class UpdateParticipantRoleRequest(
+    val role: String? = null,
+) {
+    /** №50 shape check: the [ParticipantRole] of the label, or `400 invalid_role`. */
+    fun validatedRole(): ParticipantRole =
+        when (role) {
+            MODERATOR_ROLE -> ParticipantRole.MODERATOR
+            PARTICIPANT_ROLE -> ParticipantRole.PARTICIPANT
+            else -> throw InvalidParticipantRoleException()
+        }
+
+    private companion object {
+        private const val MODERATOR_ROLE = "moderator"
+        private const val PARTICIPANT_ROLE = "participant"
+    }
+}

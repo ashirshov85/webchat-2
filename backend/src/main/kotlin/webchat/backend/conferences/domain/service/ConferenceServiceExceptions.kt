@@ -73,6 +73,22 @@ class ConferenceFullException : RuntimeException("the conference participant quo
 }
 
 /**
+ * 403 (api-contract.md 009 §1/№48–№53, FR-008/FR-009): the caller is
+ * an ACTIVE chat member (the uniform 404 of [ConferenceNotFoundException]
+ * already separated him from strangers) but his conference principal
+ * row is not `role='moderator'` — a plain participant, or a member who
+ * has not joined the conference yet, or the roster is already gone
+ * (Q18=A). Moderators are EQUAL: the gate knows nothing about the
+ * TARGET — any participant, including other moderators and the
+ * creator, is a legit object of №49/№50/№51 (Q21=A — no «владелец»
+ * role exists). Raised by the T039 controller BEFORE every moderation
+ * leg; nothing is written and no media call is made.
+ */
+class ModeratorRequiredException : RuntimeException("the caller is not a moderator of the conference") {
+    val code: String = "moderator_required"
+}
+
+/**
  * 404 (api-contract.md 009 №49/№50/№51): the moderation target
  * `{identity}` resolves to no principal of the conference — unknown,
  * malformed or never joined, or the conference is already finalized

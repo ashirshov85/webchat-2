@@ -84,6 +84,22 @@ class ConferencesExceptionHandlerTest {
                 // №44/№45–№47 path shape — the raw-segment gates
                 case("invalid_uuid", HttpStatus.BAD_REQUEST, FIELD_CHAT_ID) { handler.onInvalidConferenceChatId() },
                 case("invalid_uuid", HttpStatus.BAD_REQUEST, FIELD_CONFERENCE_ID) { handler.onInvalidConferenceId() },
+                // T039 №48–№51 — the target-blind role gate of the equal moderators (Q21=A)
+                case("moderator_required", HttpStatus.FORBIDDEN, FIELD_CONFERENCE) { handler.onModeratorRequired() },
+                // T039 №49/№50/№51 — the folded moderation target (ended roster is indistinguishable)
+                case("participant_not_found", HttpStatus.NOT_FOUND, FIELD_PARTICIPANT) {
+                    handler.onParticipantNotFound()
+                },
+                // T039 №49/№50/№51 request shape — the identity segment and the two bodies
+                case("malformed_request", HttpStatus.BAD_REQUEST, FIELD_PARTICIPANT_IDENTITY) {
+                    handler.onInvalidParticipantIdentity()
+                },
+                case("malformed_request", HttpStatus.BAD_REQUEST, FIELD_PARTICIPANT_RESTRICTIONS) {
+                    handler.onInvalidParticipantRestrictions()
+                },
+                case("invalid_role", HttpStatus.BAD_REQUEST, FIELD_PARTICIPANT_ROLE) {
+                    handler.onInvalidParticipantRole()
+                },
             ).stream()
 
         private fun case(
@@ -103,5 +119,9 @@ class ConferencesExceptionHandlerTest {
         private const val FIELD_CONFERENCE = "conference"
         private const val FIELD_CONFERENCE_ID = "conferenceId"
         private const val FIELD_MODE = "mode"
+        private const val FIELD_PARTICIPANT = "participant"
+        private const val FIELD_PARTICIPANT_IDENTITY = "identity"
+        private const val FIELD_PARTICIPANT_RESTRICTIONS = "restrictions"
+        private const val FIELD_PARTICIPANT_ROLE = "role"
     }
 }

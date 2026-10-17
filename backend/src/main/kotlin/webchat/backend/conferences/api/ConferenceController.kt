@@ -4,45 +4,59 @@ import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.security.oauth2.jwt.Jwt
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
 import webchat.backend.conferences.api.dto.ConferenceMode
 import webchat.backend.conferences.api.dto.ConferenceView
 import webchat.backend.conferences.api.dto.CreateConferenceRequest
+import webchat.backend.conferences.api.dto.InvalidParticipantIdentityException
 import webchat.backend.conferences.api.dto.JoinTicket
 import webchat.backend.conferences.api.dto.MeView
+import webchat.backend.conferences.api.dto.ParticipantView
+import webchat.backend.conferences.api.dto.UpdateParticipantRestrictionsRequest
+import webchat.backend.conferences.api.dto.UpdateParticipantRoleRequest
 import webchat.backend.conferences.api.dto.conferenceEndReasonLabel
 import webchat.backend.conferences.api.dto.conferenceModeLabel
 import webchat.backend.conferences.api.dto.conferenceStatusLabel
 import webchat.backend.conferences.api.dto.participantRoleLabel
 import webchat.backend.conferences.domain.model.Conference
+import webchat.backend.conferences.domain.model.ConferenceIdentity
 import webchat.backend.conferences.domain.model.ParticipantRole
 import webchat.backend.conferences.domain.port.ChatMembershipChecker
 import webchat.backend.conferences.domain.port.ConferenceCreateResult
 import webchat.backend.conferences.domain.port.ConferenceModeReader
 import webchat.backend.conferences.domain.port.ConferenceRepository
 import webchat.backend.conferences.domain.port.LiveKitAdminClient
+import webchat.backend.conferences.domain.port.MemberNameReader
 import webchat.backend.conferences.domain.port.ParticipantRepository
 import webchat.backend.conferences.domain.service.ConferenceEndedException
 import webchat.backend.conferences.domain.service.ConferenceForbiddenException
 import webchat.backend.conferences.domain.service.ConferenceNotFoundException
 import webchat.backend.conferences.domain.service.ConferenceService
 import webchat.backend.conferences.domain.service.JoinTokenService
+import webchat.backend.conferences.domain.service.ModerationService
+import webchat.backend.conferences.domain.service.ModerationUpdate
+import webchat.backend.conferences.domain.service.ModeratorRequiredException
 import java.util.UUID
 
 /**
- * T019 (009, US1) — the member surface of the `conferences` tag:
- * №44 `POST /api/v1/chats/{chatId}/conferences`, №45 `GET
- * /api/v1/conferences/{conferenceId}`, №46 `GET …/me` and №47 `POST
- * …/join` — a thin HTTP adapter in the [webchat.backend.chats.api.ChatController]
- * discipline: the owner id is the token `sub` claim, the raw path
- * segments refuse as the typed 400 `invalid_uuid` problems BEFORE any
- * collaborator is touched, and every business refusal leaves as a
- * typed exception rendered problem+json by
- * [ConferencesExceptionHandler].
+ * T019 (009, US1) + T039 (009, US3) — the member surface of the
+ * `conferences` tag: №44 `POST /api/v1/chats/{chatId}/conferences`,
+ * №45 `GET /api/v1/conferences/{conferenceId}`, №46 `GET …/me`, №47
+ * `POST …/join` (T019) and the moderation family №48 `POST …/end`,
+ * №49 `PUT …/participants/{identity}/restrictions`, №50 `PUT
+ * …/participants/{identity}/role`, №51 `DELETE
+ * …/participants/{identity}` (T039) — a thin HTTP adapter in the
+ * [webchat.backend.chats.api.ChatController] discipline: the owner id
+ * is the token `sub` claim, the raw path segments refuse as the typed
+ * 400 `invalid_uuid` problems BEFORE any collaborator is touched, and
+ * every business refusal leaves as a typed exception rendered
+ * problem+json by [ConferencesExceptionHandler].
  *
  * The division of labor the services were built for (their KDocs pin
  * it): №44 delegates its whole gate ladder to
@@ -58,6 +72,21 @@ import java.util.UUID
  * (api-contract.md §1 — the existence of a conference is never
  * disclosed; only №44/№47 split the explicit 403).
  *
+ * The №48–№51 moderation ladder of T039 (api-contract.md §1): the
+ * SAME uniform 404 of [resolveForRead] (a stranger never learns the
+ * conference exists), then the ROLE gate `403 moderator_required`
+ * ([requireModerator]) — the row of the CALLER only: moderators are
+ * EQUAL and act on ANY target including each other and the creator
+ * (Q21=A — no «владелец» role exists), so the gate deliberately knows
+ * nothing about the `{identity}` it is pointed at — and only then the
+ * [ModerationService] legs with their own refusals (`409
+ * conference_ended` of the №48 repeat, `404 participant_not_found` of
+ * the folded target). The one ordering subtlety: №48 checks the
+ * ENDED row BEFORE the role gate — the finalize deleted the whole
+ * roster (Q18=A), so the gate row is gone exactly when the contract's
+ * repeat answer `409 conference_ended` must win over an undecidable
+ * 403.
+ *
  * The [ConferenceView] projection: `activeParticipants` is the
  * media-plane connection truth of `ListParticipants` (the DB mirrors
  * none of it, research §4/§7) and `mode` comes from the invite widget
@@ -70,17 +99,19 @@ import java.util.UUID
  * fail the durable create).
  */
 @RestController
-// the №44–№47 collaborators, one port per leg (DIP, plan.md VIII); one
-// endpoint per №44–№47 operation plus the shared view/path helpers —
-// T039/T045 extend the same class
+// the №44–№51 collaborators, one port per leg (DIP, plan.md VIII); one
+// endpoint per №44–№51 operation plus the shared view/path helpers —
+// T045 extends the same class
 @Suppress("LongParameterList", "TooManyFunctions")
 class ConferenceController(
     private val conferenceService: ConferenceService,
     private val joinTokenService: JoinTokenService,
+    private val moderationService: ModerationService,
     private val conferenceRepository: ConferenceRepository,
     private val participantRepository: ParticipantRepository,
     private val membership: ChatMembershipChecker,
     private val inviteModes: ConferenceModeReader,
+    private val memberNames: MemberNameReader,
     private val liveKit: LiveKitAdminClient,
 ) {
     /**
@@ -178,7 +209,178 @@ class ConferenceController(
         return joinTokenService.mintMember(callerId, conference)
     }
 
+    /**
+     * №48 (api-contract.md 009 §2, T039): the moderator's end of the
+     * WHOLE conference — `204`, everyone disconnects through the
+     * `DeleteRoom` of [ModerationService.end]. The ladder: the uniform
+     * `404 conference_not_found` of [resolveForRead] → `409
+     * conference_ended` of an ALREADY-ended row (deliberately BEFORE
+     * the role gate: the finalize deleted the whole roster, Q18=A, so
+     * the gate row is gone exactly when the contract's repeat answer
+     * must win over an undecidable 403) → `403 moderator_required` of
+     * [requireModerator] → the service's own ended re-check as the
+     * concurrent-end race backstop.
+     *
+     * `ThrowsCount` suppressed: the throw statements ARE the №48
+     * refusal ladder of api-contract.md 009 §2, in the contract order.
+     */
+    @Suppress("ThrowsCount")
+    @PostMapping("/api/v1/conferences/{conferenceId}/end")
+    fun end(
+        @PathVariable conferenceId: String,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Unit> {
+        val callerId = callerId(accessToken)
+        val conference = resolveForRead(parseConferenceId(conferenceId), callerId)
+        if (conference.isEnded) {
+            throw ConferenceEndedException()
+        }
+        requireModerator(conference, callerId)
+        moderationService.end(conference)
+        return ResponseEntity.noContent().build()
+    }
+
+    /**
+     * №49 (api-contract.md 009 §2, T039): the full SET of the target's
+     * four moderation flags — `200 ParticipantView` of the row AFTER
+     * the write plus the live `online` flag observed by the immediate
+     * `UpdateParticipant`/`MutePublishedTrack` application (SC-005).
+     * The ladder: the shape 400s (the raw `conferenceId`, the blank
+     * `{identity}`, the partial body) → the uniform 404 →
+     * [requireModerator] → the service's `404 participant_not_found`
+     * of the folded target. The target is ANY participant — another
+     * moderator, the creator, the caller himself (Q21=A): the gate
+     * never looks at the `{identity}` it is pointed at.
+     */
+    @PutMapping("/api/v1/conferences/{conferenceId}/participants/{identity}/restrictions")
+    fun setRestrictions(
+        @PathVariable conferenceId: String,
+        @PathVariable identity: String,
+        @RequestBody request: UpdateParticipantRestrictionsRequest,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ParticipantView {
+        val callerId = callerId(accessToken)
+        val restrictions = request.validatedRestrictions()
+        requireIdentity(identity)
+        val conference = resolveForRead(parseConferenceId(conferenceId), callerId)
+        requireModerator(conference, callerId)
+        return viewOf(moderationService.setRestrictions(conference, identity, restrictions))
+    }
+
+    /**
+     * №50 (api-contract.md 009 §2, T039): the role SET of the target —
+     * `200 ParticipantView` with the persisted role (Q9=A) and the
+     * live `online` flag of the metadata broadcast leg. The SAME
+     * ladder as №49 with the `role` shape check (`400 invalid_role`);
+     * elevation and demotion are one symmetric pair — moderators are
+     * EQUAL, the creator is demotable, no «владелец» exists (Q21=A).
+     */
+    @PutMapping("/api/v1/conferences/{conferenceId}/participants/{identity}/role")
+    fun setRole(
+        @PathVariable conferenceId: String,
+        @PathVariable identity: String,
+        @RequestBody request: UpdateParticipantRoleRequest,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ParticipantView {
+        val callerId = callerId(accessToken)
+        val role = request.validatedRole()
+        requireIdentity(identity)
+        val conference = resolveForRead(parseConferenceId(conferenceId), callerId)
+        requireModerator(conference, callerId)
+        return viewOf(moderationService.changeRole(conference, identity, role))
+    }
+
+    /**
+     * №51 (api-contract.md 009 §2, T039): the kick — `204`, the
+     * immediate `RemoveParticipant` of every live connection of the
+     * target with NO row write (кик ≠ бан — the re-join by the
+     * still-active link stays open). The SAME ladder as №49/№50; the
+     * service owns the `404 participant_not_found` fold and lets a
+     * media-plane failure surface as `503
+     * conference_media_unavailable` (there is no durable fact to
+     * outrank the disconnect — the ModerationService.kick contract).
+     */
+    @DeleteMapping("/api/v1/conferences/{conferenceId}/participants/{identity}")
+    fun kick(
+        @PathVariable conferenceId: String,
+        @PathVariable identity: String,
+        @AuthenticationPrincipal accessToken: Jwt,
+    ): ResponseEntity<Unit> {
+        val callerId = callerId(accessToken)
+        requireIdentity(identity)
+        val conference = resolveForRead(parseConferenceId(conferenceId), callerId)
+        requireModerator(conference, callerId)
+        moderationService.kick(conference, identity)
+        return ResponseEntity.noContent().build()
+    }
+
     private fun callerId(accessToken: Jwt): UUID = UUID.fromString(accessToken.subject)
+
+    /**
+     * The №48–№51 role gate (api-contract.md 009 §1, FR-008): the
+     * CALLER's principal row must be `role='moderator'` — a plain
+     * participant, a member who has not joined the conference yet and
+     * an already-finalized roster (Q18=A) all answer the SAME `403
+     * moderator_required` through [ModeratorRequiredException]. The
+     * gate is TARGET-blind on purpose: moderators are equal and act
+     * on anyone including each other and the creator (Q21=A), so no
+     * `{identity}` — and no self-action — is ever refused here.
+     */
+    private fun requireModerator(
+        conference: Conference,
+        callerId: UUID,
+    ) {
+        val caller = participantRepository.findMember(conference.id, callerId)
+        if (caller?.role != ParticipantRole.MODERATOR) {
+            throw ModeratorRequiredException()
+        }
+    }
+
+    /**
+     * The №49/№50/№51 `ParticipantView` projection (api-contract.md §4):
+     * the row AFTER the applied change with the just-persisted flags
+     * and the `online` flag the service observed during the immediate
+     * application — one object, the panel re-renders without a
+     * follow-up read. [ParticipantView.name] is the guest's stored
+     * display name or the member's `users.username` through
+     * [MemberNameReader] (a guest row cannot exist without its name
+     * and a member row cannot exist without its user — the V18
+     * shape-CHECK; a `null` username is the invariant breach it is).
+     */
+    private fun viewOf(update: ModerationUpdate): ParticipantView {
+        val row = update.participant
+        return ParticipantView(
+            identity = row.identity.value,
+            name =
+                when (row.identity) {
+                    is ConferenceIdentity.Member ->
+                        memberNames.usernameOf(row.identity.userId)
+                            ?: error("participant ${row.identity.value} has no users row (the V18 invariant)")
+                    is ConferenceIdentity.Guest -> row.displayName!!
+                },
+            role = participantRoleLabel(row.role),
+            guest = row.isGuest,
+            micRestricted = row.restrictions.micRestricted,
+            cameraRestricted = row.restrictions.cameraRestricted,
+            screenRestricted = row.restrictions.screenRestricted,
+            speechRestricted = row.restrictions.speechRestricted,
+            online = update.online,
+        )
+    }
+
+    /**
+     * The `{identity}` shape gate of №49/№50/№51 (api-contract.md 009
+     * §2): a blank segment is the contract 400 `errors: {identity:
+     * [malformed_request]}`; a MALFORMED but non-blank value is NOT
+     * checked here — it folds inside [ModerationService] to the same
+     * `404 participant_not_found` as an unknown one (the 006 privacy
+     * precedent, nothing echoed).
+     */
+    private fun requireIdentity(raw: String) {
+        if (raw.isBlank()) {
+            throw InvalidParticipantIdentityException()
+        }
+    }
 
     /**
      * The №45/№46 resolution (api-contract.md 009 §1): the uniform 404 —
