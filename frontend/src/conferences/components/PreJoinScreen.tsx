@@ -174,6 +174,17 @@ function deviceLabel(device: MediaDeviceInfo, fallbackBase: string, index: numbe
   return device.label.trim() !== '' ? device.label : `${fallbackBase} ${index + 1}`
 }
 
+/** Плейсхолдер превью при выключенной камере: ожидание acquisition, блокировка модератором, «выключена». */
+function cameraPlaceholder(cameraPending: boolean, cameraBlocked: boolean): string {
+  if (cameraPending) {
+    return 'Включение камеры…'
+  }
+  if (cameraBlocked) {
+    return 'Камера недоступна'
+  }
+  return 'Камера выключена'
+}
+
 export default function PreJoinScreen({
   mode,
   onJoin,
@@ -260,7 +271,7 @@ export default function PreJoinScreen({
       cameraTrackRef.current = track
       setCameraOn(true)
       // разрешение получено — браузер раскрывает метки, обновляем списки
-      void refreshDevices()
+      refreshDevices()
     } catch {
       if (seq === cameraSeqRef.current) {
         setCameraFailed(true)
@@ -415,11 +426,7 @@ export default function PreJoinScreen({
           />
         ) : (
           <p className="conference-prejoin-placeholder" aria-hidden="true">
-            {cameraPending
-              ? 'Включение камеры…'
-              : cameraBlocked
-                ? 'Камера недоступна'
-                : 'Камера выключена'}
+            {cameraPlaceholder(cameraPending, cameraBlocked)}
           </p>
         )}
       </div>
