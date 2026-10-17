@@ -20,8 +20,22 @@ import { SecurityPage } from './settings/pages/SecurityPage'
  */
 const ConferencePage = lazy(() => import('./conferences/pages/ConferencePage'))
 
+/**
+ * Гостевая join-страница (009 US4, T050) — ленивый чанк того же
+ * модуля `conferences/` (`livekit-client` остаётся вне main-bundle,
+ * research §10); запрашивается при заходе по инвайт-ссылке.
+ */
+const GuestJoinPage = lazy(() => import('./conferences/pages/GuestJoinPage'))
+
 /** `/conference/{id}` — единственный сегмент-id после префикса. */
 const CONFERENCE_ROUTE = /^\/conference\/([^/]+)$/
+
+/**
+ * `/join/{inviteToken}` — публичный гостевой маршрут (FR-009):
+ * подписанный nonce ES256 из инвайт-ссылки; base64url-сегменты
+ * JWT безопасны в pathname и матчатся как есть (без декодирования).
+ */
+const GUEST_JOIN_ROUTE = /^\/join\/([^/]+)$/
 
 /**
  * Protected route (T025): a visitor without a refresh token (no
@@ -61,6 +75,26 @@ function renderRoute(pathname: string): ReactNode {
           <ConferencePage conferenceId={conferenceId} />
         </Suspense>
       </ProtectedRoute>
+    )
+  }
+  /**
+   * `/join/:inviteToken` (009 US4, T050): ПУБЛИЧНЫЙ роут — без
+   * аутентификации (внешний гость без аккаунта, FR-009) и без
+   * ProtectedRoute: ленивый чанк грузится сразу, перенаправления на
+   * login нет (returnTo гостю не нужен). Гость видит только экран гостевого входа
+   * и экран конференции — чат-поверхность исключена (FR-010): `/`, `/chat`
+   * и `/conference/:id` остаются protected (перенаправляют без сессии),
+   * API чатов аутентифицированы на сервере (SecurityConfig 009 T047).
+   * Аутентифицированный посетитель ссылки тоже входит гостем (Q14=A) —
+   * роут одинаково открыт для обоих, гостизна решается токеном №55.
+   */
+  const guestJoinRoute = GUEST_JOIN_ROUTE.exec(pathname)
+  const inviteToken = guestJoinRoute?.[1]
+  if (guestJoinRoute !== null && inviteToken !== undefined) {
+    return (
+      <Suspense fallback={<p>Загрузка приглашения…</p>}>
+        <GuestJoinPage inviteToken={inviteToken} />
+      </Suspense>
     )
   }
   switch (pathname) {
