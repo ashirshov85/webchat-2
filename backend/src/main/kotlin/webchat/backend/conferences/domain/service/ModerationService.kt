@@ -4,13 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
+import webchat.backend.auth.domain.port.Clock
 import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.api.dto.participantRoleLabel
 import webchat.backend.conferences.domain.model.Conference
+import webchat.backend.conferences.domain.model.ConferenceEndReason
 import webchat.backend.conferences.domain.model.ConferenceIdentity
 import webchat.backend.conferences.domain.model.ConferenceParticipant
 import webchat.backend.conferences.domain.model.ParticipantRestrictions
 import webchat.backend.conferences.domain.model.ParticipantRole
+import webchat.backend.conferences.domain.port.ConferenceRepository
 import webchat.backend.conferences.domain.port.LiveKitAdminClient
 import webchat.backend.conferences.domain.port.LiveKitParticipant
 import webchat.backend.conferences.domain.port.ParticipantRepository
@@ -31,11 +34,13 @@ data class ModerationUpdate(
 )
 
 /**
- * T036/T037 (009, US3) — the server-side moderation legs of the
+ * T036–T038 (009, US3) — the server-side moderation legs of the
  * `conferences` API over the two-step discipline of research.md §5:
  * the durable SET write plus the IMMEDIATE application to the live
  * connection(s):
  *
+ *  * **№48** [end] — the moderator's end of the WHOLE conference:
+ *    the finalize pre-record (`moderator`) BEFORE `DeleteRoom`;
  *  * **№49** [setRestrictions] — the four-flag SET of the
  *    moderation restrictions;
  *  * **№50** [changeRole] — the role SET, persistent until the end
@@ -88,16 +93,106 @@ data class ModerationUpdate(
  * The moderator gate itself (`403 moderator_required`) and the №48–№51
  * HTTP surface stay with the T039 controller — moderators are equal
  * and act on ANYONE including each other and the creator (Q21=A), so
- * the gate needs nothing here. The №48 end of T038 joins this class.
+ * the gate needs nothing here.
  */
 @Service
 class ModerationService(
     private val participants: ParticipantRepository,
+    private val conferences: ConferenceRepository,
     private val liveKit: LiveKitAdminClient,
     private val metrics: ConferenceMetrics,
     private val objectMapper: ObjectMapper,
+    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(ModerationService::class.java)
+
+    /**
+     * №48 (api-contract.md 009 §2): the moderator's end of the WHOLE
+     * conference — `DeleteRoom` disconnects every participant of
+     * every kind immediately, the media plane's own US3-6 cascade.
+     *
+     * The order is the data-model 009 §Сущность 1 finalize mapping:
+     * the reason PRE-RECORDS by the ONE idempotent
+     * [ConferenceRepository.finalize] (`moderator`) BEFORE
+     * [LiveKitAdminClient.deleteRoom] — the conditional `→ended`
+     * UPDATE plus the Q18=A roster deletions commit first, so the
+     * `room_finished` webhook the deletion fires re-enters finalize
+     * as a NO-OP reusing the pre-recorded reason (the штатный
+     * lifecycle integration of US5 — webhook T053/finalize T055; a
+     * direct finalize without a room deletion is only the sweeper's
+     * webhook-loss compensation, T056/SC-007). A `created`
+     * conference (nobody joined yet) ends the SAME way — the
+     * pre-recorded `moderator` outranks the empty-timeout
+     * `room_lost` mapping of a pre-record-less end.
+     *
+     * The refusals are the contract's repeat ladder: an ENDED row
+     * answers [ConferenceEndedException] (`409 conference_ended`)
+     * BEFORE any write — and so does the finalize race loser: a
+     * concurrent №48 or `room_finished` that ended the row between
+     * the caller's resolution and here wins the conditional UPDATE,
+     * and the `null` return is the SAME «конференция завершена»
+     * repeat answer (invariant 5 — `ended_at`/`end_reason` stay the
+     * winner's, the roster deletions ride the winner's transaction).
+     *
+     * `DeleteRoom` runs strictly AFTER the durable end and is
+     * best-effort by the committed-row-outranks-the-plane rule of
+     * the eager №44 room (the T017 post-commit discipline): the №48
+     * contract table defines no media-failure code, and the ended
+     * row already carries the whole effect — every later mint
+     * answers `409 conference_ended`, the roster is gone — so a
+     * failing plane is logged (ids only, constitution V) and the
+     * room converges by itself: nobody can re-mint, the clients
+     * give up inside `reconnect-window` (Q15=B), and the
+     * `empty_timeout`/`departure_timeout` of the №44 creation close
+     * the drained room, firing the штатный webhook after all.
+     *
+     * `ThrowsCount` suppressed: the two throw statements are the same
+     * single №48 refusal (`409 conference_ended`).
+     */
+    @Suppress("ThrowsCount")
+    fun end(conference: Conference) {
+        if (conference.isEnded) throw ConferenceEndedException()
+        // the winning conditional UPDATE returns the finalized row —
+        // the loser's `null` is the same repeat refusal below
+        conferences
+            .finalize(conference.id, ConferenceEndReason.MODERATOR, clock.now())
+            ?: throw ConferenceEndedException()
+        // the winning pre-record IS the moderator path's finalize:
+        // the later webhook re-enters as a no-op and must never
+        // count twice (invariant 5, the countConferenceEnded contract)
+        metrics.countModerationAction(ConferenceMetrics.ModerationAction.END)
+        metrics.countConferenceEnded(ConferenceEndReason.MODERATOR)
+        deleteRoomAfterFinalize(conference)
+    }
+
+    /**
+     * The `DeleteRoom` leg of №48 — strictly AFTER the finalize
+     * pre-record has committed (the T017 post-commit order): everyone
+     * disconnects immediately, the media plane fires the штатный
+     * `room_finished` webhook (T053/T055) and the deletion of an
+     * already-absent room is the port's success no-op (webhook/sweeper
+     * race). A media-plane failure MUST NOT fail the already-committed
+     * end — the №48 table has no 503, the ended row carries the whole
+     * effect and the drained room converges by the empty/departure
+     * timeouts (see [end]); the warn log carries ids only
+     * (constitution V).
+     *
+     * `TooGenericExceptionCaught` suppressed: the committed end
+     * outranks the room call; the convergence is documented above.
+     */
+    @Suppress("TooGenericExceptionCaught")
+    private fun deleteRoomAfterFinalize(conference: Conference) {
+        try {
+            liveKit.deleteRoom(conference.roomName)
+        } catch (failure: Exception) {
+            log.warn(
+                "DeleteRoom of conference <{}> failed after the moderator finalize committed; " +
+                    "no re-mint is possible and the drained room closes by its empty/departure timeout: {}",
+                conference.id,
+                failure.message,
+            )
+        }
+    }
 
     /**
      * №49 (api-contract.md 009 §2): the full SET of the target's four

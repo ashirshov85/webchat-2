@@ -10,8 +10,10 @@ import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers
 import org.mockito.Mockito
 import org.springframework.jdbc.core.JdbcTemplate
+import webchat.backend.auth.domain.port.Clock
 import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.domain.model.Conference
+import webchat.backend.conferences.domain.model.ConferenceEndReason
 import webchat.backend.conferences.domain.model.ConferenceIdentity
 import webchat.backend.conferences.domain.model.ConferenceParticipant
 import webchat.backend.conferences.domain.model.ParticipantRestrictions
@@ -19,6 +21,7 @@ import webchat.backend.conferences.domain.model.ParticipantRole
 import webchat.backend.conferences.domain.model.PublicationSource
 import webchat.backend.conferences.domain.model.PublishGrants
 import webchat.backend.conferences.domain.port.ConferenceMediaUnavailableException
+import webchat.backend.conferences.domain.port.ConferenceRepository
 import webchat.backend.conferences.domain.port.LiveKitAdminClient
 import webchat.backend.conferences.domain.port.LiveKitParticipant
 import webchat.backend.conferences.domain.port.ParticipantRepository
@@ -26,12 +29,23 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * T036/T037 unit regression (tasks.md US3): the №49/№50/№51
- * moderation legs pinned against research.md §5 — the durable SET
+ * T036–T038 unit regression (tasks.md US3): the №48/№49/№50/№51
+ * moderation legs pinned against research.md §5/§7 — the durable SET
  * writes, the immediate media-plane application and the refusal
  * ladder, port fakes all the way down (the `ConferenceServiceTest`
  * convention):
  *
+ *  * **the end (№48)** — the data-model §Сущность 1 order: the
+ *    finalize pre-record `moderator` commits BEFORE `DeleteRoom`
+ *    (everyone disconnects immediately, the штатная finalization is
+ *    the `room_finished` webhook of US5 — T053/T055, a direct
+ *    finalize is only the sweeper's webhook-loss compensation
+ *    T056); an ended row and the finalize race loser answer the
+ *    SAME `409 conference_ended` repeat refusal with nothing
+ *    disconnected and nothing counted; a media-plane failure never
+ *    fails the already-committed end (the №48 table has no 503 —
+ *    the ended row carries the whole effect, no re-mint is
+ *    possible);
  *  * **the durable SET (№49/№50)** — the target folds through the
  *    principal prefix (a FULL member connection identity of the
  *    roster panel included), the repository receives the verbatim
@@ -65,18 +79,21 @@ import java.util.UUID
  *    disconnect (Q2=A edge semantics), and every applied action
  *    counts its `webchat_conference_moderation_actions_total{action}`.
  */
-@Suppress("TooManyFunctions") // one leg per №49/№50/№51 rule of research.md §5
+@Suppress("TooManyFunctions") // one leg per №48/№49/№50/№51 rule of research.md §5
 class ModerationServiceTest {
     private val participants = Mockito.mock(ParticipantRepository::class.java)
+    private val conferences = Mockito.mock(ConferenceRepository::class.java)
     private val liveKit = Mockito.mock(LiveKitAdminClient::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
     private val service =
         ModerationService(
             participants = participants,
+            conferences = conferences,
             liveKit = liveKit,
             metrics = ConferenceMetrics(meterRegistry, Mockito.mock(JdbcTemplate::class.java)),
             objectMapper = ObjectMapper(),
+            clock = Clock { NOW },
         )
 
     private val conference: Conference =
@@ -85,6 +102,95 @@ class ModerationServiceTest {
     @BeforeEach
     fun stubTheCommonLegs() {
         Mockito.`when`(liveKit.listParticipants(ArgumentMatchers.anyString())).thenReturn(emptyList())
+    }
+
+    @Test
+    fun `the end pre-records the moderator finalize before DeleteRoom`() {
+        val active = conference.activate(NOW)!!
+        Mockito
+            .`when`(
+                conferences.finalize(
+                    eqNotNull(CONFERENCE_ID),
+                    eqNotNull(ConferenceEndReason.MODERATOR),
+                    eqNotNull(NOW),
+                ),
+            ).thenReturn(active.end(ConferenceEndReason.MODERATOR, NOW))
+
+        service.end(active)
+
+        Mockito.inOrder(conferences, liveKit).apply {
+            verify(conferences).finalize(CONFERENCE_ID, ConferenceEndReason.MODERATOR, NOW)
+            verify(liveKit).deleteRoom(conference.roomName)
+        }
+        assertThat(actionCount(END)).isEqualTo(1.0)
+        assertThat(endedCount()).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `a created conference ends the same way — the pre-record outranks room_lost`() {
+        Mockito
+            .`when`(conferences.finalize(anyNotNull(), anyNotNull(), anyNotNull()))
+            .thenReturn(conference.end(ConferenceEndReason.MODERATOR, NOW))
+
+        service.end(conference)
+
+        // nobody ever joined: the eager №44 room is deleted all the
+        // same, and the pre-recorded `moderator` (not the
+        // empty-timeout `room_lost` of a pre-record-less end) wins
+        Mockito.verify(conferences).finalize(CONFERENCE_ID, ConferenceEndReason.MODERATOR, NOW)
+        Mockito.verify(liveKit).deleteRoom(conference.roomName)
+        assertThat(actionCount(END)).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `an ended conference answers conference_ended with nothing written`() {
+        val ended = conference.end(ConferenceEndReason.LAST_LEFT, NOW)!!
+
+        assertThatThrownBy { service.end(ended) }
+            .isInstanceOfSatisfying(ConferenceEndedException::class.java) {
+                assertThat(it.code).isEqualTo("conference_ended")
+            }
+
+        Mockito.verifyNoInteractions(conferences)
+        Mockito.verify(liveKit, Mockito.never()).deleteRoom(anyNotNull())
+        assertThat(actionCount(END)).isZero()
+        assertThat(endedCount()).isZero()
+    }
+
+    @Test
+    fun `the finalize race loser answers the same conference_ended`() {
+        Mockito
+            .`when`(conferences.finalize(anyNotNull(), anyNotNull(), anyNotNull()))
+            .thenReturn(null)
+
+        assertThatThrownBy { service.end(conference) }
+            .isInstanceOfSatisfying(ConferenceEndedException::class.java) {
+                assertThat(it.code).isEqualTo("conference_ended")
+            }
+
+        // a concurrent №48/room_finished won the conditional UPDATE:
+        // nothing disconnects, nothing counts — the winner's answer stands
+        Mockito.verify(liveKit, Mockito.never()).deleteRoom(anyNotNull())
+        assertThat(actionCount(END)).isZero()
+        assertThat(endedCount()).isZero()
+    }
+
+    @Test
+    fun `a media-plane failure never fails the durable end`() {
+        Mockito
+            .`when`(conferences.finalize(anyNotNull(), anyNotNull(), anyNotNull()))
+            .thenReturn(conference.end(ConferenceEndReason.MODERATOR, NOW))
+        Mockito
+            .`when`(liveKit.deleteRoom(ArgumentMatchers.anyString()))
+            .thenThrow(ConferenceMediaUnavailableException(IllegalStateException("plane down")))
+
+        service.end(conference)
+
+        // the committed end outranks the room call: the №48 answer
+        // stays, the action and the winning moderator finalize count,
+        // the drained room converges by its empty/departure timeout
+        assertThat(actionCount(END)).isEqualTo(1.0)
+        assertThat(endedCount()).isEqualTo(1.0)
     }
 
     @Test
@@ -592,6 +698,14 @@ class ModerationServiceTest {
             .counter()
             ?.count() ?: 0.0
 
+    /** The winning moderator-path finalize count of `webchat_conference_ended_total`. */
+    private fun endedCount(): Double =
+        meterRegistry
+            .find(ENDED_TOTAL)
+            .tag("end_reason", "moderator")
+            .counter()
+            ?.count() ?: 0.0
+
     /** Nothing was pushed to the plane: no permission update, no track mute. */
     private fun verifyNoLiveApplication() {
         Mockito
@@ -625,11 +739,15 @@ class ModerationServiceTest {
 
         const val MODERATION_ACTIONS = "webchat_conference_moderation_actions_total"
 
+        const val ENDED_TOTAL = "webchat_conference_ended_total"
+
         const val SET_RESTRICTIONS = "set_restrictions"
 
         const val SET_ROLE = "set_role"
 
         const val KICK = "kick"
+
+        const val END = "end"
 
         /** The capture() null-fallback of the non-null Kotlin parameters (the SessionServiceTest elvis seam). */
         val DUMMY_GRANTS = PublishGrants(canPublish = true, canPublishSources = emptySet())
