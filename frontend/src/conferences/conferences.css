@@ -309,3 +309,12 @@
   font: italic 12px var(--font-body);
   color: var(--muted);
 }
+
+/* Пояснения блокировки источников по №46 MeView (T033, FR-007):
+   «право слова» (Q4=A) или точечные restricted-поля — компактный
+   стек строк под тумблерами (role=status каждого <output>). */
+.conference-prejoin-restrictions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

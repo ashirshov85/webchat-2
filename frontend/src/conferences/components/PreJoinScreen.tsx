@@ -37,7 +37,18 @@
  * предупреждение «как слушатель». Тумблеры остаются доступными:
  * повторное включение камеры здесь — новая попытка acquisition
  * (успех убирает предупреждение), микрофон — выбор на звонок.
- * Блокировка тумблеров по ограничениям №46 MeView — T033.
+ * Блокировка тумблеров по ограничениям прав №46 MeView (T033,
+ * FR-007): micRestricted/cameraRestricted блокируют соответствующий
+ * тумблер с пояснением, speechRestricted («право слова», Q4=A)
+ * блокирует ВСЕ тумблеры публикации — микрофон и камера принудительно
+ * «выкл», превью не запрашивается вовсе, выборка «Войти» уезжает без
+ * запрещённых источников (сервер всё равно срезал бы grants в токене
+ * №47 — UI честен до входа). screenRestricted поясняется строкой:
+ * тумблера экрана на pre-join нет (демонстрация начинается в звонке,
+ * T028), пояснение снимает сюрприз заблокированного тумблера после
+ * входа (T043 — live-обновление). Гостю ограничения не передаются:
+ * строка гостя создаётся при входе, на pre-join ограничений нет
+ * (data-model §2, T049 не передаёт restrictions).
  *
  * Выбор устройств: перечисление MediaDevices + сигналы devicechange —
  * useDevices (T031; подключение/отключение устройств обновляет списки).
@@ -59,7 +70,7 @@ import { createLocalVideoTrack } from 'livekit-client'
 import type { LocalVideoTrack } from 'livekit-client'
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import type { ConferenceMode } from '../api/conferences'
+import type { ConferenceMode, MeView } from '../api/conferences'
 import { useDevices } from '../hooks/useDevices'
 import '../conferences.css'
 
@@ -69,6 +80,16 @@ export interface PreJoinDevices {
   readonly videoInput: string | null
   readonly audioOutput: string | null
 }
+
+/**
+ * Ограничения прав принципала для pre-join (T033, FR-007): четыре
+ * restricted-поля №46 MeView (роль pre-join не нужна — только блокировки
+ * источников). Гость ограничений не передаёт (data-model §2).
+ */
+export type PreJoinRestrictions = Pick<
+  MeView,
+  'micRestricted' | 'cameraRestricted' | 'screenRestricted' | 'speechRestricted'
+>
 
 /** Стартовая выборка pre-join по «Войти»: тумблеры + выбранные устройства (FR-005/FR-006). */
 export interface PreJoinSelection {
@@ -90,6 +111,12 @@ export interface PreJoinScreenProps {
   readonly onCancel?: () => void
   /** Минт №47/№55 в полёте (T034/T049): «Войти» недоступна, aria-busy. */
   readonly joining?: boolean
+  /**
+   * Ограничения прав №46 MeView (T033, FR-007): undefined/null —
+   * ограничений нет (гость на pre-join — строка гостя создаётся при
+   * входе, data-model §2); передаётся T034 из useConference.me.
+   */
+  readonly restrictions?: PreJoinRestrictions | null
 }
 
 /**
@@ -115,6 +142,33 @@ function initialCamera(mode: ConferenceMode): boolean {
   return mode === 'video'
 }
 
+/**
+ * Пояснения блокировки источников по №46 MeView (T033, FR-007):
+ * «право слова» (Q4=A) блокирует ВСЕ публикации — одно объединяющее
+ * пояснение покрывает микрофон/камеру/экран; отдельные restricted-поля
+ * поясняются по отдельности (экран — только строкой: тумблера экрана
+ * на pre-join нет, демонстрация начинается в звонке — T028).
+ */
+function restrictionNotices(restrictions: PreJoinRestrictions | null | undefined): string[] {
+  if (restrictions === null || restrictions === undefined) {
+    return []
+  }
+  if (restrictions.speechRestricted) {
+    return ['Публикация отключена модератором (право слова) — вы войдёте как слушатель']
+  }
+  const notices: string[] = []
+  if (restrictions.micRestricted) {
+    notices.push('Микрофон отключён модератором')
+  }
+  if (restrictions.cameraRestricted) {
+    notices.push('Камера отключена модератором')
+  }
+  if (restrictions.screenRestricted) {
+    notices.push('Демонстрация экрана отключена модератором')
+  }
+  return notices
+}
+
 /** Метка устройства: браузер скрывает label до разрешения — нумерованный fallback. */
 function deviceLabel(device: MediaDeviceInfo, fallbackBase: string, index: number): string {
   return device.label.trim() !== '' ? device.label : `${fallbackBase} ${index + 1}`
@@ -125,14 +179,24 @@ export default function PreJoinScreen({
   onJoin,
   onCancel,
   joining = false,
+  restrictions = null,
 }: PreJoinScreenProps) {
   const titleId = useId()
   const micSelectId = useId()
   const cameraSelectId = useId()
   const speakerSelectId = useId()
 
-  /** Тумблеры стартового состояния: микрофон (вкл в обоих режимах, FR-005) — чистый выбор (трек не держим), камера — живой локальный трек превью (НЕ оптимистично: включён только при живом треке — отказ acquisition возвращает «выкл», T032). */
-  const [micOn, setMicOn] = useState(true)
+  /**
+   * Блокировки источников №46 MeView (T033, FR-007): «право слова»
+   * (Q4=A) глушит ВСЕ публикации — прибавляется к каждому источнику;
+   * отдельные restricted-поля — точечно.
+   */
+  const speechRestricted = restrictions?.speechRestricted === true
+  const micBlocked = speechRestricted || restrictions?.micRestricted === true
+  const cameraBlocked = speechRestricted || restrictions?.cameraRestricted === true
+
+  /** Тумблеры стартового состояния: микрофон (вкл в обоих режимах, FR-005) — чистый выбор (трек не держим; запрещённый (T033) — принудительно выкл), камера — живой локальный трек превью (НЕ оптимистично: включён только при живом треке — отказ acquisition возвращает «выкл», T032; запрещённая — не включается вовсе). */
+  const [micOn, setMicOn] = useState(() => !micBlocked)
   const [cameraOn, setCameraOn] = useState(false)
   /** Камера в полёте acquisition/переключения — тумблер недоступен, плейсхолдер «Включение камеры…». */
   const [cameraPending, setCameraPending] = useState(false)
@@ -167,8 +231,8 @@ export default function PreJoinScreen({
   const cameraPendingRef = useRef(false)
   const videoInputIdRef = useRef('')
   videoInputIdRef.current = videoInputId
-  /** Стартовый дефолт камеры фиксируется на монтаж (mode точки входа — FR-005): интент включения, а не состояние. */
-  const initialCameraRef = useRef(initialCamera(mode))
+  /** Стартовый дефолт камеры фиксируется на монтаж (mode точки входа — FR-005): интент включения, а не состояние; запрещённая модератором камера (T033) не запрашивается вовсе. */
+  const initialCameraRef = useRef(initialCamera(mode) && !cameraBlocked)
 
   /**
    * Включение камеры: acquisition локального трека превью (по выбранному
@@ -252,7 +316,26 @@ export default function PreJoinScreen({
     }
   }, [cameraOn])
 
+  // Ограничение применилось/ужесточилось после монтажа (T033: refetch №46
+  // — T043/T034): запрещённые источники принудительно выключаются,
+  // превью-трек освобождается — UI не обещает того, что сервер
+  // срежет в grants токена №47 (FR-007, Q4=A).
+  useEffect(() => {
+    if (micBlocked) {
+      setMicOn(false)
+    }
+  }, [micBlocked])
+
+  useEffect(() => {
+    if (cameraBlocked) {
+      releaseCamera()
+    }
+  }, [cameraBlocked, releaseCamera])
+
   function flipCamera(): void {
+    if (cameraBlocked) {
+      return
+    }
     if (cameraOn) {
       releaseCamera()
     } else {
@@ -278,11 +361,13 @@ export default function PreJoinScreen({
    * не занимался): стартовое состояние + выбранные устройства уходят
    * родителю (T034/T049 → join №47/№55 и ConferenceRoom), превью-трек
    * освобождается сразу — устройства под публикацию звонка.
+   * Запрещённые источники (T033: «право слова» — все, Q4=A) в выборку
+   * не попадают — защита вдогонку принудительным «выкл» тумблеров.
    */
   function handleJoin(): void {
     const selection: PreJoinSelection = {
-      microphone: micOn,
-      camera: cameraOn,
+      microphone: micOn && !micBlocked,
+      camera: cameraOn && !cameraBlocked,
       devices: {
         audioInput: audioInputId === '' ? null : audioInputId,
         videoInput: videoInputId === '' ? null : videoInputId,
@@ -298,6 +383,9 @@ export default function PreJoinScreen({
     microphonePermission === 'denied',
     cameraPermission === 'denied' || cameraFailed,
   )
+
+  /** Пояснения блокировок №46 MeView (T033, FR-007). */
+  const restrictionNoticeList = restrictionNotices(restrictions)
 
   return (
     <dialog open className="conference-prejoin" aria-labelledby={titleId}>
@@ -316,7 +404,11 @@ export default function PreJoinScreen({
           />
         ) : (
           <p className="conference-prejoin-placeholder" aria-hidden="true">
-            {cameraPending ? 'Включение камеры…' : 'Камера выключена'}
+            {cameraPending
+              ? 'Включение камеры…'
+              : cameraBlocked
+                ? 'Камера недоступна'
+                : 'Камера выключена'}
           </p>
         )}
       </div>
@@ -326,6 +418,7 @@ export default function PreJoinScreen({
           className="conference-controls-toggle"
           aria-label="Микрофон"
           aria-pressed={micOn}
+          disabled={micBlocked}
           onClick={() => {
             setMicOn((on) => !on)
           }}
@@ -340,7 +433,7 @@ export default function PreJoinScreen({
           className="conference-controls-toggle"
           aria-label="Камера"
           aria-pressed={cameraOn}
-          disabled={cameraPending}
+          disabled={cameraPending || cameraBlocked}
           onClick={flipCamera}
         >
           <span aria-hidden="true">Камера</span>
@@ -349,6 +442,15 @@ export default function PreJoinScreen({
           </span>
         </button>
       </fieldset>
+      {restrictionNoticeList.length > 0 && (
+        <div className="conference-prejoin-restrictions">
+          {restrictionNoticeList.map((text) => (
+            <output key={text} className="conference-prejoin-notice">
+              {text}
+            </output>
+          ))}
+        </div>
+      )}
       <div className="conference-prejoin-devices">
         <div className="conference-prejoin-device">
           <label htmlFor={micSelectId}>Микрофон</label>
