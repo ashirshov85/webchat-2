@@ -405,3 +405,130 @@
   font: italic 11px var(--font-body);
   color: var(--err);
 }
+
+/* ============================================================
+ * Панель модерации (T042, US3; FR-008, №48–№51): действия
+ * модератора по строкам участников (мьют микрофона/камеры/экрана,
+ * право слова, назначение/снятие модератора, кик) и «Завершить
+ * конференцию». Видна только роли модератора (metadata локального
+ * подключения). Деструктивные действия (кик/завершение) — через
+ * подтверждение role=alertdialog. Фокус с клавиатуры — 008.
+ * ============================================================ */
+
+.conference-moderation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+}
+
+.conference-moderation-title {
+  margin: 0;
+  font: 15px var(--font-heading);
+  letter-spacing: 0.04em;
+  color: var(--gold-light);
+}
+
+.conference-moderation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conference-moderation-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: var(--r-panel);
+}
+
+.conference-moderation-name {
+  font: 13px var(--font-body);
+  color: var(--cream);
+}
+
+/* Действия строки: компактная переносимая цепочка кнопок. */
+.conference-moderation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.conference-moderation-button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 12px var(--font-body);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+/* Действующее ограничение — приглушённая кнопка возврата (латунь). */
+.conference-moderation-button-restricted {
+  border-color: var(--gold-dark);
+  color: var(--gold-light);
+}
+
+/* Деструктивное (кик/завершение/подтверждение) — акцент отказа. */
+.conference-moderation-button-danger {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.conference-moderation-end {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border: 1px solid var(--err);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--err);
+  cursor: pointer;
+}
+
+/* Подтверждение деструктивного действия (role=alertdialog). */
+.conference-moderation-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--err);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+}
+
+.conference-moderation-confirm-text {
+  margin: 0;
+  font: 12.5px var(--font-body);
+  color: var(--cream);
+}
+
+.conference-moderation-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Нейтральная строка отказа действия (<output> = role=status). */
+.conference-moderation-notice {
+  font: italic 12px var(--font-body);
+  color: var(--muted);
+}
+
+/* Конвенция 008: видимый фокус с клавиатуры (все кнопки панели). */
+.conference-moderation button:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+.conference-moderation button[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}

@@ -86,8 +86,12 @@ interface PublishPermissions {
   readonly canPublishSources: readonly number[]
 }
 
-/** Порядок строк: локальный первым, затем удалённые по identity (стабильный DOM-порядок). */
-function orderParticipants(
+/**
+ * Порядок строк: локальный первым, затем удалённые по identity (стабильный DOM-порядок).
+ * Общий для панелей US3 — ModerationPanel (T042) держит тот же порядок строк.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- чистая проекция без состояния/хуков, разделяется с ModerationPanel (T042)
+export function orderParticipants(
   left: LocalParticipant | RemoteParticipant,
   right: LocalParticipant | RemoteParticipant,
 ): number {
@@ -98,7 +102,8 @@ function orderParticipants(
 }
 
 /** Отображаемое имя строки: name тикета/метаданных, иначе identity (как тайлы T027). */
-function participantLabel(name: string | undefined, identity: string): string {
+// eslint-disable-next-line react-refresh/only-export-components -- чистая проекция без состояния/хуков, разделяется с ModerationPanel (T042)
+export function participantLabel(name: string | undefined, identity: string): string {
   return name !== undefined && name.trim() !== '' ? name : identity
 }
 
@@ -106,9 +111,11 @@ function participantLabel(name: string | undefined, identity: string): string {
  * Пометки из metadata участника: JSON `{"role":…,"guest":…}` (§3) —
  * ставится минтом токена и обновляется UpdateParticipant (broadcast
  * ролей, Q9=A). Отсутствие/битый JSON — нейтральный дефолт «участник,
- * не гость»: список не рушится посторонними метаданными.
+ * не гость»: список не рушится посторонними метаданными. Экспортировано
+ * для ModerationPanel (T042): локальная роль — тот же источник.
  */
-function parseParticipantMarks(metadata: string | undefined): ParticipantMarks {
+// eslint-disable-next-line react-refresh/only-export-components -- чистая проекция без состояния/хуков, разделяется с ModerationPanel (T042)
+export function parseParticipantMarks(metadata: string | undefined): ParticipantMarks {
   if (metadata === undefined) {
     return MARKS_DEFAULT
   }
@@ -133,8 +140,11 @@ function parseParticipantMarks(metadata: string | undefined): ParticipantMarks {
  * (источники не консультируются, Q4=A); иначе точечно — источника нет
  * в canPublishSources ⟺ срезан модератором. Пустой набор источников
  * = «все разрешены» (семантика LiveKit) — ограничений нет.
+ * Экспортировано для ModerationPanel (T042): №49 SET-состояние
+ * выводится из тех же grants (источник истины — LiveKit, SC-005).
  */
-function restrictionMarks(
+// eslint-disable-next-line react-refresh/only-export-components -- чистая проекция без состояния/хуков, разделяется с ModerationPanel (T042)
+export function restrictionMarks(
   permissions: PublishPermissions | undefined,
 ): ParticipantRestrictionMarks {
   if (permissions === undefined) {

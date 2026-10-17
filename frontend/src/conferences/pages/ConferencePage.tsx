@@ -25,11 +25,13 @@
  * №45 `200 status='ended'` (старая ссылка) и №47 `409
  * conference_ended` — терминальное состояние без pre-join и кнопки
  * входа. Блок joined монтирует медиа-комнату ConferenceRoom (T027):
- * подключение по JoinTicket, тайлы участников и адаптация качества
+ * подключение по JoinTicket, тайлы участников и адаптацию качества
  * (FR-004); в слоте children — ParticipantsPanel (T041): список
  * участников из LiveKit (identity/name, роль, online, ограничения),
- * и MediaControls (T028): тумблеры микрофона/камеры/экрана и «Покинуть»
- * (выход — leave слота вкладки,
+ * ModerationPanel (T042): панель действий модератора №48–№51
+ * (рендерится только роли модератора — сама скрывается broadcast'ом
+ * снятия роли), и MediaControls (T028): тумблеры микрофона/камеры/
+ * экрана и «Покинуть» (выход — leave слота вкладки,
  * Q10=A, возврат на pre-join для возможного повторного входа).
  * Сообщения об ошибках — нейтральные, без раскрытия деталей
  * (существование не раскрывается, api-contract §1): ветвление UX по
@@ -43,6 +45,7 @@ import type { ConferenceDeviceSelection } from '../hooks/useDevices'
 import ConferenceRoom from '../components/ConferenceRoom'
 import type { ConferenceRoomInitialMedia } from '../components/ConferenceRoom'
 import MediaControls from '../components/MediaControls'
+import ModerationPanel from '../components/ModerationPanel'
 import ParticipantsPanel from '../components/ParticipantsPanel'
 import PreJoinScreen from '../components/PreJoinScreen'
 import type { PreJoinSelection } from '../components/PreJoinScreen'
@@ -130,6 +133,7 @@ function JoinedPanel({
         refreshTicket={refreshTicket}
       >
         <ParticipantsPanel />
+        <ModerationPanel conferenceId={conferenceId} />
         <MediaControls onLeave={onLeave} />
       </ConferenceRoom>
     </div>

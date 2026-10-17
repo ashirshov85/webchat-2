@@ -1,6 +1,7 @@
 /**
- * Типизированный API-клиент тега `conferences` (009, №44–№47): создание
- * конференции из чата, статус, собственные права и JoinTicket. Типы — из
+ * Типизированный API-клиент тега `conferences` (009, №44–№51): создание
+ * конференции из чата, статус, собственные права, JoinTicket и серверная
+ * модерация (ограничения/роль/кик/завершение). Типы — из
  * генерации `pnpm generate:api` (`contracts/openapi.yaml` — единственный
  * источник истины); ошибки — RFC 9457 Problem: каждый вызов бросает
  * типизированный ApiProblem, коды контракта едут в `errors: {field:
@@ -29,6 +30,16 @@ export type MeView = components['schemas']['MeView']
 /** №47/№55 JoinTicket: короткоживущий LiveKit-токен + wsUrl + identity. */
 export type JoinTicket = components['schemas']['JoinTicket']
 
+/** №49/№50 ParticipantView: применённое состояние участника (роль + 4 ограничения + online). */
+export type ParticipantView = components['schemas']['ParticipantView']
+
+/** №49 тело запроса: ПОЛНОЕ SET-состояние четырёх ограничений (сброс — false). */
+export type UpdateParticipantRestrictionsRequest =
+  components['schemas']['UpdateParticipantRestrictionsRequest']
+
+/** №50 тело запроса: назначение/снятие модератора (равноправие — Q21=A). */
+export type UpdateParticipantRoleRequest = components['schemas']['UpdateParticipantRoleRequest']
+
 /**
  * Коды ошибок контракта №44–№47: «конференция завершена» (`conference_ended`
  * — ответ по старой ссылке), «нет доступа» (`conference_forbidden` — не-член
@@ -46,6 +57,20 @@ export type ConferenceErrorCode =
   | 'conference_ended'
   | 'conference_full'
   | 'conference_media_unavailable'
+
+/**
+ * Коды ошибок контракта модерации №48–№51: правовой гейт `moderator_required`
+ * (403, включая снятие роли самому себе в полёте), цель ушла из конференции
+ * (`participant_not_found` — строка LiveKit уже отсутствует), терминальное
+ * `conference_ended` и единый не-раскрывающий `conference_not_found`.
+ */
+export type ModerationErrorCode =
+  | 'invalid_uuid'
+  | 'malformed_request'
+  | 'conference_not_found'
+  | 'conference_ended'
+  | 'moderator_required'
+  | 'participant_not_found'
 
 async function authedRequest(path: string, method: string, body?: unknown): Promise<Response> {
   const response = await apiFetch(path, {
@@ -81,6 +106,16 @@ export function conferenceErrorCode(value: unknown): ConferenceErrorCode | null 
   if (!isConferenceProblem(value)) return null
   const code = Object.values(value.errors ?? {}).flat()[0]
   return (code as ConferenceErrorCode | undefined) ?? null
+}
+
+/**
+ * Единственный код ошибки из Problem модерации №48–№51
+ * (`errors: {field: [code]}`); null — не Problem (сеть/транспорт).
+ */
+export function moderationErrorCode(value: unknown): ModerationErrorCode | null {
+  if (!isConferenceProblem(value)) return null
+  const code = Object.values(value.errors ?? {}).flat()[0]
+  return (code as ModerationErrorCode | undefined) ?? null
 }
 
 /**
@@ -142,4 +177,70 @@ export async function joinConference(conferenceId: string): Promise<JoinTicket> 
     'POST',
   )
   return (await response.json()) as JoinTicket
+}
+
+/**
+ * №48 `POST /conferences/{conferenceId}/end`: завершение модератором —
+ * медиа-комната удаляется (все отключаются немедленно), SSE
+ * `conference.ended` членам чата (финализация — вебхук US5/T055).
+ * Модераторы равноправны (Q21=A). Ошибки: `moderator_required`,
+ * `conference_not_found`, `conference_ended` (повтор по завершённой).
+ */
+export async function endConference(conferenceId: string): Promise<void> {
+  await authedRequest(`/conferences/${encodeURIComponent(conferenceId)}/end`, 'POST')
+}
+
+/**
+ * №49 `PUT /conferences/{conferenceId}/participants/{identity}/restrictions`:
+ * полное SET-состояние четырёх ограничений (идемпотентно, передаются все
+ * поля — текущее состояние панели выводит из grants LiveKit); применяется
+ * немедленно ≤ 2 c (SC-005: UpdateParticipant + MutePublishedTrack) и
+ * персистентно до конца конференции (Q5/Q22=A). Ошибки:
+ * `moderator_required`, `conference_not_found`, `participant_not_found`.
+ */
+export async function updateParticipantRestrictions(
+  conferenceId: string,
+  identity: string,
+  restrictions: UpdateParticipantRestrictionsRequest,
+): Promise<ParticipantView> {
+  const response = await authedRequest(
+    `/conferences/${encodeURIComponent(conferenceId)}/participants/${encodeURIComponent(identity)}/restrictions`,
+    'PUT',
+    restrictions,
+  )
+  return (await response.json()) as ParticipantView
+}
+
+/**
+ * №50 `PUT /conferences/{conferenceId}/participants/{identity}/role`:
+ * назначение/снятие модератора — роль персистентна, включая
+ * переподключение (Q9=A), применяется немедленно broadcast'ом metadata
+ * (SC-005). Действия применимы к любому участнику (Q21=A). Ошибки:
+ * `moderator_required`, `conference_not_found`, `participant_not_found`.
+ */
+export async function updateParticipantRole(
+  conferenceId: string,
+  identity: string,
+  role: UpdateParticipantRoleRequest['role'],
+): Promise<ParticipantView> {
+  const response = await authedRequest(
+    `/conferences/${encodeURIComponent(conferenceId)}/participants/${encodeURIComponent(identity)}/role`,
+    'PUT',
+    { role },
+  )
+  return (await response.json()) as ParticipantView
+}
+
+/**
+ * №51 `DELETE /conferences/{conferenceId}/participants/{identity}`: кик —
+ * немедленный разрыв подключения (≤ 2 c, SC-005); кик ≠ бан —
+ * переподключение по действующей ссылке допустимо (edge spec.md).
+ * Ошибки: `moderator_required`, `conference_not_found`,
+ * `participant_not_found`.
+ */
+export async function kickParticipant(conferenceId: string, identity: string): Promise<void> {
+  await authedRequest(
+    `/conferences/${encodeURIComponent(conferenceId)}/participants/${encodeURIComponent(identity)}`,
+    'DELETE',
+  )
 }
