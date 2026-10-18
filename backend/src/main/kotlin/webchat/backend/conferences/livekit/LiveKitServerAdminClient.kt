@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Component
 import retrofit2.Call
 import retrofit2.Response
+import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.domain.model.PublicationSource
 import webchat.backend.conferences.domain.model.PublishGrants
 import webchat.backend.conferences.domain.port.ConferenceMediaUnavailableException
@@ -46,6 +47,13 @@ import java.time.Duration
  * Twirp `not_found` classification (HTTP 404 or the `not_found`
  * error code); an existing `CreateRoom` target is updated, never
  * duplicated (the sweeper's self-heal rides the same call).
+ *
+ * **Observability** (research §13, FR-018/SC-009, T067): every logical
+ * Twirp call — the whole retry loop of [twirp] — is timed as a
+ * `webchat_conference_livekit_api_seconds{method}` sample through
+ * [ConferenceMetrics.startLiveKitApi]; the per-method latency is the
+ * media-plane health signal behind the `503 conference_media_unavailable`
+ * edge (SC-001 on real data).
  */
 @Component
 @Suppress("TooManyFunctions") // the 8 port methods of §4 + the adapter's single retry/mapping plumbing
@@ -55,11 +63,13 @@ class LiveKitServerAdminClient
         private val client: RoomServiceClient,
         private val retryBackoff: Duration,
         private val maxAttempts: Int,
+        private val metrics: ConferenceMetrics,
     ) : LiveKitAdminClient {
         @Autowired
         constructor(
             properties: ConferencesProperties,
             objectMapper: ObjectMapper,
+            metrics: ConferenceMetrics,
         ) : this(
             objectMapper = objectMapper,
             client =
@@ -70,6 +80,7 @@ class LiveKitServerAdminClient
                 ),
             retryBackoff = DEFAULT_RETRY_BACKOFF,
             maxAttempts = DEFAULT_MAX_ATTEMPTS,
+            metrics = metrics,
         )
 
         /**
@@ -84,7 +95,7 @@ class LiveKitServerAdminClient
         ) {
             // both outcomes are success: SET-semantics — the existing
             // room configuration is simply re-asserted
-            twirp {
+            twirp(ConferenceMetrics.LiveKitMethod.CREATE_ROOM) {
                 client.createRoom(
                     name = name,
                     emptyTimeout = emptyTimeout.toLiveKitSeconds(),
@@ -96,12 +107,12 @@ class LiveKitServerAdminClient
 
         /** `DeleteRoom` (§4): the controlled end — an absent room is the idempotent no-op (webhook/sweeper race). */
         override fun deleteRoom(name: String) {
-            twirp { client.deleteRoom(name) }
+            twirp(ConferenceMetrics.LiveKitMethod.DELETE_ROOM) { client.deleteRoom(name) }
         }
 
         /** `ListRooms` (§4): the bare room-name set — the №44 pre-flight probe and the sweeper's existence scan. */
         override fun listRoomNames(): Set<String> =
-            when (val outcome = twirp { client.listRooms() }) {
+            when (val outcome = twirp(ConferenceMetrics.LiveKitMethod.LIST_ROOMS) { client.listRooms() }) {
                 is TwirpOutcome.Success -> outcome.body?.mapTo(HashSet()) { it.name } ?: emptySet()
                 TwirpOutcome.TargetAbsent -> emptySet()
             }
@@ -111,7 +122,12 @@ class LiveKitServerAdminClient
          * pre-checks, invite revocation, chat-removal disconnect.
          */
         override fun listParticipants(room: String): List<LiveKitParticipant> =
-            when (val outcome = twirp { client.listParticipants(room) }) {
+            when (
+                val outcome =
+                    twirp(ConferenceMetrics.LiveKitMethod.LIST_PARTICIPANTS) {
+                        client.listParticipants(room)
+                    }
+            ) {
                 is TwirpOutcome.Success ->
                     outcome.body.orEmpty().map { info ->
                         // proto3 keeps unset metadata as "" — the port
@@ -130,7 +146,7 @@ class LiveKitServerAdminClient
             room: String,
             identity: String,
         ) {
-            twirp { client.removeParticipant(room, identity) }
+            twirp(ConferenceMetrics.LiveKitMethod.REMOVE_PARTICIPANT) { client.removeParticipant(room, identity) }
         }
 
         /**
@@ -146,7 +162,7 @@ class LiveKitServerAdminClient
             permission: PublishGrants,
             metadata: String,
         ) {
-            twirp {
+            twirp(ConferenceMetrics.LiveKitMethod.UPDATE_PARTICIPANT) {
                 client.updateParticipant(
                     room,
                     identity,
@@ -171,13 +187,22 @@ class LiveKitServerAdminClient
             source: PublicationSource,
         ) {
             val target =
-                when (val outcome = twirp { client.listParticipants(room) }) {
+                when (
+                    val outcome =
+                        twirp(ConferenceMetrics.LiveKitMethod.LIST_PARTICIPANTS) {
+                            client.listParticipants(room)
+                        }
+                ) {
                     is TwirpOutcome.Success -> outcome.body?.firstOrNull { it.identity == identity } ?: return
                     TwirpOutcome.TargetAbsent -> return
                 }
             target.tracksList
                 .filter { it.source == source.toWire() && !it.muted }
-                .forEach { track -> twirp { client.mutePublishedTrack(room, identity, track.sid, true) } }
+                .forEach { track ->
+                    twirp(ConferenceMetrics.LiveKitMethod.MUTE_PUBLISHED_TRACK) {
+                        client.mutePublishedTrack(room, identity, track.sid, true)
+                    }
+                }
         }
 
         /**
@@ -191,7 +216,7 @@ class LiveKitServerAdminClient
             topic: String,
             payload: String,
         ) {
-            twirp {
+            twirp(ConferenceMetrics.LiveKitMethod.SEND_DATA) {
                 client.sendData(
                     room,
                     payload.toByteArray(StandardCharsets.UTF_8),
@@ -211,16 +236,29 @@ class LiveKitServerAdminClient
          * (misconfiguration — e.g. a bad API pair answering 401/403)
          * failing FAST as a loud [TwirpFailure] instead of a dishonest
          * «unavailable», and exhausted retries surfacing as
-         * [ConferenceMediaUnavailableException].
+         * [ConferenceMediaUnavailableException]. The WHOLE logical call
+         * — retries and backoff included — is one
+         * `webchat_conference_livekit_api_seconds{method}` sample
+         * (FR-018/SC-009, T067): a degrading plane reads as degrading
+         * latency, which is the signal the 503 edge rides.
          */
-        private fun <T> twirp(callFactory: () -> Call<T>): TwirpOutcome<T> =
-            when (val result = runAttempts(callFactory)) {
-                is RetryResult.Completed -> result.outcome
-                is RetryResult.Aborted ->
-                    throw result.loudFailure ?: ConferenceMediaUnavailableException(
-                        result.lastFailure ?: error("the retry loop must record a failure before aborting"),
-                    )
+        private fun <T> twirp(
+            method: ConferenceMetrics.LiveKitMethod,
+            callFactory: () -> Call<T>,
+        ): TwirpOutcome<T> {
+            val sample = metrics.startLiveKitApi(method)
+            return try {
+                when (val result = runAttempts(callFactory)) {
+                    is RetryResult.Completed -> result.outcome
+                    is RetryResult.Aborted ->
+                        throw result.loudFailure ?: ConferenceMediaUnavailableException(
+                            result.lastFailure ?: error("the retry loop must record a failure before aborting"),
+                        )
+                }
+            } finally {
+                sample.stop()
             }
+        }
 
         /**
          * The retry loop of [twirp]: a finished try returns, a loud try or

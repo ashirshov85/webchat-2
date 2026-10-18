@@ -7,6 +7,7 @@ import org.mockito.ArgumentMatchers
 import org.mockito.Mockito
 import org.springframework.http.HttpStatus
 import org.springframework.security.oauth2.jwt.Jwt
+import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.api.dto.ConferenceMode
 import webchat.backend.conferences.api.dto.CreateConferenceRequest
 import webchat.backend.conferences.api.dto.GuestInviteView
@@ -98,6 +99,7 @@ class ConferenceControllerTest {
     private val inviteModes = Mockito.mock(ConferenceModeReader::class.java)
     private val memberNames = Mockito.mock(MemberNameReader::class.java)
     private val liveKit = Mockito.mock(LiveKitAdminClient::class.java)
+    private val metrics = Mockito.mock(ConferenceMetrics::class.java)
 
     private val controller =
         ConferenceController(
@@ -111,6 +113,7 @@ class ConferenceControllerTest {
             inviteModes = inviteModes,
             memberNames = memberNames,
             liveKit = liveKit,
+            metrics = metrics,
         )
 
     @Test
@@ -303,6 +306,7 @@ class ConferenceControllerTest {
 
         assertThrows<ConferenceForbiddenException> { controller.join(CONFERENCE_ID.toString(), tokenOf(CALLER_ID)) }
 
+        Mockito.verify(metrics).countJoinDenied(ConferenceMetrics.JoinDenialReason.MEMBERSHIP)
         Mockito.verifyNoInteractions(joinTokenService)
         Mockito
             .verify(participantRepository, Mockito.never())
@@ -317,6 +321,9 @@ class ConferenceControllerTest {
 
         assertThrows<ConferenceEndedException> { controller.join(CONFERENCE_ID.toString(), tokenOf(CALLER_ID)) }
 
+        Mockito
+            .verify(metrics, Mockito.never())
+            .countJoinDenied(ConferenceMetrics.JoinDenialReason.MEMBERSHIP)
         Mockito.verifyNoInteractions(joinTokenService)
     }
 

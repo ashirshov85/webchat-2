@@ -482,7 +482,7 @@ class ConferenceLifecycleIT : ConferencesTestSupport() {
         livekit.start()
 
         openUserEvents(bob).use { bobStream ->
-            val returnedPlane = LiveKitServerAdminClient(returnedPlaneProperties(), objectMapper)
+            val returnedPlane = LiveKitServerAdminClient(returnedPlaneProperties(), objectMapper, conferenceMetrics)
             val sweeper = schedulerOf(properties = returnedPlaneProperties(), adapter = returnedPlane)
 
             // the first observation of the absence starts the grace clock — nothing yet

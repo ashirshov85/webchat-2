@@ -474,7 +474,10 @@ export function floodJoinByInvite(data) {
   const response = http.post(
     `${CONFERENCES_ENDPOINT}/join-by-invite`,
     JSON.stringify({ inviteToken: `flood55-${runId}-${Math.random().toString(36).slice(2)}`, name: 'k6 flood' }),
-    { headers: { 'X-Forwarded-For': data.flood55Ip }, tags: { op: 'flood_join_by_invite' } },
+    {
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': data.flood55Ip },
+      tags: { op: 'flood_join_by_invite' },
+    },
   )
   if (response.status === 200 || response.status === 404) floodAdmissions55Total.add(1)
   check(response, {
@@ -585,7 +588,7 @@ export function controlPlaneLoop(data) {
       const guest = http.post(
         `${CONFERENCES_ENDPOINT}/join-by-invite`,
         JSON.stringify({ inviteToken, name: `k6 guest ${runId}` }),
-        { tags: { op: 'guest_join' } },
+        { headers: { 'Content-Type': 'application/json' }, tags: { op: 'guest_join' } },
       )
       check(guest, {
         '№55 guest join is 200 with g: identity': r => {

@@ -6,6 +6,7 @@ import com.nimbusds.jose.JWSHeader
 import com.nimbusds.jose.crypto.ECDSASigner
 import com.nimbusds.jwt.JWTClaimsSet
 import com.nimbusds.jwt.SignedJWT
+import io.micrometer.core.instrument.MeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -93,6 +94,9 @@ private const val CONTEXT_SEPARATING_PROPERTY = "conferences.reconnect-window=11
 class ConferenceGuestAccessIT : ConferencesTestSupport() {
     @Autowired
     private lateinit var redisTemplate: StringRedisTemplate
+
+    @Autowired
+    private lateinit var meterRegistry: MeterRegistry
 
     /** SC-003: every forgery mode folds into ONE uniform refusal — №54 and №55 alike. */
     @Test
@@ -399,6 +403,7 @@ class ConferenceGuestAccessIT : ConferencesTestSupport() {
     fun `the invite-info flood answers 429 and the background api keeps its budget`() {
         val (alice, bob) = messagingPair()
         ensureChatOk(alice, bob.id)
+        val rateLimitedBefore = rateLimitDenials()
 
         repeat(WARMUP_SAMPLES) { assertThat(listChats(alice).statusCode).isEqualTo(HttpStatus.OK) }
         val baselineP99 = p99MicrosOf(List(BASELINE_SAMPLES) { timedChatsRead(alice) })
@@ -434,6 +439,10 @@ class ConferenceGuestAccessIT : ConferencesTestSupport() {
                 baselineP99,
                 NOISE_GUARD_MICROS,
             ).isLessThanOrEqualTo(baselineP99 + baselineP99 / DEGRADATION_BUDGET_DIVISOR + NOISE_GUARD_MICROS)
+        assertThat(rateLimitDenials())
+            .overridingErrorMessage(
+                "the 429 legs count webchat_conference_joins_denied_total{reason=rate_limit} (FR-018/SC-009, T067)",
+            ).isGreaterThan(rateLimitedBefore)
     }
 
     /**
@@ -457,7 +466,24 @@ class ConferenceGuestAccessIT : ConferencesTestSupport() {
         assertThat(guestRowsOf(conferenceId))
             .overridingErrorMessage("a throttled flood never reaches the chain — no guest row was minted")
             .isEmpty()
+        assertThat(rateLimitDenials())
+            .overridingErrorMessage(
+                "the №55 429 legs count webchat_conference_joins_denied_total{reason=rate_limit} " +
+                    "(FR-018/SC-009, T067)",
+            ).isGreaterThan(0.0)
     }
+
+    /**
+     * The FR-018 rate-limit denial counter of the T067 seam (find(): the
+     * common `application` tag stays unasserted).
+     */
+    private fun rateLimitDenials(): Double =
+        meterRegistry
+            .find(JOINS_DENIED_METRIC)
+            .tag(REASON_TAG, RATE_LIMIT_REASON)
+            .counter()
+            ?.count()
+            ?: 0.0
 
     // --- the forgery builders and the SC-004 measurement helpers ----------------
 
@@ -550,6 +576,13 @@ class ConferenceGuestAccessIT : ConferencesTestSupport() {
         const val MINUTE_SECONDS = 60
 
         const val TOO_MANY_REQUESTS_STATUS = 429
+
+        /** The FR-018 denial-counter coordinates of the T067 observability seam. */
+        const val JOINS_DENIED_METRIC = "webchat_conference_joins_denied_total"
+
+        const val REASON_TAG = "reason"
+
+        const val RATE_LIMIT_REASON = "rate_limit"
 
         const val WARMUP_SAMPLES = 10
 

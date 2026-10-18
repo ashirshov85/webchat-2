@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
+import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.api.dto.ConferenceMode
 import webchat.backend.conferences.api.dto.ConferenceView
 import webchat.backend.conferences.api.dto.CreateConferenceRequest
@@ -127,6 +128,7 @@ class ConferenceController(
     private val inviteModes: ConferenceModeReader,
     private val memberNames: MemberNameReader,
     private val liveKit: LiveKitAdminClient,
+    private val metrics: ConferenceMetrics,
 ) {
     /**
      * №44 (api-contract.md 009 §2): `201 ConferenceView` for the winner
@@ -196,10 +198,12 @@ class ConferenceController(
      * the row (`404 conference_not_found`), the EVERY-JOIN membership
      * gate (FR-003/SC-002: `403 conference_forbidden` BEFORE any quota
      * probe, principal row or token — a stranger, a №32-kicked and a
-     * №33-left former member answer identically and never mint), the
-     * `409 conference_ended` of an old link — and the service owns the
-     * mint-time legs (`409 conference_full` of the FR-015 quota,
-     * `503 conference_media_unavailable`).
+     * №33-left former member answer identically and never mint, and
+     * the 403 leg counts
+     * `webchat_conference_joins_denied_total{reason=membership}` of
+     * FR-018/SC-009, T067), the `409 conference_ended` of an old link —
+     * and the service owns the mint-time legs (`409 conference_full` of
+     * the FR-015 quota, `503 conference_media_unavailable`).
      *
      * `ThrowsCount` suppressed: the three throw statements ARE the №47
      * refusal ladder of api-contract.md 009 §2, in the contract order.
@@ -215,6 +219,9 @@ class ConferenceController(
             conferenceRepository.findById(parseConferenceId(conferenceId))
                 ?: throw ConferenceNotFoundException()
         if (!membership.isMember(conference.chatId, callerId)) {
+            // the SC-002 refusal is observable on real data (FR-018/SC-009,
+            // T067): the denial counter rides the SAME ladder leg as the 403
+            metrics.countJoinDenied(ConferenceMetrics.JoinDenialReason.MEMBERSHIP)
             throw ConferenceForbiddenException()
         }
         if (conference.isEnded) {

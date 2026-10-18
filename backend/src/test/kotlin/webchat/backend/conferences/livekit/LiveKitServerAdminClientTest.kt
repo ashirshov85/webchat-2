@@ -3,6 +3,7 @@ package webchat.backend.conferences.livekit
 import com.fasterxml.jackson.databind.ObjectMapper
 import io.livekit.server.RoomService
 import io.livekit.server.RoomServiceClient
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import livekit.LivekitModels.DataPacket
 import livekit.LivekitModels.ParticipantInfo
 import livekit.LivekitModels.Room
@@ -25,14 +26,18 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatCode
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito
+import org.springframework.jdbc.core.JdbcTemplate
 import retrofit2.Call
 import retrofit2.Response
+import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.domain.model.PublicationSource
 import webchat.backend.conferences.domain.model.PublishGrants
 import webchat.backend.conferences.domain.port.ConferenceMediaUnavailableException
 import webchat.backend.conferences.domain.port.LiveKitParticipant
 import java.io.IOException
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 /**
  * Unit mirror of the T012 adapter contract (livekit-integration.md §4/§7):
@@ -49,6 +54,8 @@ import java.time.Duration
 class LiveKitServerAdminClientTest {
     private val roomService = RecordingRoomService()
 
+    private val meterRegistry = SimpleMeterRegistry()
+
     private val adapter =
         LiveKitServerAdminClient(
             // retryBackoff ZERO: the backoff curve itself is a constant of
@@ -57,7 +64,39 @@ class LiveKitServerAdminClientTest {
             client = RoomServiceClient(roomService, "devkey", "secret"),
             retryBackoff = Duration.ZERO,
             maxAttempts = 3,
+            metrics = ConferenceMetrics(meterRegistry, Mockito.mock(JdbcTemplate::class.java)),
         )
+
+    /**
+     * T067 (FR-018/SC-009): every logical Twirp call times one
+     * `webchat_conference_livekit_api_seconds{method}` sample — retries
+     * and backoff included in the single sample of the logical call.
+     */
+    @Test
+    fun everyTwirpCallTimesTheLiveKitApiTimer() {
+        roomService.stub("deleteRoom", success(Room.getDefaultInstance()))
+        roomService.stub("listRooms", success(ListRoomsResponse.getDefaultInstance()))
+
+        adapter.deleteRoom("c:1")
+        adapter.listRoomNames()
+        adapter.deleteRoom("c:1")
+
+        val deleteTimer =
+            meterRegistry
+                .find("webchat_conference_livekit_api_seconds")
+                .tag("method", "DeleteRoom")
+                .timer()
+        val listTimer =
+            meterRegistry
+                .find("webchat_conference_livekit_api_seconds")
+                .tag("method", "ListRooms")
+                .timer()
+        assertThat(deleteTimer).isNotNull
+        assertThat(deleteTimer!!.count()).isEqualTo(2L)
+        assertThat(listTimer).isNotNull
+        assertThat(listTimer!!.count()).isEqualTo(1L)
+        assertThat(deleteTimer.max(TimeUnit.SECONDS)).isNotNegative()
+    }
 
     @Test
     fun createRoomSendsContractParameters() {
