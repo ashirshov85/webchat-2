@@ -2,6 +2,7 @@ package webchat.backend.conferences.livekit
 
 import com.google.protobuf.InvalidProtocolBufferException
 import io.livekit.server.WebhookReceiver
+import livekit.LivekitWebhook
 import org.slf4j.LoggerFactory
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.http.HttpHeaders
@@ -14,6 +15,8 @@ import org.springframework.web.bind.annotation.RestController
 import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.ConferenceMetrics.WebhookEvent
 import webchat.backend.conferences.ConferenceMetrics.WebhookResult
+import webchat.backend.conferences.domain.service.ConferenceLifecycleService
+import webchat.backend.conferences.domain.service.ConferenceWebhookEvent
 import webchat.backend.config.ConferencesProperties
 import java.nio.charset.StandardCharsets
 import java.time.Duration
@@ -61,6 +64,7 @@ class LiveKitWebhookController(
     properties: ConferencesProperties,
     private val metrics: ConferenceMetrics,
     private val redisTemplate: StringRedisTemplate,
+    private val lifecycle: ConferenceLifecycleService,
 ) {
     private val webhookReceiver = WebhookReceiver(properties.livekit.apiKey, properties.livekit.apiSecret)
 
@@ -106,10 +110,46 @@ class LiveKitWebhookController(
             return OK
         }
 
-        // intake complete; the T054 lifecycle service consumes the event here
+        // intake complete; the T054 lifecycle service consumes the
+        // event here — and a processing failure is STILL the 200 of
+        // the 200-always rule (§5 «Доступность»: valid events are
+        // never lost to a retry-suppressing error status); the
+        // `processed`/`ignored` metric samples close inside the
+        // service, `duplicate` above stays this boundary's own
+        // (`TooGenericExceptionCaught` suppressed: the failure text
+        // only — no payload — reaches the log, constitution V)
         log.debug("accepted a webhook delivery of event type <{}>", event.event)
+        try {
+            lifecycle.onWebhook(domainEventOf(event))
+        } catch (failure: Exception) {
+            log.warn(
+                "processing of a webhook delivery of event type <{}> failed; answered 200 by the availability rule " +
+                    "(the sweeper of T056 compensates a lost state effect): {}",
+                event.event,
+                failure.toString(),
+            )
+        }
         return OK
     }
+
+    /**
+     * The T054 hand-off mapping: the signature-verified protobuf folds
+     * onto the DOMAIN event set — this adapter is the ONLY place the
+     * SDK type is readable (DIP); absent room/participant fields ride
+     * as empty strings and resolve to the service's tagged no-ops,
+     * and the identity/room values cross verbatim without ever
+     * reaching a log (§5 «Приватность»).
+     */
+    private fun domainEventOf(event: LivekitWebhook.WebhookEvent): ConferenceWebhookEvent =
+        when (event.event) {
+            EVENT_ROOM_STARTED -> ConferenceWebhookEvent.RoomStarted(event.room.name)
+            EVENT_PARTICIPANT_JOINED ->
+                ConferenceWebhookEvent.ParticipantJoined(event.room.name, event.participant.identity)
+            EVENT_PARTICIPANT_LEFT ->
+                ConferenceWebhookEvent.ParticipantLeft(event.room.name, event.participant.identity)
+            EVENT_ROOM_FINISHED -> ConferenceWebhookEvent.RoomFinished(event.room.name)
+            else -> ConferenceWebhookEvent.Unhandled(event.event)
+        }
 
     /**
      * The `event.id` dedup marker — `SET NX EX` under [DEDUP_KEY_PREFIX]:
@@ -141,6 +181,15 @@ class LiveKitWebhookController(
          * the markers expire and the Redis set stays constant-size.
          */
         val DEDUP_WINDOW: Duration = Duration.ofMinutes(5)
+
+        /** livekit-integration.md §5: the handled wire event labels (the T054 mapping vocabulary). */
+        const val EVENT_ROOM_STARTED = "room_started"
+
+        const val EVENT_PARTICIPANT_JOINED = "participant_joined"
+
+        const val EVENT_PARTICIPANT_LEFT = "participant_left"
+
+        const val EVENT_ROOM_FINISHED = "room_finished"
 
         private val OK = ResponseEntity<Unit>(HttpStatus.OK)
 

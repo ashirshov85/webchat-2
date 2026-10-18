@@ -98,7 +98,7 @@ data class Conference(
      * §2): `c:{conferenceId}` — opaque, no PII. Derived, not stored.
      */
     val roomName: String
-        get() = "c:$id"
+        get() = "$ROOM_NAME_PREFIX$id"
 
     /** FR-001 idempotence surface: a non-ended conference still accepts joins/token mints. */
     val isEnded: Boolean
@@ -142,6 +142,27 @@ data class Conference(
         }
 
     companion object {
+        /** The room-name prefix of livekit-integration.md §2: `c:{conferenceId}` — opaque, no PII. */
+        const val ROOM_NAME_PREFIX = "c:"
+
+        /**
+         * The inbound twin of [roomName] (T054): folds a webhook room
+         * name back to the conference id — [ROOM_NAME_PREFIX] + a valid
+         * UUID. Malformed input (foreign prefix, non-UUID tail) yields
+         * `null`, never throws: webhook bodies are external input, and
+         * a room this backend never created is the metric-tagged
+         * no-op of livekit-integration.md §5 (the
+         * [ConferenceIdentity.parsePrincipal] discipline).
+         */
+        fun conferenceIdOfRoomName(roomName: String): UUID? {
+            if (!roomName.startsWith(ROOM_NAME_PREFIX)) return null
+            return try {
+                UUID.fromString(roomName.substring(ROOM_NAME_PREFIX.length))
+            } catch (_: IllegalArgumentException) {
+                null
+            }
+        }
+
         /**
          * №44 `POST /chats/{chatId}/conferences` (T017): the new row
          * starts [CREATED][ConferenceStatus.CREATED] — the room is

@@ -291,6 +291,28 @@ class RedisRealtimePublisher(
         toUserIds.forEach { addressee -> publishEnvelope(addressee, EVENT_PRESENCE_UPDATED, payload) }
     }
 
+    /**
+     * T054 (realtime-conference-events.md 009 §1): the conferences
+     * lifecycle frames ride the SAME per-user channel family and the
+     * SAME at-most-once post-commit discipline as every other №18
+     * frame — the transport stays conference-agnostic (it only fans
+     * the frame family out, no new topology, research.md 006 §4): the
+     * caller's adapter
+     * (`webchat.backend.conferences.repository.RedisConferenceEventPublisher`)
+     * owns the contract payload serialization, exactly like the
+     * presence T017 seam above. Every envelope rides the SAME
+     * [pushTimer] pipeline, so the frame is observed in
+     * `webchat_realtime_push_seconds` with `event=conference.started`
+     * on the publish leg here and the dispatch leg in [handleFrame]
+     * (SC-006).
+     */
+    fun fanoutConferenceStarted(
+        toUserIds: List<UUID>,
+        payload: Map<String, Any>,
+    ) {
+        toUserIds.forEach { addressee -> publishEnvelope(addressee, EVENT_CONFERENCE_STARTED, payload) }
+    }
+
     /** The T019 dynamic subscription hook: subscribe `rt:user:{id}` on the first live session. */
     override fun onFirstConnection(userId: UUID) {
         pubSub.subscribe(userChannel(userId))
@@ -548,6 +570,9 @@ class RedisRealtimePublisher(
 
         /** realtime-events.md 008a §1.3: the №42 own-channel sync `event:` value (T053). */
         const val EVENT_CHAT_SOUND_UPDATED = "chat.sound.updated"
+
+        /** realtime-conference-events.md 009 §1: the lifecycle `event:` value (T054). */
+        const val EVENT_CONFERENCE_STARTED = "conference.started"
 
         /** The internal wire envelope fields (transport detail, NOT the public SSE framing). */
         const val FIELD_EVENT = "event"

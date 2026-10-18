@@ -16,12 +16,15 @@ import org.springframework.data.redis.core.ValueOperations
 import org.springframework.http.HttpStatus
 import org.springframework.jdbc.core.JdbcTemplate
 import webchat.backend.conferences.ConferenceMetrics
+import webchat.backend.conferences.domain.service.ConferenceLifecycleService
+import webchat.backend.conferences.domain.service.ConferenceWebhookEvent
 import webchat.backend.config.ConferencesProperties
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Duration
 import java.util.Base64
 import java.util.Date
+import java.util.UUID
 
 /**
  * T053 unit regression (tasks.md US5): the LiveKit webhook intake of
@@ -64,11 +67,14 @@ class LiveKitWebhookControllerTest {
 
     private val meterRegistry = SimpleMeterRegistry()
 
+    private val lifecycle = Mockito.mock(ConferenceLifecycleService::class.java)
+
     private val controller =
         LiveKitWebhookController(
             properties = TEST_PROPERTIES,
             metrics = ConferenceMetrics(meterRegistry, Mockito.mock(JdbcTemplate::class.java)),
             redisTemplate = redisTemplate,
+            lifecycle = lifecycle,
         )
 
     @BeforeEach
@@ -90,6 +96,7 @@ class LiveKitWebhookControllerTest {
 
         assertThat(response.statusCode).isEqualTo(HttpStatus.UNAUTHORIZED)
         Mockito.verifyNoInteractions(valueOperations)
+        Mockito.verifyNoInteractions(lifecycle)
         assertThat(webhookCounters()).isEmpty()
     }
 
@@ -122,7 +129,7 @@ class LiveKitWebhookControllerTest {
     }
 
     @Test
-    fun `a validly signed event answers 200 and marks its id seen for the dedup window`() {
+    fun `a validly signed event answers 200, marks its id seen and hands the event to the lifecycle service`() {
         val response =
             controller.receive(
                 ROOM_FINISHED_BODY.toByteArray(StandardCharsets.UTF_8),
@@ -137,11 +144,42 @@ class LiveKitWebhookControllerTest {
                 Mockito.eq("1"),
                 Mockito.eq(LiveKitWebhookController.DEDUP_WINDOW),
             )
+        Mockito.verify(lifecycle).onWebhook(ConferenceWebhookEvent.RoomFinished(ROOM_NAME))
         assertThat(webhookCounters()).isEmpty()
     }
 
     @Test
-    fun `a duplicate delivery answers 200 and counts the duplicate metric of the event type`() {
+    fun `a participant event maps with its room and participant identity`() {
+        val body =
+            """{"event":"participant_joined","id":"$EVENT_ID","room":{"name":"$ROOM_NAME"},""" +
+                """"participant":{"identity":"$MEMBER_CONNECTION_IDENTITY"}}"""
+
+        val response = controller.receive(body.toByteArray(StandardCharsets.UTF_8), signedAuthHeader(body))
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
+        Mockito
+            .verify(lifecycle)
+            .onWebhook(ConferenceWebhookEvent.ParticipantJoined(ROOM_NAME, MEMBER_CONNECTION_IDENTITY))
+    }
+
+    @Test
+    fun `a processing failure still answers 200 by the availability rule`() {
+        Mockito
+            .`when`(lifecycle.onWebhook(ConferenceWebhookEvent.RoomFinished(ROOM_NAME)))
+            .thenThrow(IllegalStateException("processing exploded"))
+
+        val response =
+            controller.receive(
+                ROOM_FINISHED_BODY.toByteArray(StandardCharsets.UTF_8),
+                signedAuthHeader(ROOM_FINISHED_BODY),
+            )
+
+        assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
+        Mockito.verify(lifecycle).onWebhook(ConferenceWebhookEvent.RoomFinished(ROOM_NAME))
+    }
+
+    @Test
+    fun `a duplicate delivery answers 200, counts the duplicate metric and never reaches the processor`() {
         Mockito
             .`when`(
                 valueOperations.setIfAbsent(
@@ -159,6 +197,7 @@ class LiveKitWebhookControllerTest {
 
         assertThat(response.statusCode).isEqualTo(HttpStatus.OK)
         assertThat(duplicateCount(event = "room_finished")).isEqualTo(1.0)
+        Mockito.verifyNoInteractions(lifecycle)
     }
 
     @Test
@@ -272,8 +311,16 @@ class LiveKitWebhookControllerTest {
 
         const val EVENT_ID = "11111111-2222-3333-4444-555555555555"
 
-        val ROOM_FINISHED_BODY =
-            """{"event":"room_finished","id":"$EVENT_ID","room":{"name":"c:00000000-0000-0000-0000-0000000000aa"}}"""
+        const val ROOM_NAME = "c:00000000-0000-0000-0000-0000000000aa"
+
+        val MEMBER_USER_ID: UUID = UUID.fromString("00000000-0000-0000-0000-000000000001")
+
+        val CONNECTION_ID: UUID = UUID.fromString("00000000-0000-0000-0000-000000000002")
+
+        /** a full member connection identity — what the plane reports (research §4). */
+        val MEMBER_CONNECTION_IDENTITY = "u:$MEMBER_USER_ID:$CONNECTION_ID"
+
+        val ROOM_FINISHED_BODY = """{"event":"room_finished","id":"$EVENT_ID","room":{"name":"$ROOM_NAME"}}"""
 
         val TEST_PROPERTIES =
             ConferencesProperties(
