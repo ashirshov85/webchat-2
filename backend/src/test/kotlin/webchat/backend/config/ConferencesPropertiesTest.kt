@@ -37,6 +37,9 @@ class ConferencesPropertiesTest {
                 // №54/№55 (api-contract.md 009 §3 canon)
                 assertThat(properties.rateLimit.inviteInfo).isEqualTo("30/1m")
                 assertThat(properties.rateLimit.joinByInvite).isEqualTo("10/1m")
+                // T053: the LiveKit webhook intake bucket (api-contract.md
+                // 009 §3 canon — generous for delivery retries)
+                assertThat(properties.rateLimit.livekitWebhook).isEqualTo("60/1m")
             }
     }
 
@@ -63,6 +66,7 @@ class ConferencesPropertiesTest {
                 "conferences.livekit.api-secret=prodsecret",
                 "conferences.rate-limit.invite-info=60/1m",
                 "conferences.rate-limit.join-by-invite=20/1m",
+                "conferences.rate-limit.livekit-webhook=120/1m",
             ).run { context ->
                 val properties = context.getBean(ConferencesProperties::class.java)
 
@@ -84,6 +88,7 @@ class ConferencesPropertiesTest {
                 // exactly these knobs (2× the default buckets)
                 assertThat(properties.rateLimit.inviteInfo).isEqualTo("60/1m")
                 assertThat(properties.rateLimit.joinByInvite).isEqualTo("20/1m")
+                assertThat(properties.rateLimit.livekitWebhook).isEqualTo("120/1m")
             }
     }
 
@@ -118,6 +123,7 @@ class ConferencesPropertiesTest {
                 "conferences.livekit.api-secret=secret",
                 "conferences.rate-limit.invite-info=30/1m",
                 "conferences.rate-limit.join-by-invite=10/1m",
+                "conferences.rate-limit.livekit-webhook=60/1m",
             )
     }
 }

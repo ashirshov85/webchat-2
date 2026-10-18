@@ -179,7 +179,7 @@ description: "Task list for feature implementation: Видеоконференц
 
 **Purpose**: Сквозные проверки качества, безопасности и готовности (конституция: Development Workflow & Quality Gates)
 
-- [ ] T063 [P] Прогнать полный контур контракта и backend: `./scripts/validate-contracts.sh` (vacuum → openapi-typescript → drift-check → oasdiff без breaking) и `./gradlew test` (workdir `backend/`) — все IT зелёные
+- [X] T063 [P] Прогнать полный контур контракта и backend: `./scripts/validate-contracts.sh` (vacuum → openapi-typescript → drift-check → oasdiff без breaking) и `./gradlew test` (workdir `backend/`) — все IT зелёные
 - [ ] T064 [P] Прогнать frontend: `pnpm --dir frontend test`, `pnpm --dir frontend exec playwright test tests/e2e/conferences.spec.ts` (против local-compose LiveKit), lint/format backend+frontend
 - [ ] T065 Аудит безопасности (принцип V): `LIVEKIT_API_KEY/SECRET` и ключи nonce — только env; webhook payload и identity без PII не логируются; гостю недоступны API чатов (проверка без Bearer); ошибки публичных endpoints не раскрывают деталей конференции/причин подделки
 - [ ] T066 Прогнать ручную валидацию quickstart.md §3.1–§3.5 целиком на `deploy/local` (включая негативные ветки: §3.1 шаг 3, §3.4 шаги 5–8, §3.5 шаги 2–5) и доступность pre-join/экрана конференции по стандартам 008 (FR-007)
