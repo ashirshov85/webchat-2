@@ -3,6 +3,8 @@ package webchat.backend.conferences.domain.service
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate
 import webchat.backend.auth.domain.port.Clock
 import webchat.backend.conferences.ConferenceMetrics
@@ -11,8 +13,11 @@ import webchat.backend.conferences.ConferenceMetrics.WebhookEvent
 import webchat.backend.conferences.ConferenceMetrics.WebhookResult
 import webchat.backend.conferences.api.dto.ConferenceMode
 import webchat.backend.conferences.domain.model.Conference
+import webchat.backend.conferences.domain.model.ConferenceEndReason
 import webchat.backend.conferences.domain.model.ConferenceIdentity
+import webchat.backend.conferences.domain.model.ConferenceStatus
 import webchat.backend.conferences.domain.port.ChatMembershipChecker
+import webchat.backend.conferences.domain.port.ConferenceEndedEvent
 import webchat.backend.conferences.domain.port.ConferenceEventPublisher
 import webchat.backend.conferences.domain.port.ConferenceModeReader
 import webchat.backend.conferences.domain.port.ConferenceRepository
@@ -69,7 +74,8 @@ sealed interface ConferenceWebhookEvent {
 
     /**
      * `room_finished` — the room closed (empty timeouts or
-     * `DeleteRoom`); the штатный finalize path belongs to T055.
+     * `DeleteRoom`); the штатный finalize seat of [finalize] — the
+     * reason mapping rides the row's own status.
      */
     data class RoomFinished(
         val roomName: String,
@@ -82,10 +88,11 @@ sealed interface ConferenceWebhookEvent {
 }
 
 /**
- * T054 (009, US5) — the webhook PROCESSING half of the lifecycle (the
+ * T054/T055 (009, US5) — the webhook PROCESSING half of the lifecycle
+ * and the ONE idempotent finalize every end path funnels into (the
  * T053 intake stays the boundary: signature, dedup, 200-always; this
  * service owns every state effect, realtime publication and metric of
- * an accepted event — livekit-integration.md §5, research §7):
+ * an accepted event — livekit-integration.md §5, research.md §7):
  *
  *  * **`room_started` → 200/no-op** — the room is created EAGERLY at
  *    №44 (post-commit `CreateRoom`, T017), so the webhook arrives
@@ -112,22 +119,38 @@ sealed interface ConferenceWebhookEvent {
  *    a rowcount-0 mark (a connection the backend never minted for,
  *    the finalize race already deleted the roster) is a silent no-op
  *    — the webhook still answers 200;
+ *  * **`room_finished` → [finalize]** — the штатный end of an
+ *    `active` conference (`last_left`, the departure/empty timeouts
+ *    closed the drained room) and of a `created` one (`room_lost`,
+ *    «никто не вошёл», the empty timeout ate the eager №44 room) —
+ *    data-model 009 §Сущность 1; the №48 `room_finished` after
+ *    T038's `DeleteRoom` re-enters [finalize] as the repository's
+ *    `null` no-op reusing the pre-recorded `moderator` (invariant 5);
  *  * **the rest** — 200/no-op with the `ignored` metric.
  *
- * ONE transaction per participant event ([TransactionTemplate], the
- * T017 convention): the conditional transition, the membership
- * snapshot and the mark commit together, and the SSE fires strictly
- * AFTER it (the `SystemMessageService` post-commit rule — a rolled
- * back transition never announces anything). The mode of the SSE
- * payload is the invite-widget projection ([ConferenceModeReader]) —
- * a `null` there is the broken T017 create-transaction invariant and
- * fails LOUD, rolling the transition back (the resolveMode precedent
- * of the №44/№45 controller); the T053 intake still answers 200 and
- * the sweeper (T056) converges the orphan.
+ * The [finalize] seat (T055, SC-007) — the callers beside the webhook:
+ * №48 ([ModerationService.end] pre-records `moderator` BEFORE
+ * `DeleteRoom`), the max-duration/sweeper scheduler (`max_duration`/
+ * `room_lost`, T056) and the chat-deletion listener (`chat_deleted`,
+ * T062 — inside the deletion transaction, BEFORE the `ON DELETE
+ * CASCADE`, FR-014).
+ *
+ * ONE transaction per state effect ([TransactionTemplate], the T017
+ * convention): the conditional transition, the membership snapshot and
+ * the Q18=A roster deletions commit together, and the SSE fires
+ * strictly AFTER it (the `SystemMessageService` post-commit rule — a
+ * rolled back transition never announces anything). The mode of the
+ * started SSE payload is the invite-widget projection
+ * ([ConferenceModeReader]) — a `null` there is the broken T017
+ * create-transaction invariant and fails LOUD, rolling the transition
+ * back (the resolveMode precedent of the №44/№45 controller); the T053
+ * intake still answers 200 and the sweeper (T056) converges the
+ * orphan.
  */
 @Service
-// the T054 collaborators, one port per leg (DIP, plan.md VIII)
-@Suppress("LongParameterList")
+// the T054/T055 collaborators, one port per leg (DIP, plan.md VIII);
+// one function per §5 webhook rule + the shared T055 finalize seat
+@Suppress("LongParameterList", "TooManyFunctions")
 class ConferenceLifecycleService(
     private val conferences: ConferenceRepository,
     private val participants: ParticipantRepository,
@@ -150,6 +173,19 @@ class ConferenceLifecycleService(
     private val participantEvent = TransactionTemplate(transactionManager)
 
     /**
+     * The ONE transaction of the T055 finalize: the ACTIVE-membership
+     * snapshot, the conditional `→ended` UPDATE and the Q18=A roster
+     * deletions ([ConferenceRepository.finalize]) commit or roll back
+     * TOGETHER. The template joins an AMBIENT transaction when there
+     * is one ([finalize] is the T062 chat-deletion seat: the
+     * BEFORE_COMMIT listener runs inside the deletion transaction —
+     * the snapshot must be taken while the roster rows still exist),
+     * and the SSE rides the `afterCommit` seam, so it stays post-commit
+     * in BOTH shapes.
+     */
+    private val finalizeEvent = TransactionTemplate(transactionManager)
+
+    /**
      * The T053 intake's single processing hand-off. NEVER throws into
      * the transport contract: a handled event runs its legs, every
      * event closes its `webchat_conference_webhooks_processed_total`
@@ -164,18 +200,53 @@ class ConferenceLifecycleService(
             }
             is ConferenceWebhookEvent.ParticipantJoined -> onParticipantJoined(event)
             is ConferenceWebhookEvent.ParticipantLeft -> onParticipantLeft(event)
-            is ConferenceWebhookEvent.RoomFinished -> {
-                // the T055 finalize seat: an accepted, deliberately
-                // unprocessed delivery until the finalize lands
-                log.debug("room_finished of room <{}> parked for the finalize (T055)", event.roomName)
-                count(event, WebhookResult.IGNORED)
-            }
+            is ConferenceWebhookEvent.RoomFinished -> onRoomFinished(event)
             is ConferenceWebhookEvent.Unhandled -> {
                 log.debug("an unhandled webhook event of type <{}> was ignored", event.eventType)
                 count(event, WebhookResult.IGNORED)
             }
         }
     }
+
+    /**
+     * T055 (SC-007, realtime-conference-events.md §2): the ONE
+     * idempotent finalize every end path funnels into —
+     * [ConferenceRepository.finalize]'s conditional `→ended` UPDATE
+     * with [reason], the Q18=A roster deletions and the post-commit
+     * SSE `conference.ended` to the chat's ACTIVE members (the
+     * snapshot rides the SAME transaction, so the frame reaches
+     * exactly the roster the conference belonged to; guests receive
+     * nothing — §4). Callers: the `room_finished` webhook (the
+     * reason mapping of [onRoomFinished]), №48 ([ModerationService.end]
+     * — the pre-record BEFORE `DeleteRoom` IS this call, the later
+     * webhook re-enters as a no-op), the scheduler (max-duration/
+     * sweeper, T056) and the chat-deletion listener (T062, ambient
+     * transaction).
+     *
+     * Returns the finalized row to the WINNER (the caller's repeat
+     * answer and post-commit media legs — №48's `DeleteRoom`), or
+     * `null` for the idempotent no-op: an already-ended conference
+     * (duplicate `room_finished`, the №48 webhook, the sweeper racing
+     * the webhook) keeps the FIRST winner's `ended_at`/`end_reason`
+     * and never announces or counts twice (invariant 5, constitution
+     * III). The `webchat_conference_ended_total{end_reason}` counter
+     * and the SSE both ride the WINNING call only — inside the
+     * transaction's `afterCommit`, so a rolled-back end announces
+     * nothing and the T062 ambient shape stays post-commit too.
+     */
+    fun finalize(
+        conference: Conference,
+        reason: ConferenceEndReason,
+    ): Conference? =
+        finalizeEvent.execute {
+            // the snapshot rides the transition transaction — the
+            // addressees are the roster the conference belonged to at
+            // the very moment it ended (T062: BEFORE the CASCADE)
+            val addressees = membership.activeMemberIds(conference.chatId)
+            val ended = conferences.finalize(conference.id, reason, clock.now()) ?: return@execute null
+            afterCommit { announceEnded(EndedAnnouncement(addressees, eventOf(ended))) }
+            ended
+        }
 
     /**
      * `participant_joined` (livekit-integration.md §5): the
@@ -246,6 +317,125 @@ class ConferenceLifecycleService(
     }
 
     /**
+     * `room_finished` (livekit-integration.md §5, data-model 009
+     * §Сущность 1): the штатный [finalize] seat — the reason mapping
+     * rides the row's OWN status at the moment the webhook lands:
+     *
+     *  * `active` — the departure/empty timeouts closed the drained
+     *    room after the last leg left: `last_left` (a webhook without
+     *    a pre-record — the №48 row was already ended by its
+     *    pre-record and resolves to the no-op below);
+     *  * `created` — «никто не вошёл»: the empty timeout ate the eager
+     *    №44 room before any join: `room_lost`.
+     *
+     * An ENDED row is the idempotent no-op — a duplicate delivery or
+     * the №48 webhook after T038's `DeleteRoom` re-enters [finalize]
+     * exactly like the winner did, gets the repository's `null` and
+     * keeps the first winner's `ended_at`/`end_reason` (invariant 5);
+     * a room this backend never created (foreign/malformed name, no
+     * row) is the tagged no-op of the [ParticipantJoined] discipline.
+     */
+    @Suppress("ReturnCount") // one return per terminal outcome of the reason ladder
+    private fun onRoomFinished(event: ConferenceWebhookEvent.RoomFinished) {
+        val conferenceId = Conference.conferenceIdOfRoomName(event.roomName)
+        if (conferenceId == null) {
+            log.debug("room_finished of a non-conference room <{}> was ignored", event.roomName)
+            count(event, WebhookResult.IGNORED)
+            return
+        }
+        val conference = conferences.findById(conferenceId)
+        if (conference == null) {
+            log.debug("room_finished of an unknown conference <{}> was ignored", conferenceId)
+            count(event, WebhookResult.IGNORED)
+            return
+        }
+        if (conference.isEnded) {
+            // the №48 штатный reuse (pre-recorded `moderator` before
+            // DeleteRoom) or a duplicate delivery — invariant 5
+            log.debug("room_finished of the already-ended conference <{}> re-entered finalize as a no-op", conferenceId)
+            count(event, WebhookResult.PROCESSED)
+            return
+        }
+        val reason =
+            if (conference.status == ConferenceStatus.CREATED) {
+                ConferenceEndReason.ROOM_LOST
+            } else {
+                ConferenceEndReason.LAST_LEFT
+            }
+        val ended = finalize(conference, reason)
+        if (ended == null) {
+            // a concurrent path (№48 pre-record, the sweeper) won the
+            // conditional UPDATE between the read and the finalize
+            log.debug("room_finished of conference <{}> lost the finalize race — the winner's end stands", conferenceId)
+        }
+        count(event, WebhookResult.PROCESSED)
+    }
+
+    /**
+     * The post-commit `conference.ended` leg (SC-006/SC-007): the
+     * once-anchored frame to the snapshot roster plus the winning
+     * `webchat_conference_ended_total{end_reason}` counter — both ride
+     * the WINNING finalize's `afterCommit` only (the counter is the
+     * same once-anchor discipline the [ModerationService.end] №48
+     * pre-record hands over to [finalize]). At-most-once isolation —
+     * the transition is already durable, a lost frame converges via
+     * the №45 `status` refetch (FR-013); the warn log carries ids
+     * only (constitution V).
+     */
+    @Suppress("TooGenericExceptionCaught") // at-most-once isolation, the announceStarted post-commit defense
+    private fun announceEnded(announcement: EndedAnnouncement) {
+        metrics.countConferenceEnded(announcement.event.reason)
+        try {
+            events.fanoutConferenceEnded(announcement.addressees, announcement.event)
+        } catch (failure: Exception) {
+            log.warn(
+                "realtime fan-out of conference.ended of conference <{}> to <{}> addressees failed; " +
+                    "the transition is durable and clients converge on the №45 refetch (FR-013): {}",
+                announcement.event.conferenceId,
+                announcement.addressees.size,
+                failure.message,
+            )
+        }
+    }
+
+    /**
+     * The SSE payload of the winning finalize: the ENDED row's own
+     * stamps — [Conference.endedAt]/[Conference.endReason] are
+     * non-null by the model invariant of an ended row, and the reason
+     * is the ROW's (the №48 pre-recorded `moderator` re-read verbatim,
+     * never the racing webhook's `last_left` guess).
+     */
+    private fun eventOf(ended: Conference): ConferenceEndedEvent =
+        ConferenceEndedEvent(
+            conferenceId = ended.id,
+            chatId = ended.chatId,
+            endedAt = ended.endedAt ?: error("an ended conference ${ended.id} carries no ended_at"),
+            reason = ended.endReason ?: error("an ended conference ${ended.id} carries no end_reason"),
+        )
+
+    /**
+     * The post-commit ordering rule (the realtime contract §4; the 006
+     * `afterCommit` discipline of the chats `SystemMessageService`,
+     * verbatim): the publication runs in `afterCommit` of the AMBIENT
+     * transition transaction — a rolled-back transition never announces
+     * anything, and the T062 ambient shape (the finalize joining the
+     * deletion transaction) stays post-commit too. Without an active
+     * synchronization (a direct unit call) the publication runs
+     * inline.
+     */
+    private fun afterCommit(publish: () -> Unit) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            publish()
+            return
+        }
+        TransactionSynchronizationManager.registerSynchronization(
+            object : TransactionSynchronization {
+                override fun afterCommit() = publish()
+            },
+        )
+    }
+
+    /**
      * The post-commit `conference.started` leg (US5-1/SC-006): the
      * once-anchored frame to the snapshot roster plus the winning
      * `created→active` counter. At-most-once isolation — the
@@ -311,6 +501,12 @@ class ConferenceLifecycleService(
     private data class StartedAnnouncement(
         val addressees: List<UUID>,
         val event: ConferenceStartedEvent,
+    )
+
+    /** The post-commit legs of a WON finalize: the snapshot roster and the ready frame. */
+    private data class EndedAnnouncement(
+        val addressees: List<UUID>,
+        val event: ConferenceEndedEvent,
     )
 
     /** The committed outcome of one participant webhook transaction. */

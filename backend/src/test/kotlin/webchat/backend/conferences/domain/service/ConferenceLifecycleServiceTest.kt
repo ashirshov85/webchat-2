@@ -14,8 +14,10 @@ import webchat.backend.auth.domain.port.Clock
 import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.api.dto.ConferenceMode
 import webchat.backend.conferences.domain.model.Conference
+import webchat.backend.conferences.domain.model.ConferenceEndReason
 import webchat.backend.conferences.domain.model.ConferenceIdentity
 import webchat.backend.conferences.domain.port.ChatMembershipChecker
+import webchat.backend.conferences.domain.port.ConferenceEndedEvent
 import webchat.backend.conferences.domain.port.ConferenceEventPublisher
 import webchat.backend.conferences.domain.port.ConferenceModeReader
 import webchat.backend.conferences.domain.port.ConferenceRepository
@@ -61,8 +63,22 @@ import java.util.UUID
  *    silent mode guess — the resolveMode precedent);
  *  * **`participant_left`** — the `last_left_at` twin on the principal
  *    prefix, no SSE of any kind;
- *  * **`room_finished`** — the T055 finalize seat: accepted, parked,
- *    `ignored` until the finalize lands;
+ *  * **`room_finished`** — the T055 finalize seat: an `active`
+ *    conference ends `last_left`, a `created` one («никто не вошёл»,
+ *    the empty timeout ate the eager №44 room) ends `room_lost`; an
+ *    already-ended row (the №48 webhook after T038's `DeleteRoom`
+ *    pre-record, a duplicate delivery) is the idempotent no-op of
+ *    invariant 5 — nothing re-announced, nothing re-counted; a
+ *    foreign room name and an unknown conference are the tagged
+ *    `ignored` no-ops;
+ *  * **the direct [ConferenceLifecycleService.finalize] seat** — the
+ *    №48 pre-record/scheduler/T062 entry: the winner announces
+ *    `conference.ended` to the transaction's membership snapshot with
+ *    the ENDED row's own stamps (the pre-recorded reason re-read
+ *    verbatim — never the racing webhook's guess) and counts the
+ *    `webchat_conference_ended_total{end_reason}` sample exactly once;
+ *    the loser (the repository's `null`) returns `null`, announces
+ *    nothing and counts nothing;
  *  * **isolation** — a failing fan-out never escapes the handler (the
  *    transition is durable; clients converge on the №45 refetch).
  */
@@ -231,11 +247,136 @@ class ConferenceLifecycleServiceTest {
     }
 
     @Test
-    fun `room_finished is parked for the finalize of T055`() {
+    fun `room_finished of an active conference finalizes last_left and announces conference ended exactly once`() {
+        val active = created.activate(NOW)!!
+        Mockito.`when`(conferences.findById(CONFERENCE_ID)).thenReturn(active)
+        Mockito
+            .`when`(conferences.finalize(CONFERENCE_ID, ConferenceEndReason.LAST_LEFT, NOW))
+            .thenReturn(active.end(ConferenceEndReason.LAST_LEFT, NOW))
+
         service.onWebhook(RoomFinished(created.roomName))
 
-        Mockito.verifyNoInteractions(conferences, participants, membership, inviteModes, events)
-        assertThat(webhookCount(event = "room_finished", result = "ignored")).isEqualTo(1.0)
+        // the frame reaches the SNAPSHOT roster (US5-1) with the
+        // winning row's own stamps — the reason of the ROW, never the
+        // caller's guess (data-class equality carries the payload)
+        Mockito
+            .verify(events)
+            .fanoutConferenceEnded(
+                MEMBERS,
+                ConferenceEndedEvent(CONFERENCE_ID, CHAT_ID, NOW, ConferenceEndReason.LAST_LEFT),
+            )
+        Mockito.verify(conferences).finalize(CONFERENCE_ID, ConferenceEndReason.LAST_LEFT, NOW)
+        assertThat(endedCount(reason = "last_left")).isEqualTo(1.0)
+        assertThat(webhookCount(event = "room_finished", result = "processed")).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `room_finished of a created conference finalizes room_lost — nobody ever joined`() {
+        Mockito.`when`(conferences.findById(CONFERENCE_ID)).thenReturn(created)
+        Mockito
+            .`when`(conferences.finalize(CONFERENCE_ID, ConferenceEndReason.ROOM_LOST, NOW))
+            .thenReturn(created.end(ConferenceEndReason.ROOM_LOST, NOW))
+
+        service.onWebhook(RoomFinished(created.roomName))
+
+        // «никто не вошёл»: the empty timeout ate the eager №44 room —
+        // the empty-timeout mapping of data-model §Сущность 1, the
+        // started anchor never fired and the ended frame still does
+        Mockito
+            .verify(events)
+            .fanoutConferenceEnded(
+                MEMBERS,
+                ConferenceEndedEvent(CONFERENCE_ID, CHAT_ID, NOW, ConferenceEndReason.ROOM_LOST),
+            )
+        Mockito.verify(conferences).finalize(CONFERENCE_ID, ConferenceEndReason.ROOM_LOST, NOW)
+        assertThat(endedCount(reason = "room_lost")).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `a duplicate room_finished of an ended conference re-enters finalize as the invariant-5 no-op`() {
+        val ended = created.activate(NOW)!!.end(ConferenceEndReason.MODERATOR, NOW)!!
+        Mockito.`when`(conferences.findById(CONFERENCE_ID)).thenReturn(ended)
+
+        service.onWebhook(RoomFinished(created.roomName))
+
+        // the №48 штатный reuse (the pre-recorded `moderator` before
+        // DeleteRoom) or a plain duplicate: the winner's
+        // ended_at/end_reason stand, no second frame, no second count
+        Mockito
+            .verify(conferences, Mockito.never())
+            .finalize(anyNotNull(), anyNotNull(), anyNotNull())
+        Mockito
+            .verify(events, Mockito.never())
+            .fanoutConferenceEnded(ArgumentMatchers.anyList(), anyNotNull())
+        assertThat(endedCount(reason = "moderator")).isZero()
+        assertThat(webhookCount(event = "room_finished", result = "processed")).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `room_finished of a foreign room and of an unknown conference are the tagged no-ops`() {
+        service.onWebhook(RoomFinished("somebody-elses-room"))
+        Mockito.`when`(conferences.findById(CONFERENCE_ID)).thenReturn(null)
+        service.onWebhook(RoomFinished(created.roomName))
+
+        Mockito
+            .verify(conferences, Mockito.never())
+            .finalize(anyNotNull(), anyNotNull(), anyNotNull())
+        Mockito
+            .verify(events, Mockito.never())
+            .fanoutConferenceEnded(ArgumentMatchers.anyList(), anyNotNull())
+        assertThat(webhookCount(event = "room_finished", result = "ignored")).isEqualTo(2.0)
+    }
+
+    @Test
+    fun `the direct finalize winner announces the ended frame with the winning row's own stamps`() {
+        // the №48 pre-record seat: the reason handed over is MODERATOR
+        // and the ROW's reason is what the frame carries (identical
+        // here — the repository rewrote nothing; invariant 5)
+        Mockito
+            .`when`(conferences.finalize(CONFERENCE_ID, ConferenceEndReason.MODERATOR, NOW))
+            .thenReturn(created.end(ConferenceEndReason.MODERATOR, NOW))
+
+        val ended = service.finalize(created, ConferenceEndReason.MODERATOR)
+
+        assertThat(ended).isNotNull
+        Mockito
+            .verify(events)
+            .fanoutConferenceEnded(
+                MEMBERS,
+                ConferenceEndedEvent(CONFERENCE_ID, CHAT_ID, NOW, ConferenceEndReason.MODERATOR),
+            )
+        assertThat(endedCount(reason = "moderator")).isEqualTo(1.0)
+    }
+
+    @Test
+    fun `a losing direct finalize announces nothing and returns null`() {
+        Mockito
+            .`when`(conferences.finalize(anyNotNull(), anyNotNull(), anyNotNull()))
+            .thenReturn(null)
+
+        assertThat(service.finalize(created, ConferenceEndReason.ROOM_LOST)).isNull()
+
+        Mockito
+            .verify(events, Mockito.never())
+            .fanoutConferenceEnded(ArgumentMatchers.anyList(), anyNotNull())
+        assertThat(endedCount(reason = "room_lost")).isZero()
+    }
+
+    @Test
+    fun `a failing ended fan-out never escapes the finalize`() {
+        Mockito
+            .`when`(conferences.finalize(CONFERENCE_ID, ConferenceEndReason.LAST_LEFT, NOW))
+            .thenReturn(created.activate(NOW)!!.end(ConferenceEndReason.LAST_LEFT, NOW))
+        Mockito
+            .`when`(events.fanoutConferenceEnded(ArgumentMatchers.anyList(), anyNotNull()))
+            .thenThrow(IllegalStateException("redis is down"))
+
+        val ended = service.finalize(created.activate(NOW)!!, ConferenceEndReason.LAST_LEFT)
+
+        // the transition is durable, the counter closed its sample and
+        // the failure stayed isolated (the announceStarted defense)
+        assertThat(ended).isNotNull
+        assertThat(endedCount(reason = "last_left")).isEqualTo(1.0)
     }
 
     @Test
@@ -260,6 +401,14 @@ class ConferenceLifecycleServiceTest {
     }
 
     private fun startedCount(): Double = meterRegistry.find(STARTED_METRIC).counter()?.count() ?: 0.0
+
+    private fun endedCount(reason: String): Double =
+        meterRegistry
+            .find(ENDED_METRIC)
+            .tag(END_REASON_TAG, reason)
+            .counter()
+            ?.count()
+            ?: 0.0
 
     private fun joinCount(kind: String): Double =
         meterRegistry
@@ -311,6 +460,8 @@ class ConferenceLifecycleServiceTest {
 
         const val STARTED_METRIC = "webchat_conference_started_total"
 
+        const val ENDED_METRIC = "webchat_conference_ended_total"
+
         const val JOINS_METRIC = "webchat_conference_joins_total"
 
         const val WEBHOOKS_PROCESSED_METRIC = "webchat_conference_webhooks_processed_total"
@@ -320,5 +471,7 @@ class ConferenceLifecycleServiceTest {
         const val EVENT_TAG = "event"
 
         const val RESULT_TAG = "result"
+
+        const val END_REASON_TAG = "end_reason"
     }
 }

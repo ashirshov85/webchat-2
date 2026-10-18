@@ -1,6 +1,7 @@
 package webchat.backend.conferences.domain.port
 
 import webchat.backend.conferences.api.dto.ConferenceMode
+import webchat.backend.conferences.domain.model.ConferenceEndReason
 import java.time.Instant
 import java.util.UUID
 
@@ -19,6 +20,24 @@ data class ConferenceStartedEvent(
     val chatId: UUID,
     val startedAt: Instant,
     val mode: ConferenceMode,
+)
+
+/**
+ * The `conference.ended` frame payload (realtime-conference-events.md
+ * 009 §2, `components.schemas.ConferenceEndedEvent`; US5/FR-013,
+ * SC-007): the conference is over — the ONE idempotent finalize of
+ * [ConferenceRepository.finalize] won its conditional `→ended`
+ * (whatever of the five paths carried it — the reason of the WINNING
+ * row, never the caller's guess). [endedAt] is the winning
+ * transition's own stamp; the frame carries no mode — the ended leg
+ * needs no widget projection (Q20=A: the chat history never changes
+ * on an end).
+ */
+data class ConferenceEndedEvent(
+    val conferenceId: UUID,
+    val chatId: UUID,
+    val endedAt: Instant,
+    val reason: ConferenceEndReason,
 )
 
 /**
@@ -43,10 +62,10 @@ data class ConferenceStartedEvent(
  * field set with the lower-case `video|audio` label) is the ADAPTER's
  * contract serialization.
  *
- * A single `started` leg (T054); the `ended` twin (T055) joins this
- * port with its own payload when the finalize lands.
+ * The `started` leg (T054) and the `ended` twin (T055) — one method
+ * per №18 frame of the contract pair.
  */
-fun interface ConferenceEventPublisher {
+interface ConferenceEventPublisher {
     /**
      * T054 (realtime-conference-events.md §1): ONE
      * `conference.started {conferenceId,chatId,startedAt,mode}`
@@ -64,5 +83,25 @@ fun interface ConferenceEventPublisher {
     fun fanoutConferenceStarted(
         toUserIds: List<UUID>,
         event: ConferenceStartedEvent,
+    )
+
+    /**
+     * T055 (realtime-conference-events.md §2): ONE
+     * `conference.ended {conferenceId,chatId,endedAt,reason}` envelope
+     * per [toUserIds] addressee on their own `rt:user:{userId}`
+     * channel — published strictly POST-COMMIT of the WINNING
+     * finalize (the `afterCommit` seam of the transition transaction:
+     * a rolled-back end never announces anything), EXACTLY ONCE per
+     * conference (the conditional `→ended` UPDATE is the once-anchor:
+     * a duplicate `room_finished`, the №48 webhook after the
+     * pre-record and the sweeper racing the webhook all resolve to the
+     * repository's `null` no-op and never reach this leg — invariant
+     * 5). At-most-once like every №18 frame — the isolation and
+     * convergence rules are the [fanoutConferenceStarted] twin (№45
+     * `status='ended'` refetch, Q20=A).
+     */
+    fun fanoutConferenceEnded(
+        toUserIds: List<UUID>,
+        event: ConferenceEndedEvent,
     )
 }

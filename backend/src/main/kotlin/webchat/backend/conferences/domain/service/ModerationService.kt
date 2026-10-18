@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
-import webchat.backend.auth.domain.port.Clock
 import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.api.dto.participantRoleLabel
 import webchat.backend.conferences.domain.model.Conference
@@ -13,7 +12,6 @@ import webchat.backend.conferences.domain.model.ConferenceIdentity
 import webchat.backend.conferences.domain.model.ConferenceParticipant
 import webchat.backend.conferences.domain.model.ParticipantRestrictions
 import webchat.backend.conferences.domain.model.ParticipantRole
-import webchat.backend.conferences.domain.port.ConferenceRepository
 import webchat.backend.conferences.domain.port.LiveKitAdminClient
 import webchat.backend.conferences.domain.port.LiveKitParticipant
 import webchat.backend.conferences.domain.port.ParticipantRepository
@@ -40,7 +38,10 @@ data class ModerationUpdate(
  * connection(s):
  *
  *  * **№48** [end] — the moderator's end of the WHOLE conference:
- *    the finalize pre-record (`moderator`) BEFORE `DeleteRoom`;
+ *    the finalize pre-record (`moderator`) BEFORE `DeleteRoom`, via
+ *    the ONE lifecycle [ConferenceLifecycleService.finalize] seat
+ *    (T055 — the SSE `conference.ended` and the ended counter ride
+ *    the winning call there);
  *  * **№49** [setRestrictions] — the four-flag SET of the
  *    moderation restrictions;
  *  * **№50** [changeRole] — the role SET, persistent until the end
@@ -98,11 +99,10 @@ data class ModerationUpdate(
 @Service
 class ModerationService(
     private val participants: ParticipantRepository,
-    private val conferences: ConferenceRepository,
+    private val lifecycle: ConferenceLifecycleService,
     private val liveKit: LiveKitAdminClient,
     private val metrics: ConferenceMetrics,
     private val objectMapper: ObjectMapper,
-    private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(ModerationService::class.java)
 
@@ -113,17 +113,26 @@ class ModerationService(
      *
      * The order is the data-model 009 §Сущность 1 finalize mapping:
      * the reason PRE-RECORDS by the ONE idempotent
-     * [ConferenceRepository.finalize] (`moderator`) BEFORE
-     * [LiveKitAdminClient.deleteRoom] — the conditional `→ended`
-     * UPDATE plus the Q18=A roster deletions commit first, so the
-     * `room_finished` webhook the deletion fires re-enters finalize
-     * as a NO-OP reusing the pre-recorded reason (the штатный
-     * lifecycle integration of US5 — webhook T053/finalize T055; a
-     * direct finalize without a room deletion is only the sweeper's
-     * webhook-loss compensation, T056/SC-007). A `created`
-     * conference (nobody joined yet) ends the SAME way — the
-     * pre-recorded `moderator` outranks the empty-timeout
+     * [ConferenceLifecycleService.finalize] (`moderator`) BEFORE
+     * [LiveKitAdminClient.deleteRoom] — the lifecycle seat's
+     * conditional `→ended` UPDATE plus the Q18=A roster deletions
+     * commit first, so the `room_finished` webhook the deletion fires
+     * re-enters finalize as a NO-OP reusing the pre-recorded reason
+     * (the штатный lifecycle integration of US5 — webhook T053/
+     * finalize T055; a direct finalize without a room deletion is
+     * only the sweeper's webhook-loss compensation, T056/SC-007). A
+     * `created` conference (nobody joined yet) ends the SAME way —
+     * the pre-recorded `moderator` outranks the empty-timeout
      * `room_lost` mapping of a pre-record-less end.
+     *
+     * The winning pre-record IS the moderator path's finalize: the
+     * SSE `conference.ended` to the chat's snapshot roster and the
+     * `webchat_conference_ended_total{end_reason}` counter ride the
+     * lifecycle winner — THIS call — while the later webhook
+     * re-enters as a no-op and must never count or announce twice
+     * (invariant 5, the [ConferenceMetrics.countConferenceEnded]
+     * contract; this service keeps only the №48 moderation-action
+     * sample).
      *
      * The refusals are the contract's repeat ladder: an ENDED row
      * answers [ConferenceEndedException] (`409 conference_ended`)
@@ -153,15 +162,11 @@ class ModerationService(
     fun end(conference: Conference) {
         if (conference.isEnded) throw ConferenceEndedException()
         // the winning conditional UPDATE returns the finalized row —
-        // the loser's `null` is the same repeat refusal below
-        conferences
-            .finalize(conference.id, ConferenceEndReason.MODERATOR, clock.now())
+        // the loser's `null` is the same repeat refusal below; the
+        // SSE/counter legs ride the lifecycle winner (T055)
+        lifecycle.finalize(conference, ConferenceEndReason.MODERATOR)
             ?: throw ConferenceEndedException()
-        // the winning pre-record IS the moderator path's finalize:
-        // the later webhook re-enters as a no-op and must never
-        // count twice (invariant 5, the countConferenceEnded contract)
         metrics.countModerationAction(ConferenceMetrics.ModerationAction.END)
-        metrics.countConferenceEnded(ConferenceEndReason.MODERATOR)
         deleteRoomAfterFinalize(conference)
     }
 

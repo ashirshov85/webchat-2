@@ -10,6 +10,8 @@ import org.mockito.ArgumentCaptor
 import org.mockito.ArgumentMatchers
 import org.mockito.Mockito
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.SimpleTransactionStatus
 import webchat.backend.auth.domain.port.Clock
 import webchat.backend.conferences.ConferenceMetrics
 import webchat.backend.conferences.domain.model.Conference
@@ -20,7 +22,11 @@ import webchat.backend.conferences.domain.model.ParticipantRestrictions
 import webchat.backend.conferences.domain.model.ParticipantRole
 import webchat.backend.conferences.domain.model.PublicationSource
 import webchat.backend.conferences.domain.model.PublishGrants
+import webchat.backend.conferences.domain.port.ChatMembershipChecker
+import webchat.backend.conferences.domain.port.ConferenceEndedEvent
+import webchat.backend.conferences.domain.port.ConferenceEventPublisher
 import webchat.backend.conferences.domain.port.ConferenceMediaUnavailableException
+import webchat.backend.conferences.domain.port.ConferenceModeReader
 import webchat.backend.conferences.domain.port.ConferenceRepository
 import webchat.backend.conferences.domain.port.LiveKitAdminClient
 import webchat.backend.conferences.domain.port.LiveKitParticipant
@@ -84,16 +90,36 @@ class ModerationServiceTest {
     private val participants = Mockito.mock(ParticipantRepository::class.java)
     private val conferences = Mockito.mock(ConferenceRepository::class.java)
     private val liveKit = Mockito.mock(LiveKitAdminClient::class.java)
+    private val membership = Mockito.mock(ChatMembershipChecker::class.java)
+    private val events = Mockito.mock(ConferenceEventPublisher::class.java)
+    private val transactionManager = Mockito.mock(PlatformTransactionManager::class.java)
     private val meterRegistry = SimpleMeterRegistry()
 
+    /**
+     * The T055 wiring: №48's pre-record rides the ONE lifecycle
+     * finalize seat, so the test builds the REAL
+     * [ConferenceLifecycleService] over the SAME repository mock and
+     * meterRegistry — the SSE `conference.ended` and the
+     * `webchat_conference_ended_total` counter of the moderator path
+     * are asserted through it (they left this service with T055).
+     */
     private val service =
         ModerationService(
             participants = participants,
-            conferences = conferences,
+            lifecycle =
+                ConferenceLifecycleService(
+                    conferences = conferences,
+                    participants = participants,
+                    membership = membership,
+                    inviteModes = Mockito.mock(ConferenceModeReader::class.java),
+                    events = events,
+                    metrics = ConferenceMetrics(meterRegistry, Mockito.mock(JdbcTemplate::class.java)),
+                    clock = Clock { NOW },
+                    transactionManager = transactionManager,
+                ),
             liveKit = liveKit,
             metrics = ConferenceMetrics(meterRegistry, Mockito.mock(JdbcTemplate::class.java)),
             objectMapper = ObjectMapper(),
-            clock = Clock { NOW },
         )
 
     private val conference: Conference =
@@ -102,6 +128,10 @@ class ModerationServiceTest {
     @BeforeEach
     fun stubTheCommonLegs() {
         Mockito.`when`(liveKit.listParticipants(ArgumentMatchers.anyString())).thenReturn(emptyList())
+        Mockito
+            .`when`(transactionManager.getTransaction(ArgumentMatchers.any()))
+            .thenReturn(SimpleTransactionStatus())
+        Mockito.`when`(membership.activeMemberIds(CHAT_ID)).thenReturn(MEMBERS)
     }
 
     @Test
@@ -122,6 +152,16 @@ class ModerationServiceTest {
             verify(conferences).finalize(CONFERENCE_ID, ConferenceEndReason.MODERATOR, NOW)
             verify(liveKit).deleteRoom(conference.roomName)
         }
+        // T055: the winning pre-record IS the moderator path's finalize —
+        // the SSE conference.ended rides the lifecycle winner (the
+        // later room_finished webhook re-enters as the no-op and never
+        // re-announces), the action and ended samples each count once
+        Mockito
+            .verify(events)
+            .fanoutConferenceEnded(
+                MEMBERS,
+                ConferenceEndedEvent(CONFERENCE_ID, CHAT_ID, NOW, ConferenceEndReason.MODERATOR),
+            )
         assertThat(actionCount(END)).isEqualTo(1.0)
         assertThat(endedCount()).isEqualTo(1.0)
     }
@@ -152,6 +192,7 @@ class ModerationServiceTest {
             }
 
         Mockito.verifyNoInteractions(conferences)
+        Mockito.verifyNoInteractions(events)
         Mockito.verify(liveKit, Mockito.never()).deleteRoom(anyNotNull())
         assertThat(actionCount(END)).isZero()
         assertThat(endedCount()).isZero()
@@ -169,8 +210,11 @@ class ModerationServiceTest {
             }
 
         // a concurrent №48/room_finished won the conditional UPDATE:
-        // nothing disconnects, nothing counts — the winner's answer stands
+        // nothing disconnects, nothing counts, nothing announces — the
+        // winner's answer stands (the lifecycle no-op never reaches the
+        // SSE leg)
         Mockito.verify(liveKit, Mockito.never()).deleteRoom(anyNotNull())
+        Mockito.verifyNoInteractions(events)
         assertThat(actionCount(END)).isZero()
         assertThat(endedCount()).isZero()
     }
@@ -721,11 +765,14 @@ class ModerationServiceTest {
 
         val CHAT_ID: UUID = UUID.fromString("00000000-0000-4000-8000-00000000c0a7")
 
-        val CREATOR_ID: UUID = UUID.fromString("00000000-0000-4000-8000-00000000000d")
+        val CREATOR_ID: UUID = UUID.fromString("00000000-0000-0000-0000-00000000000d")
 
         val TARGET_USER_ID: UUID = UUID.fromString("00000000-0000-4000-8000-0000000000b0")
 
         val CONN_ID: UUID = UUID.fromString("00000000-0000-4000-8000-0000000000e0")
+
+        /** The lifecycle SSE addressee snapshot of the №48 winner tests (T055). */
+        val MEMBERS: List<UUID> = listOf(CREATOR_ID, TARGET_USER_ID)
 
         val TARGET_PRINCIPAL: String = "u:$TARGET_USER_ID"
 

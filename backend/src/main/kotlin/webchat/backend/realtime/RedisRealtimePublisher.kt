@@ -313,6 +313,24 @@ class RedisRealtimePublisher(
         toUserIds.forEach { addressee -> publishEnvelope(addressee, EVENT_CONFERENCE_STARTED, payload) }
     }
 
+    /**
+     * T055 (realtime-conference-events.md 009 §2): the `conference.ended`
+     * twin of the started leg — the SAME per-user channel family and
+     * the SAME at-most-once post-commit discipline as every other №18
+     * frame, the transport still conference-agnostic (the caller's
+     * adapter owns the contract payload serialization). Every envelope
+     * rides the SAME [pushTimer] pipeline, so the frame is observed in
+     * `webchat_realtime_push_seconds` with `event=conference.ended` on
+     * the publish leg here and the dispatch leg in [handleFrame]
+     * (SC-006/SC-007).
+     */
+    fun fanoutConferenceEnded(
+        toUserIds: List<UUID>,
+        payload: Map<String, Any>,
+    ) {
+        toUserIds.forEach { addressee -> publishEnvelope(addressee, EVENT_CONFERENCE_ENDED, payload) }
+    }
+
     /** The T019 dynamic subscription hook: subscribe `rt:user:{id}` on the first live session. */
     override fun onFirstConnection(userId: UUID) {
         pubSub.subscribe(userChannel(userId))
@@ -573,6 +591,9 @@ class RedisRealtimePublisher(
 
         /** realtime-conference-events.md 009 §1: the lifecycle `event:` value (T054). */
         const val EVENT_CONFERENCE_STARTED = "conference.started"
+
+        /** realtime-conference-events.md 009 §2: the lifecycle `event:` value (T055). */
+        const val EVENT_CONFERENCE_ENDED = "conference.ended"
 
         /** The internal wire envelope fields (transport detail, NOT the public SSE framing). */
         const val FIELD_EVENT = "event"
