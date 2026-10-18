@@ -7,6 +7,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import webchat.backend.chats.domain.model.ChatParticipant
+import webchat.backend.chats.domain.port.ChatDeletedEvent
 import webchat.backend.chats.domain.port.GroupDeletedEvent
 import webchat.backend.chats.domain.port.GroupEvent
 import webchat.backend.chats.domain.port.GroupMemberAddedEvent
@@ -694,6 +695,14 @@ class GroupService(
         val group = resolveGroupForUpdate(chatId)
         rolePolicy.requireOwner(membership)
         val formers = participants.activeMembers(group.id)
+        // T062 (009, FR-014): the chat-deletion domain event — strictly
+        // BEFORE the DELETE statement (and with it the ON DELETE
+        // CASCADE): the conferences domain's SYNCHRONOUS listener
+        // finalizes the chat's running call INSIDE this transaction,
+        // while the conference rows and the membership roster it
+        // snapshots still exist (data-model 009 §Сущность 1). A
+        // rolled-back №30 rolls the finalize back with it.
+        eventPublisher.publishEvent(ChatDeletedEvent(group.id))
         if (!groupRepository.deleteHard(group.id)) throw GroupNotFoundException()
         adminLog.append(
             GroupAdminLogEntry(group.id, callerId, targetUserId = null, action = GroupAdminAction.GROUP_DELETED),

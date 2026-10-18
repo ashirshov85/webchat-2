@@ -1,6 +1,8 @@
 package webchat.backend.conferences
 
 import com.fasterxml.jackson.databind.JsonNode
+import io.micrometer.core.instrument.Counter
+import io.micrometer.core.instrument.MeterRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.MethodOrderer.OrderAnnotation
@@ -116,6 +118,10 @@ class ConferenceLifecycleIT : ConferencesTestSupport() {
 
     @Autowired
     private lateinit var clock: Clock
+
+    /** The T062 durable-reason probe — the winning-finalize counter the CASCADEd-away row cannot carry. */
+    @Autowired
+    private lateinit var meterRegistry: MeterRegistry
 
     /** §5: the three rejection modes of the receiver fold into the uniform 401; a valid signature is 200-always. */
     @Order(1)
@@ -500,6 +506,73 @@ class ConferenceLifecycleIT : ConferencesTestSupport() {
     }
 
     /**
+     * T062 (FR-014, edge «чат удалён»): the owner's №30 hard delete of
+     * a chat with an ACTIVE conference — every leg of the task table:
+     * the running call ends `chat_deleted` INSIDE the deletion
+     * transaction (the reason pre-record + the membership snapshot ride
+     * it, BEFORE the ON DELETE CASCADE), the live member connections
+     * are broken server-side by the post-commit `DeleteRoom`, the room
+     * is gone, the FORMER members (the pre-CASCADE snapshot — the
+     * CASCADE erases the roster the frame is addressed by) receive the
+     * SSE `conference.ended` with `reason='chat_deleted'`, and the
+     * reason is durably fixed by the winning-finalize counter — the
+     * row itself dies with the chat (`conferences.chat_id` CASCADE),
+     * so №45 of the dead call answers the plain `404
+     * conference_not_found`.
+     */
+    @Order(8)
+    @Test
+    fun `deleting the chat ends its running conference chat_deleted and disconnects everyone`() {
+        val (alice, bob) = messagingPair()
+        val chatId = groupChatOf(alice, bob)
+        val sourceIp = uniqueSourceIp()
+        val conferenceId = createConferenceOk(alice, chatId)
+        val aliceTicket = ticketOf(joinConferenceOk(alice, conferenceId))
+        val aliceConnection = connectTicket(aliceTicket)
+        val bobConnection = connectMember(bob, conferenceId)
+        activateByWebhook(conferenceId, aliceTicket[IDENTITY_FIELD].asText(), sourceIp)
+        assertThat(conferenceRow(conferenceId)[STATUS_COLUMN]).isEqualTo(ACTIVE_STATUS)
+        val endedBefore = chatDeletedEnds().count()
+
+        openUserEvents(alice).use { aliceStream ->
+            openUserEvents(bob).use { bobStream ->
+                deleteGroupOk(alice, chatId)
+
+                // the media leg: the post-commit DeleteRoom breaks every
+                // live connection of the dead chat's call
+                aliceConnection.awaitClosedByServer()
+                bobConnection.awaitClosedByServer()
+                await().atMost(ROOM_GONE_BUDGET).until {
+                    roomNameOf(conferenceId) !in liveKitAdmin.listRoomNames()
+                }
+
+                // the SSE leg: the frame reaches BOTH former members off
+                // the pre-CASCADE roster snapshot, carrying chat_deleted
+                for (stream in listOf(aliceStream, bobStream)) {
+                    assertEndedPayload(
+                        stream.awaitEvent(CONFERENCE_ENDED_EVENT, DELIVERY_BUDGET),
+                        conferenceId,
+                        chatId,
+                        CHAT_DELETED_REASON,
+                    )
+                }
+
+                // the reason is fixed by the winning-finalize counter — the
+                // row itself CASCADEd away with the chat
+                assertThat(chatDeletedEnds().count())
+                    .overridingErrorMessage("the chat-deletion end must count exactly one chat_deleted finalize")
+                    .isEqualTo(endedBefore + 1.0)
+                assertThat(conferenceRowsOf(chatId))
+                    .overridingErrorMessage("the conferences of a deleted chat die with it (V18 CASCADE)")
+                    .isEmpty()
+                assertThat(getConference(alice, conferenceId).statusCode)
+                    .overridingErrorMessage("an old link of a deleted chat's call answers the plain 404")
+                    .isEqualTo(HttpStatus.NOT_FOUND)
+            }
+        }
+    }
+
+    /**
      * The T056 tick driver: the DIRECTLY CONSTRUCTED scheduler of the
      * production collaborators (application-test.yml keeps the
      * scheduled bean off the IT JVM — the single-owner rule), so every
@@ -593,6 +666,14 @@ class ConferenceLifecycleIT : ConferencesTestSupport() {
     /** The durable row of one conference — the invariant-5/6 probe surface. */
     private fun conferenceRow(conferenceId: UUID): Map<String, Any> =
         jdbcTemplate.queryForMap(CONFERENCE_ROW_SQL, conferenceId)
+
+    /** The `webchat_conference_ended_total{end_reason='chat_deleted'}` counter — the T062 reason witness. */
+    private fun chatDeletedEnds(): Counter =
+        meterRegistry.counter(
+            ENDED_TOTAL_METRIC,
+            END_REASON_TAG,
+            CHAT_DELETED_REASON,
+        )
 
     /** The №15 history size of the chat — the Q20=A «история не изменена» probe. */
     private fun messageCountOf(chatId: UUID): Int =
@@ -775,6 +856,17 @@ class ConferenceLifecycleIT : ConferencesTestSupport() {
         const val ROOM_LOST_REASON = "room_lost"
 
         const val MAX_DURATION_REASON = "max_duration"
+
+        /** data-model 009 §Сущность 1: the chat-deletion end reason of the T062 listener. */
+        const val CHAT_DELETED_REASON = "chat_deleted"
+
+        /** The metric name/tag of the winning-finalize counter (ConferenceMetrics). */
+        const val ENDED_TOTAL_METRIC = "webchat_conference_ended_total"
+
+        const val END_REASON_TAG = "end_reason"
+
+        /** The room-gone convergence budget of the T062 media leg (the DeleteRoom is already post-commit). */
+        val ROOM_GONE_BUDGET: Duration = Duration.ofSeconds(5)
 
         /** The №54 `reason` label of an ended conference (api-contract.md 009 §3). */
         const val ENDED_REASON = "ended"

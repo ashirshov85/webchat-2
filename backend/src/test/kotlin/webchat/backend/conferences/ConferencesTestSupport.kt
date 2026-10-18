@@ -452,6 +452,31 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
     }
 
     /**
+     * Contract №30 `DELETE /api/v1/groups/{chatId}` — the OWNER-ONLY
+     * hard delete, the T062 chat-deletion seat: the ONLY durable
+     * removal of a chat (the CASCADE base the `chat_deleted`
+     * conference end path rides on, FR-014).
+     */
+    protected fun deleteGroup(
+        owner: MessagingUser,
+        chatId: UUID,
+    ): ResponseEntity<String> = exchangeAuthorized(owner, "$GROUPS_PATH/$chatId", HttpMethod.DELETE)
+
+    /** The №30 happy-path fixture — asserts the durable deletion itself (the CASCADE has run). */
+    protected fun deleteGroupOk(
+        owner: MessagingUser,
+        chatId: UUID,
+    ) {
+        val response = deleteGroup(owner, chatId)
+        assertThat(response.statusCode)
+            .overridingErrorMessage(
+                "№30 delete of group <$chatId> by its owner must answer 204, got <%s>: %s",
+                response.statusCode,
+                response.body,
+            ).isEqualTo(HttpStatus.NO_CONTENT)
+    }
+
+    /**
      * The RFC 9457 problem code of a refused №44–№55 answer — the
      * `errors: {field: [<code>]}` shape of api-contract.md 009 §1
      * (the ChatAccessIT convention); the moderation target refusals
