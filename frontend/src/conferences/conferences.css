@@ -45,6 +45,27 @@
   text-align: center;
 }
 
+/* Тост предупреждения о лимите длительности (T060 ← T056, FR-015,
+   Q16=B): data-пакет topic conference.warning (всем подключённым,
+   включая гостей без SSE) → понятное сообщение о скором
+   контролируемом завершении; закрывается вручную. */
+.conference-warning-toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+  font: 12.5px var(--font-body);
+  color: var(--cream);
+}
+
+.conference-warning-toast p {
+  margin: 0;
+}
+
 /* Сетка тайлов камер: адаптивные колонки от ширины, тайл 16:9. */
 .conference-tiles {
   display: grid;

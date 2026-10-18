@@ -9,8 +9,9 @@ import type { JoinTicket } from '../../api/conferences'
  * («только слушаю») — понятное предупреждение и снятие при успешном
  * повторном включении уже в звонке (LocalTrackPublished, тумблеры T028);
  * серверные разрывы — терминальные без авто-возврата, полный разрыв
- * после успешного подключения — единственная попытка refreshTicket (№47)
- * и переподключение свежим тикетом (FR-014); размонтирование рвёт
+ * после успешного подключения — цепочка реконнекта в окне
+ * reconnect-window со свежими тикетами №47 (T060, FR-014; полные
+ * сценарии окна/истечения/тоста — T061); размонтирование рвёт
  * подключение (best-effort). livekit-client и примитивы
  * @livekit/components-react заменены фейками: предмет теста — связка
  * нашей комнаты с SDK-контрактом (connect/disconnect/события/сеттеры).
@@ -32,6 +33,7 @@ const lk = vi.hoisted(() => {
     Reconnecting: 'reconnecting',
     Reconnected: 'reconnected',
     Disconnected: 'disconnected',
+    DataReceived: 'dataReceived',
     LocalTrackPublished: 'localTrackPublished',
     ActiveDeviceChanged: 'activeDeviceChanged',
   } as const
@@ -468,13 +470,12 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     })
     await screen.findByText('Соединение потеряно — переподключение…')
 
-    // повторный разрыв той же цепочки: попытка обновления уже потрачена —
-    // второго refreshTicket нет, фаза — контролируемое «не удалось»
+    // повторный разрыв той же мёртвой комнаты — дубликат цепочки
+    // (окно реконнекта T060): тикет уже получен, второго минта нет,
+    // фаза остаётся «переподключение…» до смены тикета родителем
     first.emit(lk.RoomEvent.Disconnected)
     expect(refreshTicket).toHaveBeenCalledTimes(1)
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      'Не удалось подключиться к медиа-серверу',
-    )
+    expect(screen.getByRole('status')).toHaveTextContent('Соединение потеряно — переподключение…')
 
     // родитель перевыдал тикет (смена ticket.token) — СВЕЖАЯ комната
     // подключается новым токеном, прежняя корректно разорвана

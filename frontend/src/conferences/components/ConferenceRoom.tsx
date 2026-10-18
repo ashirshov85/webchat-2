@@ -41,16 +41,30 @@
  * MediaControls (T028), удалённые рендерятся широкими тайлами над
  * сеткой камер.
  *
- * Реконнект (фундамент T060, FR-014): подключённому LiveKit продлевает
- * токен сам (livekit-integration §3); при ПОЛНОМ разрыве после
- * успешного подключения компонент единожды обновляет тикет повторным
- * №47 (refreshTicket useConference, свежий connId) и переподключается
- * — смена ticket.token пересоздаёт комнату. Серверные разрывы
- * (RemoveParticipant/удаление комнаты/дубль identity/нет прав) —
- * терминальное «Вы отключены» без авто-возврата: кик ≠ бан, но
- * повторный вход — осознанное действие по действующей ссылке (edge
- * spec.md). Полное окно reconnect-window с индикацией и ретраями —
- * T060 (US5).
+ * Реконнект (T060, FR-014, Q15=B): подключённому LiveKit продлевает
+ * токен сам (livekit-integration §3); транзиентная потеря связи —
+ * внутренние Reconnecting/Reconnected livekit-client (индикация
+ * «переподключение…», медиа-слой остаётся). При ПОЛНОМ разрыве после
+ * успешного подключения открывается окно reconnect-window (дефолт
+ * 120 с, conferences.reconnect-window Q19): цепочка ретраев с малым
+ * интервалом, каждая попытка — СВЕЖИЙ тикет повторным №47 (члены) /
+ * №55 (гости, refreshTicket страницы, FR-014: TTL 900 с < 4 ч —
+ * истёкший токен не годится, минт даёт новый connId); смена
+ * ticket.token пересоздаёт комнату — звонок продолжается. Истечение
+ * окна — контролируемое завершение с понятным сообщением («lost»);
+ * серийные разрывы одной цепочки держат ОДНО окно от первой потери
+ * до восстановления. Серверные разрывы (RemoveParticipant/удаление
+ * комнаты/дубль identity/нет прав) — терминальное «Вы отключены»
+ * без авто-возврата: кик ≠ бан, но повторный вход — осознанное
+ * действие по действующей ссылке (edge spec.md).
+ *
+ * Предупреждение о лимите длительности (T060 ← T056, FR-015,
+ * Q16=B): шедулер шлёт admin-SendData пакет topic
+ * `conference.warning`, payload `{"type":"conference.warning",
+ * "endsAt":…}` — ВСЕМ подключённым, включая гостей без SSE; приём
+ * RoomEvent.DataReceived по теме → тост «конференция завершится по
+ * лимиту длительности» (закрывается вручную — событие одно, до
+ * контролируемого завершения остаётся warning-before-end).
  */
 import {
   ParticipantTile,
@@ -60,6 +74,7 @@ import {
   useTracks,
 } from '@livekit/components-react'
 import { DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
+import type { DataPacket_Kind, RemoteParticipant } from 'livekit-client'
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConferenceMode, JoinTicket } from '../api/conferences'
@@ -69,7 +84,28 @@ import type { ConferenceDeviceSelection } from '../hooks/useDevices'
 import '../conferences.css'
 
 /** Фаза медиа-подключения комнаты — статус-строка и видимость тайлов. */
-export type ConferenceRoomPhase = 'connecting' | 'connected' | 'reconnecting' | 'failed' | 'closed'
+export type ConferenceRoomPhase =
+  'connecting' | 'connected' | 'reconnecting' | 'failed' | 'lost' | 'closed'
+
+/**
+ * Окно реконнекта при полном разрыве (T060, FR-014, Q15=B): зеркало
+ * серверного `conferences.reconnect-window` (дефолт 120 с, Q19) —
+ * цепочка ретраев со свежими тикетами живёт не дольше окна от ПЕРВОЙ
+ * потери связи; истечение — контролируемое завершение (lost).
+ */
+const DEFAULT_RECONNECT_WINDOW_MS = 120_000
+
+/** Интервал между ретраями минта внутри окна реконнекта (T060). */
+const DEFAULT_RECONNECT_RETRY_DELAY_MS = 2_000
+
+/** Тема data-пакета предупреждения о лимите длительности (T056). */
+const WARNING_TOPIC = 'conference.warning'
+
+/** payload.type того же пакета (`{"type":"conference.warning","endsAt":…}`). */
+const WARNING_TYPE = 'conference.warning'
+
+/** Текст тоста предупреждения (FR-015, Q16=B). */
+const WARNING_TOAST_TEXT = 'Конференция завершится по лимиту длительности'
 
 /** Стартовое состояние публикации (pre-join T034; дефолт — по mode, Q3=A). */
 export interface ConferenceRoomInitialMedia {
@@ -100,8 +136,16 @@ export interface ConferenceRoomProps {
    * треков; null/undefined — системные устройства по умолчанию.
    */
   readonly initialDevices?: ConferenceDeviceSelection | null
-  /** Повторный минт №47 при полном разрыве (useConference.refreshTicket, FR-014). */
+  /** Повторный минт №47/№55 при полном разрыве (useConference.refreshTicket, FR-014). */
   readonly refreshTicket: () => Promise<JoinTicket | null>
+  /**
+   * Окно реконнекта от первой потери связи до контролируемого
+   * завершения (T060, conferences.reconnect-window Q19); дефолт —
+   * {@link DEFAULT_RECONNECT_WINDOW_MS}; переопределяется тестами.
+   */
+  readonly reconnectWindowMs?: number
+  /** Интервал ретраев минта внутри окна (T060); переопределяется тестами. */
+  readonly reconnectRetryDelayMs?: number
   /** Слот для MediaControls (T028) и панелей US3/US4 — внутри RoomContext. */
   readonly children?: ReactNode
 }
@@ -188,6 +232,8 @@ function phaseStatusText(phase: ConferenceRoomPhase): string | null {
       return 'Соединение потеряно — переподключение…'
     case 'failed':
       return 'Не удалось подключиться к медиа-серверу'
+    case 'lost':
+      return 'Не удалось восстановить связь с конференцией'
     case 'closed':
       return 'Вы отключены от конференции'
     default:
@@ -264,6 +310,8 @@ export default function ConferenceRoom({
   initialMedia,
   initialDevices,
   refreshTicket,
+  reconnectWindowMs = DEFAULT_RECONNECT_WINDOW_MS,
+  reconnectRetryDelayMs = DEFAULT_RECONNECT_RETRY_DELAY_MS,
   children,
 }: ConferenceRoomProps) {
   /** Комната текущего жизненного цикла тикета (создаётся эффектом, T027). */
@@ -271,12 +319,22 @@ export default function ConferenceRoom({
   const [phase, setPhase] = useState<ConferenceRoomPhase>('connecting')
   /** Слоты стартовой публикации, недоступные из-за отказа браузера (T032). */
   const [mediaDenied, setMediaDenied] = useState<MediaDenied>(MEDIA_DENIED_NONE)
+  /** Тост conference.warning (T056 → T060): показан до закрытия/завершения. */
+  const [warningVisible, setWarningVisible] = useState(false)
   /** Разрыв инициирован выходом (слот вкладки/размонтирование) — без авто-возврата. */
   const intentionalRef = useRef(false)
   /** Успешное подключение уже было — реконнект с новым тикетом допустим (FR-014). */
   const everConnectedRef = useRef(false)
-  /** Одна попытка обновления тикета на цепочку разрывов (окно/ретраи — T060). */
-  const reconnectSpentRef = useRef(false)
+  /**
+   * Дедлайн окна реконнекта (T060): timestamp от ПЕРВОЙ полной потери
+   * связи цепочки; null — окно закрыто (подключение восстановлено /
+   * терминальный выход). Переживает смену комнаты (смена тикета) —
+   * серийные разрывы держат одно окно, при восстановлении
+   * сбрасывается и следующая потеря открывает заново.
+   */
+  const reconnectDeadlineRef = useRef<number | null>(null)
+  /** Таймер ретрая минта внутри окна (гасится cleanup'ом прогона). */
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshTicketRef = useRef(refreshTicket)
   refreshTicketRef.current = refreshTicket
 
@@ -299,8 +357,82 @@ export default function ConferenceRoom({
   useEffect(() => {
     intentionalRef.current = false
     let disposed = false
+    /**
+     * Разрыв этой комнаты уже запустил цепочку реконнекта (T060):
+     * повторные Disconnected мёртвого экземпляра — дубликаты, новый
+     * минт не инициируют (свежий тикет уже получен/запланирован).
+     */
+    let chainTriggered = false
     const active = createConferenceRoom()
     setMediaDenied(MEDIA_DENIED_NONE)
+
+    /**
+     * Окно истекло — контролируемое завершение (T060, Q15=B):
+     * понятное сообщение, окно закрывается, ретраи прекращаются.
+     */
+    const expireReconnectWindow = (): void => {
+      reconnectDeadlineRef.current = null
+      if (retryTimerRef.current !== null) {
+        clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = null
+      }
+      setPhase('lost')
+    }
+    /** Остаток окна: null — окно закрыто (не реконнект) или ещё активно. */
+    const reconnectExpired = (): boolean => {
+      const deadline = reconnectDeadlineRef.current
+      return deadline !== null && Date.now() >= deadline
+    }
+    const scheduleReconnectRetry = (): void => {
+      if (disposed || intentionalRef.current) {
+        return
+      }
+      if (reconnectExpired()) {
+        expireReconnectWindow()
+        return
+      }
+      if (retryTimerRef.current !== null) {
+        return
+      }
+      retryTimerRef.current = setTimeout(() => {
+        retryTimerRef.current = null
+        attemptReconnect()
+      }, reconnectRetryDelayMs)
+    }
+    /**
+     * Попытка реконнекта (T060, FR-014): свежий тикет повторным
+     * №47/№55 — истёкший TTL не годится (900 с < 4 ч). Успех с НОВЫМ
+     * токеном — эстафета родителю (смена ticket.token пересоздаёт
+     * комнату, цепочка продолжится прогоном свежего тикета); null
+     * (сбой/устаревание/конференция завершена) и прочие сбои —
+     * ретрай, пока окно живо.
+     */
+    const attemptReconnect = (): void => {
+      if (disposed || intentionalRef.current) {
+        return
+      }
+      if (reconnectExpired()) {
+        expireReconnectWindow()
+        return
+      }
+      void refreshTicketRef
+        .current()
+        .then((fresh) => {
+          if (disposed || intentionalRef.current) {
+            return
+          }
+          if (fresh !== null && fresh.token !== ticket.token) {
+            chainTriggered = true
+            return
+          }
+          scheduleReconnectRetry()
+        })
+        .catch(() => {
+          if (!disposed && !intentionalRef.current) {
+            scheduleReconnectRetry()
+          }
+        })
+    }
 
     const handleReconnecting = () => {
       if (!disposed) {
@@ -309,7 +441,37 @@ export default function ConferenceRoom({
     }
     const handleReconnected = () => {
       if (!disposed) {
+        // Транзиентный восстановился сам — окно не нужно (T060).
+        reconnectDeadlineRef.current = null
         setPhase('connected')
+      }
+    }
+    /**
+     * Предупреждение о лимите длительности (T056 → T060, Q16=B):
+     * data-пакет topic `conference.warning` (серверный SendData —
+     * единственный канал гостям без SSE) → тост; чужие темы и битый
+     * payload игнорируются нейтрально.
+     */
+    const handleDataReceived = (
+      payload: Uint8Array,
+      _participant?: RemoteParticipant,
+      _kind?: DataPacket_Kind,
+      topic?: string,
+    ): void => {
+      if (disposed || topic !== WARNING_TOPIC) {
+        return
+      }
+      try {
+        const parsed: unknown = JSON.parse(new TextDecoder().decode(payload))
+        if (
+          parsed !== null &&
+          typeof parsed === 'object' &&
+          (parsed as { type?: unknown }).type === WARNING_TYPE
+        ) {
+          setWarningVisible(true)
+        }
+      } catch {
+        // битый payload — без реакции (нейтрально)
       }
     }
     /**
@@ -337,37 +499,34 @@ export default function ConferenceRoom({
         return
       }
       if (isTerminalDisconnect(reason)) {
+        reconnectDeadlineRef.current = null
         setPhase('closed')
         return
       }
-      if (!everConnectedRef.current || reconnectSpentRef.current) {
+      if (!everConnectedRef.current) {
         setPhase('failed')
         return
       }
-      reconnectSpentRef.current = true
+      // Дубликаты разрыва той же мёртвой комнаты — уже в цепочке (T060).
+      if (chainTriggered) {
+        return
+      }
+      chainTriggered = true
+      // Окно — от ПЕРВОЙ потери цепочки (серийные разрывы держат одно).
+      if (reconnectDeadlineRef.current === null) {
+        reconnectDeadlineRef.current = Date.now() + reconnectWindowMs
+      }
       setPhase('reconnecting')
-      // Свежий тикет пересоздаёт комнату (смена ticket.token → эффект);
-      // null (сбой/устаревание/конференция завершена) — контролируемое
-      // «не удалось» (полное окно и ретраи — T060).
-      void refreshTicketRef
-        .current()
-        .then((fresh) => {
-          if (fresh === null && !disposed && !intentionalRef.current) {
-            setPhase('failed')
-          }
-        })
-        .catch(() => {
-          if (!disposed && !intentionalRef.current) {
-            setPhase('failed')
-          }
-        })
+      attemptReconnect()
     }
     active.on(RoomEvent.Reconnecting, handleReconnecting)
     active.on(RoomEvent.Reconnected, handleReconnected)
     active.on(RoomEvent.Disconnected, handleDisconnected)
+    active.on(RoomEvent.DataReceived, handleDataReceived)
     active.on(RoomEvent.LocalTrackPublished, handleLocalTrackPublished)
     bindConferenceDisconnect(conferenceId, () => {
       intentionalRef.current = true
+      reconnectDeadlineRef.current = null
       safeDisconnect(active)
     })
     setRoom(active)
@@ -379,25 +538,46 @@ export default function ConferenceRoom({
           return
         }
         everConnectedRef.current = true
-        reconnectSpentRef.current = false
+        // Подключение восстановлено (в т.ч. цепочкой реконнекта) —
+        // окно закрыто, следующая потеря откроет заново (T060).
+        reconnectDeadlineRef.current = null
         setPhase('connected')
         const denied = await publishInitialTracks(active, startMicrophone, startCamera)
         if (!disposed) {
           setMediaDenied(denied)
         }
       } catch {
-        if (!disposed) {
-          setPhase('failed')
+        if (disposed) {
+          return
         }
+        if (everConnectedRef.current && reconnectDeadlineRef.current !== null) {
+          // Свежий тикет цепочки не подключился — ретрай до конца окна.
+          setPhase('reconnecting')
+          scheduleReconnectRetry()
+          return
+        }
+        setPhase('failed')
       }
     })()
     return () => {
       disposed = true
       intentionalRef.current = true
+      if (retryTimerRef.current !== null) {
+        clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = null
+      }
       active.removeAllListeners()
       safeDisconnect(active)
     }
-  }, [conferenceId, ticket.wsUrl, ticket.token, startMicrophone, startCamera])
+  }, [
+    conferenceId,
+    ticket.wsUrl,
+    ticket.token,
+    startMicrophone,
+    startCamera,
+    reconnectWindowMs,
+    reconnectRetryDelayMs,
+  ])
 
   const statusText = phaseStatusText(phase)
   const mediaNotice = mediaFailureNotice(mediaDenied)
@@ -417,6 +597,14 @@ export default function ConferenceRoom({
       <div className="conference-room" data-conference-room={conferenceId}>
         {statusText !== null && <output className="conference-room-status">{statusText}</output>}
         {mediaNotice !== null && <output className="conference-room-media">{mediaNotice}</output>}
+        {warningVisible && (
+          <div className="conference-warning-toast" role="status" data-conference-warning>
+            <p>{WARNING_TOAST_TEXT}</p>
+            <button type="button" onClick={() => setWarningVisible(false)}>
+              Закрыть
+            </button>
+          </div>
+        )}
         {(phase === 'connected' || phase === 'reconnecting') && <ConferenceMedia />}
         {children}
       </div>
