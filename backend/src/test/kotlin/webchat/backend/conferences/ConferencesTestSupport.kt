@@ -27,10 +27,16 @@ import org.testcontainers.utility.DockerImageName
 import webchat.backend.chats.MessagingTestSupport
 import webchat.backend.conferences.domain.model.ParticipantRestrictions
 import webchat.backend.conferences.domain.port.LiveKitAdminClient
+import webchat.backend.conferences.livekit.LiveKitWebhookController
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.time.Duration
+import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * T021 (tasks.md Phase 3, US1): the shared fixtures of the conference
@@ -210,6 +216,85 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
             "/api/v1/conferences/$conferenceId/guest-invite",
             user,
         )
+
+    /**
+     * T053/T057 (009, US5) — `POST /api/internal/conferences/livekit/webhook`,
+     * the media plane's ONLY way into the backend: the RAW body bytes with
+     * an optional [authHeader] (the serialized webhook JWT — NO Bearer
+     * scheme, the [io.livekit.server.WebhookReceiver] shape) and the
+     * [sourceIp] that pins the `rl:ip:conferences-livekit-webhook` bucket
+     * of T053. The IT IS the plane: the Testcontainers media server
+     * carries no `webhook.urls` config (deliberately — the deploy/local
+     * compose shape only), so every lifecycle event of the US5 story ITs
+     * arrives through THIS leg as a signed delivery the receiver must
+     * accept, exactly the bytes the plane would send.
+     */
+    protected fun postWebhook(
+        body: String,
+        authHeader: String?,
+        sourceIp: String,
+    ): ResponseEntity<String> {
+        val headers =
+            HttpHeaders().apply {
+                contentType = MediaType.APPLICATION_JSON
+                authHeader?.let { set(HttpHeaders.AUTHORIZATION, it) }
+                set(X_FORWARDED_FOR_HEADER, sourceIp)
+            }
+        // postForEntity (the Object-typed request overload): the byte[]
+        // body must NOT unify the request/response type variables of the
+        // exchange overloads, and ByteArrayHttpMessageConverter writes
+        // the exact signature bytes under the JSON content type
+        return restTemplate.postForEntity(
+            LiveKitWebhookController.WEBHOOK_PATH,
+            HttpEntity(body.toByteArray(StandardCharsets.UTF_8), headers),
+            String::class.java,
+        )
+    }
+
+    /**
+     * Mints the webhook Authorization exactly like the plane does
+     * (livekit-integration.md §5): a compact HS256 JWT whose `iss` is
+     * the API key and whose `sha256` claim is the STANDARD-Base64 of
+     * the SHA-256 over the exact body bytes — the same pair
+     * [LiveKitWebhookController] verifies through the SDK receiver.
+     *
+     * Signed through `javax.crypto.Mac` ON PURPOSE: the dev pair
+     * `devkey`/`secret` is SHORTER than the 32-byte floor of nimbus
+     * `MACSigner` (a nimbus-only limitation — the plane's Go HMAC and
+     * the receiver's auth0 verifier both accept any length), and the
+     * SDK's own auth0 java-jwt is a runtime-only transitive of
+     * livekit-server, unreferenceable from test code.
+     */
+    protected fun signedWebhookAuth(
+        body: String,
+        apiKey: String,
+        apiSecret: String,
+    ): String {
+        val sha256 =
+            Base64
+                .getEncoder()
+                .encodeToString(
+                    MessageDigest
+                        .getInstance(SHA_256_ALGORITHM)
+                        .digest(body.toByteArray(StandardCharsets.UTF_8)),
+                )
+        val header = """{"alg":"$HS256_ALGORITHM","typ":"JWT"}"""
+        val claims = """{"iss":"$apiKey","iat":${System.currentTimeMillis() / MILLIS_PER_SECOND},"sha256":"$sha256"}"""
+        val signingInput = "${base64UrlOf(header)}.${base64UrlOf(claims)}"
+        val mac =
+            Mac.getInstance(HMAC_SHA_256).apply {
+                init(SecretKeySpec(apiSecret.toByteArray(StandardCharsets.UTF_8), HMAC_SHA_256))
+            }
+        return "$signingInput.${base64UrlOf(mac.doFinal(signingInput.toByteArray(StandardCharsets.UTF_8)))}"
+    }
+
+    private fun base64UrlOf(value: String): String = base64UrlOf(value.toByteArray(StandardCharsets.UTF_8))
+
+    private fun base64UrlOf(bytes: ByteArray): String =
+        Base64
+            .getUrlEncoder()
+            .withoutPadding()
+            .encodeToString(bytes)
 
     /**
      * Contract №54 `GET /api/v1/conferences/invite-info?inviteToken={nonce}`
@@ -886,6 +971,15 @@ abstract class ConferencesTestSupport : MessagingTestSupport() {
         const val JOIN_BY_INVITE_PATH = "/api/v1/conferences/join-by-invite"
 
         const val INVITE_TOKEN_PARAM = "inviteToken"
+
+        /** The webhook-mint constants of [signedWebhookAuth] (§5: the compact HS256 shape the receiver verifies). */
+        const val SHA_256_ALGORITHM = "SHA-256"
+
+        const val HS256_ALGORITHM = "HS256"
+
+        const val HMAC_SHA_256 = "HmacSHA256"
+
+        const val MILLIS_PER_SECOND = 1000L
 
         val CONFERENCES_OF_CHAT_SQL =
             """
