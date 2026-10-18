@@ -242,9 +242,8 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     chatId = await ensureDirectChat(api, alice, bob)
   })
 
-  test.afterAll(() => {
-    void api.dispose()
-  })
+  // api-контекст suite-scope уничтожается самим Playwright: ручной dispose()
+  // в afterAll конфликтует с авто-диспозом и ломает следующий suite (T064)
 
   test.beforeEach(() => {
     openedPages = []
@@ -378,9 +377,8 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     chatId = await ensureDirectChat(api, alice, bob)
   })
 
-  test.afterAll(() => {
-    void api.dispose()
-  })
+  // api-контекст suite-scope уничтожается самим Playwright: ручной dispose()
+  // в afterAll конфликтует с авто-диспозом и ломает следующий suite (T064)
 
   test.beforeEach(() => {
     openedPages = []
@@ -481,9 +479,8 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     chatId = await ensureDirectChat(api, alice, bob)
   })
 
-  test.afterAll(() => {
-    void api.dispose()
-  })
+  // api-контекст suite-scope уничтожается самим Playwright: ручной dispose()
+  // в afterAll конфликтует с авто-диспозом и ломает следующий suite (T064)
 
   test.beforeEach(() => {
     openedContexts = []
@@ -634,9 +631,8 @@ test.describe.serial('индикатор «звонок идёт» US5 e2e (009 
     chatId = group.chatId
   })
 
-  test.afterAll(() => {
-    void api.dispose()
-  })
+  // api-контекст suite-scope уничтожается самим Playwright: ручной dispose()
+  // в afterAll конфликтует с авто-диспозом и ломает следующий suite (T064)
 
   test.beforeEach(() => {
     openedContexts = []

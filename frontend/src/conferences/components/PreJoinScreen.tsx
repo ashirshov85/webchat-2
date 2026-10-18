@@ -306,6 +306,12 @@ export default function PreJoinScreen({
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps -- намеренная инвалидация висящих acquisition камеры при размонтировании: монотонный счётчик поколений (не DOM-ref), инкремент в cleanup — сам механизм устаревания (устаревший трек останавливается сам себя, конституция III)
       cameraSeqRef.current++
+      // висящее acquisition поколения инвалидируется: сброс pending (как
+      // releaseCamera) — иначе StrictMode-перемонтаж dev-рендера блокируется
+      // флагом «в полёте» мёртвого поколения, а его finally со stale seq
+      // pending не сбрасывает — камера «подвисает» выкл навсегда (T064)
+      cameraPendingRef.current = false
+      setCameraPending(false)
       cameraTrackRef.current?.stop()
       cameraTrackRef.current = null
     }

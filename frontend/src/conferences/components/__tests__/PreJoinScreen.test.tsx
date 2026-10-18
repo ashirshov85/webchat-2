@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { StrictMode } from 'react'
 
 /**
  * 009, US2, T032 (Q6=A) — отказ браузера в доступе к камере/микрофону
@@ -413,5 +414,68 @@ describe('PreJoinScreen — закрытие без «Войти»: отключ
     }
     // включённая на входе камера уезжает в выборке — публикация уже звонком (T034)
     expect(selection.camera).toBe(true)
+  })
+})
+
+describe('PreJoinScreen — StrictMode-перемонтаж acquisition камеры (009 регрессия T064)', () => {
+  /**
+   * Регрессия e2e T064 (dev-рендер: main.tsx StrictMode двойной монтаж
+   * эффектов): cleanup инвалидирует поколение висящего acquisition, но
+   * НЕ сбрасывал cameraPending — повторный монтаж блокировался флагом
+   * «в полёте» мёртвого поколения, а finally со stale seq pending не
+   * сбрасывал: камера «подвисала» выкл навсегда, выборка «Войти» уезжала
+   * с camera:false (e2e SC-001/SC-005 — без видео). Здесь: acquisition
+   * монтажа #1 «медленный» (резолвится позже перемонтажа) — повторный
+   * запрос #2 обязан завершиться и включить камеру; поздний трек #1
+   * останавливается как устаревший.
+   */
+  beforeEach(() => {
+    resetMediaEnv()
+  })
+
+  afterEach(() => {
+    clearMediaEnv()
+  })
+
+  it('повторное acquisition перемонтажа не блокируется pending мёртвого поколения; выборка с камерой', async () => {
+    const staleTrack = fakeVideoTrack()
+    const liveTrack = fakeVideoTrack()
+    let resolveFirst!: (track: ReturnType<typeof fakeVideoTrack>) => void
+    const firstAcquisition = new Promise<ReturnType<typeof fakeVideoTrack>>((resolve) => {
+      resolveFirst = resolve
+    })
+    camera.createLocalVideoTrack
+      .mockReturnValueOnce(firstAcquisition)
+      .mockReturnValueOnce(Promise.resolve(liveTrack))
+    const onJoin = vi.fn()
+    render(
+      <StrictMode>
+        <PreJoinScreen mode="video" onJoin={onJoin} onCancel={vi.fn()} />
+      </StrictMode>,
+    )
+
+    // перемонтаж StrictMode уже случился: acquisition #2 завершено — камера вкл
+    await waitFor(() => {
+      expect(camera.createLocalVideoTrack).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(cameraToggle()).toHaveAttribute('aria-pressed', 'true')
+    })
+    expect(cameraToggle()).toBeEnabled()
+
+    // поздний резолв мёртвого поколения #1 — трек останавливается, состояние не меняется
+    resolveFirst(staleTrack)
+    await waitFor(() => {
+      expect(staleTrack.stop).toHaveBeenCalledTimes(1)
+    })
+    expect(cameraToggle()).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(joinButton())
+    const selection = onJoin.mock.calls[0]?.[0] as PreJoinSelection | undefined
+    if (selection === undefined) {
+      throw new Error('onJoin не вызван')
+    }
+    expect(selection.camera).toBe(true)
+    expect(liveTrack.stop).toHaveBeenCalledTimes(1)
   })
 })
