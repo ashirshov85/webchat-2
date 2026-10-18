@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { JoinTicket } from '../../api/conferences'
 
@@ -10,11 +10,17 @@ import type { JoinTicket } from '../../api/conferences'
  * повторном включении уже в звонке (LocalTrackPublished, тумблеры T028);
  * серверные разрывы — терминальные без авто-возврата, полный разрыв
  * после успешного подключения — цепочка реконнекта в окне
- * reconnect-window со свежими тикетами №47 (T060, FR-014; полные
- * сценарии окна/истечения/тоста — T061); размонтирование рвёт
- * подключение (best-effort). livekit-client и примитивы
+ * reconnect-window со свежими тикетами №47 (T060, FR-014); livekit-client и примитивы
  * @livekit/components-react заменены фейками: предмет теста — связка
  * нашей комнаты с SDK-контрактом (connect/disconnect/события/сеттеры).
+ *
+ * 009, US5, T061 — полные сценарии окна реконнекта T060 (Q15=B):
+ * индикация потери связи «переподключение…» и КОНТРОЛИРУЕМОЕ
+ * завершение по истечении reconnect-window («lost», ретраи минта
+ * прекращаются); тост предупреждения о лимите длительности по
+ * data-пакету topic `conference.warning` (T056 → T060, FR-015,
+ * Q16=B) с ручным закрытием и нейтральным игнором чужих тем/битого
+ * payload.
  */
 
 const lk = vi.hoisted(() => {
@@ -58,14 +64,14 @@ const lk = vi.hoisted(() => {
     connectImpl: ((wsUrl: string, token: string) => Promise<void>) | null = null
     micImpl: ((enabled: boolean) => Promise<void>) | null = null
     cameraImpl: ((enabled: boolean) => Promise<void>) | null = null
-    private readonly listeners = new Map<string, Set<(payload?: unknown) => void>>()
+    private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>()
 
     constructor(options: unknown) {
       this.constructorOptions = options
       FakeRoom.instances.push(this)
     }
 
-    on(event: string, listener: (payload?: unknown) => void): this {
+    on(event: string, listener: (...args: unknown[]) => void): this {
       let set = this.listeners.get(event)
       if (set === undefined) {
         set = new Set()
@@ -75,7 +81,7 @@ const lk = vi.hoisted(() => {
       return this
     }
 
-    off(event: string, listener: (payload?: unknown) => void): this {
+    off(event: string, listener: (...args: unknown[]) => void): this {
       this.listeners.get(event)?.delete(listener)
       return this
     }
@@ -85,9 +91,10 @@ const lk = vi.hoisted(() => {
       return Promise.resolve(true)
     }
 
-    emit(event: string, payload?: unknown): void {
+    /** Вариадический emit: DataReceived несёт (payload, participant, kind, topic). */
+    emit(event: string, ...args: unknown[]): void {
       this.listeners.get(event)?.forEach((listener) => {
-        listener(payload)
+        listener(...args)
       })
     }
 
@@ -593,5 +600,175 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     // подпись широкого тайла — отображаемое имя участника (participantLabel)
     expect(screens).toHaveTextContent('Экран — bob')
     expect(screens.querySelector('video')).not.toBeNull()
+  })
+})
+
+describe('ConferenceRoom — окно реконнекта T060 (009 US5 T061, Q15=B)', () => {
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('потеря связи после подключения: индикация «переподключение…» и цепочка ретраев минта до конца окна', async () => {
+    // null — минт не даёт свежего тикета (сбой/устаревание): ретраи
+    // продолжаются, пока окно живо
+    const refreshTicket = vi.fn().mockResolvedValue(null)
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={refreshTicket}
+        reconnectWindowMs={150}
+        reconnectRetryDelayMs={20}
+      />,
+    )
+    const room = lastRoom()
+    await waitFor(() => {
+      expect(room.micCalls).toHaveLength(1)
+    })
+
+    room.state = lk.ConnectionState.Disconnected
+    room.emit(lk.RoomEvent.Disconnected)
+
+    // индикация потери связи (T060): понятный статус с первой потери
+    expect(await screen.findByText('Соединение потеряно — переподключение…')).toBeVisible()
+    await waitFor(() => {
+      expect(refreshTicket.mock.calls.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  it('истечение reconnect-window — контролируемое завершение «lost», ретраи минта прекращаются', async () => {
+    const refreshTicket = vi.fn().mockResolvedValue(null)
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={refreshTicket}
+        reconnectWindowMs={150}
+        reconnectRetryDelayMs={20}
+      />,
+    )
+    const room = lastRoom()
+    await waitFor(() => {
+      expect(room.micCalls).toHaveLength(1)
+    })
+
+    room.state = lk.ConnectionState.Disconnected
+    room.emit(lk.RoomEvent.Disconnected)
+    expect(await screen.findByText('Соединение потеряно — переподключение…')).toBeVisible()
+
+    // окно истекло — понятное сообщение контролируемого завершения
+    const lost = await screen.findByText(
+      'Не удалось восстановить связь с конференцией',
+      {},
+      { timeout: 2_000 },
+    )
+    expect(lost).toBeVisible()
+
+    // цепочка остановлена: новых вызовов минта после «lost» нет
+    const callsAtLoss = refreshTicket.mock.calls.length
+    expect(callsAtLoss).toBeGreaterThanOrEqual(1)
+    await new Promise((resolve) => {
+      setTimeout(resolve, 80)
+    })
+    expect(refreshTicket.mock.calls).toHaveLength(callsAtLoss)
+    expect(room.connectCalls).toHaveLength(1)
+  })
+})
+
+describe('ConferenceRoom — тост conference.warning (009 US5 T061 ← T056/T060, FR-015 Q16=B)', () => {
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('data-пакет topic conference.warning — тост о лимите длительности, закрытие вручную', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+    await waitFor(() => {
+      expect(room.connectCalls).toHaveLength(1)
+    })
+
+    // серверный SendData шедулера T056: payload {"type","endsAt"} — ВСЕМ
+    // подключённым (включая гостей без SSE), тема conference.warning
+    const payload = new TextEncoder().encode(
+      JSON.stringify({ type: 'conference.warning', endsAt: '2026-10-17T15:55:00.000Z' }),
+    )
+    room.emit(lk.RoomEvent.DataReceived, payload, undefined, undefined, 'conference.warning')
+
+    const toast = await screen.findByText('Конференция завершится по лимиту длительности')
+    expect(toast).toBeVisible()
+
+    // событие одно — тост живёт до ручного закрытия (до завершения
+    // остаётся warning-before-end)
+    fireEvent.click(screen.getByRole('button', { name: 'Закрыть' }))
+    await waitFor(() => {
+      expect(screen.queryByText('Конференция завершится по лимиту длительности')).toBeNull()
+    })
+  })
+
+  it('чужая тема и битый payload — тост не показывается (нейтральный игнор)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+    await waitFor(() => {
+      expect(room.connectCalls).toHaveLength(1)
+    })
+
+    const encode = (value: string) => new TextEncoder().encode(value)
+    // чужая тема: payload правильный, но topic не conference.warning
+    room.emit(
+      lk.RoomEvent.DataReceived,
+      encode(JSON.stringify({ type: 'conference.warning' })),
+      undefined,
+      undefined,
+      'chat.typing',
+    )
+    // битый JSON нужной темы
+    room.emit(
+      lk.RoomEvent.DataReceived,
+      encode('не-json'),
+      undefined,
+      undefined,
+      'conference.warning',
+    )
+    // чужой payload.type нужной темы
+    room.emit(
+      lk.RoomEvent.DataReceived,
+      encode(JSON.stringify({ type: 'other.event' })),
+      undefined,
+      undefined,
+      'conference.warning',
+    )
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 30)
+    })
+    expect(screen.queryByText(/лимитом длительности/)).toBeNull()
   })
 })

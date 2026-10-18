@@ -30,6 +30,14 @@ import {
  * (T051), чат-поверхность гостю недоступна (FR-010: `/` → /login),
  * подделанный nonce — единообразный отказ без раскрытия причин (edge).
  *
+ * 009, US5, T061 — e2e индикатора «звонок идёт» (quickstart §3.5,
+ * T059): carol — член группового чата, НЕ входя в звонок, видит бейдж
+ * по №18 conference.started (фактический вход первого участника —
+ * US5-1) и снятие по завершении №48 (вебхук room_finished → finalize →
+ * №18 conference.ended); участник звонка отключается терминально
+ * (DeleteRoom → «Вы отключены»). Группа — чтобы у звонка был зритель
+ * вне конференции (в личном чате оба члена — участники звонка).
+ *
  * Стенд (quickstart §2): docker compose postgres redis mailpit livekit,
  * backend :8080 (LIVEKIT_URL/KEY/SECRET), SPA :5173 (webServer конфига).
  * Аккаунты готовятся через REST (register → письмо Mailpit → confirm →
@@ -582,5 +590,105 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     await expect(guestPage.getByText('Ссылка недействительна')).toBeVisible()
     await expect(guestPage.getByLabel('Ваше имя')).toHaveCount(0)
     expect(guestPage.url()).not.toContain('/login')
+  })
+})
+
+test.describe.serial('индикатор «звонок идёт» US5 e2e (009 T061)', () => {
+  let api: APIRequestContext
+  let alice: TestAccount
+  let carol: TestAccount
+  let chatId: string
+  let groupTitle: string
+  /** Контексты теста (наблюдатель + вкладка звонка) — закрываются в afterEach. */
+  let openedContexts: BrowserContext[]
+
+  async function ensureLogin(username: string): Promise<TestAccount> {
+    try {
+      return await login(api, username)
+    } catch {
+      return await ensureAccount(api, username)
+    }
+  }
+
+  test.beforeAll(async () => {
+    // синтетический клиентский IP (TEST-NET-2) — изолированные бакеты
+    // register/login (паттерн сьюта US4; регистрации US1/US3 уже заняли 4
+    // из 5/1ч дефолтного IP)
+    api = await request.newContext({
+      baseURL: API_URL,
+      extraHTTPHeaders: { 'X-Forwarded-For': '198.51.100.61' },
+    })
+    alice = await ensureLogin(`alice${RUN_ID}`)
+    carol = await ensureAccount(api, `carol${RUN_ID}`)
+    // группа alice+carol: у звонка есть член-зритель вне конференции;
+    // начальный состав — только из контактов создателя (№27, 422 иначе)
+    await apiCall(api, 'post', '/api/v1/contacts', {
+      data: { userId: carol.userId },
+      token: alice.accessToken,
+    })
+    groupTitle = `Индикатор${RUN_ID}`
+    const group = await apiCall<{ chatId: string }>(api, 'post', '/api/v1/groups', {
+      data: { title: groupTitle, memberUserIds: [carol.userId] },
+      token: alice.accessToken,
+    })
+    chatId = group.chatId
+  })
+
+  test.afterAll(() => {
+    void api.dispose()
+  })
+
+  test.beforeEach(() => {
+    openedContexts = []
+  })
+
+  test.afterEach(async () => {
+    for (const context of openedContexts) {
+      await context.close()
+    }
+  })
+
+  test('carol не в звонке: бейдж «Звонок идёт» по started и снятие по завершении №48 (T059/T061)', async ({
+    browser,
+  }) => {
+    const aliceNow = await login(api, alice.username)
+
+    // carol в мессенджере ДО старта: кадр conference.started долетает
+    // только по её живому SSE-каналу (потерянный кадр компенсируется
+    // REST-fallback лишь на ПЕРЕподключении)
+    const carolContext = await browser.newContext()
+    openedContexts.push(carolContext)
+    await carolContext.addInitScript((refreshToken) => {
+      window.localStorage.setItem('webchat.auth.refreshToken', refreshToken)
+    }, carol.refreshToken)
+    const carolPage = await carolContext.newPage()
+    await carolPage.goto('/')
+    await expect(carolPage.getByText(groupTitle, { exact: true })).toBeVisible({
+      timeout: 15_000,
+    })
+    // №12 загружен — даём SSE-каналу подняться до входа первого участника
+    await carolPage.waitForTimeout(1_000)
+
+    // alice (создатель = модератор) стартует и входит первой —
+    // conference.started публикуется именно входом (US5-1)
+    const conference = await createConference(api, aliceNow, chatId)
+    const alicePage = await openConferencePage(browser, aliceNow, conference.id)
+    openedContexts.push(alicePage.context())
+    await alicePage.getByRole('button', { name: 'Войти' }).click()
+    await expect(alicePage.getByText('Вы в конференции')).toBeVisible({ timeout: 15_000 })
+
+    // №18 conference.started → бейдж «Звонок идёт» у строки чата carol
+    await expect(carolPage.getByText('Звонок идёт').first()).toBeVisible({ timeout: 10_000 })
+
+    // №48 завершение модератором (DeleteRoom → вебхук → finalize → №18
+    // conference.ended): бейдж снят, участник отключён терминально
+    await apiCall(api, 'post', `/api/v1/conferences/${conference.id}/end`, {
+      token: aliceNow.accessToken,
+    })
+
+    await expect(carolPage.getByText('Звонок идёт')).toHaveCount(0, { timeout: 10_000 })
+    await expect(alicePage.getByText('Вы отключены от конференции')).toBeVisible({
+      timeout: 15_000,
+    })
   })
 })
