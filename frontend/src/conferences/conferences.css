@@ -681,3 +681,67 @@
   outline: 2px solid var(--gold-light);
   outline-offset: 2px;
 }
+
+/* ============================================================
+ * Бейдж «Звонок идёт» (T059, US5; FR-013/US5-1): индикатор
+ * активной конференции чата — строки «Чатов» (.c-top ChatListItem)
+ * и заголовок открытого окна (ChatHeader, между именем и кнопками).
+ * Живёт в чужих контекстах — сам себя выравнивает (inline-flex,
+ * baseline с текстом строки), золото активного состояния + пульс
+ * иконки: состояние видно и без цвета (текст «Звонок идёт»,
+ * конвенция 008).
+ * ============================================================ */
+
+.conference-badge {
+  display: inline-flex;
+  align-items: baseline;
+  column-gap: 5px;
+  flex: none;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-field);
+  font: italic 11px var(--font-body);
+  color: var(--gold-light);
+  white-space: nowrap;
+}
+
+/* Заголовок окна: чуть крупнее строчной лексики, по центру оси. */
+.chat-head .conference-badge {
+  align-self: center;
+  font-size: 12px;
+}
+
+.conference-badge-icon {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: var(--gold-light);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  align-self: center;
+  animation: conference-badge-pulse 1.6s ease-in-out infinite;
+}
+
+.conference-badge-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Пульс иконки — «живой» индикатор активного звонка. */
+@keyframes conference-badge-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conference-badge-icon {
+    animation: none;
+  }
+}

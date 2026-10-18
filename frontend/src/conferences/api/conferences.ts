@@ -85,6 +85,21 @@ export type InviteInvalidReason = NonNullable<InviteInfoView['reason']>
 /** №55 GuestJoinRequest: nonce ссылки + отображаемое имя (trim 1–50, Q19/Q7=A). */
 export type GuestJoinRequest = components['schemas']['GuestJoinRequest']
 
+/** №18 `conference.started` payload (009, US5-1, FR-013): первый участник фактически вошёл. */
+export type ConferenceStartedEvent = components['schemas']['ConferenceStartedEvent']
+
+/** №18 `conference.ended` payload (009, US5, FR-013): любой путь завершения (reason). */
+export type ConferenceEndedEvent = components['schemas']['ConferenceEndedEvent']
+
+/**
+ * №18 conference-кадр в виде, каким его раздаёт клиент (009,
+ * realtime-conference-events.md §1/§2): SSE `event:`-тип, навешанный
+ * на payload — сам payload поля type не несёт (конвенция 006/007).
+ */
+export type ConferenceRealtimeEvent =
+  | ({ type: 'conference.started' } & ConferenceStartedEvent)
+  | ({ type: 'conference.ended' } & ConferenceEndedEvent)
+
 /**
  * Коды ошибок публичной гостевой поверхности №54/№55: единообразный отказ
  * подделки (`invite_invalid` — без различения причин), `invite_not_found`,

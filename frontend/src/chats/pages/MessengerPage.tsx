@@ -285,6 +285,7 @@ import {
 import type { ChatListItem, ChatView, ContactView, Message } from '../../api/chats'
 import { createConference } from '../../conferences/api/conferences'
 import type { ConferenceMode } from '../../conferences/api/conferences'
+import { useConferenceRealtime } from '../../conferences/hooks/useConferenceRealtime'
 import { problemMessage } from '../../auth/problem'
 import { clearTokens, getRefreshToken } from '../../auth/session'
 import { getAckBatcher } from '../../sync/ack'
@@ -1320,6 +1321,13 @@ function MessengerMachine() {
   // its `syncing` drives the SyncIndicator below.
   const { syncing, error: syncError, onChatUpdate } = useSync(currentUserId)
   const realtime = useRealtime()
+
+  // 009 US5 (T059): live-срез «звонок идёт» — кадры №18
+  // conference.started/ended общего канала (функция статуса:
+  // дубли/внепорядковые кадры безопасны), REST-fallback №45 на
+  // каждом (пере)подключении SSE. Один монти на страницу: byChat
+  // уезжает в строки «Чатов» и заголовок открытого окна.
+  const liveConferenceSlice = useConferenceRealtime()
 
   // №37 presence heartbeat (007 research.md §E2; 008 T076): keep THIS
   // connection's registration alive on the shared №18 stream — every
@@ -2575,6 +2583,7 @@ function MessengerMachine() {
               searchResults={searchResults}
               onSearchQueryChange={setSearchQuery}
               onJumpToMessage={handleJumpToMessage}
+              liveConferences={liveConferenceSlice.byChat}
               onOpenProfile={() => {
                 setModalForm('profile')
               }}
@@ -2606,6 +2615,11 @@ function MessengerMachine() {
                   searchActive={searchMode}
                   onToggleSearch={handleToggleSearch}
                   onStartCall={handleStartConference}
+                  conference={
+                    activeChat !== null
+                      ? (liveConferenceSlice.byChat.get(activeChat.chatId) ?? null)
+                      : null
+                  }
                   onAddContact={handleGearAddContact}
                   onToggleBlock={handleGearToggleBlock}
                   onDeleteChat={handleGearDeleteChat}

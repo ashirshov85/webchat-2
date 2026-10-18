@@ -66,10 +66,22 @@
  * — the RESOURCES own the reconnect convergence, the event never
  * replays (§1.3); malformed frames never reach the listener (the
  * №18 guard discipline).
+ *
+ * Feature 009 (T059, realtime-conference-events.md §1/§2): the
+ * stream also carries the conference lifecycle frames
+ * `conference.started`/`conference.ended`; they are handed to the
+ * conference listeners (`onConferenceEvent`, consumed by
+ * conferences/hooks/useConferenceRealtime — the «звонок идёт»
+ * indicator) with the SSE `event:` type tagged onto the parsed
+ * payload (the 006 GroupRealtimeEvent convention). The at-least-once
+ * channel may redeliver or reorder — the STATUS-function application
+ * lives in the consumer's reducer, not here; malformed frames never
+ * reach the listener (the №18 guard discipline).
  */
 import { useEffect, useRef } from 'react'
 import type { ChatReadEvent, MessageCreatedEvent } from '../../api/chats'
 import type { GroupRealtimeEvent } from '../../api/groups'
+import type { ConferenceRealtimeEvent } from '../../conferences/api/conferences'
 import { streamUserEvents } from '../../api/sse'
 import type { SseConnection } from '../../api/sse'
 import type { PresenceUpdatedEvent } from '../../presence/presenceStore'
@@ -104,6 +116,15 @@ export type TypingEventListener = (chatId: string, userId: string, started: bool
  * participants, FR-012).
  */
 export type ChatSoundUpdatedListener = (chatId: string, soundEnabled: boolean) => void
+
+/**
+ * №18 conference frame listener (feature 009, T059): the frame's
+ * tagged payload (`ConferenceRealtimeEvent`); the consumer applies
+ * it as a STATUS function («звонок идёт / не идёт»,
+ * realtime-conference-events.md §4) — duplicates and out-of-order
+ * frames are consumer-side no-ops.
+ */
+export type ConferenceEventListener = (event: ConferenceRealtimeEvent) => void
 
 export interface RealtimeStream {
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe
@@ -154,6 +175,17 @@ export interface RealtimeStream {
    */
   onChatSoundUpdated(listener: ChatSoundUpdatedListener): Unsubscribe
   /**
+   * Subscribes to every №18 `conference.started`/`conference.ended`
+   * frame of the user's stream (feature 009, T059): the listener
+   * applies the frame as a STATUS function — «звонок идёт / не
+   * идёт» (realtime-conference-events.md §4: at-least-once, дубли и
+   * внепорядковые кадры безопасны, применение — функция статуса);
+   * the REST №45 fallback on (re)connect stays with the consumer
+   * (conferences/hooks/useConferenceRealtime). Malformed frames
+   * never reach the listener (the №18 guard discipline).
+   */
+  onConferenceEvent(listener: ConferenceEventListener): Unsubscribe
+  /**
    * The №37 404 recovery (presence-api.md §2; 008 T076): the presence
    * registration of the current connectionId is dead — re-open the
    * transport immediately; the new `connected` frame restarts the
@@ -173,6 +205,7 @@ class UserEventStream implements RealtimeStream {
   private readonly presenceListeners = new Set<PresenceUpdatedListener>()
   private readonly typingListeners = new Map<string | null, Set<TypingEventListener>>()
   private readonly chatSoundListeners = new Set<ChatSoundUpdatedListener>()
+  private readonly conferenceListeners = new Set<ConferenceEventListener>()
   private lastConnectionId: string | null = null
 
   retain(): void {
@@ -211,6 +244,12 @@ class UserEventStream implements RealtimeStream {
     connection.subscribe('chat.sound.updated', (data) => {
       this.handleChatSoundUpdated(data)
     })
+    connection.subscribe('conference.started', (data) => {
+      this.handleConferenceEvent('conference.started', data)
+    })
+    connection.subscribe('conference.ended', (data) => {
+      this.handleConferenceEvent('conference.ended', data)
+    })
     connection.subscribe('connected', (data) => {
       this.handleConnected(data)
     })
@@ -233,6 +272,7 @@ class UserEventStream implements RealtimeStream {
     this.presenceListeners.clear()
     this.typingListeners.clear()
     this.chatSoundListeners.clear()
+    this.conferenceListeners.clear()
   }
 
   onMessageCreated(chatId: string | null, listener: MessageCreatedListener): Unsubscribe {
@@ -289,6 +329,13 @@ class UserEventStream implements RealtimeStream {
     this.chatSoundListeners.add(listener)
     return () => {
       this.chatSoundListeners.delete(listener)
+    }
+  }
+
+  onConferenceEvent(listener: ConferenceEventListener): Unsubscribe {
+    this.conferenceListeners.add(listener)
+    return () => {
+      this.conferenceListeners.delete(listener)
     }
   }
 
@@ -373,6 +420,19 @@ class UserEventStream implements RealtimeStream {
     }
     for (const listener of this.chatSoundListeners) {
       listener(frame.chatId, frame.soundEnabled)
+    }
+  }
+
+  private handleConferenceEvent(
+    eventType: 'conference.started' | 'conference.ended',
+    data: string,
+  ): void {
+    const event = parseConferenceEvent(eventType, data)
+    if (event === null) {
+      return
+    }
+    for (const listener of this.conferenceListeners) {
+      listener(event)
     }
   }
 
@@ -556,6 +616,58 @@ function parseConnectionId(data: string): string | null {
   return typeof candidate.connectionId === 'string' && candidate.connectionId.length > 0
     ? candidate.connectionId
     : null
+}
+
+/** Причина завершения №18 `conference.ended` (009, realtime-conference-events.md §2). */
+const CONFERENCE_END_REASONS = [
+  'last_left',
+  'moderator',
+  'max_duration',
+  'room_lost',
+  'chat_deleted',
+] as const
+
+/**
+ * №18 `conference.started`/`conference.ended` payload guard (feature
+ * 009, T059; realtime-conference-events.md §1/§2): минимальная
+ * проверка полей кадров перед рукой слушателю (дисциплина №18) —
+ * «звонок идёт»-потребитель получает только целые кадры; `event:`
+ * тип навешивается на payload (конвенция 006).
+ */
+function parseConferenceEvent(
+  eventType: 'conference.started' | 'conference.ended',
+  data: string,
+): ConferenceRealtimeEvent | null {
+  let payload: unknown
+  try {
+    payload = JSON.parse(data)
+  } catch {
+    return null
+  }
+  if (typeof payload !== 'object' || payload === null) {
+    return null
+  }
+  const candidate = payload as Record<string, unknown>
+  if (typeof candidate.conferenceId !== 'string' || typeof candidate.chatId !== 'string') {
+    return null
+  }
+  if (eventType === 'conference.started') {
+    if (
+      typeof candidate.startedAt !== 'string' ||
+      (candidate.mode !== 'video' && candidate.mode !== 'audio')
+    ) {
+      return null
+    }
+    return { ...candidate, type: eventType } as ConferenceRealtimeEvent
+  }
+  if (typeof candidate.endedAt !== 'string') {
+    return null
+  }
+  const reason = CONFERENCE_END_REASONS.find((value) => value === candidate.reason)
+  if (reason === undefined) {
+    return null
+  }
+  return { ...candidate, type: eventType } as ConferenceRealtimeEvent
 }
 
 function isGroupEventPayload(eventType: GroupEventType, value: unknown): boolean {
