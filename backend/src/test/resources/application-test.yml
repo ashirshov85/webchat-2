@@ -60,3 +60,13 @@ presence:
     # bucket on purpose (burst cap 150 attempts) and sees Retry-After: 1 at
     # the 2 token/s refill of the 60 s window
     snapshots-per-minute: 120
+
+conferences:
+  # T056 (scheduler ownership, the presence T036 / typing T008 rule): the
+  # IT JVM caches many Spring contexts against the ONE shared media plane
+  # — every cached context running the lifecycle scheduler would race
+  # its sweeper observations against the others' and spam per-context
+  # max-duration warnings. The scheduler is therefore OFF for every test
+  # context; production always runs it (the conditional defaults to
+  # TRUE), and the IT set drives the sweep legs deterministically.
+  scheduler-enabled: false
