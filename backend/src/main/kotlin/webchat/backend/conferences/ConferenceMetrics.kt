@@ -262,6 +262,15 @@ class ConferenceMetrics(
         PARTICIPANT_LEFT("participant_left"),
         ROOM_FINISHED("room_finished"),
         OTHER("other"),
+        ;
+
+        companion object {
+            /**
+             * The intake-side wire mapping (T053): every unhandled event
+             * type folds to [OTHER] — one bounded tag space, no cardinals.
+             */
+            fun of(wireEvent: String?): WebhookEvent = entries.firstOrNull { it.value == wireEvent } ?: OTHER
+        }
     }
 
     /** The outcome of one webhook intake (T053/T054). */

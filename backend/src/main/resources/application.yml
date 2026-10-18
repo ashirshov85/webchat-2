@@ -449,13 +449,16 @@ conferences:
     api-secret: ${LIVEKIT_API_SECRET:secret}
   # T047 (FR-009/FR-012): per-IP Bucket4j specs of the two PUBLIC guest
   # routes (api-contract.md 009 §3 canon — №54 invite-info 30/1m, №55
-  # join-by-invite 10/1m, stricter: it creates guest rows and tokens),
-  # "<count>/<window>" form, enforced by the shared RateLimitFilter
-  # (pattern 002) under the rl:ip:conferences-* family; per-env
-  # overridable like every conferences.* value (Q19=A)
+  # join-by-invite 10/1m, stricter: it creates guest rows and tokens)
+  # and the T053 LiveKit webhook intake (livekit-webhook 60/1m — the
+  # generous canon covers the delivery retries of a busy plane,
+  # livekit-integration.md §5), "<count>/<window>" form, enforced by
+  # the shared RateLimitFilter (pattern 002) under the rl:ip:*
+  # family; per-env overridable like every conferences.* value (Q19=A)
   rate-limit:
     invite-info: ${CONFERENCES_RATE_LIMIT_INVITE_INFO:30/1m}
     join-by-invite: ${CONFERENCES_RATE_LIMIT_JOIN_BY_INVITE:10/1m}
+    livekit-webhook: ${CONFERENCES_RATE_LIMIT_LIVEKIT_WEBHOOK:60/1m}
 
 management:
   # Common tag required on every metric (contracts/technical-endpoints.md §1)

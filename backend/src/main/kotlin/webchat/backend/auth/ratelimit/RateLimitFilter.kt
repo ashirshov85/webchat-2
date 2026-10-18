@@ -87,8 +87,17 @@ import java.time.Duration
  * exists pre-auth) and intervally refilled for the same burst-proof
  * reason: a nonce-probing flood can never win tokens back mid-window,
  * so the N+1-th request inside the window is deterministically the
- * uniform 429 (the T048 flood legs). The webhook row of T053 joins
- * this table together with its controller — never before.
+ * uniform 429 (the T048 flood legs).
+ *
+ * The 009 T053 row (livekit-integration.md §5 of
+ * specs/009-video-conferences): the LiveKit webhook intake
+ * `POST /api/internal/conferences/livekit/webhook` joins the same
+ * table together with its controller — `rl:ip:conferences-livekit-
+ * webhook:<ip>` 60/1m, the generous canon covering the delivery
+ * retries of a busy plane (every join/leave of every room is an
+ * event) while still capping an IP spoof flood before the signature
+ * work; intervally refilled and per-env through
+ * `conferences.rate-limit.livekit-webhook` like the guest rows.
  */
 @Suppress("LargeClass", "LongParameterList", "TooManyFunctions")
 class RateLimitFilter(
@@ -138,6 +147,12 @@ class RateLimitFilter(
                     POST_METHOD,
                     CONFERENCES_JOIN_BY_INVITE_ROUTE_NAME,
                     conferencesProperties.rateLimit.joinByInvite,
+                ),
+            "/api/internal/conferences/livekit/webhook" to
+                conferenceRoute(
+                    POST_METHOD,
+                    CONFERENCES_LIVEKIT_WEBHOOK_ROUTE_NAME,
+                    conferencesProperties.rateLimit.livekitWebhook,
                 ),
         )
 
@@ -433,6 +448,7 @@ class RateLimitFilter(
         const val SSO_CALLBACK_ROUTE_NAME = "sso-callback"
         const val CONFERENCES_INVITE_INFO_ROUTE_NAME = "conferences-invite-info"
         const val CONFERENCES_JOIN_BY_INVITE_ROUTE_NAME = "conferences-join-by-invite"
+        const val CONFERENCES_LIVEKIT_WEBHOOK_ROUTE_NAME = "conferences-livekit-webhook"
         const val REASON_DETAIL = "reason"
         const val LOCKOUT_REASON = "lockout"
         const val RETRY_AFTER_DETAIL = "retryAfterSec"

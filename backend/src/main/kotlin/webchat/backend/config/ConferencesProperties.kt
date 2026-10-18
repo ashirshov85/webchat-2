@@ -55,7 +55,10 @@ data class ConferencesProperties(
     val roomLostGrace: Duration,
     /** livekit-integration.md §1: media-plane ingress and the API pair of the server config. */
     val livekit: LiveKit,
-    /** T047 (009, US4, FR-009): per-IP bucket specs of the public guest routes №54/№55. */
+    /**
+     * T047/T053 (009, US4/US5, FR-009/FR-012): per-IP bucket specs of
+     * the public guest routes №54/№55 and the webhook intake.
+     */
     val rateLimit: RateLimit,
 ) {
     /**
@@ -67,8 +70,10 @@ data class ConferencesProperties(
      * `RateLimitFilter` (pattern 002) under the `rl:ip:conferences-*`
      * Redis family (data-model.md §Redis of 009); parsed fail-fast at
      * startup by the filter, intervally refilled so N/1m reads as
-     * exactly N admissions per window. The webhook row of T053 joins
-     * this table later, with its own spec.
+     * exactly N admissions per window. The T053 webhook row
+     * [livekitWebhook] is the same shape for the LiveKit intake —
+     * still IP-only: the media plane owns no subject, its
+     * authenticity is the webhook signature, not a bearer.
      */
     data class RateLimit(
         /** №54 `GET /api/v1/conferences/invite-info` — the join-page status probe, default 30/1m per IP. */
@@ -78,6 +83,15 @@ data class ConferencesProperties(
          * per IP (stricter: it mints guest rows and tokens).
          */
         val joinByInvite: String,
+        /**
+         * T053 (009, US5) — the LiveKit webhook intake
+         * `POST /api/internal/conferences/livekit/webhook`, default
+         * 60/1m per IP: the generous canon covers the delivery RETRIES
+         * of a busy plane (every join/leave of every room is an event)
+         * while still capping an IP spoof flood before the signature
+         * work (livekit-integration.md §5).
+         */
+        val livekitWebhook: String,
     )
 
     /**

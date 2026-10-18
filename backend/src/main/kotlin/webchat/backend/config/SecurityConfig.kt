@@ -101,11 +101,20 @@ class SecurityConfig {
                 // WITHOUT any bearer expectation; their flood guard is the
                 // per-IP bucket pair `rl:ip:conferences-invite-info` 30/1m
                 // and `rl:ip:conferences-join-by-invite` 10/1m in the
-                // RateLimitFilter above. The webhook route stays CLOSED
-                // here until its controller opens it in T053 — a public
-                // path must never precede its handler
+                // RateLimitFilter above. The webhook route below (T053)
+                // opens together with its controller — a public path must
+                // never precede its handler
                 authorize("/api/v1/conferences/invite-info", permitAll)
                 authorize("/api/v1/conferences/join-by-invite", permitAll)
+                // T053 (009, US5): the LiveKit webhook intake — the media
+                // plane cannot carry a Bearer, so the exact path stands
+                // permitAll like the guest pair above; its authenticity is
+                // NOT this chain but the WebhookReceiver signature check
+                // inside the controller (401 on a bad signature), and its
+                // flood guard is the per-IP bucket
+                // `rl:ip:conferences-livekit-webhook` 60/1m of the
+                // RateLimitFilter (livekit-integration.md §5)
+                authorize("/api/internal/conferences/livekit/webhook", permitAll)
                 authorize("/actuator/health/**", permitAll)
                 authorize("/actuator/prometheus", permitAll)
                 authorize("/actuator/metrics/**", permitAll)

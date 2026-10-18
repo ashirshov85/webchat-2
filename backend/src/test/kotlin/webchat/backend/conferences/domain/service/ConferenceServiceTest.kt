@@ -306,7 +306,7 @@ class ConferenceServiceTest {
                 sweepInterval = Duration.ofSeconds(60),
                 roomLostGrace = Duration.ofSeconds(120),
                 livekit = ConferencesProperties.LiveKit("http://localhost:7880", "devkey", "devsecret"),
-                rateLimit = ConferencesProperties.RateLimit("30/1m", "10/1m"),
+                rateLimit = ConferencesProperties.RateLimit("30/1m", "10/1m", "60/1m"),
             )
     }
 }
