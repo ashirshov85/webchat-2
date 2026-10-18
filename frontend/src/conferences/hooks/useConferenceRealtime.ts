@@ -90,7 +90,7 @@ export function applyConferenceEvent(
       return slice
     }
     const current = slice.byChat.get(event.chatId)
-    if (current !== undefined && current.conferenceId === event.conferenceId) {
+    if (current?.conferenceId === event.conferenceId) {
       return slice
     }
     const byChat = new Map(slice.byChat)
@@ -105,7 +105,7 @@ export function applyConferenceEvent(
   // стоит именно на эту конференцию; дубль `ended` — тот же срез.
   const badged = slice.byChat.get(event.chatId)
   let nextByChat: Map<string, LiveConference> | null = null
-  if (badged !== undefined && badged.conferenceId === event.conferenceId) {
+  if (badged?.conferenceId === event.conferenceId) {
     nextByChat = new Map(slice.byChat)
     nextByChat.delete(event.chatId)
   }
@@ -140,8 +140,7 @@ export function applyConferenceView(
   if (view.status === 'active') {
     const current = slice.byChat.get(view.chatId)
     if (
-      current !== undefined &&
-      current.conferenceId === view.id &&
+      current?.conferenceId === view.id &&
       current.mode === view.mode &&
       (view.startedAt === undefined || current.startedAt === view.startedAt)
     ) {
@@ -157,7 +156,7 @@ export function applyConferenceView(
   }
   const badged = slice.byChat.get(view.chatId)
   let nextByChat: Map<string, LiveConference> | null = null
-  if (badged !== undefined && badged.conferenceId === view.id) {
+  if (badged?.conferenceId === view.id) {
     nextByChat = new Map(slice.byChat)
     nextByChat.delete(view.chatId)
   }

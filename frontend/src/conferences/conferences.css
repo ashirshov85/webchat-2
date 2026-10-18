@@ -62,7 +62,7 @@
   color: var(--cream);
 }
 
-.conference-warning-toast p {
+.conference-warning-toast span {
   margin: 0;
 }
 

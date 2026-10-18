@@ -513,9 +513,7 @@ export default function ConferenceRoom({
       }
       chainTriggered = true
       // Окно — от ПЕРВОЙ потери цепочки (серийные разрывы держат одно).
-      if (reconnectDeadlineRef.current === null) {
-        reconnectDeadlineRef.current = Date.now() + reconnectWindowMs
-      }
+      reconnectDeadlineRef.current ??= Date.now() + reconnectWindowMs
       setPhase('reconnecting')
       attemptReconnect()
     }
@@ -598,12 +596,12 @@ export default function ConferenceRoom({
         {statusText !== null && <output className="conference-room-status">{statusText}</output>}
         {mediaNotice !== null && <output className="conference-room-media">{mediaNotice}</output>}
         {warningVisible && (
-          <div className="conference-warning-toast" role="status" data-conference-warning>
-            <p>{WARNING_TOAST_TEXT}</p>
+          <output className="conference-warning-toast" data-conference-warning>
+            <span>{WARNING_TOAST_TEXT}</span>
             <button type="button" onClick={() => setWarningVisible(false)}>
               Закрыть
             </button>
-          </div>
+          </output>
         )}
         {(phase === 'connected' || phase === 'reconnecting') && <ConferenceMedia />}
         {children}

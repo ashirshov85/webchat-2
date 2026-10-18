@@ -99,7 +99,7 @@ class LiveKitWebhookController(
 
         // a signature-verified event with no usable identity: nothing to
         // dedup, nothing to process — the 200-always rule again
-        if (event == null || event.id.isBlank()) {
+        if (event.id.isBlank()) {
             log.debug("accepted a webhook delivery with no event identity; answered 200 without processing")
             return OK
         }
