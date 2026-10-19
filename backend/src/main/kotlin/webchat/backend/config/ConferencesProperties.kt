@@ -96,7 +96,14 @@ data class ConferencesProperties(
 
     /**
      * LiveKit connection of the backend: [url] is the signaling/Twirp
-     * ingress, [apiKey]/[apiSecret] the server pair that signs client
+     * ingress the ADMIN adapter talks to (cluster-internal on the dev
+     * stand, `http://livekit:7880`); [publicUrl] is the CLIENT ingress
+     * handed out as [webchat.backend.conferences.api.dto.JoinTicket.wsUrl]
+     * — browsers cannot reach the in-cluster service, so an environment
+     * exposing the SPA through an ingress sets it to the public
+     * wss/https endpoint (dev: the `/livekit` route of the same host).
+     * Blank (default) inherits [url] — the local-compose single-URL
+     * setup. [apiKey]/[apiSecret] the server pair that signs client
      * tokens, admin tokens of the Twirp adapter (T012) and webhook
      * bodies. Dev defaults mirror deploy/local/docker-compose.yml (the
      * public `--dev` placeholder pair); production values come from env /
@@ -106,7 +113,11 @@ data class ConferencesProperties(
         val url: String,
         val apiKey: String,
         val apiSecret: String,
-    )
+        val publicUrl: String = "",
+    ) {
+        /** The client-facing WS ingress of the JoinTicket: the explicit public URL, or [url] when not split. */
+        fun clientUrl(): String = publicUrl.ifBlank { url }
+    }
 
     init {
         require(maxParticipants > 0) { "conferences.max-participants must be positive" }

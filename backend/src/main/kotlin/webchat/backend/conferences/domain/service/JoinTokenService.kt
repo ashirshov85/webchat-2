@@ -123,7 +123,7 @@ class JoinTokenService(
         metrics.countTokensMinted(ConferenceMetrics.JoinKind.MEMBER)
         return JoinTicket(
             token = token,
-            wsUrl = properties.livekit.url,
+            wsUrl = properties.livekit.clientUrl(),
             identity = identity,
             name = username,
             expiresAt = clock.now() + properties.tokenTtl,
@@ -218,7 +218,7 @@ class JoinTokenService(
         metrics.countTokensMinted(ConferenceMetrics.JoinKind.GUEST)
         return JoinTicket(
             token = token,
-            wsUrl = properties.livekit.url,
+            wsUrl = properties.livekit.clientUrl(),
             identity = identity,
             name = name,
             expiresAt = clock.now() + properties.tokenTtl,

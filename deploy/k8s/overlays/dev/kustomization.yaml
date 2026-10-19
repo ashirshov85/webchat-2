@@ -12,6 +12,9 @@ resources:
   # LiveKit API key pair (009-video-conferences T004): dev placeholder
   # devkey/secret of the local compose — see livekit.yaml header
   - livekit.yaml
+  # Public wss signaling route of the media plane on the app host
+  # (009): browsers connect through here — see the file header
+  - livekit-signaling.yaml
 
 namespace: dev
 
@@ -45,6 +48,12 @@ patches:
     target:
       kind: Deployment
       name: backend
+  # 009: advertise the STUN-discovered public IP in ICE candidates —
+  # behind the stand NAT the pod IP is private and media never reaches it
+  - path: livekit-external-ip.yaml
+    target:
+      kind: ConfigMap
+      name: livekit-config
 
 # Deploy-time substitution: `kustomize edit set image \
 #   backend=${REGISTRY}/${IMAGE_PREFIX}/backend:${SHA} \

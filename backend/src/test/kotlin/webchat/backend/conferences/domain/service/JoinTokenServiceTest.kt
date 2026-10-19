@@ -103,6 +103,35 @@ class JoinTokenServiceTest {
     }
 
     @Test
+    fun `mint hands out the public client ingress when the environment splits it`() {
+        // the dev-stand split: the admin Twirp calls stay in-cluster
+        // (conferences.livekit.url), while the JoinTicket wsUrl points
+        // browsers at the public ingress route (livekit.public-url)
+        stubGuestRow()
+        val splitProperties =
+            TEST_PROPERTIES.copy(
+                livekit = TEST_PROPERTIES.livekit.copy(publicUrl = "https://dev.webchat.lkshr.ru/livekit"),
+            )
+        val splitService =
+            JoinTokenService(
+                liveKit = liveKit,
+                participants = participants,
+                memberNames = memberNames,
+                tokenMinter = LiveKitServerTokenMinter(splitProperties),
+                properties = splitProperties,
+                metrics = ConferenceMetrics(SimpleMeterRegistry(), Mockito.mock(JdbcTemplate::class.java)),
+                objectMapper = ObjectMapper(),
+                clock = Clock { NOW },
+            )
+
+        val memberTicket = splitService.mintMember(CALLER_ID, conference())
+        val guestTicket = splitService.mintGuest(activeConference(), INVITE_ID, GUEST_NAME)
+
+        assertThat(memberTicket.wsUrl).isEqualTo("https://dev.webchat.lkshr.ru/livekit")
+        assertThat(guestTicket.wsUrl).isEqualTo("https://dev.webchat.lkshr.ru/livekit")
+    }
+
+    @Test
     fun `mint issues the admission ticket of the member shape`() {
         val ticket = service.mintMember(CALLER_ID, conference())
 

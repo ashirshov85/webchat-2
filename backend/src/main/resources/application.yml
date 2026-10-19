@@ -452,6 +452,11 @@ conferences:
     # (the public `--dev` placeholder pair); real credentials come from
     # env / K8s Secrets only (SC-005, quickstart §2)
     url: ${LIVEKIT_URL:http://localhost:7880}
+    # CLIENT-facing WS ingress of the JoinTicket (№47/№55 wsUrl): browsers
+    # cannot reach the in-cluster `url`, so an ingress-exposed environment
+    # points it at the public wss/https endpoint (dev stand: the /livekit
+    # route of the app host). Empty default = inherit `url` (local compose)
+    public-url: ${LIVEKIT_PUBLIC_URL:}
     api-key: ${LIVEKIT_API_KEY:devkey}
     api-secret: ${LIVEKIT_API_SECRET:secret}
   # T047 (FR-009/FR-012): per-IP Bucket4j specs of the two PUBLIC guest

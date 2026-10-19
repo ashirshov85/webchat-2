@@ -22,6 +22,11 @@ spec:
           env:
             - name: LIVEKIT_URL
               value: http://livekit:7880
+            # CLIENT-facing WS ingress of the JoinTicket (№47/№55): the
+            # public /livekit route of livekit-signaling.yaml — browsers
+            # cannot resolve the in-cluster service behind LIVEKIT_URL
+            - name: LIVEKIT_PUBLIC_URL
+              value: https://dev.webchat.lkshr.ru/livekit
             - name: LIVEKIT_API_KEY
               value: devkey
             - name: LIVEKIT_API_SECRET
