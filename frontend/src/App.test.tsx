@@ -4,6 +4,22 @@ import type { MockInstance } from 'vitest'
 import { App } from './App'
 import { stubLocationAssign } from './test/location'
 
+/**
+ * 009, US4, T050 — публичный маршрут `/join/:inviteToken`: без
+ * аутентификации грузится ленивый чанк GuestJoinPage (T049), чат-роуты
+ * остаются недоступными (FR-010). API-клиент конференций замокан
+ * (№54 на монтаже страницы): valid-ответ доводит до шага имени —
+ * маркер гостевой поверхности без раскрытия чата.
+ */
+const conferences = vi.hoisted(() => ({
+  getInviteInfo: vi.fn(),
+}))
+
+vi.mock('./conferences/api/conferences', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./conferences/api/conferences')>()),
+  getInviteInfo: conferences.getInviteInfo,
+}))
+
 const REFRESH_TOKEN_STORAGE_KEY = 'webchat.auth.refreshToken'
 
 let assignMock: MockInstance
@@ -18,6 +34,7 @@ function authenticate(): void {
 
 beforeEach(() => {
   assignMock = stubLocationAssign()
+  conferences.getInviteInfo.mockReset()
 })
 
 afterEach(() => {
@@ -123,5 +140,78 @@ describe('App conference route /conference/:id (009 US1, T025)', () => {
 
     expect(screen.queryByRole('region', { name: 'Конференция' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Create an account' })).toBeInTheDocument()
+  })
+})
+
+describe('App guest join route /join/:inviteToken (009 US4, T050)', () => {
+  const INVITE_TOKEN = 'guest.nonce-jwt-token'
+
+  it('renders the lazy guest join page for an unauthenticated visitor', async () => {
+    conferences.getInviteInfo.mockResolvedValue({ valid: true, live: true })
+    navigate(`/join/${INVITE_TOKEN}`)
+    render(<App />)
+
+    const guestJoin = await screen.findByRole('region', { name: 'Подключение к конференции' })
+    expect(
+      await screen.findByRole('heading', { name: 'Подключение к конференции' }),
+    ).toBeInTheDocument()
+    expect(guestJoin).toHaveAttribute('data-guest-join', INVITE_TOKEN)
+    expect(screen.getByLabelText('Ваше имя')).toBeInTheDocument()
+    expect(conferences.getInviteInfo).toHaveBeenCalledWith(INVITE_TOKEN)
+    expect(assignMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps the chat surface excluded for the guest (FR-010)', async () => {
+    conferences.getInviteInfo.mockResolvedValue({ valid: true })
+    navigate(`/join/${INVITE_TOKEN}`)
+    render(<App />)
+
+    await screen.findByRole('region', { name: 'Подключение к конференции' })
+    expect(await screen.findByLabelText('Ваше имя')).toBeInTheDocument()
+    expect(screen.queryByRole('complementary', { name: 'Чаты и контакты' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Окно диалога' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Конференция' })).not.toBeInTheDocument()
+  })
+
+  it('renders the same public route for an authenticated visitor (Q14=A: enters as guest)', async () => {
+    authenticate()
+    conferences.getInviteInfo.mockResolvedValue({ valid: true })
+    navigate(`/join/${INVITE_TOKEN}`)
+    render(<App />)
+
+    expect(
+      await screen.findByRole('region', { name: 'Подключение к конференции' }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('complementary', { name: 'Чаты и контакты' })).not.toBeInTheDocument()
+    expect(assignMock).not.toHaveBeenCalled()
+  })
+
+  it('does not redirect /join/:inviteToken to login and keeps chat routes protected', () => {
+    conferences.getInviteInfo.mockResolvedValue({ valid: false, reason: 'expired' })
+    navigate('/join/whatever')
+    render(<App />)
+
+    expect(assignMock).not.toHaveBeenCalled()
+    cleanup()
+
+    navigate('/chat')
+    render(<App />)
+
+    expect(assignMock).toHaveBeenCalledWith('/login?returnTo=%2Fchat')
+    expect(
+      screen.queryByRole('region', { name: 'Подключение к конференции' }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('does not claim /join/ without a token', () => {
+    conferences.getInviteInfo.mockResolvedValue({ valid: true })
+    navigate('/join/')
+    render(<App />)
+
+    expect(
+      screen.queryByRole('region', { name: 'Подключение к конференции' }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Create an account' })).toBeInTheDocument()
+    expect(conferences.getInviteInfo).not.toHaveBeenCalled()
   })
 })

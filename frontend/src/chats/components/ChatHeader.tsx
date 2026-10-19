@@ -75,8 +75,16 @@
  * /conference/{id}?mode=… владеет MessengerPage. Прототип 008 кнопок
  * звонка не имеет — новая пара ride'ит дословную лексику .ch-btn без
  * спецсостояний (нет .on/.off: звонок — не тумблер); размещение — за
- * bell-колоколом, перед «шестернёнкой», в любом чате (direct и группа:
+ * bell-колоколом, перед «шестерёнкой», в любом чате (direct и группа:
  * FR-001 покрывает 1:1 и групповые).
+ *
+ * 009 US5 (T059; FR-013, US5-1): бейдж «Звонок идёт» заголовка —
+ * индикатор активной конференции ОТКРЫТОГО чата (ConferenceBadge
+ * между .chat-title и .ch-btns, режим №44 — иконка). Источник —
+ * срез useConferenceRealtime страницы (кадры №18, функция статуса,
+ * REST №45 при переподключении), заголовок — проекция `conference`;
+ * участник в звонке закрывается по Disconnected медиа-плоскости,
+ * бейдж только сигнализирует живой звонок (вход — voluntary, Q12=A).
  *
  * The avatar derives from the peer username (circle) or the group
  * title (octagon, FR-024) via ui/Avatar and recalculates on renames;
@@ -104,6 +112,7 @@ import { pluralRu, lastSeenFormat } from '../../ui/time'
 import { usePresenceEntry } from '../../presence/usePresence'
 import type { PresenceEntry } from '../../presence/presenceStore'
 import type { ConferenceMode } from '../../conferences/api/conferences'
+import { ConferenceBadge } from '../../conferences/components/ConferenceBadge'
 import { ChatGearMenu } from './ChatGearMenu'
 import type { GearMenuChat } from './ChatGearMenu'
 import './chat-header.css'
@@ -202,6 +211,12 @@ export interface ChatHeaderProps {
    * /conference/{id}?mode=… (заголовок — проекция, паттерн лупы).
    */
   readonly onStartCall?: (mode: ConferenceMode) => void
+  /**
+   * 009 US5 (T059): активная конференция открытого чата — бейдж
+   * «Звонок идёт» ({mode} — иконка); null/undefined — звонка нет.
+   * Структурный минимум: владелец состояния — useConferenceRealtime.
+   */
+  readonly conference?: { readonly mode: ConferenceMode } | null
   /** direct: «Добавить в контакты» — №21 belongs to the page (T054). */
   readonly onAddContact?: () => void
   /** direct: «Заблокировать/Разблокировать контакт» — №23/№24 of the page. */
@@ -432,6 +447,7 @@ export function ChatHeader({
   searchActive = false,
   onToggleSearch,
   onStartCall,
+  conference = null,
   onAddContact,
   onToggleBlock,
   onDeleteChat,
@@ -546,6 +562,9 @@ export function ChatHeader({
           <DirectStatusRow entry={presenceEntry} blockedByMe={chat.blockedByMe} />
         )}
       </div>
+      {/* 009 US5 (T059): «Звонок идёт» открытого чата — между именем
+          и кнопками; отсутствие конференции ничего не рендерит. */}
+      {conference !== null && <ConferenceBadge mode={conference.mode} />}
       {/* Правые кнопки: лупа псевдо-поиска (008a Phase 11 T068,
           прототип #btnSearch) — первой; bell-колокол звука (008a T057,
           ui-behavior §4.1) — всегда, персональная настройка участия;

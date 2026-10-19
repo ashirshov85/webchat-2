@@ -22,9 +22,22 @@ import webchat.backend.auth.domain.port.UserRepository
 import webchat.backend.auth.security.AuthEventRecorder
 import webchat.backend.auth.security.AuthEventType
 import webchat.backend.config.AuthRateLimitProperties
+import webchat.backend.config.ConferencesProperties
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.Duration
+
+/**
+ * The T067 observability seam of the ONE shared guard: fired with the
+ * route name on every bucket rejection (the uniform 429) so the
+ * composition root can count domain-side denial metrics — the FR-018
+ * `webchat_conference_joins_denied_total{reason=rate_limit}` of the two
+ * PUBLIC guest routes (SC-004) — without the generic auth filter
+ * knowing the conferences vocabulary.
+ */
+fun interface RateLimitedListener {
+    fun onRateLimited(routeName: String)
+}
 
 /**
  * FR-009 flood guard over the 8 public auth routes (research.md §2, §11;
@@ -72,16 +85,46 @@ import java.time.Duration
  * `rl:user:pwdchange:{userId}`) is enforced in the controller via
  * UserRateLimiter: the Bearer subject is not visible to this pre-auth
  * guard.
+ *
+ * The 009 T047 extension (research.md §6 of
+ * specs/009-video-conferences, FR-009/FR-012): the two PUBLIC guest
+ * routes of the `conferences` tag join the same table —
+ * `GET /api/v1/conferences/invite-info` (`rl:ip:conferences-invite-info:<ip>`
+ * 30/1m — the join-page status probe) and `POST
+ * /api/v1/conferences/join-by-invite`
+ * (`rl:ip:conferences-join-by-invite:<ip>` 10/1m — stricter: it creates
+ * guest rows and mints tickets; the canon of both numbers is
+ * api-contract.md 009 №54/№55, per-env overridable through
+ * `conferences.rate-limit.*`). IP-only like the SSO rows (no subject
+ * exists pre-auth) and intervally refilled for the same burst-proof
+ * reason: a nonce-probing flood can never win tokens back mid-window,
+ * so the N+1-th request inside a window is deterministically the
+ * uniform 429 (the T048 flood legs). Since T067 every 429 of the two
+ * guest routes also rides the [RateLimitedListener] seam as the FR-018
+ * `webchat_conference_joins_denied_total{reason=rate_limit}` — the
+ * SC-004 refusal observable on real data (SC-009).
+ *
+ * The 009 T053 row (livekit-integration.md §5 of
+ * specs/009-video-conferences): the LiveKit webhook intake
+ * `POST /api/internal/conferences/livekit/webhook` joins the same
+ * table together with its controller — `rl:ip:conferences-livekit-
+ * webhook:<ip>` 60/1m, the generous canon covering the delivery
+ * retries of a busy plane (every join/leave of every room is an
+ * event) while still capping an IP spoof flood before the signature
+ * work; intervally refilled and per-env through
+ * `conferences.rate-limit.livekit-webhook` like the guest rows.
  */
 @Suppress("LargeClass", "LongParameterList", "TooManyFunctions")
 class RateLimitFilter(
     redisClient: RedisClient,
     properties: AuthRateLimitProperties,
+    conferencesProperties: ConferencesProperties,
     private val clientIpResolver: ClientIpResolver,
     private val objectMapper: ObjectMapper,
     private val loginThrottle: LoginThrottle,
     private val authEventRecorder: AuthEventRecorder,
     private val userRepository: UserRepository,
+    private val rateLimitedListener: RateLimitedListener,
 ) : OncePerRequestFilter() {
     private val proxyManager: ProxyManager<ByteArray> =
         Bucket4jLettuce
@@ -109,6 +152,24 @@ class RateLimitFilter(
             "/api/v1/auth/sso/callback" to ssoRoute("sso-callback", properties.sso.callback),
             "/api/v1/auth/sso/token" to ssoRoute("sso-token", properties.sso.token),
             "/api/v1/auth/sso/link/authorize" to ssoRoute("sso-link-authorize", properties.sso.linkAuthorize),
+            "/api/v1/conferences/invite-info" to
+                conferenceRoute(
+                    GET_METHOD,
+                    CONFERENCES_INVITE_INFO_ROUTE_NAME,
+                    conferencesProperties.rateLimit.inviteInfo,
+                ),
+            "/api/v1/conferences/join-by-invite" to
+                conferenceRoute(
+                    POST_METHOD,
+                    CONFERENCES_JOIN_BY_INVITE_ROUTE_NAME,
+                    conferencesProperties.rateLimit.joinByInvite,
+                ),
+            "/api/internal/conferences/livekit/webhook" to
+                conferenceRoute(
+                    POST_METHOD,
+                    CONFERENCES_LIVEKIT_WEBHOOK_ROUTE_NAME,
+                    conferencesProperties.rateLimit.livekitWebhook,
+                ),
         )
 
     override fun doFilterInternal(
@@ -145,13 +206,21 @@ class RateLimitFilter(
                     return null
                 }
                 val key = "$EMAIL_KEY_FAMILY:${route.name}:${sha256Hex(identifier)}"
-                if (!consume(identifierBucket.limit, key, response)) return null
+                if (!consume(identifierBucket.limit, key, response)) {
+                    rateLimitedListener.onRateLimited(route.name)
+                    return null
+                }
             }
         }
 
         val clientIp = clientIpResolver.resolve(request)
         val ipKey = "$IP_KEY_FAMILY:${route.name}:$clientIp"
-        return if (consume(route.ipLimit, ipKey, response)) forwardedRequest else null
+        return if (consume(route.ipLimit, ipKey, response)) {
+            forwardedRequest
+        } else {
+            rateLimitedListener.onRateLimited(route.name)
+            null
+        }
     }
 
     /**
@@ -313,6 +382,28 @@ class RateLimitFilter(
             identifierBucket = null,
         )
 
+    /**
+     * A PUBLIC guest route of 009 (T047, research.md §6): IP-only — the
+     * caller has NO subject at all (the guest owns no token before the
+     * mint) — and refilled intervally like the SSO rows: one portion per
+     * window, so a nonce-probing or ticket-minting flood can never win
+     * tokens back mid-window and the N+1-th request inside the window is
+     * deterministically the uniform 429 (the T048 flood legs, SC-004).
+     * The spec comes per-env from `conferences.rate-limit.*` — the canon
+     * of the numbers is api-contract.md 009 №54/№55.
+     */
+    private fun conferenceRoute(
+        method: String,
+        name: String,
+        spec: String,
+    ): LimitedRoute =
+        LimitedRoute(
+            method = method,
+            name = name,
+            ipLimit = parseRateLimit(spec, intervallyRefill = true),
+            identifierBucket = null,
+        )
+
     private fun limitedRoute(
         method: String,
         name: String,
@@ -366,7 +457,9 @@ class RateLimitFilter(
         val identifierBucket: IdentifierBucket?,
     )
 
-    private companion object {
+    // public: the two guest-route names feed the RateLimitFilterConfig
+    // denial adapter (T067); the rest ride the same object
+    companion object {
         private val log = LoggerFactory.getLogger(RateLimitFilter::class.java)
 
         const val POST_METHOD = "POST"
@@ -379,6 +472,13 @@ class RateLimitFilter(
         const val PASSWORD_CHANGE_ROUTE_NAME = "password-change"
         const val SSO_PROVIDERS_ROUTE_NAME = "sso-providers"
         const val SSO_CALLBACK_ROUTE_NAME = "sso-callback"
+        // the two PUBLIC guest route names are PUBLIC themselves: the
+        // RateLimitFilterConfig adapter maps them onto the FR-018
+        // joins_denied{rate_limit} counter through the listener seam (T067)
+
+        const val CONFERENCES_INVITE_INFO_ROUTE_NAME = "conferences-invite-info"
+        const val CONFERENCES_JOIN_BY_INVITE_ROUTE_NAME = "conferences-join-by-invite"
+        const val CONFERENCES_LIVEKIT_WEBHOOK_ROUTE_NAME = "conferences-livekit-webhook"
         const val REASON_DETAIL = "reason"
         const val LOCKOUT_REASON = "lockout"
         const val RETRY_AFTER_DETAIL = "retryAfterSec"

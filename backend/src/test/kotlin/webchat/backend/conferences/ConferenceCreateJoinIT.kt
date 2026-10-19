@@ -1,10 +1,8 @@
 package webchat.backend.conferences
 
-import com.fasterxml.jackson.databind.JsonNode
 import com.nimbusds.jose.JWSAlgorithm
 import com.nimbusds.jwt.SignedJWT
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.MethodOrderer.OrderAnnotation
 import org.junit.jupiter.api.Order
 import org.junit.jupiter.api.Test
@@ -58,14 +56,6 @@ import java.util.concurrent.TimeUnit
 @TestMethodOrder(OrderAnnotation::class)
 @Suppress("TooManyFunctions") // one method per rule of the T021 task table
 class ConferenceCreateJoinIT : ConferencesTestSupport() {
-    private val openConnections = mutableListOf<RoomConnection>()
-
-    @AfterEach
-    fun closeFixtureConnections() {
-        openConnections.forEach(RoomConnection::close)
-        openConnections.clear()
-    }
-
     /** Invariant 1 + FR-002: the «double press» resolves into ONE conference, ONE widget, ONE room. */
     @Order(1)
     @Test
@@ -186,7 +176,7 @@ class ConferenceCreateJoinIT : ConferencesTestSupport() {
             .overridingErrorMessage(
                 "the only principal row is the creator's moderator row — a refused join writes nothing (SC-002)",
             ).hasSize(1)
-        assertThat(rows.single()[USER_ID_FIELD]).isEqualTo(alice.id)
+        assertThat(rows.single()[USER_ID_COLUMN]).isEqualTo(alice.id)
         assertThat(rows.single()[ROLE_FIELD]).isEqualTo(MODERATOR_ROLE)
 
         val folded = getConference(carol, conferenceId)
@@ -298,7 +288,7 @@ class ConferenceCreateJoinIT : ConferencesTestSupport() {
         val refused = joinConference(carol, conferenceId)
         assertThat(refused.statusCode).isEqualTo(HttpStatus.CONFLICT)
         assertThat(problemCode(refused)).isEqualTo(CONFERENCE_FULL_CODE)
-        assertThat(participantRowsOf(conferenceId).map { it[USER_ID_FIELD] })
+        assertThat(participantRowsOf(conferenceId).map { it[USER_ID_COLUMN] })
             .overridingErrorMessage("a quota-refused join writes no principal row")
             .doesNotContain(carol.id)
     }
@@ -346,51 +336,6 @@ class ConferenceCreateJoinIT : ConferencesTestSupport() {
             .isEmpty()
     }
 
-    /** №44 happy-path fixture → the conferenceId of the created row. */
-    private fun createConferenceOk(
-        user: MessagingUser,
-        chatId: UUID,
-        mode: String = VIDEO_MODE,
-    ): UUID {
-        val response = createConference(user, chatId, mode)
-        assertThat(response.statusCode)
-            .overridingErrorMessage("fixture №44 must answer 201, got <%s>: %s", response.statusCode, response.body)
-            .isEqualTo(HttpStatus.CREATED)
-        return UUID.fromString(conferenceViewOf(response)[ID_FIELD].asText())
-    }
-
-    /** №47 happy-path fixture → the parsed `JoinTicket`. */
-    private fun joinConferenceOk(
-        user: MessagingUser,
-        conferenceId: UUID,
-    ): ResponseEntity<String> {
-        val response = joinConference(user, conferenceId)
-        assertThat(response.statusCode)
-            .overridingErrorMessage(
-                "fixture №47 of member <${user.username}> must answer 200, got <%s>: %s",
-                response.statusCode,
-                response.body,
-            ).isEqualTo(HttpStatus.OK)
-        return response
-    }
-
-    /** №47 + a joined signal connection of the minted ticket — the media-plane actor of the story legs. */
-    private fun connectMember(
-        user: MessagingUser,
-        conferenceId: UUID,
-    ): RoomConnection = connectTicket(ticketOf(joinConferenceOk(user, conferenceId)))
-
-    private fun connectTicket(ticket: JsonNode): RoomConnection {
-        val connection =
-            RoomConnection(
-                wsUrl = ticket[WS_URL_FIELD].asText(),
-                token = ticket[TOKEN_FIELD].asText(),
-            )
-        openConnections.add(connection)
-        connection.awaitJoined()
-        return connection
-    }
-
     /**
      * The decoded `video` grant map of a minted ticket (the §3 claim
      * table). The ticket's SIGNATURE is proven the strong way — by the
@@ -422,10 +367,6 @@ class ConferenceCreateJoinIT : ConferencesTestSupport() {
         return video
     }
 
-    private fun roomNameOf(conferenceId: UUID): String = "$ROOM_PREFIX$conferenceId"
-
-    private fun memberPrefixOf(userId: UUID): String = "u:$userId:"
-
     private companion object {
         const val PRESS_TIMEOUT_SECONDS = 30L
 
@@ -437,15 +378,9 @@ class ConferenceCreateJoinIT : ConferencesTestSupport() {
 
         const val LIVEKIT_API_KEY = "devkey"
 
-        const val VIDEO_MODE = "video"
-
-        const val AUDIO_MODE = "audio"
-
         const val CREATED_STATUS = "created"
 
         const val SYSTEM_KIND = "system"
-
-        const val MODERATOR_ROLE = "moderator"
 
         const val CONFERENCE_INVITE_TYPE = "conference_invite"
 
@@ -460,8 +395,6 @@ class ConferenceCreateJoinIT : ConferencesTestSupport() {
         const val E2EE_UNSUPPORTED_CODE = "conference_e2ee_unsupported"
 
         const val MEDIA_UNAVAILABLE_CODE = "conference_media_unavailable"
-
-        const val ID_FIELD = "id"
 
         const val STATUS_FIELD = "status"
 
@@ -479,27 +412,9 @@ class ConferenceCreateJoinIT : ConferencesTestSupport() {
 
         const val CONFERENCE_ID_FIELD = "conferenceId"
 
-        const val MODE_FIELD = "mode"
-
         const val TYPE_FIELD = "type"
 
         const val MESSAGES_FIELD = "messages"
-
-        const val USER_ID_FIELD = "user_id"
-
-        const val ROLE_FIELD = "role"
-
-        const val IDENTITY_FIELD = "identity"
-
-        const val NAME_FIELD = "name"
-
-        const val WS_URL_FIELD = "wsUrl"
-
-        const val TOKEN_FIELD = "token"
-
-        const val METADATA_FIELD = "metadata"
-
-        const val VIDEO_FIELD = "video"
 
         const val ROOM_JOIN_FIELD = "roomJoin"
 
@@ -507,15 +422,7 @@ class ConferenceCreateJoinIT : ConferencesTestSupport() {
 
         const val CAN_SUBSCRIBE_FIELD = "canSubscribe"
 
-        const val CAN_PUBLISH_FIELD = "canPublish"
-
-        const val CAN_PUBLISH_SOURCES_FIELD = "canPublishSources"
-
         const val CAN_PUBLISH_DATA_FIELD = "canPublishData"
-
-        const val CAMERA_SOURCE = "camera"
-
-        const val ROOM_PREFIX = "c:"
 
         const val LOCALHOST_PREFIX = "http://localhost"
     }

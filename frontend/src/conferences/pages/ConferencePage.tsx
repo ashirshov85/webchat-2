@@ -1,35 +1,70 @@
 /**
- * Экран конференции (009, US1, T026) — цель ленивого чанка маршрута
- * `/conference/:id` (T025): тяжёлый `livekit-client`/
+ * Экран конференции (009, US1, T026 + US2, T034) — цель ленивого чанка
+ * маршрута `/conference/:id` (T025): тяжёлый `livekit-client`/
  * `@livekit/components-react` попадает ТОЛЬКО сюда и не раздувает
  * основной бандл (research §10, plan.md Structure Decision). Хук
  * useConference грузит пакет №45+№46, join №47 → JoinTicket и держит
  * слот «одна конференция на вкладку» (Q10=A).
  *
+ * Pre-join перед подключением (T034, FR-005–FR-007) — единый для ВСЕХ
+ * точек входа: дефолты тумблеров задаёт mode точки входа (`?mode=`
+ * маршрута от кнопок заголовка T023/карточки T024 — навигация полный
+ * page load, query фиксируется на монтаж; прямая ссылка без mode —
+ * дефолты по №45 view.mode), ограничения прав — №46 MeView (T033).
+ * До «Войти» НИЧЕГО не публикуется и слот квоты не занимается (FR-007):
+ * №47 вызывается только из onJoin; «Отмена» (выход из pre-join без
+ * «Войти») отменяет подключение без последствий — возврат в мессенджер,
+ * слот не занимался, превью-трек уже освобождён самим pre-join
+ * (US2-6). Стартовое состояние «Войти» (оба выкл — «только слушаю»,
+ * FR-006) и выбранные устройства передаются в ConferenceRoom
+ * (initialMedia/initialDevices), «Повторить» после ошибки join
+ * повторяет №47 с той же выборкой (тумблеры/устройства на №47 не
+ * влияют).
+ *
  * «Конференция завершена» (Q20=A) показывается по обоим REST-лицам:
  * №45 `200 status='ended'` (старая ссылка) и №47 `409
- * conference_ended` — терминальное состояние без кнопки подключения.
- * Кнопка «Подключиться» — до pre-join (T034 встраивает PreJoinScreen
- * перед №47 для всех точек входа: слот квоты не занимается до
- * «Войти», FR-007); e2e T029 на фазе US1 меряет SC-001 от неё.
- * Блок joined монтирует медиа-комнату ConferenceRoom (T027):
- * подключение по JoinTicket, тайлы участников и адаптация качества
- * (FR-004); в слоте children — MediaControls (T028): тумблеры
- * микрофона/камеры/экрана и «Покинуть» (выход — leave слота вкладки,
- * Q10=A). Сообщения об ошибках — нейтральные, без
- * раскрытия деталей (существование не раскрывается, api-contract
- * §1): ветвление UX по коду Problem, а не HTTP-статусу (конвенция
- * 002).
+ * conference_ended` — терминальное состояние без pre-join и кнопки
+ * входа. Блок joined монтирует медиа-комнату ConferenceRoom (T027):
+ * подключение по JoinTicket, тайлы участников и адаптацию качества
+ * (FR-004); в слоте children — ParticipantsPanel (T041): список
+ * участников из LiveKit (identity/name, роль, online, ограничения),
+ * ModerationPanel (T042): панель действий модератора №48–№51
+ * (рендерится только роли модератора — сама скрывается broadcast'ом
+ * снятия роли), и MediaControls (T028): тумблеры микрофона/камеры/
+ * экрана и «Покинуть» (выход — leave слота вкладки,
+ * Q10=A, возврат на pre-join для возможного повторного входа).
+ * Сообщения об ошибках — нейтральные, без раскрытия деталей
+ * (существование не раскрывается, api-contract §1): ветвление UX по
+ * коду Problem, а не HTTP-статусу (конвенция 002).
  */
+import { useCallback, useState } from 'react'
 import { conferenceErrorCode } from '../api/conferences'
-import type { ConferenceErrorCode, ConferenceMode, JoinTicket } from '../api/conferences'
+import type { ConferenceErrorCode, ConferenceMode, JoinTicket, MeView } from '../api/conferences'
 import { useConference } from '../hooks/useConference'
+import type { ConferenceDeviceSelection } from '../hooks/useDevices'
 import ConferenceRoom from '../components/ConferenceRoom'
+import type { ConferenceRoomInitialMedia } from '../components/ConferenceRoom'
 import MediaControls from '../components/MediaControls'
+import ModerationPanel from '../components/ModerationPanel'
+import ParticipantsPanel from '../components/ParticipantsPanel'
+import PreJoinScreen from '../components/PreJoinScreen'
+import type { PreJoinSelection } from '../components/PreJoinScreen'
 
 /** Props экрана конференции: id из маршрута /conference/:id. */
 export interface ConferencePageProps {
   readonly conferenceId: string
+}
+
+/**
+ * mode точки входа из `?mode=` маршрута (T034): кнопки «видеозвонок»/
+ * «аудиозвонок» заголовка (T023) и карточка-приглашение (T024) идут на
+ * `/conference/{id}?mode=…` полным page load — query читается один раз
+ * на монтаж; неверное значение/отсутствие (прямая ссылка) → null —
+ * дефолты pre-join берутся из №45 conference.mode.
+ */
+function entryModeFromSearch(search: string): ConferenceMode | null {
+  const mode = new URLSearchParams(search).get('mode')
+  return mode === 'video' || mode === 'audio' ? mode : null
 }
 
 /** Заголовок экрана по режиму конференции (№45 view.mode — фиксация сервера). */
@@ -65,18 +100,34 @@ function loadErrorMessage(code: ConferenceErrorCode | null): string {
     : 'Не удалось загрузить конференцию'
 }
 
-/** Блок подключенной вкладки (T026/T027/T028): медиа-комната + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
+/** Блок подключенной вкладки (T026/T027/T028 + панель участников T041): медиа-комната + список участников + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
 function JoinedPanel({
   conferenceId,
   ticket,
   mode,
+  initialMedia,
+  initialDevices,
   refreshTicket,
+  restrictions,
+  onRestrictionsSync,
   onLeave,
 }: {
   readonly conferenceId: string
   readonly ticket: JoinTicket
   readonly mode: ConferenceMode
+  /** Стартовое состояние pre-join (T034): оба выкл — «только слушаю» (FR-006). */
+  readonly initialMedia?: ConferenceRoomInitialMedia
+  /** Стартовый выбор устройств pre-join (T034) — применение в useDevices комнаты. */
+  readonly initialDevices?: ConferenceDeviceSelection | null
   readonly refreshTicket: () => Promise<JoinTicket | null>
+  /**
+   * Собственные ограничения №46 MeView (T043): снимок для блокировки
+   * тумблеров MediaControls (live-гранты — сама комната); null —
+   * ограничений нет.
+   */
+  readonly restrictions?: MeView | null
+  /** Повторный №46 по permission-событию LiveKit (T043 — useConference.refreshMe). */
+  readonly onRestrictionsSync: () => void
   readonly onLeave: () => void
 }) {
   return (
@@ -87,9 +138,17 @@ function JoinedPanel({
         conferenceId={conferenceId}
         ticket={ticket}
         mode={mode}
+        initialMedia={initialMedia}
+        initialDevices={initialDevices}
         refreshTicket={refreshTicket}
       >
-        <MediaControls onLeave={onLeave} />
+        <ParticipantsPanel />
+        <ModerationPanel conferenceId={conferenceId} />
+        <MediaControls
+          restrictions={restrictions}
+          onRestrictionsSync={onRestrictionsSync}
+          onLeave={onLeave}
+        />
       </ConferenceRoom>
     </div>
   )
@@ -102,6 +161,7 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
     status,
     error,
     reload,
+    refreshMe,
     joinStatus,
     joinError,
     ticket,
@@ -110,6 +170,29 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
     refreshTicket,
     leave,
   } = useConference(conferenceId)
+
+  /** mode точки входа (?mode= маршрута — T034): фиксируется на монтаж (page load навигация). */
+  const [entryMode] = useState(() => entryModeFromSearch(window.location.search))
+  /** Стартовая выборка pre-join по «Войти» (T034): тумблеры + устройства — в звонок. */
+  const [selection, setSelection] = useState<PreJoinSelection | null>(null)
+
+  /** «Войти» (FR-007: только теперь занимается слот и минтится №47): выборка едет в звонок. */
+  const handlePreJoin = useCallback(
+    (picked: PreJoinSelection): void => {
+      setSelection(picked)
+      join()
+    },
+    [join],
+  )
+
+  /**
+   * «Отмена» — выход из pre-join без «Войти» (US2-6, FR-007): подключение
+   * отменяется без последствий — №47 не вызывался, слот не занимался,
+   * превью-трек освобождён самим pre-join; возврат в мессенджер.
+   */
+  const cancelPreJoin = useCallback((): void => {
+    window.location.assign('/')
+  }, [])
 
   return (
     <section aria-label="Конференция" data-conference-id={conferenceId}>
@@ -135,22 +218,29 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
             <output>Конференция завершена</output>
           ) : (
             <div className="conference-join">
-              {joinStatus === 'idle' && (
-                <button type="button" onClick={join}>
-                  Подключиться
-                </button>
-              )}
-              {joinStatus === 'joining' && (
-                <button type="button" disabled aria-busy="true">
-                  Подключение…
-                </button>
+              {(joinStatus === 'idle' || joinStatus === 'joining') && (
+                <PreJoinScreen
+                  mode={entryMode ?? conference.mode}
+                  joining={joinStatus === 'joining'}
+                  restrictions={me}
+                  onJoin={handlePreJoin}
+                  onCancel={cancelPreJoin}
+                />
               )}
               {joinStatus === 'joined' && ticket !== null && (
                 <JoinedPanel
                   conferenceId={conferenceId}
                   ticket={ticket}
                   mode={conference.mode}
+                  initialMedia={
+                    selection !== null
+                      ? { microphone: selection.microphone, camera: selection.camera }
+                      : undefined
+                  }
+                  initialDevices={selection?.devices}
                   refreshTicket={refreshTicket}
+                  restrictions={me}
+                  onRestrictionsSync={refreshMe}
                   onLeave={leave}
                 />
               )}

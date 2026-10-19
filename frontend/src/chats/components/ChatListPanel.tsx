@@ -55,10 +55,15 @@
  * строит страница по загруженному окну ленты — панель только
  * проекция, без собственных запросов. Включение режима фокусирует
  * поле (прототип :1572 $('#search').focus()).
+ *
+ * 009 US5 (T059): сквозной провод `liveConferences` — строки
+ * получают бейдж «Звонок идёт» (срез useConferenceRealtime
+ * страницы); панель остаётся render-only.
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
 import type { ChatListStatus } from '../hooks/useChatList'
+import type { ConferenceMode } from '../../conferences/api/conferences'
 import { Avatar } from '../../ui/Avatar'
 import { ErrorBanner } from './ErrorBanner'
 import { ChatListItem } from './ChatListItem'
@@ -147,6 +152,12 @@ export interface ChatListPanelProps {
   readonly onSearchQueryChange?: (query: string) => void
   /** Клик по строке-результату — переход к сообщению ленты. */
   readonly onJumpToMessage?: (messageId: string) => void
+  /**
+   * 009 US5 (T059): live-срез активных конференций
+   * useConferenceRealtime (chatId → {mode}) — провод бейджа
+   * «Звонок идёт» в строки; отсутствует — строка без бейджа.
+   */
+  readonly liveConferences?: ReadonlyMap<string, { readonly mode: ConferenceMode }>
 }
 
 export function ChatListPanel({
@@ -167,6 +178,7 @@ export function ChatListPanel({
   searchResults = [],
   onSearchQueryChange,
   onJumpToMessage,
+  liveConferences,
 }: ChatListPanelProps) {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
@@ -289,6 +301,7 @@ export function ChatListPanel({
                   currentUserId={currentUserId}
                   active={item.chatId === activeChatId}
                   onSelect={onSelectChat}
+                  conference={liveConferences?.get(item.chatId) ?? null}
                 />
               ))}
             </ul>

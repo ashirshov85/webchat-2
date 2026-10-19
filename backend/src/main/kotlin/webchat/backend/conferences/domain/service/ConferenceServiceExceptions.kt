@@ -71,3 +71,95 @@ class ConferenceEndedException : RuntimeException("the conference has already be
 class ConferenceFullException : RuntimeException("the conference participant quota is exhausted") {
     val code: String = "conference_full"
 }
+
+/**
+ * 403 (api-contract.md 009 §1/№48–№53, FR-008/FR-009): the caller is
+ * an ACTIVE chat member (the uniform 404 of [ConferenceNotFoundException]
+ * already separated him from strangers) but his conference principal
+ * row is not `role='moderator'` — a plain participant, or a member who
+ * has not joined the conference yet, or the roster is already gone
+ * (Q18=A). Moderators are EQUAL: the gate knows nothing about the
+ * TARGET — any participant, including other moderators and the
+ * creator, is a legit object of №49/№50/№51 (Q21=A — no «владелец»
+ * role exists). Raised by the T039 controller BEFORE every moderation
+ * leg; nothing is written and no media call is made.
+ */
+class ModeratorRequiredException : RuntimeException("the caller is not a moderator of the conference") {
+    val code: String = "moderator_required"
+}
+
+/**
+ * 404 (api-contract.md 009 №49/№50/№51): the moderation target
+ * `{identity}` resolves to no principal of the conference — unknown,
+ * malformed or never joined, or the conference is already finalized
+ * (all rows deleted, Q18=A — indistinguishable by design, the 006
+ * privacy precedent). Raised by the moderation legs
+ * ([ModerationService], T036/T037) on BOTH the identity-fold and the
+ * row-write refusals; the problem+json rendering joins with its T039
+ * carrier in
+ * [webchat.backend.conferences.api.ConferencesExceptionHandler].
+ */
+class ParticipantNotFoundException : RuntimeException("the requested conference participant does not exist") {
+    val code: String = "participant_not_found"
+}
+
+/**
+ * 404 (api-contract.md 009 №53): the conference has NO active guest
+ * link to revoke — never issued, already revoked (the №53 repeat), or
+ * the finalized conference whose invite rows the finalize transaction
+ * deleted (Q18=A — indistinguishable by design, nothing echoed; the
+ * contract table of the delete lists no `conference_ended`, the fold
+ * IS the ended answer). Raised by
+ * [webchat.backend.conferences.domain.service.GuestInviteService.revoke]
+ * (T045) after the moderator gate; the conditional UPDATE keeps the
+ * ORIGINAL `revoked_at` of the first win.
+ */
+class GuestInviteNotFoundException : RuntimeException("the conference has no active guest invite") {
+    val code: String = "guest_invite_not_found"
+}
+
+/**
+ * 404 (api-contract.md 009 §3 №55, SC-003): the submitted nonce is
+ * FORGED — unparseable, foreign-key, tampered, mistyped or a blank
+ * token: every forgery mode answers the SAME uniform refusal without
+ * distinguishing causes (the «без раскрытия причин подделки» edge —
+ * api-contract §1), so the exception carries no distinguishing state
+ * by design. Raised by [webchat.backend.conferences.api.GuestJoinController]
+ * (T046) when the ES256 nonce layer
+ * ([webchat.backend.conferences.livekit.GuestInviteTokens.verify], T044)
+ * refuses the token; nothing is looked up and nothing is written.
+ */
+class InviteInvalidException : RuntimeException("the guest invite nonce is invalid") {
+    val code: String = "invite_invalid"
+}
+
+/**
+ * 404 (api-contract.md 009 §3 №55): the nonce carried a VERIFIABLE
+ * signature but its status row resolves to nothing the ladder can use —
+ * the invite row is gone without an ended conference (the row and its
+ * conference are read atomically enough for the guest surface; the
+ * finalize-fold answer of a deleted row + ended conference is the
+ * [ConferenceEndedException] twin). Nothing is written.
+ */
+class InviteNotFoundException : RuntimeException("the guest invite link does not exist") {
+    val code: String = "invite_not_found"
+}
+
+/**
+ * 409 (api-contract.md 009 §3 №55, SC-003): the link's TTL horizon has
+ * passed — `now >= expiresAt` of the status row (the JWT `exp` equals
+ * it by construction, T044): a legitimately signed but EXPIRED link is
+ * a disclosable lifecycle state, not a forgery. Nothing is written.
+ */
+class InviteExpiredException : RuntimeException("the guest invite link has expired") {
+    val code: String = "invite_expired"
+}
+
+/**
+ * 409 (api-contract.md 009 §3 №55, SC-003): the link was revoked — by
+ * №53 or by the Q17=A replacement of a №52 issue; a REVOKED row is a
+ * disclosable lifecycle state, not a forgery. Nothing is written.
+ */
+class InviteRevokedException : RuntimeException("the guest invite link has been revoked") {
+    val code: String = "invite_revoked"
+}

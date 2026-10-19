@@ -60,6 +60,14 @@ export interface UseConferenceResult {
   readonly error: unknown
   /** Повтор пакета №45+№46 (retry после сбоя загрузки). */
   readonly reload: () => void
+  /**
+   * Повторный №46 без №45 (T043, live-обновление ограничений):
+   * вызывается permission-событием LiveKit (MediaControls) после
+   * серверного применения ограничений (SC-005) — снимок me догоняет
+   * БД для pre-join после выхода; отказ — тихий, снимок остаётся
+   * прежним (вспомогательная синхронизация, экран не рушится).
+   */
+  readonly refreshMe: () => void
   readonly joinStatus: ConferenceJoinStatus
   readonly joinError: unknown
   /** Действующий JoinTicket (№47); null — не подключены/после leave. */
@@ -149,6 +157,8 @@ export function useConference(conferenceId: string): UseConferenceResult {
   const joinStatusRef = useRef<ConferenceJoinStatus>('idle')
   const releaseSlotRef = useRef<(() => void) | null>(null)
   const operationSeqRef = useRef(0)
+  /** Аннулирует висящие №46-refresh при смене conferenceId/размонтировании. */
+  const meSeqRef = useRef(0)
 
   const applyJoinStatus = useCallback((next: ConferenceJoinStatus) => {
     joinStatusRef.current = next
@@ -162,6 +172,7 @@ export function useConference(conferenceId: string): UseConferenceResult {
   // дочерний компонент) рвёт подключение в собственном cleanup
   // раньше родителя.
   useEffect(() => {
+    meSeqRef.current++
     setConference(null)
     setMe(null)
     setStatus('loading')
@@ -176,6 +187,8 @@ export function useConference(conferenceId: string): UseConferenceResult {
     return () => {
       // eslint-disable-next-line react-hooks/exhaustive-deps -- намеренная инвалидация висящих №47 при размонтировании/смене экрана: монотонный счётчик операций (не DOM-ref), рост в cleanup — сам механизм устаревания (устаревший ответ не занимается слот, конституция III)
       operationSeqRef.current++
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- тот же механизм для висящих №46-refresh (T043): счётчик не DOM-ref, устаревший снимок me не показывается на новом экране
+      meSeqRef.current++
       releaseSlotRef.current?.()
       releaseSlotRef.current = null
     }
@@ -216,6 +229,25 @@ export function useConference(conferenceId: string): UseConferenceResult {
   const reload = useCallback(() => {
     setRefreshCount((count) => count + 1)
   }, [])
+
+  /**
+   * Повторный №46 (T043): снимок me обновляется после серверного
+   * применения ограничений (permission-событие LiveKit — SC-005);
+   * seq гасит ответ, висящий через смену conferenceId (устаревший
+   * снимок не показывается, конституция III). Тихий best-effort:
+   * отказ синхронизации не рушит экран — живые grants LiveKit
+   * остаются источником блокировок тумблеров.
+   */
+  const refreshMe = useCallback((): void => {
+    const seq = meSeqRef.current
+    void getConferenceMe(conferenceId)
+      .then((view) => {
+        if (meSeqRef.current === seq) {
+          setMe(view)
+        }
+      })
+      .catch(() => {})
+  }, [conferenceId])
 
   const join = useCallback(() => {
     const current = joinStatusRef.current
@@ -290,6 +322,7 @@ export function useConference(conferenceId: string): UseConferenceResult {
     status,
     error,
     reload,
+    refreshMe,
     joinStatus,
     joinError,
     ticket,

@@ -1,17 +1,26 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { JoinTicket } from '../../api/conferences'
 
 /**
- * 009, US1, T029 — ConferenceRoom (T027, FR-004/FR-006): подключение по
- * JoinTicket (wsUrl+token), стартовая публикация по mode/initialMedia,
- * отказ устройств не рушит вход («только слушаю»), серверные разрывы —
- * терминальные без авто-возврата, полный разрыв после успешного
- * подключения — единственная попытка refreshTicket (№47) и
- * переподключение свежим тикетом (FR-014); размонтирование рвёт
- * подключение (best-effort). livekit-client и примитивы
+ * 009, US1, T029 (+ T032, US2, Q6=A) — ConferenceRoom (T027,
+ * FR-004/FR-006): подключение по JoinTicket (wsUrl+token), стартовая
+ * публикация по mode/initialMedia, отказ устройств не рушит вход
+ * («только слушаю») — понятное предупреждение и снятие при успешном
+ * повторном включении уже в звонке (LocalTrackPublished, тумблеры T028);
+ * серверные разрывы — терминальные без авто-возврата, полный разрыв
+ * после успешного подключения — цепочка реконнекта в окне
+ * reconnect-window со свежими тикетами №47 (T060, FR-014); livekit-client и примитивы
  * @livekit/components-react заменены фейками: предмет теста — связка
  * нашей комнаты с SDK-контрактом (connect/disconnect/события/сеттеры).
+ *
+ * 009, US5, T061 — полные сценарии окна реконнекта T060 (Q15=B):
+ * индикация потери связи «переподключение…» и КОНТРОЛИРУЕМОЕ
+ * завершение по истечении reconnect-window («lost», ретраи минта
+ * прекращаются); тост предупреждения о лимите длительности по
+ * data-пакету topic `conference.warning` (T056 → T060, FR-015,
+ * Q16=B) с ручным закрытием и нейтральным игнором чужих тем/битого
+ * payload.
  */
 
 const lk = vi.hoisted(() => {
@@ -30,6 +39,9 @@ const lk = vi.hoisted(() => {
     Reconnecting: 'reconnecting',
     Reconnected: 'reconnected',
     Disconnected: 'disconnected',
+    DataReceived: 'dataReceived',
+    LocalTrackPublished: 'localTrackPublished',
+    ActiveDeviceChanged: 'activeDeviceChanged',
   } as const
   const Track = {
     Source: { Camera: 'camera', Microphone: 'microphone', ScreenShare: 'screen_share' },
@@ -45,19 +57,21 @@ const lk = vi.hoisted(() => {
     readonly connectCalls: { wsUrl: string; token: string }[] = []
     readonly micCalls: boolean[] = []
     readonly cameraCalls: boolean[] = []
+    /** switchActiveDevice (useDevices — стартовый выбор pre-join, T034). */
+    readonly switchCalls: { kind: string; deviceId: string }[] = []
     disconnectCalls = 0
     /** Управляемое тестом поведение connect конкретной комнаты (приоритет над default). */
     connectImpl: ((wsUrl: string, token: string) => Promise<void>) | null = null
     micImpl: ((enabled: boolean) => Promise<void>) | null = null
     cameraImpl: ((enabled: boolean) => Promise<void>) | null = null
-    private readonly listeners = new Map<string, Set<(reason?: number) => void>>()
+    private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>()
 
     constructor(options: unknown) {
       this.constructorOptions = options
       FakeRoom.instances.push(this)
     }
 
-    on(event: string, listener: (reason?: number) => void): this {
+    on(event: string, listener: (...args: unknown[]) => void): this {
       let set = this.listeners.get(event)
       if (set === undefined) {
         set = new Set()
@@ -67,9 +81,20 @@ const lk = vi.hoisted(() => {
       return this
     }
 
-    emit(event: string, reason?: number): void {
+    off(event: string, listener: (...args: unknown[]) => void): this {
+      this.listeners.get(event)?.delete(listener)
+      return this
+    }
+
+    switchActiveDevice(kind: string, deviceId: string): Promise<boolean> {
+      this.switchCalls.push({ kind, deviceId })
+      return Promise.resolve(true)
+    }
+
+    /** Вариадический emit: DataReceived несёт (payload, participant, kind, topic). */
+    emit(event: string, ...args: unknown[]): void {
       this.listeners.get(event)?.forEach((listener) => {
-        listener(reason)
+        listener(...args)
       })
     }
 
@@ -252,7 +277,40 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     })
   })
 
-  it('отказ браузера в доступе к устройствам не рушит вход — участник остаётся слушателем', async () => {
+  it('стартовый выбор устройств pre-join применяется при появлении комнаты (T034, useDevices initial)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        initialMedia={{ microphone: true, camera: false }}
+        initialDevices={{
+          audioInput: 'mic-2',
+          videoInput: 'cam-2',
+          audioOutput: 'spk-2',
+        }}
+        refreshTicket={vi.fn()}
+      />,
+    )
+
+    // комната появилась — выбор применён ДО первой публикации (null-слоты
+    // не адресуются: «По умолчанию» остаётся браузерному дефолту)
+    await waitFor(() => {
+      expect(lastRoom().switchCalls).toEqual([
+        { kind: 'audioinput', deviceId: 'mic-2' },
+        { kind: 'videoinput', deviceId: 'cam-2' },
+        { kind: 'audiooutput', deviceId: 'spk-2' },
+      ])
+    })
+    await waitFor(() => {
+      expect(lastRoom().micCalls).toEqual([true])
+    })
+    await waitFor(() => {
+      expect(lastRoom().cameraCalls).toEqual([false])
+    })
+  })
+
+  it('отказ браузера в доступе к устройствам не рушит вход — слушатель + понятное предупреждение (Q6=A, T032)', async () => {
     render(
       <ConferenceRoom
         conferenceId="c-1"
@@ -274,11 +332,97 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     await waitFor(() => {
       expect(room.cameraCalls).toEqual([true])
     })
-    // вход сохранён: подключение не разорвано, ошибки на экране нет
-    await waitFor(() => {
-      expect(screen.queryByRole('status')).toBeNull()
-    })
+    // вход сохранён: подключение не разорвано; отказ — предупреждение
+    // «только слушаю» с подсказкой повторного запроса в звонке
+    expect(
+      await screen.findByText('Нет доступа к камере и микрофону — можно включить их в звонке'),
+    ).toBeVisible()
     expect(room.disconnectCalls).toBe(0)
+  })
+
+  it('отказ только микрофона (mode=audio) — предупреждение про микрофон, вход сохранён (T032)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="audio"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+    room.micImpl = () => Promise.reject(new Error('NotAllowedError'))
+
+    await waitFor(() => {
+      expect(room.micCalls).toEqual([true])
+    })
+    expect(
+      await screen.findByText('Нет доступа к микрофону — можно включить его в звонке'),
+    ).toBeVisible()
+    // камера не запрашивалась (mode=audio) — её части в предупреждении нет
+    expect(screen.queryByText(/Нет доступа к камере/)).toBeNull()
+    expect(room.disconnectCalls).toBe(0)
+  })
+
+  it('намеренно выключенный старт не считается отказом — предупреждения нет (FR-006)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        initialMedia={{ microphone: false, camera: false }}
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+
+    await waitFor(() => {
+      expect(room.micCalls).toEqual([false])
+    })
+    await waitFor(() => {
+      expect(room.cameraCalls).toEqual([false])
+    })
+    await waitFor(() => {
+      expect(screen.queryByText(/Нет доступа/)).toBeNull()
+    })
+  })
+
+  it('повторный запрос уже в звонке: успешная публикация (LocalTrackPublished) снимает предупреждение слота (Q6=A, T032)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+    room.micImpl = () => Promise.reject(new Error('NotAllowedError'))
+    room.cameraImpl = () => Promise.reject(new Error('NotAllowedError'))
+
+    await waitFor(() => {
+      expect(room.cameraCalls).toEqual([true])
+    })
+    // оба слота недоступны — объединённое предупреждение
+    expect(
+      await screen.findByText('Нет доступа к камере и микрофону — можно включить их в звонке'),
+    ).toBeVisible()
+
+    // пользователь повторно запросил микрофон тумблером (T028) — успех:
+    // LocalTrackPublished микрофона снимает только свою часть
+    room.emit(lk.RoomEvent.LocalTrackPublished, { source: lk.Track.Source.Microphone })
+    expect(
+      await screen.findByText('Нет доступа к камере — можно включить её в звонке'),
+    ).toBeVisible()
+
+    // успешное включение камеры убирает предупреждение полностью
+    room.emit(lk.RoomEvent.LocalTrackPublished, { source: lk.Track.Source.Camera })
+    await waitFor(() => {
+      expect(screen.queryByText(/Нет доступа/)).toBeNull()
+    })
+
+    // публикация экрана предупреждений не порождает и не трогает
+    room.emit(lk.RoomEvent.LocalTrackPublished, { source: lk.Track.Source.ScreenShare })
+    expect(screen.queryByText(/Нет доступа/)).toBeNull()
   })
 
   it('серверный разрыв (PARTICIPANT_REMOVED) — терминальный «Вы отключены», без refreshTicket', async () => {
@@ -333,13 +477,12 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     })
     await screen.findByText('Соединение потеряно — переподключение…')
 
-    // повторный разрыв той же цепочки: попытка обновления уже потрачена —
-    // второго refreshTicket нет, фаза — контролируемое «не удалось»
+    // повторный разрыв той же мёртвой комнаты — дубликат цепочки
+    // (окно реконнекта T060): тикет уже получен, второго минта нет,
+    // фаза остаётся «переподключение…» до смены тикета родителем
     first.emit(lk.RoomEvent.Disconnected)
     expect(refreshTicket).toHaveBeenCalledTimes(1)
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      'Не удалось подключиться к медиа-серверу',
-    )
+    expect(screen.getByRole('status')).toHaveTextContent('Соединение потеряно — переподключение…')
 
     // родитель перевыдал тикет (смена ticket.token) — СВЕЖАЯ комната
     // подключается новым токеном, прежняя корректно разорвана
@@ -457,5 +600,175 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     // подпись широкого тайла — отображаемое имя участника (participantLabel)
     expect(screens).toHaveTextContent('Экран — bob')
     expect(screens.querySelector('video')).not.toBeNull()
+  })
+})
+
+describe('ConferenceRoom — окно реконнекта T060 (009 US5 T061, Q15=B)', () => {
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('потеря связи после подключения: индикация «переподключение…» и цепочка ретраев минта до конца окна', async () => {
+    // null — минт не даёт свежего тикета (сбой/устаревание): ретраи
+    // продолжаются, пока окно живо
+    const refreshTicket = vi.fn().mockResolvedValue(null)
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={refreshTicket}
+        reconnectWindowMs={150}
+        reconnectRetryDelayMs={20}
+      />,
+    )
+    const room = lastRoom()
+    await waitFor(() => {
+      expect(room.micCalls).toHaveLength(1)
+    })
+
+    room.state = lk.ConnectionState.Disconnected
+    room.emit(lk.RoomEvent.Disconnected)
+
+    // индикация потери связи (T060): понятный статус с первой потери
+    expect(await screen.findByText('Соединение потеряно — переподключение…')).toBeVisible()
+    await waitFor(() => {
+      expect(refreshTicket.mock.calls.length).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  it('истечение reconnect-window — контролируемое завершение «lost», ретраи минта прекращаются', async () => {
+    const refreshTicket = vi.fn().mockResolvedValue(null)
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={refreshTicket}
+        reconnectWindowMs={150}
+        reconnectRetryDelayMs={20}
+      />,
+    )
+    const room = lastRoom()
+    await waitFor(() => {
+      expect(room.micCalls).toHaveLength(1)
+    })
+
+    room.state = lk.ConnectionState.Disconnected
+    room.emit(lk.RoomEvent.Disconnected)
+    expect(await screen.findByText('Соединение потеряно — переподключение…')).toBeVisible()
+
+    // окно истекло — понятное сообщение контролируемого завершения
+    const lost = await screen.findByText(
+      'Не удалось восстановить связь с конференцией',
+      {},
+      { timeout: 2_000 },
+    )
+    expect(lost).toBeVisible()
+
+    // цепочка остановлена: новых вызовов минта после «lost» нет
+    const callsAtLoss = refreshTicket.mock.calls.length
+    expect(callsAtLoss).toBeGreaterThanOrEqual(1)
+    await new Promise((resolve) => {
+      setTimeout(resolve, 80)
+    })
+    expect(refreshTicket.mock.calls).toHaveLength(callsAtLoss)
+    expect(room.connectCalls).toHaveLength(1)
+  })
+})
+
+describe('ConferenceRoom — тост conference.warning (009 US5 T061 ← T056/T060, FR-015 Q16=B)', () => {
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('data-пакет topic conference.warning — тост о лимите длительности, закрытие вручную', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+    await waitFor(() => {
+      expect(room.connectCalls).toHaveLength(1)
+    })
+
+    // серверный SendData шедулера T056: payload {"type","endsAt"} — ВСЕМ
+    // подключённым (включая гостей без SSE), тема conference.warning
+    const payload = new TextEncoder().encode(
+      JSON.stringify({ type: 'conference.warning', endsAt: '2026-10-17T15:55:00.000Z' }),
+    )
+    room.emit(lk.RoomEvent.DataReceived, payload, undefined, undefined, 'conference.warning')
+
+    const toast = await screen.findByText('Конференция завершится по лимиту длительности')
+    expect(toast).toBeVisible()
+
+    // событие одно — тост живёт до ручного закрытия (до завершения
+    // остаётся warning-before-end)
+    fireEvent.click(screen.getByRole('button', { name: 'Закрыть' }))
+    await waitFor(() => {
+      expect(screen.queryByText('Конференция завершится по лимиту длительности')).toBeNull()
+    })
+  })
+
+  it('чужая тема и битый payload — тост не показывается (нейтральный игнор)', async () => {
+    render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    const room = lastRoom()
+    await waitFor(() => {
+      expect(room.connectCalls).toHaveLength(1)
+    })
+
+    const encode = (value: string) => new TextEncoder().encode(value)
+    // чужая тема: payload правильный, но topic не conference.warning
+    room.emit(
+      lk.RoomEvent.DataReceived,
+      encode(JSON.stringify({ type: 'conference.warning' })),
+      undefined,
+      undefined,
+      'chat.typing',
+    )
+    // битый JSON нужной темы
+    room.emit(
+      lk.RoomEvent.DataReceived,
+      encode('не-json'),
+      undefined,
+      undefined,
+      'conference.warning',
+    )
+    // чужой payload.type нужной темы
+    room.emit(
+      lk.RoomEvent.DataReceived,
+      encode(JSON.stringify({ type: 'other.event' })),
+      undefined,
+      undefined,
+      'conference.warning',
+    )
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 30)
+    })
+    expect(screen.queryByText(/лимитом длительности/)).toBeNull()
   })
 })

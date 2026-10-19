@@ -1,17 +1,22 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MockInstance } from 'vitest'
 import type { ApiProblem } from '../../../api/auth'
+import { stubLocationAssign } from '../../../test/location'
 import type { ConferenceView, JoinTicket, MeView } from '../../api/conferences'
 import { leaveActiveConference } from '../../hooks/useConference'
 import ConferencePage from '../ConferencePage'
 
 /**
- * 009, US1, T026 — экран конференции: контракт маршрута (region
- * «Конференция» + data-conference-id, App.test T025), пакет №45+№46,
- * кнопка «Подключиться» → №47 → блок joined с identity и «Покинуть»,
- * «Конференция завершена» по обоим лицам (№45 status='ended' и №47
- * 409 conference_ended) и нейтральные ошибки загрузки/join с
- * «Повторить».
+ * 009, US1, T026 + US2, T034 — экран конференции: контракт маршрута
+ * (region «Конференция» + data-conference-id, App.test T025), пакет
+ * №45+№46, pre-join перед подключением (T034: «Войти» → №47, «Отмена» —
+ * отмена подключения без последствий, US2-6), блок joined с identity и
+ * «Покинуть» (возврат на pre-join), «Конференция завершена» по обоим
+ * лицам (№45 status='ended' и №47 409 conference_ended) и нейтральные
+ * ошибки загрузки/join с «Повторить». jsdom без mediaDevices —
+ * acquisition превью камеры на pre-join тихо отклоняется (T032),
+ * «Войти» остаётся доступной (Q6=A).
  */
 
 const conferences = vi.hoisted(() => ({
@@ -75,16 +80,20 @@ function resolveBundle(view: ConferenceView = conferenceView(), me: MeView = meV
   conferences.getConferenceMe.mockResolvedValue(me)
 }
 
-describe('ConferencePage (009 US1 T026)', () => {
+describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
+  let assignMock: MockInstance
+
   beforeEach(() => {
     conferences.getConference.mockReset()
     conferences.getConferenceMe.mockReset()
     conferences.joinConference.mockReset()
+    assignMock = stubLocationAssign()
   })
 
   afterEach(() => {
     cleanup()
     leaveActiveConference()
+    assignMock.mockRestore()
   })
 
   it('keeps the route contract: region «Конференция» with data-conference-id', async () => {
@@ -98,23 +107,26 @@ describe('ConferencePage (009 US1 T026)', () => {
     expect(screen.getByText('Ваша роль: модератор')).toBeInTheDocument()
   })
 
-  it('shows «Конференция завершена» for a №45 ended status without a join button', async () => {
+  it('shows «Конференция завершена» for a №45 ended status without a pre-join', async () => {
     resolveBundle(conferenceView({ status: 'ended', endReason: 'last_left' }))
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
 
     const ended = await screen.findByText('Конференция завершена')
     expect(ended.tagName).toBe('OUTPUT')
-    expect(screen.queryByRole('button', { name: 'Подключиться' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Войти' })).not.toBeInTheDocument()
     expect(conferences.joinConference).not.toHaveBeenCalled()
   })
 
-  it('join №47 renders the joined block with the ticket identity and leave returns to idle', async () => {
+  it('«Войти» on pre-join mints №47 and renders the joined block; leave returns to pre-join', async () => {
     resolveBundle()
     const ticket = joinTicket()
     conferences.joinConference.mockResolvedValue(ticket)
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Подключиться' }))
+    // до «Войти» №47 не вызывался и слот не занимался (FR-007, US2-5)
+    const joinButton = await screen.findByRole('button', { name: 'Войти' })
+    expect(conferences.joinConference).not.toHaveBeenCalled()
+    fireEvent.click(joinButton)
 
     const joined = await screen.findByText('Вы в конференции')
     expect(joined.tagName).toBe('OUTPUT')
@@ -125,8 +137,20 @@ describe('ConferencePage (009 US1 T026)', () => {
     // коммитом — Room создаётся эффектом жизненного цикла тикета (T027)
     fireEvent.click(await screen.findByRole('button', { name: 'Покинуть' }))
 
-    expect(await screen.findByRole('button', { name: 'Подключиться' })).toBeInTheDocument()
+    // выход возвращает на pre-join — повторный вход доступен (T034)
+    expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
     expect(screen.queryByText('Вы в конференции')).not.toBeInTheDocument()
+  })
+
+  it('«Отмена» на pre-join отменяет подключение без последствий: №47 не вызывался, возврат в мессенджер (US2-6, T034)', async () => {
+    resolveBundle()
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
+
+    expect(assignMock).toHaveBeenCalledWith('/')
+    expect(conferences.joinConference).not.toHaveBeenCalled()
   })
 
   it('shows «Конференция завершена» when №47 answers 409 conference_ended', async () => {
@@ -134,11 +158,11 @@ describe('ConferencePage (009 US1 T026)', () => {
     conferences.joinConference.mockRejectedValue(problem(409, 'conference_ended'))
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Подключиться' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Войти' }))
 
     const ended = await screen.findByText('Конференция завершена')
     expect(ended.tagName).toBe('OUTPUT')
-    expect(screen.queryByRole('button', { name: 'Подключиться' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Войти' })).not.toBeInTheDocument()
   })
 
   it('renders a neutral join error with «Повторить» (conference_full)', async () => {
@@ -148,7 +172,7 @@ describe('ConferencePage (009 US1 T026)', () => {
       .mockResolvedValueOnce(joinTicket())
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Подключиться' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Войти' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Конференция заполнена')
 

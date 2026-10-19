@@ -3,6 +3,7 @@ package webchat.backend.conferences.api.dto
 import com.fasterxml.jackson.annotation.JsonInclude
 import webchat.backend.conferences.domain.model.ConferenceEndReason
 import webchat.backend.conferences.domain.model.ConferenceStatus
+import webchat.backend.conferences.domain.model.ParticipantRestrictions
 import webchat.backend.conferences.domain.model.ParticipantRole
 import java.time.Instant
 import java.util.UUID
@@ -162,3 +163,180 @@ data class JoinTicket(
     val name: String,
     val expiresAt: Instant,
 )
+
+/**
+ * 400 (api-contract.md 009 №49/№50/№51): the PATH `{identity}` segment
+ * is blank — `errors: {identity: [malformed_request]}`. Nothing of the
+ * submitted value is echoed (constitution V); rendered by
+ * [webchat.backend.conferences.api.ConferencesExceptionHandler] as a
+ * typed problem.
+ */
+class InvalidParticipantIdentityException : RuntimeException("identity must not be blank")
+
+/**
+ * 400 (api-contract.md 009 №49): the body is not the full
+ * SET-state of four booleans — `errors: {restrictions:
+ * [malformed_request]}` (a missing flag makes a partial update, which
+ * the SET semantics forbid — api-contract.md §2 №49). The same
+ * raw-nullable-then-validate discipline as
+ * [CreateConferenceRequest].
+ */
+class InvalidParticipantRestrictionsException :
+    RuntimeException("restrictions must be the full SET of the four booleans")
+
+/**
+ * 400 (api-contract.md 009 №50): the submitted `role` is absent or
+ * outside `moderator|participant` — `errors: {role: [invalid_role]}`.
+ * The submitted value is never echoed (constitution V).
+ */
+class InvalidParticipantRoleException : RuntimeException("role must be one of: moderator, participant")
+
+/**
+ * Contract №52 success body — `GuestInviteView` (api-contract.md §4):
+ * the freshly minted guest link — the signed nonce inside the PUBLIC
+ * SPA route [inviteUrl] (`{FRONTEND}/join/{inviteToken}`, T050) and
+ * the [expiresAt] horizon (= `createdAt + conferences.guest-invite-ttl`,
+ * 24 h default Q19=A — the nonce `exp` and the status row share it by
+ * construction, data-model 009 §Сущность 3). ONE active link per
+ * conference: every №52 answer has already revoked its predecessor in
+ * the same transaction (Q17=A) and disconnected its connected guests
+ * (Q13=B). Never posted to the chat (FR-009) — delivery rides the
+ * moderator's own channel.
+ */
+data class GuestInviteView(
+    val inviteUrl: String,
+    val expiresAt: Instant,
+)
+
+/**
+ * The №54 invalidity reason (api-contract.md 009 §3, the
+ * `InviteInfoView.reason` enum expired|revoked|ended): a LIFECYCLE
+ * state of the link — decidable from the status row/ended conference
+ * and disclosable to the join page. A FORGED nonce carries NO reason:
+ * the forgery modes are never distinguished (api-contract §1 edge).
+ */
+enum class InviteInfoReason {
+    EXPIRED,
+    REVOKED,
+    ENDED,
+}
+
+/** The lowercase contract label of an [InviteInfoReason] (schema enum expired|revoked|ended). */
+fun inviteInfoReasonLabel(reason: InviteInfoReason): String = reason.name.lowercase()
+
+/**
+ * Contract №54 success body — `InviteInfoView` (api-contract.md §3): the
+ * minimum-disclosure status answer of the PUBLIC link probe, BEFORE the
+ * guest enters a name (SC-003 ≤ 3 действий, FR-009): the [valid] flag,
+ * an optional [reason] for a LIFECYCLE refusal and the optional [live]
+ * UX hint. A forged nonce answers `{valid:false}` with NO reason (the
+ * forgery modes are indistinguishable, api-contract §1 edge) and NO
+ * chat/conference details are ever disclosed; [reason] is absent when
+ * [valid] is `true`, [live] is carried only for a valid link
+ * (`status='active'` of the conference row — the first join has
+ * happened and finalize has not).
+ */
+data class InviteInfoView(
+    val valid: Boolean,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val reason: String? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL) val live: Boolean? = null,
+)
+
+/**
+ * 422 (api-contract.md 009 §3 №55, Q19/Q7=A): the guest display name is
+ * blank after the server trim or longer than
+ * `conferences.guest-name-max-length` (50 default) — `errors: {name:
+ * [name_invalid]}`. The submitted value is never echoed (constitution
+ * V); rendered by [webchat.backend.conferences.api.ConferencesExceptionHandler]
+ * as a typed problem.
+ */
+class InvalidGuestNameException :
+    RuntimeException("name must be 1 to conferences.guest-name-max-length characters long after trim")
+
+/**
+ * Contract №55 request body — `GuestJoinRequest` (api-contract.md §3,
+ * openapi.yaml 0.11.0): exactly `{inviteToken, name}` — the nonce of
+ * the guest link and the display name the guest enters. The
+ * raw-string-then-validate discipline of [CreateConferenceRequest]: the
+ * name is checked HERE as the contract `422 name_invalid` (the
+ * server-side trim, 1..max — Q19/Q7=A), while the `inviteToken` needs
+ * the ES256 SIGNATURE layer before any lifecycle decision and stays a
+ * raw string for the nonce ladder of
+ * [webchat.backend.conferences.api.GuestJoinController] (T046).
+ */
+data class GuestJoinRequest(
+    val inviteToken: String? = null,
+    val name: String? = null,
+) {
+    /**
+     * №55 name shape check: the server-side trim, then `1..maxLength`
+     * ([webchat.backend.config.ConferencesProperties.guestNameMaxLength],
+     * 50 default) — [InvalidGuestNameException] (`422 name_invalid`)
+     * otherwise, without echoing the submitted value.
+     */
+    fun validatedName(maxLength: Int): String {
+        val trimmed = name?.trim().orEmpty()
+        if (trimmed.isEmpty() || trimmed.length > maxLength) {
+            throw InvalidGuestNameException()
+        }
+        return trimmed
+    }
+}
+
+/**
+ * Contract №49 request body — `UpdateParticipantRestrictionsRequest`
+ * (api-contract.md §4, openapi.yaml 0.11.0): the FULL SET-state of the
+ * four moderation flags, all four required (a partial update is
+ * impossible; a reset is an explicit `false`, api-contract.md §2 №49).
+ *
+ * The flags arrive as nullable booleans on purpose (the
+ * [CreateConferenceRequest] convention): a missing flag is rejected
+ * HERE as the contract 400 `errors: {restrictions:
+ * [malformed_request]}` instead of dying in deserialization — the
+ * reply stays a typed problem. The moderator/ended/target legs are
+ * caller-dependent and stay with the T039 controller +
+ * [webchat.backend.conferences.domain.service.ModerationService].
+ */
+data class UpdateParticipantRestrictionsRequest(
+    val micRestricted: Boolean? = null,
+    val cameraRestricted: Boolean? = null,
+    val screenRestricted: Boolean? = null,
+    val speechRestricted: Boolean? = null,
+) {
+    /** №49 shape check: the complete [ParticipantRestrictions], or `400 malformed_request`. */
+    fun validatedRestrictions(): ParticipantRestrictions =
+        ParticipantRestrictions(
+            micRestricted = requiredFlag(micRestricted),
+            cameraRestricted = requiredFlag(cameraRestricted),
+            screenRestricted = requiredFlag(screenRestricted),
+            speechRestricted = requiredFlag(speechRestricted),
+        )
+
+    private fun requiredFlag(flag: Boolean?): Boolean = flag ?: throw InvalidParticipantRestrictionsException()
+}
+
+/**
+ * Contract №50 request body — `UpdateParticipantRoleRequest`
+ * (api-contract.md §4): exactly `{role: "moderator" | "participant"}`
+ * — the elevation/demotion pair of the EQUAL moderators (Q21=A; no
+ * «владелец» role exists, the creator just STARTS as a moderator).
+ * The raw-string-then-validate discipline of [CreateConferenceRequest]:
+ * an absent/unknown label is the contract 400 `errors: {role:
+ * [invalid_role]}`.
+ */
+data class UpdateParticipantRoleRequest(
+    val role: String? = null,
+) {
+    /** №50 shape check: the [ParticipantRole] of the label, or `400 invalid_role`. */
+    fun validatedRole(): ParticipantRole =
+        when (role) {
+            MODERATOR_ROLE -> ParticipantRole.MODERATOR
+            PARTICIPANT_ROLE -> ParticipantRole.PARTICIPANT
+            else -> throw InvalidParticipantRoleException()
+        }
+
+    private companion object {
+        private const val MODERATOR_ROLE = "moderator"
+        private const val PARTICIPANT_ROLE = "participant"
+    }
+}

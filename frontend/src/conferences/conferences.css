@@ -31,6 +31,41 @@
   text-align: center;
 }
 
+/* Предупреждение об отказе доступа к устройствам в звонке (T032,
+   Q6=A): вход сохранён — «только слушаю», повторный запрос — тумблеры
+   T028 (снимает предупреждение); <output> = role=status. */
+.conference-room-media {
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+  font: 12.5px var(--font-body);
+  color: var(--muted);
+  text-align: center;
+}
+
+/* Тост предупреждения о лимите длительности (T060 ← T056, FR-015,
+   Q16=B): data-пакет topic conference.warning (всем подключённым,
+   включая гостей без SSE) → понятное сообщение о скором
+   контролируемом завершении; закрывается вручную. */
+.conference-warning-toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+  font: 12.5px var(--font-body);
+  color: var(--cream);
+}
+
+.conference-warning-toast span {
+  margin: 0;
+}
+
 /* Сетка тайлов камер: адаптивные колонки от ширины, тайл 16:9. */
 .conference-tiles {
   display: grid;
@@ -154,4 +189,580 @@
   margin: 0;
   font: italic 12px var(--font-body);
   color: var(--muted);
+}
+
+/* Пояснения блокировки собственных источников модератором (T043, US3;
+   №49/№46 + live-grants): компактный стек строк под тумблерами — как на
+   pre-join (T033), каждый <output> = role=status. */
+.conference-controls-restrictions {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ============================================================
+ * Pre-join экран (T030, US2; FR-005–FR-007): превью камеры,
+ * тумблеры стартового состояния (переиспользуют геометрию
+ * .conference-controls-toggle выше), выбор устройств ввода/вывода,
+ * «Войти»/«Отмена». Нативный <dialog> без модальной подложки —
+ * диалоговая семантика внутри страницы конференции (008).
+ * ============================================================ */
+
+/* Панель pre-join: гасим браузерные дефолты dialog до лексики модуля. */
+.conference-prejoin {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+  color: var(--cream);
+}
+
+.conference-prejoin-title {
+  margin: 0;
+  font: 17px var(--font-heading);
+  letter-spacing: 0.04em;
+  color: var(--cream-bright);
+}
+
+/* Превью: тёмная видеоповерхность 16:9 (как тайлы комнаты), плейсхолдер по центру. */
+.conference-prejoin-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: #060503;
+}
+
+.conference-prejoin-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.conference-prejoin-placeholder {
+  margin: 0;
+  font: italic 12.5px var(--font-body);
+  color: var(--muted);
+}
+
+/* Тумблеры стартового состояния: та же пара
+   .conference-controls-toggle/-state (aria-pressed — золотая рамка). */
+.conference-prejoin-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+  border: none;
+}
+
+/* Выбор устройств: подпись латунью над селектом, сетка адаптивная. */
+.conference-prejoin-devices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 12px;
+}
+
+.conference-prejoin-device {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.conference-prejoin-device label {
+  font: italic 11px var(--font-body);
+  color: var(--muted);
+}
+
+.conference-prejoin-device select {
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream);
+}
+
+/* Действия: «Войти» — золотая акция (канон SC-001: замер от «Войти»), «Отмена» тихая. */
+.conference-prejoin-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.conference-prejoin-join {
+  padding: 8px 24px;
+  border: 1px solid var(--gold);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream-bright);
+  cursor: pointer;
+}
+
+.conference-prejoin-cancel {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* Конвенция 008 FR-035: видимый фокус с клавиатуры (кнопки и селекты pre-join). */
+.conference-prejoin button:focus-visible,
+.conference-prejoin select:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+.conference-prejoin button[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Предупреждение pre-join (отказ доступа к камере — Q6=A; <output> = role=status). */
+.conference-prejoin-notice {
+  margin: 0;
+  font: italic 12px var(--font-body);
+  color: var(--muted);
+}
+
+/* Пояснения блокировки источников по №46 MeView (T033, FR-007):
+   «право слова» (Q4=A) или точечные restricted-поля — компактный
+   стек строк под тумблерами (role=status каждого <output>). */
+.conference-prejoin-restrictions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ============================================================
+ * Панель участников (T041, US3; FR-008): список подключённых из
+ * LiveKit — имя (fallback identity)/«вы», identity (ключ действий
+ * модерации №49–№51), «гость» (US4/T051), роль, online, индикация
+ * ограничений. Индикаторы — текстом, не только цветом (008).
+ * ============================================================ */
+
+.conference-participants {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+}
+
+.conference-participants-title {
+  margin: 0;
+  font: 15px var(--font-heading);
+  letter-spacing: 0.04em;
+  color: var(--cream-bright);
+}
+
+.conference-participants-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Строка: baseline-цепочка пометок, перенос по ширине (панель узкая). */
+.conference-participants-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 4px 6px;
+  border-radius: var(--r-panel);
+}
+
+.conference-participants-name {
+  font: 13px var(--font-body);
+  color: var(--cream);
+}
+
+/* identity — ключ модерации (u:{userId}:{connId}/g:{connId}, без PII):
+   моно-шрифт машины, тише имени. */
+.conference-participants-identity {
+  font: italic 11px var(--font-mono);
+  color: var(--muted-2);
+}
+
+.conference-participants-you {
+  font: italic 11px var(--font-body);
+  color: var(--muted);
+}
+
+/* Бейдж «гость» — латунная рамка, отличим и без цвета (текст). */
+.conference-participants-guest {
+  padding: 1px 8px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-field);
+  font: italic 11px var(--font-body);
+  color: var(--gold-light);
+}
+
+.conference-participants-role {
+  font: italic 11px var(--font-body);
+  color: var(--muted);
+}
+
+/* online: присутствие в LiveKit — мягкая зелень токена --ok. */
+.conference-participants-online {
+  font: italic 11px var(--font-body);
+  color: var(--ok);
+}
+
+/* Индикация ограничений (право слова/точечные источники, Q4/Q22=A). */
+.conference-participants-restricted {
+  font: italic 11px var(--font-body);
+  color: var(--err);
+}
+
+/* ============================================================
+ * Панель модерации (T042, US3; FR-008, №48–№51): действия
+ * модератора по строкам участников (мьют микрофона/камеры/экрана,
+ * право слова, назначение/снятие модератора, кик) и «Завершить
+ * конференцию». Видна только роли модератора (metadata локального
+ * подключения). Деструктивные действия (кик/завершение) — через
+ * подтверждение role=alertdialog. Фокус с клавиатуры — 008.
+ * ============================================================ */
+
+.conference-moderation {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+}
+
+.conference-moderation-title {
+  margin: 0;
+  font: 15px var(--font-heading);
+  letter-spacing: 0.04em;
+  color: var(--gold-light);
+}
+
+.conference-moderation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conference-moderation-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: var(--r-panel);
+}
+
+.conference-moderation-name {
+  font: 13px var(--font-body);
+  color: var(--cream);
+}
+
+/* Действия строки: компактная переносимая цепочка кнопок. Нативная
+   fieldset-группа (implicit role=group): сбрасываем браузерные дефолты
+   fieldset (margin/min-width/padding/border) до лексики панели. */
+.conference-moderation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+  border: none;
+}
+
+.conference-moderation-button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 12px var(--font-body);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+/* Действующее ограничение — приглушённая кнопка возврата (латунь). */
+.conference-moderation-button-restricted {
+  border-color: var(--gold-dark);
+  color: var(--gold-light);
+}
+
+/* Деструктивное (кик/завершение/подтверждение) — акцент отказа. */
+.conference-moderation-button-danger {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+.conference-moderation-end {
+  align-self: flex-start;
+  padding: 6px 14px;
+  border: 1px solid var(--err);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--err);
+  cursor: pointer;
+}
+
+/* Подтверждение деструктивного действия (role=alertdialog). */
+.conference-moderation-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--err);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+}
+
+.conference-moderation-confirm-text {
+  margin: 0;
+  font: 12.5px var(--font-body);
+  color: var(--cream);
+}
+
+.conference-moderation-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Нейтральная строка отказа действия (<output> = role=status). */
+.conference-moderation-notice {
+  font: italic 12px var(--font-body);
+  color: var(--muted);
+}
+
+/* Конвенция 008: видимый фокус с клавиатуры (все кнопки панели). */
+.conference-moderation button:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+.conference-moderation button[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ============================================================
+ * Гостевая join-страница (009, US4, T049): шаг имени, отказ
+ * ссылки, обвязка pre-join. Публичный экран /join/:inviteToken —
+ * та же тёмная лексика модуля (панель/крем/латунь, 008).
+ * ============================================================ */
+
+/* Статус проверки №54 (<output> = role=status). */
+.guest-join-status {
+  font: italic 12.5px var(--font-body);
+  color: var(--muted);
+}
+
+/* Блок ошибки/отказа (ConferencePage №45/№47 и гостевые экраны №54/№55):
+ * панель с понятным сообщением и повтором, где он допустим. */
+.conference-error {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 12px 16px;
+  border: 1px solid var(--err);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+}
+
+.conference-error p {
+  margin: 0;
+  font: 13px var(--font-body);
+  color: var(--err);
+}
+
+.conference-error button {
+  align-self: flex-start;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+/* Шаг имени: узкая форма по центру, как pre-join. */
+.guest-join-name {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+  color: var(--cream);
+}
+
+.guest-join-title {
+  margin: 0;
+  font: 17px var(--font-heading);
+  letter-spacing: 0.04em;
+  color: var(--cream-bright);
+}
+
+/* live-подсказка №54: конференция уже идёт (<output> = role=status). */
+.guest-join-live {
+  font: italic 12px var(--font-body);
+  color: var(--gold-light);
+}
+
+.guest-join-name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.guest-join-name-field label {
+  font: italic 11px var(--font-body);
+  color: var(--muted);
+}
+
+.guest-join-name-input {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream);
+}
+
+.guest-join-name-input[aria-invalid='true'] {
+  border-color: var(--err);
+}
+
+.guest-join-name-error {
+  margin: 0;
+  font: italic 12px var(--font-body);
+  color: var(--err);
+}
+
+.guest-join-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* «Продолжить» — золотая акция (канон гостевого флоу SC-003). */
+.guest-join-submit {
+  padding: 8px 24px;
+  border: 1px solid var(--gold);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream-bright);
+  cursor: pointer;
+}
+
+/* Обвязка pre-join: повторяемая ошибка №55 над переиспользуемым экраном. */
+.guest-join-prejoin {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(560px, 100%);
+  margin: 0 auto;
+}
+
+/* Конвенция 008 FR-035: видимый фокус с клавиатуры (форма имени). */
+.guest-join-name button:focus-visible,
+.guest-join-name input:focus-visible,
+.guest-join-prejoin > .conference-error button:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+ * Бейдж «Звонок идёт» (T059, US5; FR-013/US5-1): индикатор
+ * активной конференции чата — строки «Чатов» (.c-top ChatListItem)
+ * и заголовок открытого окна (ChatHeader, между именем и кнопками).
+ * Живёт в чужих контекстах — сам себя выравнивает (inline-flex,
+ * baseline с текстом строки), золото активного состояния + пульс
+ * иконки: состояние видно и без цвета (текст «Звонок идёт»,
+ * конвенция 008).
+ * ============================================================ */
+
+.conference-badge {
+  display: inline-flex;
+  align-items: baseline;
+  column-gap: 5px;
+  flex: none;
+  max-width: 100%;
+  padding: 1px 8px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-field);
+  font: italic 11px var(--font-body);
+  color: var(--gold-light);
+  white-space: nowrap;
+}
+
+/* Заголовок окна: чуть крупнее строчной лексики, по центру оси. */
+.chat-head .conference-badge {
+  align-self: center;
+  font-size: 12px;
+}
+
+.conference-badge-icon {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: var(--gold-light);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  align-self: center;
+  animation: conference-badge-pulse 1.6s ease-in-out infinite;
+}
+
+.conference-badge-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Пульс иконки — «живой» индикатор активного звонка. */
+@keyframes conference-badge-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conference-badge-icon {
+    animation: none;
+  }
 }

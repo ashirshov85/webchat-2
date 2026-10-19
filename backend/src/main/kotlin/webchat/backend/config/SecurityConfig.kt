@@ -1,7 +1,5 @@
 package webchat.backend.config
 
-import com.fasterxml.jackson.databind.ObjectMapper
-import io.lettuce.core.RedisClient
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import org.springframework.boot.web.servlet.FilterRegistrationBean
@@ -22,11 +20,7 @@ import org.springframework.security.web.AuthenticationEntryPoint
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter
 import org.springframework.security.web.savedrequest.NullRequestCache
-import webchat.backend.auth.domain.port.UserRepository
-import webchat.backend.auth.ratelimit.ClientIpResolver
-import webchat.backend.auth.ratelimit.LoginThrottle
 import webchat.backend.auth.ratelimit.RateLimitFilter
-import webchat.backend.auth.security.AuthEventRecorder
 import webchat.backend.auth.security.AuthJwtDecoder
 import webchat.backend.auth.security.JwtService
 
@@ -52,34 +46,8 @@ class SecurityConfig {
     ): JwtDecoder = AuthJwtDecoder(jwtService, redisTemplate)
 
     /**
-     * The US5 guard of the public auth routes (FR-009): Bucket4j limits per
-     * source and per request identifier (T047, research.md §2/§11) plus the
-     * T048 `login:fail` brute-force lockout of research.md §8 — the counter
-     * verdict runs FIRST on `/auth/login`, before the buckets, and answers
-     * with the uniform 429 + `Retry-After` = the remaining counter TTL.
-     */
-    @Suppress("LongParameterList") // the guard's collaborators are the wiring itself (tasks.md T047–T048)
-    @Bean
-    fun rateLimitFilter(
-        rateLimitRedisClient: RedisClient,
-        properties: AuthRateLimitProperties,
-        clientIpResolver: ClientIpResolver,
-        objectMapper: ObjectMapper,
-        loginThrottle: LoginThrottle,
-        authEventRecorder: AuthEventRecorder,
-        userRepository: UserRepository,
-    ): RateLimitFilter =
-        RateLimitFilter(
-            rateLimitRedisClient,
-            properties,
-            clientIpResolver,
-            objectMapper,
-            loginThrottle,
-            authEventRecorder,
-            userRepository,
-        )
-
-    /**
+     * The US5 rate-limit guard bean is wired by [RateLimitFilterConfig].
+     *
      * The filter lives ONLY in the security chain (added before
      * [UsernamePasswordAuthenticationFilter]) — this registration disables
      * Boot's automatic servlet-container registration so it cannot run twice.
@@ -127,6 +95,26 @@ class SecurityConfig {
                 authorize("/api/v1/auth/sso/authorize", permitAll)
                 authorize("/api/v1/auth/sso/callback", permitAll)
                 authorize("/api/v1/auth/sso/token", permitAll)
+                // T047 (009, US4, FR-009): the ONLY public `conferences`
+                // surface — the guest pair №54/№55 (exact paths, no
+                // wildcards, the T017 discipline). They stand permitAll
+                // WITHOUT any bearer expectation; their flood guard is the
+                // per-IP bucket pair `rl:ip:conferences-invite-info` 30/1m
+                // and `rl:ip:conferences-join-by-invite` 10/1m in the
+                // RateLimitFilter above. The webhook route below (T053)
+                // opens together with its controller — a public path must
+                // never precede its handler
+                authorize("/api/v1/conferences/invite-info", permitAll)
+                authorize("/api/v1/conferences/join-by-invite", permitAll)
+                // T053 (009, US5): the LiveKit webhook intake — the media
+                // plane cannot carry a Bearer, so the exact path stands
+                // permitAll like the guest pair above; its authenticity is
+                // NOT this chain but the WebhookReceiver signature check
+                // inside the controller (401 on a bad signature), and its
+                // flood guard is the per-IP bucket
+                // `rl:ip:conferences-livekit-webhook` 60/1m of the
+                // RateLimitFilter (livekit-integration.md §5)
+                authorize("/api/internal/conferences/livekit/webhook", permitAll)
                 authorize("/actuator/health/**", permitAll)
                 authorize("/actuator/prometheus", permitAll)
                 authorize("/actuator/metrics/**", permitAll)

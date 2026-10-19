@@ -27,7 +27,9 @@ import java.util.UUID
  * is the №53 conditional UPDATE…RETURNING resolved by rowcount: an
  * unknown id AND an already-revoked invite answer identically (`null`
  * → the caller's `404 guest_invite_not_found`), and a revoke keeps the
- * ORIGINAL `revoked_at` of the first win. There is NO delete leg of
+ * ORIGINAL `revoked_at` of the first win; [revokeActiveOf] is the SAME
+ * resolution keyed by the conference's single ACTIVE row — the DELETE
+ * path of №53 carries no invite id. There is NO delete leg of
  * its own: the finalize transaction of
  * [JdbcConferenceRepository.finalize] removes every row of the
  * conference (Q18=A).
@@ -68,6 +70,20 @@ class JdbcGuestInviteRepository(
     ): GuestInvite? =
         jdbcTemplate
             .query(REVOKE_BY_ID_SQL, ROW_MAPPER, Timestamp.from(at), id)
+            .firstOrNull()
+
+    /**
+     * №53: the SAME conditional revoke-previous statement [issue] runs
+     * before its INSERT — exposed alone for the DELETE leg (the
+     * conference's single ACTIVE row, resolved by rowcount exactly as
+     * [revoke]).
+     */
+    override fun revokeActiveOf(
+        conferenceId: UUID,
+        at: Instant,
+    ): GuestInvite? =
+        jdbcTemplate
+            .query(REVOKE_ACTIVE_OF_CONFERENCE_SQL, ROW_MAPPER, Timestamp.from(at), conferenceId)
             .firstOrNull()
 
     override fun findById(id: UUID): GuestInvite? =

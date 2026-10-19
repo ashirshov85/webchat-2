@@ -1,12 +1,42 @@
-import { expect, request, test, type APIRequestContext, type Page } from '@playwright/test'
+import {
+  expect,
+  request,
+  test,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from '@playwright/test'
 
 /**
- * 009, US1, T029 — e2e звонка двух вкладок против локального LiveKit
- * (quickstart §3.1): fake media (`--use-fake-device-for-media-stream`),
- * SC-001 на фазе US1 — от клика «Подключиться» до медиа ≤ 5 c (каноничная
- * форма «от "Войти" на pre-join» — после T034); устойчивость к деградации
- * сети (FR-004): CDP network throttling на вкладке — подключение
- * сохраняется без обрыва, после снятия троттлинга звонок продолжается.
+ * 009, US1, T029 (+ US2, T034) — e2e звонка двух вкладок против
+ * локального LiveKit (quickstart §3.1): fake media
+ * (`--use-fake-device-for-media-stream`), SC-001 — каноничная форма
+ * «от "Войти" на pre-join» до медиа ≤ 5 c (T034 встроил единый pre-join
+ * для всех точек входа; обе вкладки открывают /conference/{id} без
+ * ?mode= — дефолты по №45 mode=video: камера+микрофон); устойчивость к
+ * деградации сети (FR-004): CDP network throttling на вкладке —
+ * подключение сохраняется без обрыва, после снятия троттлинга звонок
+ * продолжается.
+ *
+ * 009, US3, T043 — e2e модерации (quickstart §3.3): мьют микрофона
+ * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
+ * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
+ * (SET-семантика №49, live-обновление permission-событием + refetch №46).
+ *
+ * 009, US4, T052 — e2e гостевого доступа (quickstart §3.4): приватное
+ * окно БЕЗ аккаунта по инвайт-ссылке №52 (SC-003 — ≤ 3 действий от
+ * открытия ссылки до конференции: имя → «Продолжить» → «Войти»; pre-join
+ * «только микрофон», Q1=C), пометка «гость» и имя видны модератору
+ * (T051), чат-поверхность гостю недоступна (FR-010: `/` → /login),
+ * подделанный nonce — единообразный отказ без раскрытия причин (edge).
+ *
+ * 009, US5, T061 — e2e индикатора «звонок идёт» (quickstart §3.5,
+ * T059): carol — член группового чата, НЕ входя в звонок, видит бейдж
+ * по №18 conference.started (фактический вход первого участника —
+ * US5-1) и снятие по завершении №48 (вебхук room_finished → finalize →
+ * №18 conference.ended); участник звонка отключается терминально
+ * (DeleteRoom → «Вы отключены»). Группа — чтобы у звонка был зритель
+ * вне конференции (в личном чате оба члена — участники звонка).
  *
  * Стенд (quickstart §2): docker compose postgres redis mailpit livekit,
  * backend :8080 (LIVEKIT_URL/KEY/SECRET), SPA :5173 (webServer конфига).
@@ -20,8 +50,10 @@ const API_URL = process.env.E2E_API_URL ?? 'http://localhost:8080'
 const MAILPIT_URL = process.env.E2E_MAILPIT_URL ?? 'http://localhost:8025'
 const RUN_ID = process.env.E2E_RUN_ID ?? Date.now().toString(36)
 const PASSWORD = `E2e-conference-${RUN_ID}`
-/** SC-001 на фазе US1: от «Подключиться» до медиа (T029). */
+/** SC-001: от «Войти» на pre-join до медиа (каноничная форма — после T034). */
 const SC001_MS = 5_000
+/** SC-005: модерационное действие применяется и становится видно ≤ 2 c. */
+const SC005_MS = 2_000
 
 interface TestAccount {
   readonly username: string
@@ -176,14 +208,14 @@ async function openConferencePage(
   return page
 }
 
-/** Клик «Подключиться» и ожидание полного медиа: свой статус + удалённый тайл. */
+/** Клик «Войти» на pre-join (T034) и ожидание полного медиа: свой статус + удалённый тайл. */
 async function connectAndAwaitMedia(
   page: Page,
   ownStatus: string,
   remoteUsername: string,
 ): Promise<number> {
   const startedAt = Date.now()
-  await page.getByRole('button', { name: 'Подключиться' }).click()
+  await page.getByRole('button', { name: 'Войти' }).click()
   await expect(page.getByText(ownStatus)).toBeVisible({ timeout: 15_000 })
   // медиа обеих сторон: тайл собеседника (ParticipantName; имя может
   // встретиться в нескольких тайлах метаданных — достаточно первого) +
@@ -210,9 +242,8 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     chatId = await ensureDirectChat(api, alice, bob)
   })
 
-  test.afterAll(() => {
-    void api.dispose()
-  })
+  // api-контекст suite-scope уничтожается самим Playwright: ручной dispose()
+  // в afterAll конфликтует с авто-диспозом и ломает следующий suite (T064)
 
   test.beforeEach(() => {
     openedPages = []
@@ -224,7 +255,7 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     }
   })
 
-  test('SC-001 (US1-фаза): звонок двух вкладок — обе стороны видят медиа ≤ 5 c от «Подключиться»', async ({
+  test('SC-001: звонок двух вкладок — обе стороны видят медиа ≤ 5 c от «Войти» на pre-join', async ({
     browser,
   }) => {
     // свежие refresh-токены: ротация одноразовая, контексты стартуют с действующим
@@ -238,14 +269,16 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     ])
     openedPages.push(alicePage, bobPage)
 
-    // защищённый маршрут грузит экран и пакет №45+№46 (ленивый чанк conferences)
+    // защищённый маршрут грузит экран и пакет №45+№46 (ленивый чанк
+    // conferences); pre-join (T034) — до «Войти» слот не занимается
+    // (FR-007), дефолты тумблеров — по №45 mode=video
     await expect(alicePage.getByRole('region', { name: 'Конференция' })).toBeVisible()
     await expect(bobPage.getByRole('region', { name: 'Конференция' })).toBeVisible()
-    await expect(alicePage.getByRole('button', { name: 'Подключиться' })).toBeVisible()
-    await expect(bobPage.getByRole('button', { name: 'Подключиться' })).toBeVisible()
+    await expect(alicePage.getByRole('button', { name: 'Войти' })).toBeVisible()
+    await expect(bobPage.getByRole('button', { name: 'Войти' })).toBeVisible()
 
     // обе вкладки подключаются параллельно: каждая — от своего клика
-    // «Подключиться» до медиа (свой статус + тайл собеседника) ≤ 5 c
+    // «Войти» на pre-join до медиа (свой статус + тайл собеседника) ≤ 5 c
     const [aliceElapsed, bobElapsed] = await Promise.all([
       connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
       connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
@@ -253,16 +286,15 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
 
     expect(
       aliceElapsed,
-      `SC-001: alice от «Подключиться» до медиа ${aliceElapsed} мс`,
+      `SC-001: alice от «Войти» до медиа ${aliceElapsed} мс`,
     ).toBeLessThanOrEqual(SC001_MS)
-    expect(
-      bobElapsed,
-      `SC-001: bob от «Подключиться» до медиа ${bobElapsed} мс`,
-    ).toBeLessThanOrEqual(SC001_MS)
+    expect(bobElapsed, `SC-001: bob от «Войти» до медиа ${bobElapsed} мс`).toBeLessThanOrEqual(
+      SC001_MS,
+    )
 
-    // корректный выход (Q10=A): «Покинуть» возвращает к «Подключиться» без следов
+    // корректный выход (Q10=A): «Покинуть» возвращает на pre-join без следов
     await bobPage.getByRole('button', { name: 'Покинуть' }).click()
-    await expect(bobPage.getByRole('button', { name: 'Подключиться' })).toBeVisible()
+    await expect(bobPage.getByRole('button', { name: 'Войти' })).toBeVisible()
     await expect(bobPage.getByText('Вы в конференции')).toHaveCount(0)
   })
 
@@ -327,5 +359,332 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       tilesSection(alicePage).getByText(bobNow.username, { exact: true }).first(),
     ).toBeVisible()
     await cdp.detach()
+  })
+})
+
+test.describe.serial('модерация US3 e2e (009 T043)', () => {
+  let api: APIRequestContext
+  let alice: TestAccount
+  let bob: TestAccount
+  let chatId: string
+  /** Страницы теста — закрываются в afterEach (контексты LiveKit-вкладок). */
+  let openedPages: Page[]
+
+  test.beforeAll(async () => {
+    api = await request.newContext({ baseURL: API_URL })
+    alice = await ensureAccount(api, `mod${RUN_ID}a`)
+    bob = await ensureAccount(api, `mod${RUN_ID}b`)
+    chatId = await ensureDirectChat(api, alice, bob)
+  })
+
+  // api-контекст suite-scope уничтожается самим Playwright: ручной dispose()
+  // в afterAll конфликтует с авто-диспозом и ломает следующий suite (T064)
+
+  test.beforeEach(() => {
+    openedPages = []
+  })
+
+  test.afterEach(async () => {
+    for (const page of openedPages) {
+      await page.context().close()
+    }
+  })
+
+  test('SC-005: мьют микрофона модератором блокирует тумблер цели с пояснением ≤ 2 c и виден всем; снятие разблокирует', async ({
+    browser,
+  }) => {
+    // alice — создатель = модератор (T017); обе стороны в звонке,
+    // микрофон bob опубликован (дефолты mode=video)
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
+      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+    ])
+
+    // №49: alice глушит bob'у микрофон (строка панели модерации цели)
+    const startedAt = Date.now()
+    await alicePage
+      .getByRole('group', { name: bobNow.username })
+      .getByRole('button', { name: 'Отключить микрофон' })
+      .click()
+
+    // у bob тумблер заблокирован с пояснением (T043) ≤ 2 c от клика
+    await expect(bobPage.getByText('Микрофон отключён модератором')).toBeVisible({
+      timeout: SC005_MS,
+    })
+    expect(
+      Date.now() - startedAt,
+      `SC-005: применение мьюта ${Date.now() - startedAt} мс`,
+    ).toBeLessThanOrEqual(SC005_MS)
+    await expect(bobPage.getByRole('button', { name: 'Микрофон' })).toBeDisabled()
+    // состояние видно всем: строка bob в панели участников alice
+    await expect(alicePage.getByText('микрофон отключён', { exact: true }).first()).toBeVisible({
+      timeout: SC005_MS,
+    })
+
+    // снятие ограничения (SET false, Q22=A): блокировка у цели снята ≤ 2 c
+    await alicePage
+      .getByRole('group', { name: bobNow.username })
+      .getByRole('button', { name: 'Включить микрофон' })
+      .click()
+    await expect(bobPage.getByText('Микрофон отключён модератором')).toHaveCount(0, {
+      timeout: SC005_MS,
+    })
+    await expect(bobPage.getByRole('button', { name: 'Микрофон' })).toBeEnabled({
+      timeout: SC005_MS,
+    })
+  })
+})
+
+test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
+  let api: APIRequestContext
+  let alice: TestAccount
+  let bob: TestAccount
+  let chatId: string
+  /** Контексты теста (модератор + приватные гостевые) — закрываются в afterEach. */
+  let openedContexts: BrowserContext[]
+
+  /**
+   * Гость входит БЕЗ аккаунта — собственная пара аккаунтов сценарию не
+   * нужна: в полном прогоне файла переиспользуем alice/bob сьюта US1
+   * (per-IP бакет регистраций auth 5/1ч из 002 не оставляет места
+   * третьей паре за прогон); standalone-запуск (--grep гостевой)
+   * регистрирует свою пару — login падает 401 до register.
+   */
+  async function ensureLogin(username: string): Promise<TestAccount> {
+    try {
+      return await login(api, username)
+    } catch {
+      return await ensureAccount(api, username)
+    }
+  }
+
+  test.beforeAll(async () => {
+    // Синтетический клиентский IP (TEST-NET-2) в X-Forwarded-For:
+    // ClientIpResolver 002 бакетит per-IP — суиты файла получают
+    // изолированные register/login-бакеты (полный прогон файла иначе
+    // упирается в auth 5/1ч регистраций: US1+US3 уже занимают 4)
+    api = await request.newContext({
+      baseURL: API_URL,
+      extraHTTPHeaders: { 'X-Forwarded-For': '198.51.100.52' },
+    })
+    alice = await ensureLogin(`alice${RUN_ID}`)
+    bob = await ensureLogin(`bob${RUN_ID}`)
+    chatId = await ensureDirectChat(api, alice, bob)
+  })
+
+  // api-контекст suite-scope уничтожается самим Playwright: ручной dispose()
+  // в afterAll конфликтует с авто-диспозом и ломает следующий suite (T064)
+
+  test.beforeEach(() => {
+    openedContexts = []
+  })
+
+  test.afterEach(async () => {
+    for (const context of openedContexts) {
+      await context.close()
+    }
+  })
+
+  /**
+   * Приватный контекст гостя: без localStorage-сессии (браузер без
+   * аккаунта — quickstart §1 «дейв»), fake media наследуются от
+   * launchOptions браузера; разрешения выдаём контексту явно.
+   */
+  async function newGuestContext(
+    browser: import('@playwright/test').Browser,
+  ): Promise<BrowserContext> {
+    const context = await browser.newContext({ permissions: ['camera', 'microphone'] })
+    openedContexts.push(context)
+    return context
+  }
+
+  test('SC-003: гость без аккаунта входит по инвайт-ссылке ≤ 3 действий; «гость» виден модератору; чат недоступен (FR-010)', async ({
+    browser,
+  }) => {
+    const aliceNow = await login(api, alice.username)
+    const conference = await createConference(api, aliceNow, chatId)
+
+    // №52: генерация гостевой ссылки модератором (создателем) — в чат не постится
+    const invite = await apiCall<{ inviteUrl: string; expiresAt: string }>(
+      api,
+      'post',
+      `/api/v1/conferences/${conference.id}/guest-invite`,
+      { token: aliceNow.accessToken },
+    )
+    expect(invite.inviteUrl).toContain('/join/')
+
+    // alice (модератор) в звонке — наблюдатель входа гостя (T051)
+    const alicePage = await openConferencePage(browser, aliceNow, conference.id)
+    openedContexts.push(alicePage.context())
+    await alicePage.getByRole('button', { name: 'Войти' }).click()
+    await expect(alicePage.getByText('Вы в конференции')).toBeVisible({ timeout: 15_000 })
+
+    // приватное окно без аккаунта открывает ссылку №52 (путь — из
+    // inviteUrl; хостом остаётся baseURL стенда — app.public-base-url
+    // per-env, тест не зависит от его значения)
+    const guestName = `Гость${RUN_ID}`
+    const guestContext = await newGuestContext(browser)
+    const guestPage = await guestContext.newPage()
+    await guestPage.goto(new URL(invite.inviteUrl).pathname)
+
+    // №54 валиден → шаг имени; маршрут публичный — перенаправления на
+    // login нет (FR-009), chat-поверхность не мелькает
+    await expect(
+      guestPage.getByRole('heading', { name: 'Подключение к конференции' }),
+    ).toBeVisible()
+    expect(guestPage.url()).toContain('/join/')
+    expect(guestPage.url()).not.toContain('/login')
+
+    // SC-003 ≤ 3 действий: (1) имя → (2) «Продолжить» → (3) «Войти»
+    await guestPage.getByLabel('Ваше имя').fill(guestName)
+    await guestPage.getByRole('button', { name: 'Продолжить' }).click()
+
+    // pre-join «только микрофон» (Q1=C/Q3=A): тумблер камеры доступен
+    await expect(guestPage.getByRole('button', { name: 'Микрофон' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await expect(guestPage.getByRole('button', { name: 'Камера' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    await expect(guestPage.getByRole('button', { name: 'Камера' })).toBeEnabled()
+
+    await guestPage.getByRole('button', { name: 'Войти' }).click()
+
+    // гость в конференции с пометкой «гость» (SC-003 завершён — 3 действия)
+    await expect(guestPage.getByText('Вы в конференции как гость')).toBeVisible({
+      timeout: 15_000,
+    })
+    await expect(guestPage.getByText(guestName, { exact: true }).first()).toBeVisible()
+
+    // модератор видит имя и бейдж «гость» (metadata №55, T051)
+    await expect(alicePage.getByText(guestName, { exact: true }).first()).toBeVisible({
+      timeout: 15_000,
+    })
+    await expect(alicePage.getByText('гость', { exact: true }).first()).toBeVisible()
+
+    // FR-010: чат-поверхность гостю недоступна — `/` без сессии
+    // перенаправляет на /login (ProtectedRoute), мессенджер не рендерится
+    await guestPage.goto('/')
+    await expect(guestPage).toHaveURL(/\/login/)
+  })
+
+  test('подделанный nonce — единообразный отказ «Ссылка недействительна» без ввода имени (edge, минимум раскрытия)', async ({
+    browser,
+  }) => {
+    const guestContext = await newGuestContext(browser)
+    const guestPage = await guestContext.newPage()
+    await guestPage.goto(`/join/garbage-${RUN_ID}`)
+
+    await expect(guestPage.getByText('Ссылка недействительна')).toBeVisible()
+    await expect(guestPage.getByLabel('Ваше имя')).toHaveCount(0)
+    expect(guestPage.url()).not.toContain('/login')
+  })
+})
+
+test.describe.serial('индикатор «звонок идёт» US5 e2e (009 T061)', () => {
+  let api: APIRequestContext
+  let alice: TestAccount
+  let carol: TestAccount
+  let chatId: string
+  let groupTitle: string
+  /** Контексты теста (наблюдатель + вкладка звонка) — закрываются в afterEach. */
+  let openedContexts: BrowserContext[]
+
+  async function ensureLogin(username: string): Promise<TestAccount> {
+    try {
+      return await login(api, username)
+    } catch {
+      return await ensureAccount(api, username)
+    }
+  }
+
+  test.beforeAll(async () => {
+    // синтетический клиентский IP (TEST-NET-2) — изолированные бакеты
+    // register/login (паттерн сьюта US4; регистрации US1/US3 уже заняли 4
+    // из 5/1ч дефолтного IP)
+    api = await request.newContext({
+      baseURL: API_URL,
+      extraHTTPHeaders: { 'X-Forwarded-For': '198.51.100.61' },
+    })
+    alice = await ensureLogin(`alice${RUN_ID}`)
+    carol = await ensureAccount(api, `carol${RUN_ID}`)
+    // группа alice+carol: у звонка есть член-зритель вне конференции;
+    // начальный состав — только из контактов создателя (№27, 422 иначе)
+    await apiCall(api, 'post', '/api/v1/contacts', {
+      data: { userId: carol.userId },
+      token: alice.accessToken,
+    })
+    groupTitle = `Индикатор${RUN_ID}`
+    const group = await apiCall<{ chatId: string }>(api, 'post', '/api/v1/groups', {
+      data: { title: groupTitle, memberUserIds: [carol.userId] },
+      token: alice.accessToken,
+    })
+    chatId = group.chatId
+  })
+
+  // api-контекст suite-scope уничтожается самим Playwright: ручной dispose()
+  // в afterAll конфликтует с авто-диспозом и ломает следующий suite (T064)
+
+  test.beforeEach(() => {
+    openedContexts = []
+  })
+
+  test.afterEach(async () => {
+    for (const context of openedContexts) {
+      await context.close()
+    }
+  })
+
+  test('carol не в звонке: бейдж «Звонок идёт» по started и снятие по завершении №48 (T059/T061)', async ({
+    browser,
+  }) => {
+    const aliceNow = await login(api, alice.username)
+
+    // carol в мессенджере ДО старта: кадр conference.started долетает
+    // только по её живому SSE-каналу (потерянный кадр компенсируется
+    // REST-fallback лишь на ПЕРЕподключении)
+    const carolContext = await browser.newContext()
+    openedContexts.push(carolContext)
+    await carolContext.addInitScript((refreshToken) => {
+      window.localStorage.setItem('webchat.auth.refreshToken', refreshToken)
+    }, carol.refreshToken)
+    const carolPage = await carolContext.newPage()
+    await carolPage.goto('/')
+    await expect(carolPage.getByText(groupTitle, { exact: true })).toBeVisible({
+      timeout: 15_000,
+    })
+    // №12 загружен — даём SSE-каналу подняться до входа первого участника
+    await carolPage.waitForTimeout(1_000)
+
+    // alice (создатель = модератор) стартует и входит первой —
+    // conference.started публикуется именно входом (US5-1)
+    const conference = await createConference(api, aliceNow, chatId)
+    const alicePage = await openConferencePage(browser, aliceNow, conference.id)
+    openedContexts.push(alicePage.context())
+    await alicePage.getByRole('button', { name: 'Войти' }).click()
+    await expect(alicePage.getByText('Вы в конференции')).toBeVisible({ timeout: 15_000 })
+
+    // №18 conference.started → бейдж «Звонок идёт» у строки чата carol
+    await expect(carolPage.getByText('Звонок идёт').first()).toBeVisible({ timeout: 10_000 })
+
+    // №48 завершение модератором (DeleteRoom → вебхук → finalize → №18
+    // conference.ended): бейдж снят, участник отключён терминально
+    await apiCall(api, 'post', `/api/v1/conferences/${conference.id}/end`, {
+      token: aliceNow.accessToken,
+    })
+
+    await expect(carolPage.getByText('Звонок идёт')).toHaveCount(0, { timeout: 10_000 })
+    await expect(alicePage.getByText('Вы отключены от конференции')).toBeVisible({
+      timeout: 15_000,
+    })
   })
 })

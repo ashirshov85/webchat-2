@@ -20,10 +20,15 @@ vi.mock('../../../api/auth', () => ({ toApiProblem: http.problem }))
 import {
   conferenceErrorCode,
   createConference,
+  endConference,
   getConference,
   getConferenceMe,
   isConferenceProblem,
   joinConference,
+  kickParticipant,
+  moderationErrorCode,
+  updateParticipantRestrictions,
+  updateParticipantRole,
 } from '../conferences'
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -112,6 +117,62 @@ describe('conferences API client (009 US1 T022/T029)', () => {
     expect(init?.body).toBeUndefined()
   })
 
+  it('№48 endConference: POST /conferences/{id}/end, 204 без тела', async () => {
+    http.fetch.mockResolvedValue(new Response(null, { status: 204 }))
+
+    await endConference('c-1')
+
+    const [path, init] = call()
+    expect(path).toBe('/conferences/c-1/end')
+    expect(init?.method).toBe('POST')
+    expect(init?.body).toBeUndefined()
+  })
+
+  it('№49 updateParticipantRestrictions: PUT полного SET-состояния → ParticipantView', async () => {
+    const view = { identity: 'u:1:c', role: 'participant' }
+    http.fetch.mockResolvedValue(jsonResponse(200, view))
+
+    const answer = await updateParticipantRestrictions('c-1', 'u:1:c', {
+      micRestricted: true,
+      cameraRestricted: false,
+      screenRestricted: false,
+      speechRestricted: false,
+    })
+
+    expect(answer).toEqual(view)
+    const [path, init] = call()
+    expect(path).toBe('/conferences/c-1/participants/u%3A1%3Ac/restrictions')
+    expect(init?.method).toBe('PUT')
+    expect(new Headers(init?.headers).get('Content-Type')).toBe('application/json')
+    expect(init?.body).toBe(
+      '{"micRestricted":true,"cameraRestricted":false,"screenRestricted":false,"speechRestricted":false}',
+    )
+  })
+
+  it('№50 updateParticipantRole: PUT {role} → ParticipantView', async () => {
+    const view = { identity: 'u:2:c', role: 'moderator' }
+    http.fetch.mockResolvedValue(jsonResponse(200, view))
+
+    const answer = await updateParticipantRole('c-1', 'u:2:c', 'moderator')
+
+    expect(answer.role).toBe('moderator')
+    const [path, init] = call()
+    expect(path).toBe('/conferences/c-1/participants/u%3A2%3Ac/role')
+    expect(init?.method).toBe('PUT')
+    expect(init?.body).toBe('{"role":"moderator"}')
+  })
+
+  it('№51 kickParticipant: DELETE /conferences/{id}/participants/{identity}, 204 без тела', async () => {
+    http.fetch.mockResolvedValue(new Response(null, { status: 204 }))
+
+    await kickParticipant('c-1', 'g:conn-1')
+
+    const [path, init] = call()
+    expect(path).toBe('/conferences/c-1/participants/g%3Aconn-1')
+    expect(init?.method).toBe('DELETE')
+    expect(init?.body).toBeUndefined()
+  })
+
   it('id кодируется encodeURIComponent — неожиданные символы пути исключены', async () => {
     http.fetch.mockResolvedValue(jsonResponse(200, {}))
     await getConference('c 1/evil')
@@ -145,5 +206,12 @@ describe('conferences API client (009 US1 T022/T029)', () => {
   it('isConferenceProblem: guard по числовому статусу', () => {
     expect(isConferenceProblem(problem(409, 'conference_ended'))).toBe(true)
     expect(isConferenceProblem(new Error('network'))).toBe(false)
+  })
+
+  it('moderationErrorCode: коды №48–№51 из errors; не-Problem — null', () => {
+    expect(moderationErrorCode(problem(403, 'moderator_required'))).toBe('moderator_required')
+    expect(moderationErrorCode(problem(404, 'participant_not_found'))).toBe('participant_not_found')
+    expect(moderationErrorCode(problem(409, 'conference_ended'))).toBe('conference_ended')
+    expect(moderationErrorCode(new Error('network'))).toBeNull()
   })
 })

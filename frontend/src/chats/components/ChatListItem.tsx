@@ -73,9 +73,19 @@
  * конвенция 008). Инициалы аватара — из цепочки (`initials`-prop T020),
  * цвет — по-прежнему от `peer.username` (переименование не перекрашивает,
  * FR-004); группа — title без изменений (006).
+ *
+ * 009 US5 (T059; FR-013, US5-1): бейдж «Звонок идёт» строки —
+ * индикатор активной конференции ЧАТА (не только участников
+ * звонка): ConferenceBadge между именем и временем, режим №44 —
+ * иконка. Источник — срез useConferenceRealtime страницы (кадры №18
+ * conference.started/ended, применение — функция статуса, REST
+ * №45 при переподключении), строка — чистая проекция `conference`;
+ * в историю чата индикатор не пишется (Q20=A).
  */
 import { memo } from 'react'
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
+import type { ConferenceMode } from '../../conferences/api/conferences'
+import { ConferenceBadge } from '../../conferences/components/ConferenceBadge'
 import { usePresenceStatus } from '../../presence/usePresence'
 import { Avatar } from '../../ui/Avatar'
 import { initialsOf } from '../../ui/avatar'
@@ -97,6 +107,12 @@ export interface ChatListItemProps {
   readonly active?: boolean
   /** Opens the pair dialog. */
   readonly onSelect?: (chatId: string) => void
+  /**
+   * 009 US5 (T059): активная конференция чата — бейдж «Звонок
+   * идёт»; null/undefined — звонка нет. Структурный минимум (mode),
+   * владелец состояния — useConferenceRealtime страницы.
+   */
+  readonly conference?: { readonly mode: ConferenceMode } | null
 }
 
 function previewText(text: string): string {
@@ -119,6 +135,7 @@ export const ChatListItem = memo(function ChatListItem({
   currentUserId = null,
   active = false,
   onSelect,
+  conference = null,
 }: ChatListItemProps) {
   const last = item.lastMessage
   const isGroup = item.type === 'group'
@@ -161,6 +178,9 @@ export const ChatListItem = memo(function ChatListItem({
               {name ?? ''}
             </span>
             {item.blockedByMe === true && <span className="chat-item-blocked">заблокирован</span>}
+            {/* 009 US5 (T059): «Звонок идёт» — до времени, рядом с
+                именем; отсутствующая конференция ничего не рендерит. */}
+            {conference !== null && <ConferenceBadge mode={conference.mode} />}
             <span className="c-time">{last !== null ? formatTime(last.createdAt) : ''}</span>
           </span>
           {last === null ? (
