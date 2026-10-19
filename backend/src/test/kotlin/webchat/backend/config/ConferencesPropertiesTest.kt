@@ -33,6 +33,10 @@ class ConferencesPropertiesTest {
                 assertThat(properties.livekit.url).isEqualTo("http://localhost:7880")
                 assertThat(properties.livekit.apiKey).isEqualTo("devkey")
                 assertThat(properties.livekit.apiSecret).isEqualTo("secret")
+                // no split by default: the client WS ingress inherits `url`
+                // (local-compose single-URL setup)
+                assertThat(properties.livekit.publicUrl).isEmpty()
+                assertThat(properties.livekit.clientUrl()).isEqualTo("http://localhost:7880")
                 // T047: the per-IP bucket specs of the public guest pair
                 // №54/№55 (api-contract.md 009 §3 canon)
                 assertThat(properties.rateLimit.inviteInfo).isEqualTo("30/1m")
@@ -64,6 +68,7 @@ class ConferencesPropertiesTest {
                 "conferences.livekit.url=http://livekit:7880",
                 "conferences.livekit.api-key=prodkey",
                 "conferences.livekit.api-secret=prodsecret",
+                "conferences.livekit.public-url=https://dev.webchat.lkshr.ru/livekit",
                 "conferences.rate-limit.invite-info=60/1m",
                 "conferences.rate-limit.join-by-invite=20/1m",
                 "conferences.rate-limit.livekit-webhook=120/1m",
@@ -84,6 +89,10 @@ class ConferencesPropertiesTest {
                 assertThat(properties.livekit.url).isEqualTo("http://livekit:7880")
                 assertThat(properties.livekit.apiKey).isEqualTo("prodkey")
                 assertThat(properties.livekit.apiSecret).isEqualTo("prodsecret")
+                // the dev-stand split: in-cluster Twirp ingress for the admin
+                // adapter, public ingress route for browser JoinTickets
+                assertThat(properties.livekit.publicUrl).isEqualTo("https://dev.webchat.lkshr.ru/livekit")
+                assertThat(properties.livekit.clientUrl()).isEqualTo("https://dev.webchat.lkshr.ru/livekit")
                 // T047 per-env overrides — the k6 flood profile of T058 rides
                 // exactly these knobs (2× the default buckets)
                 assertThat(properties.rateLimit.inviteInfo).isEqualTo("60/1m")
@@ -121,6 +130,7 @@ class ConferencesPropertiesTest {
                 "conferences.livekit.url=http://localhost:7880",
                 "conferences.livekit.api-key=devkey",
                 "conferences.livekit.api-secret=secret",
+                "conferences.livekit.public-url=",
                 "conferences.rate-limit.invite-info=30/1m",
                 "conferences.rate-limit.join-by-invite=10/1m",
                 "conferences.rate-limit.livekit-webhook=60/1m",

@@ -1,0 +1,33 @@
+# LiveKit media-plane wiring for the backend on the dev stand
+# (009-video-conferences): without LIVEKIT_URL the backend falls back to the
+# local-compose default http://localhost:7880 (application.yml conferences.*),
+# the pre-flight ListRooms probe of №44 fails and every call start answers
+# 503 conference_media_unavailable — the defect this patch closes.
+#
+# The URL points at the cluster-internal Service of the overlay's livekit
+# Deployment (livekit.yaml, hostNetwork node carries the RTC ports; the
+# Service routes signaling/Twirp 7880 only). The API pair is the same
+# documented dev placeholder devkey/secret committed in the overlay's
+# livekit-keys Secret (see its header: not a real secret; prod overlays
+# bring an out-of-repo Secret instead — constitution V).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: LIVEKIT_URL
+              value: http://livekit:7880
+            # CLIENT-facing WS ingress of the JoinTicket (№47/№55): the
+            # public /livekit route of livekit-signaling.yaml — browsers
+            # cannot resolve the in-cluster service behind LIVEKIT_URL
+            - name: LIVEKIT_PUBLIC_URL
+              value: https://dev.webchat.lkshr.ru/livekit
+            - name: LIVEKIT_API_KEY
+              value: devkey
+            - name: LIVEKIT_API_SECRET
+              value: secret
