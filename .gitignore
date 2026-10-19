@@ -30,3 +30,6 @@ frontend/playwright-report/
 
 # Local analysis reports (scripts/sonar-issues.sh)
 tmp/
+
+# Load-test run artifacts (lk/k6 raw outputs; analyzed numbers live in load/REPORT.md)
+load/lk/results/
