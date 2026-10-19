@@ -39,6 +39,12 @@ patches:
     target:
       kind: Deployment
       name: backend
+  # 009: LiveKit media-plane endpoint of the stand — without it the backend
+  # defaults to localhost:7880 and №44 answers conference_media_unavailable
+  - path: backend-livekit-env.yaml
+    target:
+      kind: Deployment
+      name: backend
 
 # Deploy-time substitution: `kustomize edit set image \
 #   backend=${REGISTRY}/${IMAGE_PREFIX}/backend:${SHA} \
