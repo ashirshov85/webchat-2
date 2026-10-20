@@ -487,8 +487,24 @@ class ConferenceGuestAccessIT : ConferencesTestSupport() {
 
     // --- the forgery builders and the SC-004 measurement helpers ----------------
 
-    /** Flips the last base64url character of the signature — a well-formed, TAMPERED nonce. */
-    private fun tampered(nonce: String): String = nonce.dropLast(1) + if (nonce.last() == 'A') 'B' else 'A'
+    /**
+     * Flips the last base64url character of the signature — a well-formed,
+     * TAMPERED nonce. The tail char of a canonical 86-char ES256 encoding
+     * carries only two SIGNIFICANT bits (its alphabet is exactly A/Q/g/w),
+     * so the flip must change those top bits: an 'A'→'B' swap re-decodes to
+     * byte-identical bytes for 1/4 of the signatures and would leave the
+     * nonce VALID. The quadrant flip 'A'↔'g' / 'Q'↔'w' (XOR 0b100000)
+     * always breaks the signature.
+     */
+    private fun tampered(nonce: String): String =
+        nonce.dropLast(1) +
+            when (val tail = nonce.last()) {
+                'A' -> 'g'
+                'Q' -> 'w'
+                'g' -> 'A'
+                'w' -> 'Q'
+                else -> error("unexpected ES256 signature tail <$tail>")
+            }
 
     /**
      * A well-formed `typ:"guest-invite"` ES256 nonce signed by an UNKNOWN
