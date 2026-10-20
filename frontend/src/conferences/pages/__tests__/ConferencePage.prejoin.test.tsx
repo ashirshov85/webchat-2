@@ -53,6 +53,13 @@ vi.mock('../../api/conferences', async (importOriginal) => ({
   joinConference: conferences.joinConference,
 }))
 
+/** Догрузка профилей (T073) изолирована от сьюта pre-join — свой тест у хука. */
+const profiles = vi.hoisted(() => ({ useParticipantProfiles: vi.fn() }))
+
+vi.mock('../../hooks/useParticipantProfiles', () => ({
+  useParticipantProfiles: profiles.useParticipantProfiles,
+}))
+
 vi.mock('livekit-client', () => ({
   createLocalVideoTrack: lk.createLocalVideoTrack,
   RoomEvent: { ActiveDeviceChanged: 'activeDeviceChanged' },
@@ -141,6 +148,7 @@ describe('ConferencePage pre-join: точки входа и стартовая �
     conferences.getConference.mockReset()
     conferences.getConferenceMe.mockReset()
     conferences.joinConference.mockReset()
+    profiles.useParticipantProfiles.mockReset().mockReturnValue(new Map())
     lk.createLocalVideoTrack.mockReset()
     lk.createLocalVideoTrack.mockResolvedValue({
       stop: vi.fn(),

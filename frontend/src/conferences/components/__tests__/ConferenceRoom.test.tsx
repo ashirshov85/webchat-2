@@ -149,12 +149,14 @@ vi.mock('livekit-client', () => ({
   Track: lk.Track,
 }))
 
-/** Состояние треков useTracks для ConferenceMedia (управляется тестом). */
+/** Состояние треков/спикеров useTracks/useSpeakingParticipants (управляется тестом). */
 const lkc = vi.hoisted(() => ({
   trackRefs: [] as ReadonlyArray<{
     participant: { identity: string; name?: string }
     source: string
+    publication?: { trackSid: string }
   }>,
+  speakers: [] as ReadonlyArray<{ identity: string }>,
 }))
 
 vi.mock('@livekit/components-react', () => ({
@@ -170,10 +172,10 @@ vi.mock('@livekit/components-react', () => ({
     )
     return lkc.trackRefs.filter((ref) => wanted.has(ref.source))
   },
+  useSpeakingParticipants: () => lkc.speakers,
+  // зеркало реального гварда ядра: placeholder-рефы не несут publication
+  isTrackReference: (ref: { publication?: unknown }) => ref.publication !== undefined,
   RoomAudioRenderer: () => null,
-  ParticipantTile: (props: { readonly trackRef?: { participant: { identity: string } } }) => (
-    <div data-testid="participant-tile">{props.trackRef?.participant.identity}</div>
-  ),
   VideoTrack: () => <video />,
 }))
 
@@ -582,6 +584,7 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
 
   it('медиа-слой: сетка участников и широкие тайлы демонстраций экрана', async () => {
     lkc.trackRefs = [
+      // камера не опубликована — тайл-заглушка с аватаром и именем (T073)
       { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
       { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
     ]
@@ -595,11 +598,151 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     )
 
     const tiles = await screen.findByRole('region', { name: 'Участники конференции' })
-    expect(tiles).toHaveTextContent('u:1:a')
+    // подпись тайла — отображаемое имя участника (participantLabel)
+    expect(tiles).toHaveTextContent('alice')
+    expect(tiles.querySelector('.avatar')).not.toBeNull()
     const screens = screen.getByRole('region', { name: 'Демонстрации экрана' })
     // подпись широкого тайла — отображаемое имя участника (participantLabel)
     expect(screens).toHaveTextContent('Экран — bob')
     expect(screens.querySelector('video')).not.toBeNull()
+    // тайлы демонстраций — без аватара (T073)
+    expect(screens.querySelector('.avatar')).toBeNull()
+  })
+})
+
+describe('ConferenceRoom — аватары тайлов (009 US1 T073, «как в контактах»)', () => {
+  const ALICE = '11111111-1111-4111-8111-111111111111'
+
+  /** Тайл по подписи-имени участника (figcaption). */
+  function tileByLabel(name: string): HTMLElement {
+    const label = screen.getByText(name, { exact: false })
+    const tile = label.closest('figure')
+    if (tile === null) {
+      throw new Error(`тайл участника «${name}» не найден`)
+    }
+    return tile
+  }
+
+  function renderRoom(): ReturnType<typeof render> {
+    return render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      />,
+    )
+  }
+
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+    lkc.speakers = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('тайл без камеры — аватар + имя; с опубликованной камерой — видео без аватара', async () => {
+    lkc.trackRefs = [
+      // bob: камера выключена — placeholder-реф без publication
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+      // alice: камера опубликована — реальный track-реф
+      {
+        participant: { identity: `u:${ALICE}:c1`, name: 'alice' },
+        source: 'camera',
+        publication: { trackSid: 'cam-1' },
+      },
+    ]
+    renderRoom()
+
+    const bobTile = await waitFor(() => {
+      const tile = tileByLabel('bob')
+      expect(tile).toHaveClass('conference-tile-idle')
+      return tile
+    })
+    expect(bobTile.querySelector('.avatar')).not.toBeNull()
+    expect(bobTile.querySelector('video')).toBeNull()
+
+    const aliceTile = tileByLabel('alice')
+    expect(aliceTile.classList.contains('conference-tile-idle')).toBe(false)
+    expect(aliceTile.querySelector('video')).not.toBeNull()
+    expect(aliceTile.querySelector('.avatar')).toBeNull()
+  })
+
+  it('live-переход камеры: публикация убирает аватар с тайла, выключение возвращает', async () => {
+    lkc.trackRefs = [{ participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' }]
+    const view = renderRoom()
+
+    await waitFor(() => {
+      expect(tileByLabel('bob').querySelector('.avatar')).not.toBeNull()
+    })
+
+    // камера включилась — track-реф с publication
+    lkc.trackRefs = [
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'camera',
+        publication: { trackSid: 'cam-1' },
+      },
+    ]
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    await waitFor(() => {
+      expect(tileByLabel('bob').querySelector('.avatar')).toBeNull()
+    })
+    expect(tileByLabel('bob').querySelector('video')).not.toBeNull()
+
+    // камера выключилась — аватар вернулся
+    lkc.trackRefs = [{ participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' }]
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      />,
+    )
+    await waitFor(() => {
+      expect(tileByLabel('bob').querySelector('.avatar')).not.toBeNull()
+    })
+  })
+
+  it('индикатор речи на тайле без камеры — текстом «говорит» (008: не только цветом)', async () => {
+    lkc.trackRefs = [{ participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' }]
+    lkc.speakers = [{ identity: 'u:2:b' }]
+    renderRoom()
+
+    const bobTile = await waitFor(() => {
+      const tile = tileByLabel('bob')
+      expect(tile).toHaveTextContent('говорит')
+      return tile
+    })
+    expect(bobTile.querySelector('.avatar')).not.toBeNull()
+  })
+
+  it('без аватара в профиле участника — инициалы из name (фолбэк догрузки), тире-подпись не меняется', async () => {
+    // гость без провайдера профилей: инициалы из введённого имени №55
+    lkc.trackRefs = [
+      {
+        participant: { identity: 'g:22222222-2222-4222-8222-222222222222', name: 'Виктор' },
+        source: 'camera',
+      },
+    ]
+    renderRoom()
+
+    const tile = await waitFor(() => tileByLabel('Виктор'))
+    const avatar = tile.querySelector<HTMLElement>('.avatar')
+    expect(avatar).not.toBeNull()
+    expect(avatar?.querySelector('span')?.textContent).toBe('ВИ')
   })
 })
 

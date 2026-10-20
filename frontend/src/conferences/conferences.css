@@ -118,6 +118,31 @@
   aspect-ratio: 21 / 9;
 }
 
+/* Тайл без камеры (T073): аватар «как в контактах» (ParticipantAvatar,
+   цепочка инициалов профиля / фолбэк из name) + имя; подпись — не
+   видео-оверлей, а строка под аватаром. */
+.conference-tile-idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.conference-tile-idle .conference-tile-name {
+  position: static;
+  background: none;
+  padding: 0 8px;
+  text-align: center;
+}
+
+/* Индикатор речи тайла — текстом «говорит» (008: не только цветом). */
+.conference-tile-speaking {
+  margin-left: 6px;
+  font-style: italic;
+  color: var(--gold-light);
+}
+
 /* Панель управления конференцией (T028): тумблеры микрофона/камеры/экрана
    («вкл/выкл» — визуальный индикатор внутри кнопки) и «Покинуть» —
    в слоте children ConferenceRoom, под сеткой тайлов. Нативная
@@ -383,11 +408,12 @@
   list-style: none;
 }
 
-/* Строка: baseline-цепочка пометок, перенос по ширине (панель узкая). */
+/* Строка: аватар (T073, 34px design-tokens §4) + baseline-цепочка
+   пометок, перенос по ширине (панель узкая). */
 .conference-participants-item {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   column-gap: 8px;
   row-gap: 2px;
   padding: 4px 6px;

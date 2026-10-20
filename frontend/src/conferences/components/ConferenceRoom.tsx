@@ -3,10 +3,10 @@
  * медиа-плоскости LiveKit по JoinTicket №47 (wsUrl + короткоживущий
  * токен) — Room livekit-client (simulcast + dynacast + adaptiveStream)
  * и рендер на примитивах @livekit/components-react (RoomContext →
- * useTracks/ParticipantTile/VideoTrack/RoomAudioRenderer, research
- * §10: готовые компоненты вместо ручного WebRTC-рендера — конституция
- * VII). livekit-client остаётся в ленивом чанке страницы (T002/T025 —
- * main-bundle его не содержит).
+ * useTracks/VideoTrack/RoomAudioRenderer + собственный тайл камеры
+ * с аватаром-заглушкой T073, research §10: готовые компоненты вместо
+ * ручного WebRTC-рендера — конституция VII). livekit-client остаётся
+ * в ленивом чанке страницы (T002/T025 — main-bundle его не содержит).
  *
  * Жизненный цикл комнаты привязан к слоту «одна конференция на
  * вкладку» (Q10=A): bindConferenceDisconnect (useConference) делает
@@ -67,12 +67,14 @@
  * контролируемого завершения остаётся warning-before-end).
  */
 import {
-  ParticipantTile,
+  isTrackReference,
   RoomAudioRenderer,
   RoomContext,
-  VideoTrack,
+  useSpeakingParticipants,
   useTracks,
+  VideoTrack,
 } from '@livekit/components-react'
+import type { TrackReferenceOrPlaceholder } from '@livekit/components-react'
 import { DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
 import type { DataPacket_Kind, RemoteParticipant } from 'livekit-client'
 import { useEffect, useRef, useState } from 'react'
@@ -81,6 +83,7 @@ import type { ConferenceMode, JoinTicket } from '../api/conferences'
 import { bindConferenceDisconnect } from '../hooks/useConference'
 import { useDevices } from '../hooks/useDevices'
 import type { ConferenceDeviceSelection } from '../hooks/useDevices'
+import { ParticipantAvatar } from './ParticipantAvatar'
 import '../conferences.css'
 
 /** Фаза медиа-подключения комнаты — статус-строка и видимость тайлов. */
@@ -260,10 +263,50 @@ function mediaFailureNotice(denied: MediaDenied): string | null {
 }
 
 /**
+ * Тайл камеры участника (T073): published-реф — видео с подписью
+ * имени; placeholder-реф (камера выключена/недоступна — собственный
+ * тайл тоже) — своя заглушка вместо дефолтной ParticipantTile:
+ * ui/Avatar (ParticipantAvatar, «как в контактах») + имя +
+ * индикатор речи. Живой переход камера вкл/выкл меняет набор
+ * track-рефов useTracks — аватар уходит/возвращается сам; тайлы
+ * демонстраций экрана — ConferenceMedia, без аватара.
+ */
+function CameraTile({
+  trackRef,
+  speaking,
+}: {
+  readonly trackRef: TrackReferenceOrPlaceholder
+  readonly speaking: boolean
+}) {
+  const label = participantLabel(trackRef.participant.name, trackRef.participant.identity)
+  if (isTrackReference(trackRef)) {
+    return (
+      <figure className="conference-tile">
+        <VideoTrack trackRef={trackRef} />
+        <figcaption className="conference-tile-name">{label}</figcaption>
+      </figure>
+    )
+  }
+  return (
+    <figure className="conference-tile conference-tile-idle">
+      <ParticipantAvatar
+        participant={trackRef.participant}
+        size={96}
+        className="conference-tile-avatar"
+      />
+      <figcaption className="conference-tile-name">
+        {label}
+        {speaking && <span className="conference-tile-speaking">говорит</span>}
+      </figcaption>
+    </figure>
+  )
+}
+
+/**
  * Медиа-слой комнаты (внутри RoomContext): аудио всех удалённых
  * участников — RoomAudioRenderer (микрофоны и звук демонстраций
- * экрана), видео — тайлы: сетка камер/плейсхолдеров участников
- * (ParticipantTile: имя, индикатор речи, заглушка без камеры) и
+ * экрана), видео — тайлы: сетка камер/заглушек-аватаров участников
+ * (CameraTile: имя, индикатор речи, аватар без камеры — T073) и
  * широкие тайлы демонстраций экрана (VideoTrack). adaptiveStream
  * держит паузу невидимых тайлов (FR-004).
  */
@@ -272,6 +315,8 @@ function ConferenceMedia() {
     onlySubscribed: false,
   })
   const screenTiles = useTracks([Track.Source.ScreenShare], { onlySubscribed: false })
+  const speakers = useSpeakingParticipants()
+  const speakerIdentities = new Set(speakers.map((participant) => participant.identity))
   return (
     <>
       <RoomAudioRenderer />
@@ -292,10 +337,10 @@ function ConferenceMedia() {
       )}
       <section className="conference-tiles" aria-label="Участники конференции">
         {cameraTiles.map((ref) => (
-          <ParticipantTile
+          <CameraTile
             key={`${ref.participant.identity}:${ref.source}`}
             trackRef={ref}
-            className="conference-tile"
+            speaking={speakerIdentities.has(ref.participant.identity)}
           />
         ))}
       </section>
