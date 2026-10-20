@@ -1,4 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
@@ -8,6 +10,7 @@ import { formatDate, formatTime } from '../../../ui/time'
 import { useChatMessages } from '../../hooks/useChatMessages'
 import type { SyncPageUpdate } from '../../hooks/useChatMessages'
 import type { OutboxRecord } from '../../outbox'
+import { resetInviteProbeCache } from '../conferenceInviteProbe'
 import type { TypingParticipant } from '../TypingRow'
 import { MessageList } from '../MessageList'
 
@@ -19,6 +22,21 @@ vi.mock('../../../api/chats', () => ({
   listMessages: vi.fn(),
   getChat: vi.fn(),
   markChatRead: vi.fn(),
+}))
+
+/** T072: рендер invite-карточек тянет №45-чек T070 — мок канала конференций. */
+const conferences = vi.hoisted(() => ({ getConference: vi.fn() }))
+
+vi.mock('../../../conferences/api/conferences', () => ({
+  getConference: conferences.getConference,
+  conferenceErrorCode: (value: unknown) => {
+    if (typeof value !== 'object' || value === null || !('errors' in value)) {
+      return null
+    }
+    const errors = (value as { errors?: Record<string, readonly string[]> }).errors
+    const code = Object.values(errors ?? {}).flat()[0]
+    return typeof code === 'string' ? code : null
+  },
 }))
 
 const mockedListMessages = vi.mocked(listMessages)
@@ -2557,5 +2575,101 @@ describe('MessageList direct feed avatars — US1 chain (008a T070)', () => {
       initialsOf('mikhail'),
     )
     expect(container.querySelector('.msg.me .avatar .av-in span')?.textContent).toBe('ME')
+  })
+})
+
+/**
+ * 009, US1, T072 — левое выравнивание карточки-приглашения конференции
+ * в ленте (запрос пользователя; правка представления, backend/контракт
+ * не трогаются). Карточка — участник диалога, а не встроенная подпись
+ * ленты: строка `conference_invite` прижимается ВЛЕВО по геометрии
+ * входящих (.msg.them) — модификатор `sys-invite` на li SystemRow +
+ * CSS-правило (отступ слева на колонку аватара 34px + gap 10px, ширина
+ * по лексике пузыря max-width: min(72%, 560px) вместо min-width:
+ * min(260px, 72%)). Нейтральный плейсхолдер неизвестных виджетов (OCP)
+ * ОСТАЁТСЯ центрированным — решение T024 для плейсхолдера сохраняется.
+ */
+describe('MessageList выравнивание системных виджетов (009 T072)', () => {
+  function systemMessage(payload: unknown, overrides: Partial<Message> = {}): Message {
+    return message({
+      id: 'm-sys',
+      senderId: null,
+      text: '',
+      kind: 'system',
+      ...(payload === null ? {} : { payload: payload as Message['payload'] }),
+      ...overrides,
+    })
+  }
+
+  beforeEach(() => {
+    resetInviteProbeCache()
+    conferences.getConference.mockReset()
+    // висящий фоновый №45-чек новейшей карточки (T070) — DOM не меняет
+    conferences.getConference.mockReturnValue(new Promise(() => {}))
+  })
+
+  it('li карточки conference_invite несёт модификатор sys-invite; li плейсхолдера — НЕ несёт', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          systemMessage(
+            { type: 'conference_invite', conferenceId: 'c-1', mode: 'video' },
+            { id: 'm-invite', seq: 1 },
+          ),
+          systemMessage({ type: 'future_widget', data: 1 }, { id: 'm-unknown', seq: 2 }),
+          systemMessage(null, { id: 'm-empty', seq: 3, payload: null }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+    const inviteRow = container.querySelector('li[data-mid="m-invite"]')
+    expect(inviteRow?.classList.contains('sys-invite')).toBe(true)
+    const unknownRow = container.querySelector('li[data-mid="m-unknown"]')
+    expect(unknownRow?.classList.contains('sys-invite')).toBe(false)
+    const emptyRow = container.querySelector('li[data-mid="m-empty"]')
+    expect(emptyRow?.classList.contains('sys-invite')).toBe(false)
+  })
+
+  it('CSS: модификатор несёт левое выравнивание (column-строка), база .msg.system — центр', () => {
+    const css = readFileSync(join(import.meta.dirname, '../message-list.css'), 'utf8')
+    const modifier = css.match(/\.message-list \.msg\.system\.sys-invite\s*\{([^}]*)\}/)
+    expect(modifier).not.toBeNull()
+    expect(modifier?.[1]).toContain('align-items: flex-start')
+    // колонка пузырей входящих: отступ слева на аватар 34px + gap 10px
+    expect(modifier?.[1]).toContain('padding-left: 44px')
+
+    const base = css.match(/\.message-list \.msg\.system\s*\{([^}]*)\}/)
+    expect(base?.[1]).toContain('flex-direction: column')
+    expect(base?.[1]).toContain('align-items: center')
+  })
+
+  it('регресс: геометрия входящих/исходящих (.msg/.msg.me/.msg.them) и плейсхолдер не тронуты', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          message({ id: 'in-1', senderId: PEER, text: 'входящее' }),
+          message({ id: 'out-1', senderId: ME, text: 'исходящее' }),
+        ]}
+        currentUserId={ME}
+      />,
+    )
+    expect(container.querySelector('li[data-mid="in-1"]')?.className).toBe(
+      'message incoming msg them',
+    )
+    expect(container.querySelector('li[data-mid="out-1"]')?.className).toBe(
+      'message outgoing msg me',
+    )
+
+    const css = readFileSync(join(import.meta.dirname, '../message-list.css'), 'utf8')
+    // пользовательская геометрия — прежние правила
+    expect(css.match(/\.message-list \.msg\s*\{([^}]*)\}/)?.[1]).toContain('gap: 10px')
+    expect(css.match(/\.message-list \.msg\.me\s*\{([^}]*)\}/)?.[1]).toContain(
+      'flex-direction: row-reverse',
+    )
+    expect(css.match(/\.message-list \.msg \.bubble\s*\{([^}]*)\}/)?.[1]).toContain(
+      'max-width: min(72%, 560px)',
+    )
+    // плейсхолдер — прежняя лексика встроенной подписи (центрируется базой .msg.system)
+    expect(css.match(/\.message-list \.sys-placeholder\s*\{([^}]*)\}/)?.[1]).toContain('italic')
   })
 })

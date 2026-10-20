@@ -1,0 +1,32 @@
+# Dev-stand RTC advertisement of the LiveKit node (009-video-conferences):
+# the base manifest pins --node-ip=$(POD_IP), which behind the Yandex 1:1
+# NAT of the stand is the PRIVATE 10.130.x.x address — browsers on the
+# public internet cannot send ICE media to it, and every call dies right
+# after a successful signaling handshake ("не удалось подключиться к
+# медиа-серверу"). use_external_ip makes livekit-server discover the
+# mapped public address via STUN and advertise THAT in its ICE
+# candidates; the firewall must keep UDP 7882 (mux) and TCP 7881 open to
+# the node (verified open on the stand). Strategic merge on the
+# configmap REPLACES the data["livekit.yaml"] key wholesale, so the
+# complete base config is repeated here with the one addition.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: livekit-config
+data:
+  livekit.yaml: |
+    port: 7880
+    bind_addresses:
+      - 0.0.0.0
+    webhook:
+      api_key: devkey
+      urls:
+        - http://backend:8080/api/internal/conferences/livekit/webhook
+    room:
+      enable_remote_unmute: true
+    rtc:
+      tcp_port: 7881
+      udp_port: 7882
+      use_external_ip: true
+    redis:
+      address: redis:6379

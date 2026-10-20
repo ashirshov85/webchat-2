@@ -32,6 +32,13 @@ vi.mock('../../api/conferences', async (importOriginal) => ({
   joinConference: conferences.joinConference,
 }))
 
+/** Догрузка профилей (T073) изолирована от сьюта экрана — свой тест у хука. */
+const profiles = vi.hoisted(() => ({ useParticipantProfiles: vi.fn() }))
+
+vi.mock('../../hooks/useParticipantProfiles', () => ({
+  useParticipantProfiles: profiles.useParticipantProfiles,
+}))
+
 const ME = '11111111-1111-1111-1111-111111111111'
 const CONFERENCE_ID = 'aaaaaaaa-0000-4000-8000-000000000001'
 
@@ -87,6 +94,7 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     conferences.getConference.mockReset()
     conferences.getConferenceMe.mockReset()
     conferences.joinConference.mockReset()
+    profiles.useParticipantProfiles.mockReset().mockReturnValue(new Map())
     assignMock = stubLocationAssign()
   })
 
@@ -115,6 +123,32 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     expect(ended.tagName).toBe('OUTPUT')
     expect(screen.queryByRole('button', { name: 'Войти' })).not.toBeInTheDocument()
     expect(conferences.joinConference).not.toHaveBeenCalled()
+  })
+
+  it('shows the duration on the ended screen when №45 carries startedAt/endedAt (T071)', async () => {
+    resolveBundle(
+      conferenceView({
+        status: 'ended',
+        endReason: 'moderator',
+        startedAt: '2026-10-17T12:00:00.000Z',
+        endedAt: '2026-10-17T12:30:00.000Z',
+      }),
+    )
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    const ended = await screen.findByText('Конференция завершена · 30 мин')
+    expect(ended.tagName).toBe('OUTPUT')
+    expect(screen.queryByRole('button', { name: 'Войти' })).not.toBeInTheDocument()
+    expect(conferences.joinConference).not.toHaveBeenCalled()
+  })
+
+  it('ended without startedAt (never started, room_lost) — plain label without duration (T071)', async () => {
+    resolveBundle(conferenceView({ status: 'ended', endReason: 'room_lost' }))
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    const ended = await screen.findByText('Конференция завершена')
+    expect(ended.tagName).toBe('OUTPUT')
+    expect(screen.queryByText(/Конференция завершена ·/)).not.toBeInTheDocument()
   })
 
   it('«Войти» on pre-join mints №47 and renders the joined block; leave returns to pre-join', async () => {
@@ -180,6 +214,14 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
 
     const joined = await screen.findByText('Вы в конференции')
     expect(joined.tagName).toBe('OUTPUT')
+  })
+
+  it('догружает профили участников по chatId №45-вида (T073: аватары «как в контактах»)', async () => {
+    resolveBundle(conferenceView({ chatId: 'chat-42' }))
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    await screen.findByRole('heading', { name: 'Видеоконференция' })
+    expect(profiles.useParticipantProfiles).toHaveBeenCalledWith('chat-42')
   })
 
   it('renders a neutral load error and «Повторить» re-runs the №45+№46 bundle', async () => {

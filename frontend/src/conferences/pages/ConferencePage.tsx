@@ -24,7 +24,12 @@
  * «Конференция завершена» (Q20=A) показывается по обоим REST-лицам:
  * №45 `200 status='ended'` (старая ссылка) и №47 `409
  * conference_ended` — терминальное состояние без pre-join и кнопки
- * входа. Блок joined монтирует медиа-комнату ConferenceRoom (T027):
+ * входа. T071: терминальный экран дополняется длительностью
+ * `endedAt − startedAt` загруженного №45-вида (оба поля присутствуют
+ * для status='ended'; никогда не начинавшаяся — empty-timeout →
+ * room_lost без startedAt — длительность не выводится, не выдумывать);
+ * №47-409 без полей вида — подпись без длительности.
+ * Блок joined монтирует медиа-комнату ConferenceRoom (T027):
  * подключение по JoinTicket, тайлы участников и адаптацию качества
  * (FR-004); в слоте children — ParticipantsPanel (T041): список
  * участников из LiveKit (identity/name, роль, online, ограничения),
@@ -41,7 +46,10 @@ import { useCallback, useState } from 'react'
 import { conferenceErrorCode } from '../api/conferences'
 import type { ConferenceErrorCode, ConferenceMode, JoinTicket, MeView } from '../api/conferences'
 import { useConference } from '../hooks/useConference'
+import { useParticipantProfiles } from '../hooks/useParticipantProfiles'
+import { ParticipantProfilesContext } from '../profiles'
 import type { ConferenceDeviceSelection } from '../hooks/useDevices'
+import { endedConferenceLabel, formatSpanDuration } from '../../ui/duration'
 import ConferenceRoom from '../components/ConferenceRoom'
 import type { ConferenceRoomInitialMedia } from '../components/ConferenceRoom'
 import MediaControls from '../components/MediaControls'
@@ -171,6 +179,15 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
     leave,
   } = useConference(conferenceId)
 
+  /**
+   * Профили участников чата-владельца (T073): догрузка СУЩЕСТВУЮЩИМИ
+   * API по chatId №45-вида (группа — №27-ростер одним запросом,
+   * direct — №13 peer + №10 me; сбой — пустая Map → фолбэк инициалов
+   * из name). Кэш на монтаж, раздача вниз контекстом — аватары тайлов
+   * и строк панели «как в контактах».
+   */
+  const participantProfiles = useParticipantProfiles(conference !== null ? conference.chatId : null)
+
   /** mode точки входа (?mode= маршрута — T034): фиксируется на монтаж (page load навигация). */
   const [entryMode] = useState(() => entryModeFromSearch(window.location.search))
   /** Стартовая выборка pre-join по «Войти» (T034): тумблеры + устройства — в звонок. */
@@ -215,7 +232,7 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
             {me !== null && <p>Ваша роль: {me.role === 'moderator' ? 'модератор' : 'участник'}</p>}
           </header>
           {ended ? (
-            <output>Конференция завершена</output>
+            <output>{endedConferenceLabel(formatSpanDuration(conference))}</output>
           ) : (
             <div className="conference-join">
               {(joinStatus === 'idle' || joinStatus === 'joining') && (
@@ -228,21 +245,23 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
                 />
               )}
               {joinStatus === 'joined' && ticket !== null && (
-                <JoinedPanel
-                  conferenceId={conferenceId}
-                  ticket={ticket}
-                  mode={conference.mode}
-                  initialMedia={
-                    selection !== null
-                      ? { microphone: selection.microphone, camera: selection.camera }
-                      : undefined
-                  }
-                  initialDevices={selection?.devices}
-                  refreshTicket={refreshTicket}
-                  restrictions={me}
-                  onRestrictionsSync={refreshMe}
-                  onLeave={leave}
-                />
+                <ParticipantProfilesContext.Provider value={participantProfiles}>
+                  <JoinedPanel
+                    conferenceId={conferenceId}
+                    ticket={ticket}
+                    mode={conference.mode}
+                    initialMedia={
+                      selection !== null
+                        ? { microphone: selection.microphone, camera: selection.camera }
+                        : undefined
+                    }
+                    initialDevices={selection?.devices}
+                    refreshTicket={refreshTicket}
+                    restrictions={me}
+                    onRestrictionsSync={refreshMe}
+                    onLeave={leave}
+                  />
+                </ParticipantProfilesContext.Provider>
               )}
               {joinStatus === 'error' && (
                 <div className="conference-error">

@@ -1,0 +1,48 @@
+# Public client ingress of the LiveKit media plane on the dev stand
+# (009-video-conferences): browsers cannot reach the in-cluster
+# livekit:7880 Service, and the SPA is served over HTTPS, so the
+# wss-capable route must live on the app host (no dedicated livekit DNS
+# record on dev). livekit-client PRESERVES the path prefix of the wsUrl
+# (wss://dev.webchat.lkshr.ru/livekit -> /livekit/rtc?...), so a path
+# rule with a prefix-strip rewrite routes the signaling websocket and
+# the Twirp/validate POSTs to the media plane. The strip is mandatory:
+# livekit-server serves its endpoints at the root (/rtc, /twirp/...).
+#
+# Long-lived connection settings mirror the SSE ingress conventions
+# (base ingress.yaml): websockets must not die at the default 60s proxy
+# timeouts. TLS: same cert-manager issuer + secret as the app ingress
+# (ingress-tls.yaml of this overlay) — this Ingress deliberately carries
+# NO app=webchat label, so the label-scoped host/tls patches of
+# kustomization.yaml leave its explicit host and TLS block untouched.
+#
+# The backend hands this route out as JoinTicket.wsUrl via
+# LIVEKIT_PUBLIC_URL (backend-livekit-env.yaml); RTC media (UDP 7882 /
+# TCP 7881) flows directly to the hostNetwork node, never through here.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: livekit-signaling
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - dev.webchat.lkshr.ru
+      secretName: webchat-dev-tls
+  rules:
+    - host: dev.webchat.lkshr.ru
+      http:
+        paths:
+          - path: /livekit(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: livekit
+                port:
+                  number: 7880
