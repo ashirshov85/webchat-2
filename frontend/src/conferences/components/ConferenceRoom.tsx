@@ -74,7 +74,7 @@ import {
   useTracks,
   VideoTrack,
 } from '@livekit/components-react'
-import type { TrackReferenceOrPlaceholder } from '@livekit/components-react'
+import type { TrackReference, TrackReferenceOrPlaceholder } from '@livekit/components-react'
 import { DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
 import type { DataPacket_Kind, RemoteParticipant } from 'livekit-client'
 import { useEffect, useRef, useState } from 'react'
@@ -263,6 +263,33 @@ function mediaFailureNotice(denied: MediaDenied): string | null {
 }
 
 /**
+ * Кнопка-тумблер пин-раскладки на тайле (T074): единственный явный
+ * путь управления (двойной клик по тайлу — дополнение, не замена).
+ * Доступность 008: aria-pressed + видимый текст «Развернуть»/
+ * «Свернуть» (состояние не только цветом), нативный keyboard,
+ * focus-visible (conferences.css).
+ */
+function TilePinButton({
+  pinned,
+  onToggle,
+}: {
+  readonly pinned: boolean
+  readonly onToggle: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className="conference-tile-pin"
+      aria-pressed={pinned}
+      aria-label={pinned ? 'Свернуть' : 'Развернуть'}
+      onClick={onToggle}
+    >
+      {pinned ? 'Свернуть' : 'Развернуть'}
+    </button>
+  )
+}
+
+/**
  * Тайл камеры участника (T073): published-реф — видео с подписью
  * имени; placeholder-реф (камера выключена/недоступна — собственный
  * тайл тоже) — своя заглушка вместо дефолтной ParticipantTile:
@@ -270,30 +297,46 @@ function mediaFailureNotice(denied: MediaDenied): string | null {
  * индикатор речи. Живой переход камера вкл/выкл меняет набор
  * track-рефов useTracks — аватар уходит/возвращается сам; тайлы
  * демонстраций экрана — ConferenceMedia, без аватара.
+ *
+ * Пин-раскладка (T074): pinned — тайл развёрнут большим на всю
+ * медиа-зону (conference-tile-pinned; аватар заглушки крупнее),
+ * onTogglePin — тумблер кнопкой/двойным кликом.
  */
 function CameraTile({
   trackRef,
   speaking,
+  pinned = false,
+  onTogglePin,
 }: {
   readonly trackRef: TrackReferenceOrPlaceholder
   readonly speaking: boolean
+  readonly pinned?: boolean
+  readonly onTogglePin: () => void
 }) {
   const label = participantLabel(trackRef.participant.name, trackRef.participant.identity)
+  const tileClass = pinned ? 'conference-tile conference-tile-pinned' : 'conference-tile'
   if (isTrackReference(trackRef)) {
     return (
-      <figure className="conference-tile">
+      <figure className={tileClass} onDoubleClick={onTogglePin}>
         <VideoTrack trackRef={trackRef} />
+        <TilePinButton pinned={pinned} onToggle={onTogglePin} />
         <figcaption className="conference-tile-name">{label}</figcaption>
       </figure>
     )
   }
   return (
-    <figure className="conference-tile conference-tile-idle">
+    <figure
+      className={
+        pinned ? `${tileClass} conference-tile-idle` : 'conference-tile conference-tile-idle'
+      }
+      onDoubleClick={onTogglePin}
+    >
       <ParticipantAvatar
         participant={trackRef.participant}
-        size={96}
+        size={pinned ? 144 : 96}
         className="conference-tile-avatar"
       />
+      <TilePinButton pinned={pinned} onToggle={onTogglePin} />
       <figcaption className="conference-tile-name">
         {label}
         {speaking && <span className="conference-tile-speaking">говорит</span>}
@@ -303,12 +346,66 @@ function CameraTile({
 }
 
 /**
+ * Широкий тайл демонстрации экрана (T027); в пин-раскладке (T074) —
+ * закрепляем большим на всю медиа-зону, без аватара (T073).
+ * Рефы демонстраций всегда published (useTracks без placeholder).
+ */
+function ScreenTile({
+  trackRef,
+  pinned = false,
+  onTogglePin,
+}: {
+  readonly trackRef: TrackReference
+  readonly pinned?: boolean
+  readonly onTogglePin: () => void
+}) {
+  return (
+    <figure
+      className={
+        pinned
+          ? 'conference-tile conference-tile-screen conference-tile-pinned'
+          : 'conference-tile conference-tile-screen'
+      }
+      onDoubleClick={onTogglePin}
+    >
+      <VideoTrack trackRef={trackRef} />
+      <TilePinButton pinned={pinned} onToggle={onTogglePin} />
+      <figcaption className="conference-tile-name">
+        Экран — {participantLabel(trackRef.participant.name, trackRef.participant.identity)}
+      </figcaption>
+    </figure>
+  )
+}
+
+/**
+ * Ключ тайла для пин-раскладки (T074): identity+source — зеркалит
+ * React-ключ тайлов. Один участник с камерой И демонстрацией даёт
+ * два разных пин-ключа: пин конкретного тайла, повторный пин другого
+ * тайла — переключение, того же — сворачивание.
+ */
+function tilePinKey(ref: TrackReferenceOrPlaceholder): string {
+  return `${ref.participant.identity}:${ref.source}`
+}
+
+/**
  * Медиа-слой комнаты (внутри RoomContext): аудио всех удалённых
  * участников — RoomAudioRenderer (микрофоны и звук демонстраций
  * экрана), видео — тайлы: сетка камер/заглушек-аватаров участников
  * (CameraTile: имя, индикатор речи, аватар без камеры — T073) и
  * широкие тайлы демонстраций экрана (VideoTrack). adaptiveStream
  * держит паузу невидимых тайлов (FR-004).
+ *
+ * Пин-раскладка (T074): локальное состояние закреплённого тайла
+ * (identity:source) — закреплённый рендерится большим на всю
+ * медиа-зону ВНУТРИ окна браузера (без Fullscreen API), остальные —
+ * компактной полосой; повторный пин другого тайла — переключение
+ * (закреплён всегда ≤1), закреплённого — сворачивание. Пин-цель
+ * выводится из живых track-рефов: выход участника из комнаты или
+ * завершение закреплённой демонстрации — цель исчезает из
+ * useTracks → обычная сетка (состояние комнаты, без localStorage —
+ * на размонтировании звонка исчезает). Треки подписаны
+ * (onlySubscribed: false) — adaptiveStream (FR-004) сам поднимает
+ * качество ставшему большим тайлу, ничего дособирать не нужно.
  */
 function ConferenceMedia() {
   const cameraTiles = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], {
@@ -317,30 +414,85 @@ function ConferenceMedia() {
   const screenTiles = useTracks([Track.Source.ScreenShare], { onlySubscribed: false })
   const speakers = useSpeakingParticipants()
   const speakerIdentities = new Set(speakers.map((participant) => participant.identity))
+  const [pinnedTileKey, setPinnedTileKey] = useState<string | null>(null)
+  // Пин-цель из живых рефов (undefined — цель исчезла: выход участника
+  // из комнаты / завершение закреплённой демонстрации → обычная сетка).
+  const pinnedScreen =
+    pinnedTileKey === null
+      ? undefined
+      : screenTiles.find((ref) => tilePinKey(ref) === pinnedTileKey)
+  const pinnedCamera =
+    pinnedTileKey !== null && pinnedScreen === undefined
+      ? cameraTiles.find((ref) => tilePinKey(ref) === pinnedTileKey)
+      : undefined
+  const togglePin = (key: string): void => {
+    setPinnedTileKey((current) => (current === key ? null : key))
+  }
+  if (pinnedScreen !== undefined || pinnedCamera !== undefined) {
+    const restScreens = screenTiles.filter((ref) => ref !== pinnedScreen)
+    const restCameras = cameraTiles.filter((ref) => ref !== pinnedCamera)
+    return (
+      <>
+        <RoomAudioRenderer />
+        {pinnedScreen !== undefined && (
+          <ScreenTile
+            trackRef={pinnedScreen}
+            pinned
+            onTogglePin={() => togglePin(tilePinKey(pinnedScreen))}
+          />
+        )}
+        {pinnedCamera !== undefined && (
+          <CameraTile
+            trackRef={pinnedCamera}
+            pinned
+            speaking={speakerIdentities.has(pinnedCamera.participant.identity)}
+            onTogglePin={() => togglePin(tilePinKey(pinnedCamera))}
+          />
+        )}
+        <section
+          className="conference-tiles conference-tiles-compact"
+          aria-label="Участники конференции"
+        >
+          {restScreens.map((ref) => (
+            <ScreenTile
+              trackRef={ref}
+              key={tilePinKey(ref)}
+              onTogglePin={() => togglePin(tilePinKey(ref))}
+            />
+          ))}
+          {restCameras.map((ref) => (
+            <CameraTile
+              trackRef={ref}
+              key={tilePinKey(ref)}
+              speaking={speakerIdentities.has(ref.participant.identity)}
+              onTogglePin={() => togglePin(tilePinKey(ref))}
+            />
+          ))}
+        </section>
+      </>
+    )
+  }
   return (
     <>
       <RoomAudioRenderer />
       {screenTiles.length > 0 && (
         <section className="conference-screens" aria-label="Демонстрации экрана">
           {screenTiles.map((ref) => (
-            <figure
-              className="conference-tile conference-tile-screen"
-              key={`${ref.participant.identity}:${ref.source}`}
-            >
-              <VideoTrack trackRef={ref} />
-              <figcaption className="conference-tile-name">
-                Экран — {participantLabel(ref.participant.name, ref.participant.identity)}
-              </figcaption>
-            </figure>
+            <ScreenTile
+              trackRef={ref}
+              key={tilePinKey(ref)}
+              onTogglePin={() => togglePin(tilePinKey(ref))}
+            />
           ))}
         </section>
       )}
       <section className="conference-tiles" aria-label="Участники конференции">
         {cameraTiles.map((ref) => (
           <CameraTile
-            key={`${ref.participant.identity}:${ref.source}`}
+            key={tilePinKey(ref)}
             trackRef={ref}
             speaking={speakerIdentities.has(ref.participant.identity)}
+            onTogglePin={() => togglePin(tilePinKey(ref))}
           />
         ))}
       </section>

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { JoinTicket } from '../../api/conferences'
 
@@ -175,7 +175,7 @@ vi.mock('@livekit/components-react', () => ({
   useSpeakingParticipants: () => lkc.speakers,
   // зеркало реального гварда ядра: placeholder-рефы не несут publication
   isTrackReference: (ref: { publication?: unknown }) => ref.publication !== undefined,
-  RoomAudioRenderer: () => null,
+  RoomAudioRenderer: () => <div data-testid="lk-audio-renderer" />,
   VideoTrack: () => <video />,
 }))
 
@@ -913,5 +913,225 @@ describe('ConferenceRoom — тост conference.warning (009 US5 T061 ← T056/
       setTimeout(resolve, 30)
     })
     expect(screen.queryByText(/лимитом длительности/)).toBeNull()
+  })
+})
+
+describe('ConferenceRoom — пин-раскладка тайлов (009 US1 T074)', () => {
+  /** Собственный identity тикета — self-view тайл тоже закрепляем. */
+  const OWN_IDENTITY = 'u:11111111-1111-1111-1111-111111111111:conn-1'
+
+  /** Тайл по подписи-имени участника (figcaption). */
+  function tileByLabel(name: string): HTMLElement {
+    const label = screen.getByText(name, { exact: false })
+    const tile = label.closest('figure')
+    if (tile === null) {
+      throw new Error(`тайл участника «${name}» не найден`)
+    }
+    return tile
+  }
+
+  /** Сетка/полоса участников (region «Участники конференции»). */
+  function tilesSection(): HTMLElement {
+    return screen.getByRole('region', { name: 'Участники конференции' })
+  }
+
+  function renderRoom(): ReturnType<typeof render> {
+    return render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Пин тайла кнопкой-тумблером «Развернуть» (явный путь, 008). */
+  function pinTile(tile: HTMLElement): void {
+    fireEvent.click(within(tile).getByRole('button', { name: 'Развернуть' }))
+  }
+
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+    lkc.speakers = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('(а) клик «Развернуть» — закреплённый тайл несёт пин-класс, остальные — компактную разметку', async () => {
+    lkc.trackRefs = [
+      {
+        participant: { identity: 'u:1:a', name: 'alice' },
+        source: 'camera',
+        publication: { trackSid: 'cam-1' },
+      },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    renderRoom()
+
+    const aliceTile = await waitFor(() => tileByLabel('alice'))
+    const expand = within(aliceTile).getByRole('button', { name: 'Развернуть' })
+    expect(expand).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(expand)
+
+    // закреплённый тайл — большой на всю медиа-зону (пин-класс), тумблер
+    // перевернулся: «Свернуть» + aria-pressed=true
+    const pinnedTile = tileByLabel('alice')
+    expect(pinnedTile).toHaveClass('conference-tile-pinned')
+    const collapse = within(pinnedTile).getByRole('button', { name: 'Свернуть' })
+    expect(collapse).toHaveAttribute('aria-pressed', 'true')
+
+    // остальные — компактная полоса; их тумблеры неактивны
+    expect(tilesSection()).toHaveClass('conference-tiles-compact')
+    const bobTile = tileByLabel('bob')
+    expect(bobTile).not.toHaveClass('conference-tile-pinned')
+    expect(within(bobTile).getByRole('button', { name: 'Развернуть' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+  })
+
+  it('(б) повторный клик по закреплённому тайлу — сворачивание в обычную сетку', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    renderRoom()
+    pinTile(await waitFor(() => tileByLabel('alice')))
+    expect(tileByLabel('alice')).toHaveClass('conference-tile-pinned')
+
+    fireEvent.click(within(tileByLabel('alice')).getByRole('button', { name: 'Свернуть' }))
+
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+  })
+
+  it('(в) пин другого участника — переключение: закреплён всегда ≤1', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    renderRoom()
+    pinTile(await waitFor(() => tileByLabel('alice')))
+    expect(tileByLabel('alice')).toHaveClass('conference-tile-pinned')
+
+    pinTile(tileByLabel('bob'))
+
+    // переключение: закреплён bob, alice вернулась компактной сеткой
+    expect(tileByLabel('bob')).toHaveClass('conference-tile-pinned')
+    expect(tileByLabel('alice')).not.toHaveClass('conference-tile-pinned')
+    expect(document.querySelectorAll('.conference-tile-pinned')).toHaveLength(1)
+  })
+
+  it('(г) закреплённый покидает комнату — автоматический возврат обычной сетки', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    pinTile(await waitFor(() => tileByLabel('alice')))
+    expect(document.querySelectorAll('.conference-tile-pinned')).toHaveLength(1)
+
+    // alice ушла из useTracks/useParticipants — пин-цель не существует
+    lkc.trackRefs = [{ participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' }]
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+
+    await waitFor(() => {
+      expect(screen.queryByText('alice')).toBeNull()
+    })
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+    expect(within(tileByLabel('bob')).getByRole('button', { name: 'Развернуть' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+  })
+
+  it('(д) собственный тайл и демонстрация экрана закрепляемы; завершение демонстрации сбрасывает пин', async () => {
+    lkc.trackRefs = [
+      // self-view: собственный тайл (камера выключена — аватар)
+      { participant: { identity: OWN_IDENTITY, name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    const view = renderRoom()
+
+    // собственный тайл закрепляем как любой другой
+    const ownTile = await waitFor(() => tileByLabel('alice'))
+    pinTile(ownTile)
+    expect(tileByLabel('alice')).toHaveClass('conference-tile-pinned')
+    expect(tileByLabel('alice').querySelector('.avatar')).not.toBeNull()
+
+    // демонстрация экрана закрепляема — переключение с собственного тайла
+    const screenLabel = screen.getByText('Экран — bob')
+    const screenTile = screenLabel.closest('figure')
+    if (screenTile === null) {
+      throw new Error('тайл демонстрации экрана не найден')
+    }
+    pinTile(screenTile)
+    const pinnedScreen = document.querySelector('.conference-tile-pinned')
+    expect(pinnedScreen).not.toBeNull()
+    expect(pinnedScreen).toHaveTextContent('Экран — bob')
+    // прежний закреплённый вернулся компактной полосой
+    expect(tileByLabel('alice')).not.toHaveClass('conference-tile-pinned')
+
+    // завершение единственной демонстрации у закреплённого — сброс пина
+    lkc.trackRefs = [{ participant: { identity: OWN_IDENTITY, name: 'alice' }, source: 'camera' }]
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+    await waitFor(() => {
+      expect(screen.queryByText('Экран — bob')).toBeNull()
+    })
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+  })
+
+  it('(е) регресс без пина: экранная секция широкой сеткой, аудио-рендер и children не тронуты', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    renderRoom()
+
+    const screens = await waitFor(() => {
+      const section = screen.getByRole('region', { name: 'Демонстрации экрана' })
+      expect(section).toHaveClass('conference-screens')
+      return section
+    })
+    expect(screens.classList.contains('conference-tiles-compact')).toBe(false)
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+    // аудио удалённых участников смонтировано; слот MediaControls/панелей жив
+    expect(screen.getByTestId('lk-audio-renderer')).not.toBeNull()
+    expect(screen.getByTestId('controls-slot')).not.toBeNull()
+
+    // и в пин-раскладке аудио-рендер и children остаются на месте
+    pinTile(tileByLabel('alice'))
+    expect(screen.getByTestId('lk-audio-renderer')).not.toBeNull()
+    expect(screen.getByTestId('controls-slot')).not.toBeNull()
+    // невыключенная чужая демонстрация уходит в компактную полосу
+    expect(tilesSection()).toHaveTextContent('Экран — bob')
+    expect(screen.queryByRole('region', { name: 'Демонстрации экрана' })).toBeNull()
   })
 })
