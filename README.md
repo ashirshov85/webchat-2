@@ -2,7 +2,7 @@
 
 https://dev.webchat.lkshr.ru
 
-Веб-мессенджер: личные диалоги, групповые чаты и присутствие пользователей в реальном времени.
+Веб-мессенджер: личные диалоги, групповые чаты, присутствие пользователей и видеоконференции в реальном времени.
 Монорепозиторий: Kotlin/Spring Boot backend, React frontend, OpenAPI-контракт, Kubernetes-деплой.
 
 Проект развивается по спецификациям (Spec Kit): каждая фича проходит цикл
@@ -26,6 +26,12 @@ spec → clarify → plan → tasks → implement. Текущий статус �
   режим «невидимка», защита от «дребезга» статуса (гистерезис).
 - **Социальные сигналы** — индикатор набора текста, «был(а) недавно»,
   отображаемые имена с псевдонимами, отдельные звуковые уведомления для чатов.
+- **Видеоконференции** — аудио/видеозвонки
+  и демонстрация экрана из любого чата (WebRTC через LiveKit SFU, адаптивное
+  качество simulcast/dynacast). Подключение членов чата, модерация, гостевой
+  доступ без аккаунта по ссылке с подписанным ES256-nonce. События начала/завершения по SSE,
+  квоты и таймауты per-env (maxParticipants, пустая комната, максимум
+  длительности), метрики `webchat_conference_*`.
 - **Realtime через SSE** — `GET /api/v1/users/me/events`; фан-аут между
   инстансами через Redis pub/sub.
 
@@ -55,4 +61,5 @@ spec → clarify → plan → tasks → implement. Текущий статус �
 | Frontend | React 19, TypeScript (strict), Vite 8, OpenTelemetry Web SDK |
 | Данные | PostgreSQL 17 (основное хранилище), Redis 7 (rate-limit, presence, pub/sub) |
 | Realtime | Server-Sent Events + Redis pub/sub |
+| Медиа | LiveKit SFU (WebRTC, simulcast/dynacast) |
 | Инфраструктура | Docker, Kustomize, GitHub Actions, LGTM-стек (Grafana/Loki/Tempo/Prometheus) |
