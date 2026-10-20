@@ -1193,6 +1193,12 @@ const FeedRow = memo(function FeedRow({
  * (только карточке, совпавшей с tombstone живого среза: endedAt кадра
  * №18 + startedAt бейджа №17); деривация T070 и №45-пути карточки
  * разбираются внутри ConferenceInviteCard.
+ *
+ * T072 (US1): строка-карточка `conference_invite` несёт модификатор
+ * `sys-invite` — карточка прижата ВЛЕВО по геометрии входящих
+ * (.msg.them: отступ на колонку аватара, ширина по лексике пузыря;
+ * message-list.css). Нейтральный плейсхолдер центрируется прежним
+ * правилом `.msg.system` (встроенная подпись ленты, решение T024).
  */
 const SystemRow = memo(function SystemRow({
   message,
@@ -1212,7 +1218,13 @@ const SystemRow = memo(function SystemRow({
   const endedByTombstone = invite !== null && endedConferenceId === invite.conferenceId
   return (
     <li
-      className="message system-message msg system"
+      className={
+        // T072: модификатор выравнивания — ТОЛЬКО строке известного
+        // виджета-карточки; плейсхолдер остается центрированным
+        invite !== null
+          ? 'message system-message msg system sys-invite'
+          : 'message system-message msg system'
+      }
       data-mid={message.id}
       data-seat-anchor={seatAnchor}
     >
