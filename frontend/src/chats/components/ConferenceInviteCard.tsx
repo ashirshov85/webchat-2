@@ -43,14 +43,42 @@
  * завершённые ВНЕ живой сессии (до монтажа useConferenceRealtime), этим
  * путём не узнаются — их страховка остаётся клик-проверка №45; история
  * чата не дополняется и не меняется (Q20=A).
+ *
+ * T070 (US5, баг-фикс после T069): терминальное состояние конференций,
+ * завершённых ВНЕ живой сессии (пользователь был офлайн в момент
+ * завершения / открыл чат позже — кадр №18 не доставлен). Пропс
+ * `probe` (MessageList помечает им НОВЕЙШУЮ карточку-приглашение окна
+ * ленты): `true` — ОДИН фоновый №45-чек на монтаж: `status='ended'` →
+ * терминальная подпись (как клик-ветка); `created`/`active` → кнопка
+ * остаётся (живая сходится кадрами T069); Problem
+ * `conference_not_found` → нейтральная «Конференция недоступна»;
+ * транспортный сбой — тихо (без баннера; кнопка остаётся, клик-проверка
+ * №45 — страховка), ретрай-цикл НЕ вводится. Мемоизация — сессионный
+ * кэш conferenceInviteProbe: не более одного №45 на конференцию за
+ * сессию; повторный монтаж восстанавливает осевший исход из кэша
+ * (ленивый initial state) БЕЗ запроса. Уже-терминальная живым кадром
+ * карточка (ended на монтаже) не проверяется вовсе.
  */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { conferenceErrorCode, getConference } from '../../conferences/api/conferences'
 import type { ConferenceMode } from '../../conferences/api/conferences'
 import { formatTime } from '../../ui/time'
+import { cachedInviteProbeOutcome, rememberInviteProbeOutcome } from './conferenceInviteProbe'
+import type { ConferenceInviteProbeOutcome } from './conferenceInviteProbe'
 
 /** Состояние клика «Подключиться»: проверка №45 → переход/подпись. */
 type JoinState = 'idle' | 'checking' | 'ended' | 'missing' | 'error'
+
+/**
+ * T070: исход фонового №45-чека → состояние карточки (`live` —
+ * active/created/транспортный отказ — кнопка остаётся, «idle»).
+ */
+function probeOutcomeToJoinState(outcome: ConferenceInviteProbeOutcome | undefined): JoinState {
+  if (outcome === 'ended' || outcome === 'missing') {
+    return outcome
+  }
+  return 'idle'
+}
 
 /** Первый системный виджет 009 — payload сообщения-приглашения (§4). */
 export interface ConferenceInvitePayload {
@@ -99,6 +127,15 @@ export interface ConferenceInviteCardProps {
    * поведение с клик-проверкой №45.
    */
   readonly ended?: boolean
+  /**
+   * T070: фоновый №45-чек на монтаж — MessageList помечает им НОВЕЙШУЮ
+   * карточку-приглашение окна ленты (единственную потенциально живую;
+   * все предыдущие завершены по инварианту «одна активная на чат» и
+   * терминальны чистой деривацией). Один запрос на конференцию за
+   * сессию (сессионный кэш conferenceInviteProbe); `false`/`undefined`
+   * — карточка фоново не проверяется (прямые рендеры, старые карточки).
+   */
+  readonly probe?: boolean
 }
 
 export function ConferenceInviteCard({
@@ -106,8 +143,14 @@ export function ConferenceInviteCard({
   mode,
   createdAt,
   ended = false,
+  probe = false,
 }: ConferenceInviteCardProps) {
-  const [state, setState] = useState<JoinState>('idle')
+  // T070: осевший исход фонового чека восстанавливается из сессионного
+  // кэша СРАЗУ (ленивый initial state) — повторный монтаж показывает
+  // терминальное состояние без повторного №45.
+  const [state, setState] = useState<JoinState>(() =>
+    probe ? probeOutcomeToJoinState(cachedInviteProbeOutcome(conferenceId)) : 'idle',
+  )
   // T069: липкий latch живого завершения (render-phase, идемпотентен —
   // паттерн Tick: однажды выставленный не сбрасывается, StrictMode-
   // двойной рендер сходится к тому же выводу).
@@ -116,6 +159,42 @@ export function ConferenceInviteCard({
     endedLiveRef.current = true
   }
   const endedLive = endedLiveRef.current
+
+  /**
+   * T070: фоновый №45-чек новейшей карточки на монтаж — тихий (без
+   * `checking`: кнопка не «замигает»), один на конференцию за сессию.
+   * Гварды: already-terminal живым кадром (ended на монтаже — кадр №18
+   * уже доставлен, запроса не нужно), осевший кэш, повторные рендеры
+   * этого инстанса (probedRef). Исход сводится в состояние карточки:
+   * ended → терминальная подпись, missing → «Конференция недоступна»,
+   * live (active/created/транспорт) → кнопка остаётся — клик-проверка
+   * №45 остаётся страховкой; ретрай-цикл не вводится.
+   */
+  const probedRef = useRef(false)
+  useEffect(() => {
+    if (!probe || probedRef.current || endedLiveRef.current) {
+      return
+    }
+    if (cachedInviteProbeOutcome(conferenceId) !== undefined) {
+      return
+    }
+    probedRef.current = true
+    void (async () => {
+      let outcome: ConferenceInviteProbeOutcome = 'live'
+      try {
+        const view = await getConference(conferenceId)
+        if (view.status === 'ended') {
+          outcome = 'ended'
+        }
+      } catch (cause) {
+        if (conferenceErrorCode(cause) === 'conference_not_found') {
+          outcome = 'missing'
+        }
+      }
+      rememberInviteProbeOutcome(conferenceId, outcome)
+      setState(probeOutcomeToJoinState(outcome))
+    })()
+  }, [probe, conferenceId])
 
   const handleJoin = () => {
     if (state === 'checking' || state === 'ended' || state === 'missing' || endedLive) {

@@ -872,6 +872,25 @@ function failedReasonOf(entry: OutboxRecord): string {
     : 'не отправлено'
 }
 
+/**
+ * T070: conferenceId НОВЕЙШЕЙ карточки-приглашения окна ленты (null —
+ * карточек нет). Инвариант «одна активная на чат» делает её единственной
+ * потенциально живой конференцией чата: все ПРЕДЫДУЩИЕ карточки
+ * гарантированно завершены (новая создаётся только после ended
+ * предыдущей) и терминальны чистой деривацией; окно догружается только
+ * вверх, поэтому последняя карточка загруженного окна — новейшая и при
+ * пагинации (догрузка старой страницы статусы новых не меняет).
+ */
+function newestInviteConferenceIdOf(messages: readonly Message[]): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const payload = messages[index]?.payload
+    if (isConferenceInvitePayload(payload)) {
+      return payload.conferenceId
+    }
+  }
+  return null
+}
+
 /** The feed renders the plain empty state only with nobody typing. */
 function isFeedEmpty(
   messages: readonly Message[],
@@ -1138,15 +1157,37 @@ const FeedRow = memo(function FeedRow({
  * T069 (US5): `endedConferenceId` — tombstone `endedByChat` открытого
  * чата (live-срез №18, MessageList-проп): карточка СВОЕЙ конференции
  * (conferenceId совпал) получает терминальное состояние без клика.
+ *
+ * T070 (US5): терминальное состояние конференций, завершённых ВНЕ
+ * живой сессии — БЕЗ нового API. (1) Инвариант «одна активная на чат»
+ * (`ux_conferences_chat_active` WHERE status<>'ended', №44
+ * идемпотентен): в окне ленты открытого чата все карточки
+ * `conference_invite`, КРОМЕ последней по порядку сообщений,
+ * гарантированно принадлежат завершённым конференциям (новая создаётся
+ * только после ended предыдущей; окно заканчивается новейшими
+ * сообщениями и догружается только вверх — последняя карточка окна =
+ * новейшая конференция чата, инвариант держит и при пагинации) →
+ * `newestInviteConferenceId` по messages переводит каждую НЕ-последнюю
+ * карточку в терминальное «Конференция завершена» чистой деривацией,
+ * БЕЗ запросов. (2) Единственная потенциально живая (последняя)
+ * карточка получает `probe` — один фоновый №45-чек на монтаж
+ * (сессионный кэш в карточке): ended → терминальная подпись,
+ * active/created → кнопка остаётся (живая сходится кадрами T069),
+ * 404 → «Конференция недоступна», транспорт — тихо. Деривация и кадр
+ * не конфликтуют: ended-проп T069 покрывает последнюю карточку, всё
+ * старое — деривация; внепорядковый `started` ничего не оживляет
+ * (конституция III).
  */
 const SystemRow = memo(function SystemRow({
   message,
   seatAnchor,
   endedConferenceId,
+  newestInviteConferenceId,
 }: {
   readonly message: Message
   readonly seatAnchor: ScrollLogicalPosition | undefined
   readonly endedConferenceId: string | null
+  readonly newestInviteConferenceId: string | null
 }) {
   const payload = message.payload ?? null
   return (
@@ -1160,7 +1201,15 @@ const SystemRow = memo(function SystemRow({
           conferenceId={payload.conferenceId}
           mode={payload.mode}
           createdAt={message.createdAt}
-          ended={endedConferenceId !== null && endedConferenceId === payload.conferenceId}
+          ended={
+            (endedConferenceId !== null && endedConferenceId === payload.conferenceId) ||
+            // T070: деривация «одна активная на чат» — все карточки,
+            // КРОМЕ новейшей, гарантированно завершены (без запросов)
+            payload.conferenceId !== newestInviteConferenceId
+          }
+          // T070: единственная потенциально живая карточка — один
+          // фоновый №45-чек на монтаж (сессионный кэш в карточке)
+          probe={payload.conferenceId === newestInviteConferenceId}
         />
       ) : (
         <div className="sys-placeholder">
@@ -1258,6 +1307,8 @@ interface FeedRowContext {
   readonly localIds: ReadonlySet<string>
   /** T069 (009 US5): tombstone endedByChat открытого чата — терминальная карточка. */
   readonly endedConferenceId: string | null
+  /** T070 (009 US5): новейшая карточка-приглашение окна — деривация/probe. */
+  readonly newestInviteConferenceId: string | null
 }
 
 /**
@@ -1342,6 +1393,7 @@ function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) 
           message={message}
           seatAnchor={rowSeatAnchor(message.id, ctx.seat)}
           endedConferenceId={ctx.endedConferenceId}
+          newestInviteConferenceId={ctx.newestInviteConferenceId}
         />
       ) : (
         <FeedRow
@@ -1581,6 +1633,10 @@ export function MessageList({
   }
   const seat = seatCandidatesOf(messages, currentUserId, unreadFromSeq, barrierIndex)
 
+  // T070: новейшая карточка-приглашение окна — единственная потенциально
+  // живая конференция чата (деривация старых + фоновый чек новейшей).
+  const newestInviteConferenceId = newestInviteConferenceIdOf(messages)
+
   if (isFeedEmpty(messages, activePending, activeOutbox, knownTyping)) {
     return <p className="messenger-empty">Сообщений пока нет</p>
   }
@@ -1599,6 +1655,7 @@ export function MessageList({
     seat,
     localIds: localIdsRef.current,
     endedConferenceId,
+    newestInviteConferenceId,
   }
 
   return (

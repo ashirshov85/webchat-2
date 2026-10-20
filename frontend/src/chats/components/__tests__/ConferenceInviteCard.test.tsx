@@ -5,6 +5,7 @@ import type { Message } from '../../../api/chats'
 import type { ConferenceView } from '../../../conferences/api/conferences'
 import { stubLocationAssign } from '../../../test/location'
 import { formatTime } from '../../../ui/time'
+import { resetInviteProbeCache } from '../conferenceInviteProbe'
 import { ConferenceInviteCard } from '../ConferenceInviteCard'
 import { MessageList } from '../MessageList'
 
@@ -29,6 +30,15 @@ import { MessageList } from '../MessageList'
  * A остаётся завершённой); `false`/`undefined` — текущее поведение
  * без регресса (клик-проверка №45 остаётся страховкой для конференций,
  * завершённых вне живой сессии).
+ *
+ * T070 (US5, баг-фикс после T069): НОВЕЙШАЯ карточка ленты дополнительно
+ * делает ОДИН фоновый №45-чек на монтаж (`probe`, MessageList помечает
+ * последнюю карточку `conference_invite` окна; сессионный кэш по
+ * conferenceId — не более одного запроса за сессию). Поэтому клик-тесты
+ * ниже мокают №45 цепочкой: первый вызов — фоновый чек (по умолчанию
+ * active → кнопка остаётся), следующие — клик-проверка. Прямые рендеры
+ * карточки (без MessageList) probe не получают — их ассерты «без №45»
+ * не меняются. Полный набор T070 — ConferenceInviteTerminal.test.tsx.
  */
 
 const conferences = vi.hoisted(() => ({ getConference: vi.fn() }))
@@ -88,7 +98,11 @@ describe('ConferenceInviteCard / системные виджеты ленты (0
   let assignSpy: MockInstance<(url: string) => void>
 
   beforeEach(() => {
+    resetInviteProbeCache()
     conferences.getConference.mockReset()
+    // T070: дефолт фонового №45-чека новейшей карточки — живая
+    // конференция (кнопка остаётся; клик-цепочки ниже переопределяют)
+    conferences.getConference.mockResolvedValue(conferenceView())
     assignSpy = stubLocationAssign()
   })
 
@@ -121,7 +135,11 @@ describe('ConferenceInviteCard / системные виджеты ленты (0
   })
 
   it('№45 status=ended → «Конференция завершена», без перехода и без кнопки', async () => {
-    conferences.getConference.mockResolvedValue(conferenceView({ status: 'ended' }))
+    // T070: первый №45 — фоновый чек новейшей карточки (active, кнопка
+    // остаётся), второй — клик-проверка (ended → терминальная подпись)
+    conferences.getConference
+      .mockResolvedValueOnce(conferenceView({ status: 'active' }))
+      .mockResolvedValueOnce(conferenceView({ status: 'ended' }))
     renderFeed([systemMessage(invitePayload())])
     fireEvent.click(screen.getByRole('button', { name: 'Подключиться' }))
     await waitFor(() => {
@@ -132,16 +150,18 @@ describe('ConferenceInviteCard / системные виджеты ленты (0
   })
 
   it('транспортный сбой №45 → «Не удалось подключиться», кнопка остаётся для повтора', async () => {
+    // T070: первый №45 — фоновый чек (транспорт — тихий, кнопка жива),
+    // затем клик-проверка: сбой → баннер, повторный клик → переход
     conferences.getConference
       .mockRejectedValueOnce(new Error('network'))
-      .mockResolvedValueOnce(conferenceView())
+      .mockRejectedValueOnce(new Error('network'))
     renderFeed([systemMessage(invitePayload())])
     fireEvent.click(screen.getByRole('button', { name: 'Подключиться' }))
     await waitFor(() => {
       expect(screen.getByText('Не удалось подключиться')).toBeTruthy()
     })
     expect(assignSpy).not.toHaveBeenCalled()
-    // повторный клик — повторная проверка №45 и переход
+    // повторный клик — повторная проверка №45 (дефолт-мок: active) и переход
     fireEvent.click(screen.getByRole('button', { name: 'Подключиться' }))
     await waitFor(() => {
       expect(assignSpy).toHaveBeenCalledWith('/conference/c-1?mode=video')
@@ -149,10 +169,14 @@ describe('ConferenceInviteCard / системные виджеты ленты (0
   })
 
   it('единый 404 conference_not_found → «Конференция недоступна», без деталей', async () => {
-    conferences.getConference.mockRejectedValue({
-      status: 404,
-      errors: { conference: ['conference_not_found'] },
-    })
+    // T070: первый №45 — фоновый чек (active, кнопка остаётся),
+    // клик-проверка — 404-Problem → нейтральная подпись
+    conferences.getConference
+      .mockResolvedValueOnce(conferenceView({ status: 'active' }))
+      .mockRejectedValueOnce({
+        status: 404,
+        errors: { conference: ['conference_not_found'] },
+      })
     renderFeed([systemMessage(invitePayload())])
     fireEvent.click(screen.getByRole('button', { name: 'Подключиться' }))
     await waitFor(() => {
@@ -196,7 +220,9 @@ describe('ConferenceInviteCard / системные виджеты ленты (0
 
 describe('живая проекция завершения — пропс ended (009 T069)', () => {
   beforeEach(() => {
+    resetInviteProbeCache()
     conferences.getConference.mockReset()
+    conferences.getConference.mockResolvedValue(conferenceView())
   })
 
   afterEach(() => {
