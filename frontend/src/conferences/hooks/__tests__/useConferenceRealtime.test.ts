@@ -152,7 +152,7 @@ describe('applyConferenceEvent — ended (§2)', () => {
     const next = applyConferenceEvent(live, endedEvent())
 
     expect(next.byChat.has(CHAT_A)).toBe(false)
-    expect(next.endedByChat.get(CHAT_A)).toBe(CONFERENCE_1)
+    expect(next.endedByChat.get(CHAT_A)?.conferenceId).toBe(CONFERENCE_1)
   })
 
   it('дубль ended — ТОТ ЖЕ срез (идемпотентность)', () => {
@@ -175,14 +175,14 @@ describe('applyConferenceEvent — ended (§2)', () => {
     const next = applyConferenceEvent(live, endedEvent(CHAT_A, CONFERENCE_2))
 
     expect(next.byChat.get(CHAT_A)?.conferenceId).toBe(CONFERENCE_1)
-    expect(next.endedByChat.get(CHAT_A)).toBe(CONFERENCE_2)
+    expect(next.endedByChat.get(CHAT_A)?.conferenceId).toBe(CONFERENCE_2)
   })
 
   it('ended для чата без бейджа всё равно ставит tombstone по id (потерянный started не воскресит)', () => {
     const next = applyConferenceEvent(EMPTY_CONFERENCE_SLICE, endedEvent())
 
     expect(next.byChat.size).toBe(0)
-    expect(next.endedByChat.get(CHAT_A)).toBe(CONFERENCE_1)
+    expect(next.endedByChat.get(CHAT_A)?.conferenceId).toBe(CONFERENCE_1)
     expect(applyConferenceEvent(next, startedEvent()).byChat.size).toBe(0)
   })
 })
@@ -214,7 +214,7 @@ describe('applyConferenceView — REST-fallback №45 как функция ст
     const next = applyConferenceView(live, view({ status: 'ended' }))
 
     expect(next.byChat.has(CHAT_A)).toBe(false)
-    expect(next.endedByChat.get(CHAT_A)).toBe(CONFERENCE_1)
+    expect(next.endedByChat.get(CHAT_A)?.conferenceId).toBe(CONFERENCE_1)
     expect(applyConferenceEvent(next, startedEvent()).byChat.size).toBe(0)
   })
 
@@ -223,7 +223,66 @@ describe('applyConferenceView — REST-fallback №45 как функция ст
     const next = applyConferenceView(live, view({ id: CONFERENCE_2, status: 'ended' }))
 
     expect(next.byChat.get(CHAT_A)?.conferenceId).toBe(CONFERENCE_1)
-    expect(next.endedByChat.get(CHAT_A)).toBe(CONFERENCE_2)
+    expect(next.endedByChat.get(CHAT_A)?.conferenceId).toBe(CONFERENCE_2)
+  })
+})
+
+describe('tombstone несёт span длительности завершённой конференции (009 T071)', () => {
+  it('ended при поднятом бейдже — startedAt из бейджа (№17) + endedAt кадра №18', () => {
+    const live = applyConferenceEvent(EMPTY_CONFERENCE_SLICE, startedEvent())
+    const next = applyConferenceEvent(live, endedEvent())
+
+    expect(next.endedByChat.get(CHAT_A)).toEqual({
+      conferenceId: CONFERENCE_1,
+      startedAt: STARTED_AT,
+      endedAt: ENDED_AT,
+    })
+  })
+
+  it('ended без бейджа (started-кадр не доставлялся) — tombstone без startedAt: длительности нет', () => {
+    const next = applyConferenceEvent(EMPTY_CONFERENCE_SLICE, endedEvent())
+
+    expect(next.endedByChat.get(CHAT_A)).toEqual({
+      conferenceId: CONFERENCE_1,
+      endedAt: ENDED_AT,
+    })
+  })
+
+  it('дубль ended — ТОТ ЖЕ срез (span не пересобирается, идемпотентность)', () => {
+    const live = applyConferenceEvent(EMPTY_CONFERENCE_SLICE, startedEvent())
+    const ended = applyConferenceEvent(live, endedEvent())
+    expect(applyConferenceEvent(ended, endedEvent())).toBe(ended)
+  })
+
+  it('REST-fallback №45 ended — endedAt из ответа, startedAt из бейджа (№17 приоритетнее полей ответа)', () => {
+    const live = applyConferenceEvent(EMPTY_CONFERENCE_SLICE, startedEvent())
+    const next = applyConferenceView(
+      live,
+      view({
+        status: 'ended',
+        startedAt: '2026-10-17T12:01:00.000Z',
+        endedAt: ENDED_AT,
+      }),
+    )
+
+    expect(next.endedByChat.get(CHAT_A)).toEqual({
+      conferenceId: CONFERENCE_1,
+      startedAt: STARTED_AT,
+      endedAt: ENDED_AT,
+    })
+  })
+
+  it('REST-fallback №45 ended без бейджа — span из полей ответа (оба поля ended-вида)', () => {
+    const next = applyConferenceView(
+      EMPTY_CONFERENCE_SLICE,
+      view({ status: 'ended', startedAt: STARTED_AT, endedAt: ENDED_AT }),
+    )
+
+    expect(next.endedByChat.get(CHAT_A)).toEqual({
+      conferenceId: CONFERENCE_1,
+      startedAt: STARTED_AT,
+      endedAt: ENDED_AT,
+    })
   })
 })
 
@@ -276,7 +335,7 @@ describe('useConferenceRealtime — живой срез по кадрам №18 
 
     emitConferenceEvent(endedEvent())
     expect(result.current.byChat.size).toBe(0)
-    expect(result.current.endedByChat.get(CHAT_A)).toBe(CONFERENCE_1)
+    expect(result.current.endedByChat.get(CHAT_A)?.conferenceId).toBe(CONFERENCE_1)
   })
 
   it('внепорядковый started после ended не поднимает бейдж живого хука (функция статуса)', () => {

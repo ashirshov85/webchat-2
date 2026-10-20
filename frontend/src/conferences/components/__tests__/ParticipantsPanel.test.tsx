@@ -1,6 +1,8 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ParticipantsPanel from '../ParticipantsPanel'
+import { ParticipantProfilesContext } from '../../profiles'
+import { colorOf } from '../../../ui/avatar'
 
 /**
  * 009, US3, T041 — панель участников (FR-008): список подключённых из
@@ -234,5 +236,140 @@ describe('ParticipantsPanel (009 US3 T041)', () => {
 
     expect(screen.getByText('модератор')).toBeInTheDocument()
     expect(screen.queryByText('участник')).not.toBeInTheDocument()
+  })
+})
+
+describe('ParticipantsPanel — аватары строк (009 US1 T073, «как в контактах»)', () => {
+  const ALICE = '11111111-1111-4111-8111-111111111111'
+
+  /** Аватар строки по метке имени (первая строка списка). */
+  function rowAvatar(name: string): HTMLElement {
+    const row = screen.getByText(name).closest('li')
+    if (row === null) {
+      throw new Error(`строка участника «${name}» не найдена`)
+    }
+    const avatar = row.querySelector<HTMLElement>('.avatar')
+    if (avatar === null) {
+      throw new Error('аватар строки отсутствует')
+    }
+    return avatar
+  }
+
+  function avatarInitials(avatar: HTMLElement): string {
+    return avatar.querySelector('span')?.textContent ?? ''
+  }
+
+  beforeEach(() => {
+    lkc.useParticipants.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('член с профилем — инициалы цепочки alias → displayName → username, цвет colorOf(username)', () => {
+    // identity минта №47: connId — серверный UUID (парсер — зеркало ConferenceIdentity)
+    const connId = '22222222-2222-4222-8222-222222222222'
+    lkc.useParticipants.mockReturnValue([
+      participant({
+        identity: `u:${ALICE}:${connId}`,
+        name: 'alice',
+        metadata: memberMetadata('moderator'),
+        isLocal: true,
+      }),
+    ])
+    const profiles = new Map([
+      [ALICE, { username: 'alice', displayName: 'Мария Соколова', alias: 'Маша' }],
+    ])
+
+    render(
+      <ParticipantProfilesContext.Provider value={profiles}>
+        <ParticipantsPanel />
+      </ParticipantProfilesContext.Provider>,
+    )
+
+    const avatar = rowAvatar('alice')
+    // цепочка: alias «Маша» → инициалы «МА» (как в «Контактах»)
+    expect(avatarInitials(avatar)).toBe('МА')
+    // цвет — детерминированный от username (переименование не перекрашивает)
+    expect(avatar.style.getPropertyValue('--av')).toBe(colorOf('alice'))
+  })
+
+  it('гость — инициалы из введённого имени №55, цвет от имени', () => {
+    lkc.useParticipants.mockReturnValue([
+      participant({
+        identity: 'g:22222222-2222-4222-8222-222222222222',
+        name: 'Виктор',
+        metadata: memberMetadata('participant', true),
+      }),
+    ])
+
+    render(
+      <ParticipantProfilesContext.Provider value={new Map()}>
+        <ParticipantsPanel />
+      </ParticipantProfilesContext.Provider>,
+    )
+
+    const avatar = rowAvatar('Виктор')
+    expect(avatarInitials(avatar)).toBe('ВИ')
+    expect(avatar.style.getPropertyValue('--av')).toBe(colorOf('Виктор'))
+  })
+
+  it('член вне снимка профилей — фолбэк инициалов из participant.name (сбой догрузки/позже снимка)', () => {
+    lkc.useParticipants.mockReturnValue([
+      participant({
+        identity: `u:${ALICE}:22222222-2222-4222-8222-222222222222`,
+        name: 'alice',
+        metadata: memberMetadata('participant'),
+      }),
+    ])
+
+    // провайдер без записи об участнике (догрузка не удалась/не сошлась)
+    render(
+      <ParticipantProfilesContext.Provider value={new Map()}>
+        <ParticipantsPanel />
+      </ParticipantProfilesContext.Provider>,
+    )
+
+    const avatar = rowAvatar('alice')
+    expect(avatarInitials(avatar)).toBe('AL')
+    expect(avatar.style.getPropertyValue('--av')).toBe(colorOf('alice'))
+  })
+
+  it('без провайдера (гость-наблюдатель GuestJoinPage, FR-010) — все аватары фолбэком из name', () => {
+    lkc.useParticipants.mockReturnValue([
+      participant({
+        identity: `u:${ALICE}:22222222-2222-4222-8222-222222222222`,
+        name: 'alice',
+        metadata: memberMetadata('participant'),
+      }),
+    ])
+
+    render(<ParticipantsPanel />)
+
+    expect(avatarInitials(rowAvatar('alice'))).toBe('AL')
+  })
+
+  it('регресс: аватар не ломает пометки строки — «гость»/роль/identity-ключ модерации на месте', () => {
+    lkc.useParticipants.mockReturnValue([
+      participant({
+        identity: 'g:22222222-2222-4222-8222-222222222222',
+        name: 'Виктор',
+        metadata: memberMetadata('participant', true),
+      }),
+    ])
+
+    render(<ParticipantsPanel />)
+
+    const row = screen.getByText('Виктор').closest('li')
+    expect(row).toHaveAttribute(
+      'data-participant-identity',
+      'g:22222222-2222-4222-8222-222222222222',
+    )
+    expect(screen.getByText('гость')).toBeInTheDocument()
+    expect(screen.getByText('участник')).toBeInTheDocument()
+    expect(screen.getByText('g:22222222-2222-4222-8222-222222222222')).toBeInTheDocument()
+    expect(row?.querySelector('.avatar')).not.toBeNull()
   })
 })

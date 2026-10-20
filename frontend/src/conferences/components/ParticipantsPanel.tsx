@@ -8,7 +8,12 @@
  * ParticipantPermissionsChanged (применение ограничений) — оба пишутся
  * серверным UpdateParticipant (livekit-integration §4, SC-005).
  *
- * Строка: имя (fallback — identity, как метки тайлов T027), пометка
+ * Строка (T073): аватар перед именем — ParticipantAvatar (ui/Avatar,
+ * «как в контактах», 34px design-tokens §4): члену — инициалы цепочки
+ * alias → displayName → username из догрузки ConferencePage
+ * (ParticipantProfilesContext ← useParticipantProfiles: №27-ростер
+ * группы / №13 peer + №10 me), гостю и участнику вне снимка — фолбэк
+ * из name; имя (fallback — identity, как метки тайлов T027), пометка
  * «вы» у локального, роль из metadata токена/UpdateParticipant
  * (`{"role":…,"guest":…}`, §3), индикатор online (в списке только
  * подключённые — присутствие и есть online), identity без PII
@@ -35,6 +40,7 @@
 import { useParticipants } from '@livekit/components-react'
 import type { LocalParticipant, RemoteParticipant } from 'livekit-client'
 import { useId } from 'react'
+import { ParticipantAvatar } from './ParticipantAvatar'
 import '../conferences.css'
 
 /** Роль принципала конференции (metadata LiveKit-токена, §3). */
@@ -204,6 +210,10 @@ function ParticipantRow({
 
   return (
     <li className="conference-participants-item" data-participant-identity={participant.identity}>
+      {/* Аватар перед именем (T073, «как в контактах»: лексика строк
+          контактов, 34px design-tokens §4) — инициалы цепочки профиля
+          для членов, фолбэк из name для гостей/вне снимка. */}
+      <ParticipantAvatar participant={participant} size={34} />
       <span className="conference-participants-name">{label}</span>
       {participant.isLocal ? (
         <span className="conference-participants-you">вы</span>

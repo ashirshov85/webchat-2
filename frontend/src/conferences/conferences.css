@@ -118,6 +118,89 @@
   aspect-ratio: 21 / 9;
 }
 
+/* Тайл без камеры (T073): аватар «как в контактах» (ParticipantAvatar,
+   цепочка инициалов профиля / фолбэк из name) + имя; подпись — не
+   видео-оверлей, а строка под аватаром. */
+.conference-tile-idle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.conference-tile-idle .conference-tile-name {
+  position: static;
+  background: none;
+  padding: 0 8px;
+  text-align: center;
+}
+
+/* Индикатор речи тайла — текстом «говорит» (008: не только цветом). */
+.conference-tile-speaking {
+  margin-left: 6px;
+  font-style: italic;
+  color: var(--gold-light);
+}
+
+/* ============================================================
+ * Пин-раскладка тайлов (T074, US1): закреплённый тайл — большим
+ * на всю медиа-зону ВНУТРИ окна браузера (без Fullscreen API),
+ * остальные — компактной горизонтальной полосой. Управление —
+ * кнопка-тумблер на каждом тайле (двойной клик — дополнение).
+ * ============================================================ */
+
+/* Тумблер пина: правый верхний угол тайла, полупрозрачная подложка
+   читается поверх видео; aria-pressed — золотая рамка (008:
+   состояние дублируется видимым текстом «Развернуть»/«Свернуть»). */
+.conference-tile-pin {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: rgba(6, 5, 3, 0.7);
+  font: 11px var(--font-body);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+.conference-tile-pin[aria-pressed='true'] {
+  border-color: var(--gold);
+  color: var(--cream-bright);
+}
+
+/* Конвенция 008 FR-035: видимый фокус с клавиатуры. */
+.conference-tile-pin:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+/* Закреплённый тайл — вся медиа-зона комнаты: высота от вьюпорта
+   (ширина — контейнер), не ломает раскладку при изменении окна;
+   перекрывает и 16:9 камеры, и 21:9 демонстрации (после них в
+   каскаде). Высотная «поручневая» — под сеткой остаётся место
+   компактной полосе и панели управления. */
+.conference-tile-pinned {
+  aspect-ratio: auto;
+  height: clamp(260px, 62vh, 780px);
+}
+
+/* Компактная полоса остальных тайлов: горизонтальный скролл без
+   переноса — фиксированная высота строки при любой ширине окна. */
+.conference-tiles-compact {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+}
+
+.conference-tiles-compact .conference-tile {
+  flex: 0 0 auto;
+  width: clamp(140px, 18vw, 240px);
+}
+
 /* Панель управления конференцией (T028): тумблеры микрофона/камеры/экрана
    («вкл/выкл» — визуальный индикатор внутри кнопки) и «Покинуть» —
    в слоте children ConferenceRoom, под сеткой тайлов. Нативная
@@ -383,11 +466,12 @@
   list-style: none;
 }
 
-/* Строка: baseline-цепочка пометок, перенос по ширине (панель узкая). */
+/* Строка: аватар (T073, 34px design-tokens §4) + baseline-цепочка
+   пометок, перенос по ширине (панель узкая). */
 .conference-participants-item {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   column-gap: 8px;
   row-gap: 2px;
   padding: 4px 6px;
