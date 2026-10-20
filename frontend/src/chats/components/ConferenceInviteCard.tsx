@@ -27,8 +27,24 @@
  * `/conference/:id` (T025) и pre-join (T030) достраиваются позже, но
  * контракт клика («переход по ссылке, статус проверяется №45») уже
  * закреплён api-contract §2 №45.
+ *
+ * T069 (US5, баг-фикс проводки T024×T059): ЖИВАЯ проекция завершения —
+ * пропс `ended` (tombstone `endedByChat` live-среза useConferenceRealtime
+ * №18, пробрасывается MessengerPage → MessageList → SystemRow по паре
+ * «chatId ленты + conferenceId карточки»): `true` — терминальная подпись
+ * «Конференция завершена» дословно клик-ветки `state='ended'`, БЕЗ
+ * кнопки и БЕЗ запроса №45 — кадр №18 мессенджеру уже доставлен.
+ * Терминальное состояние ЛИПКОЕ: узнав «завершено», карточка не
+ * откатывается (render-phase latch, паттерн Tick) — tombstone хранит
+ * только ПОСЛЕДНЮЮ завершённую конференцию чата, и когда ended B
+ * вытесняет A из среза (prop уходит в false), карточка A остаётся
+ * завершённой; функция статуса — внепорядковый `started` завершённой
+ * конференции бейдж не поднимает и здесь (конституция III). Конференции,
+ * завершённые ВНЕ живой сессии (до монтажа useConferenceRealtime), этим
+ * путём не узнаются — их страховка остаётся клик-проверка №45; история
+ * чата не дополняется и не меняется (Q20=A).
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { conferenceErrorCode, getConference } from '../../conferences/api/conferences'
 import type { ConferenceMode } from '../../conferences/api/conferences'
 import { formatTime } from '../../ui/time'
@@ -75,13 +91,34 @@ export interface ConferenceInviteCardProps {
   readonly mode: ConferenceMode
   /** Время системного сообщения — ножка карточки ЧЧ:ММ (FR-019). */
   readonly createdAt: string
+  /**
+   * T069: живая проекция завершения — конференция карточки совпала с
+   * tombstone `endedByChat` чата (кадр №18 `conference.ended`).
+   * `true` — терминальная «Конференция завершена» без клика; липкое
+   * (однажды узнав, не откатывается); `false`/`undefined` — текущее
+   * поведение с клик-проверкой №45.
+   */
+  readonly ended?: boolean
 }
 
-export function ConferenceInviteCard({ conferenceId, mode, createdAt }: ConferenceInviteCardProps) {
+export function ConferenceInviteCard({
+  conferenceId,
+  mode,
+  createdAt,
+  ended = false,
+}: ConferenceInviteCardProps) {
   const [state, setState] = useState<JoinState>('idle')
+  // T069: липкий latch живого завершения (render-phase, идемпотентен —
+  // паттерн Tick: однажды выставленный не сбрасывается, StrictMode-
+  // двойной рендер сходится к тому же выводу).
+  const endedLiveRef = useRef(false)
+  if (ended) {
+    endedLiveRef.current = true
+  }
+  const endedLive = endedLiveRef.current
 
   const handleJoin = () => {
-    if (state === 'checking' || state === 'ended' || state === 'missing') {
+    if (state === 'checking' || state === 'ended' || state === 'missing' || endedLive) {
       return
     }
     setState('checking')
@@ -107,6 +144,8 @@ export function ConferenceInviteCard({ conferenceId, mode, createdAt }: Conferen
           <output className="sys-status">
             {state === 'ended' ? 'Конференция завершена' : 'Конференция недоступна'}
           </output>
+        ) : endedLive ? (
+          <output className="sys-status">Конференция завершена</output>
         ) : (
           <>
             {state === 'error' && (

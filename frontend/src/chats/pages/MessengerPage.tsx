@@ -1327,6 +1327,9 @@ function MessengerMachine() {
   // дубли/внепорядковые кадры безопасны), REST-fallback №45 на
   // каждом (пере)подключении SSE. Один монти на страницу: byChat
   // уезжает в строки «Чатов» и заголовок открытого окна.
+  // T069 (баг-фикс T024×T059): tombstone endedByChat открытого чата
+  // пробрасывается в MessageList — карточка-приглашение конференции
+  // узнаёт завершение кадром №18 без клика «Подключиться».
   const liveConferenceSlice = useConferenceRealtime()
 
   // №37 presence heartbeat (007 research.md §E2; 008 T076): keep THIS
@@ -2667,6 +2670,11 @@ function MessengerMachine() {
                   ownAckIds={ownAckIds}
                   typing={typingParticipants}
                   jumpTo={searchJump}
+                  endedConferenceId={
+                    activeChat !== null
+                      ? (liveConferenceSlice.endedByChat.get(activeChat.chatId) ?? null)
+                      : null
+                  }
                 />
                 <MessageInput
                   onSend={handleSend}

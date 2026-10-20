@@ -1005,6 +1005,17 @@ export interface MessageListProps {
    * no-op.
    */
   readonly jumpTo?: { readonly messageId: string; readonly requestId: number } | null
+  /**
+   * T069 (009, US5): id ПОСЛЕДНЕЙ завершённой конференции ОТКРЫТОГО
+   * чата из tombstone `endedByChat` live-среза useConferenceRealtime
+   * (кадр №18 `conference.ended`; MessengerPage пробрасывает по chatId
+   * открытого окна). Карточка-приглашение `conference_invite` с этим
+   * conferenceId рендерится терминальной «Конференция завершена» БЕЗ
+   * клика; null/undefined — живая сессия завершения не видела (клик-
+   * проверка №45 остаётся страховкой). Сопоставление chatId+conferenceId
+   * — чужие кадры карточку не трогают.
+   */
+  readonly endedConferenceId?: string | null
 }
 
 /**
@@ -1123,13 +1134,19 @@ const FeedRow = memo(function FeedRow({
  * поиска T068) и `data-seat-anchor` (T092), что и пользовательские:
  * системное сообщение входит в непрочитанный блок на общих
  * основаниях (senderId ≠ me).
+ *
+ * T069 (US5): `endedConferenceId` — tombstone `endedByChat` открытого
+ * чата (live-срез №18, MessageList-проп): карточка СВОЕЙ конференции
+ * (conferenceId совпал) получает терминальное состояние без клика.
  */
 const SystemRow = memo(function SystemRow({
   message,
   seatAnchor,
+  endedConferenceId,
 }: {
   readonly message: Message
   readonly seatAnchor: ScrollLogicalPosition | undefined
+  readonly endedConferenceId: string | null
 }) {
   const payload = message.payload ?? null
   return (
@@ -1143,6 +1160,7 @@ const SystemRow = memo(function SystemRow({
           conferenceId={payload.conferenceId}
           mode={payload.mode}
           createdAt={message.createdAt}
+          ended={endedConferenceId !== null && endedConferenceId === payload.conferenceId}
         />
       ) : (
         <div className="sys-placeholder">
@@ -1238,6 +1256,8 @@ interface FeedRowContext {
   readonly peerAvatarInitials: string | undefined
   readonly seat: SeatCandidates
   readonly localIds: ReadonlySet<string>
+  /** T069 (009 US5): tombstone endedByChat открытого чата — терминальная карточка. */
+  readonly endedConferenceId: string | null
 }
 
 /**
@@ -1318,7 +1338,11 @@ function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) 
         </li>
       )}
       {system ? (
-        <SystemRow message={message} seatAnchor={rowSeatAnchor(message.id, ctx.seat)} />
+        <SystemRow
+          message={message}
+          seatAnchor={rowSeatAnchor(message.id, ctx.seat)}
+          endedConferenceId={ctx.endedConferenceId}
+        />
       ) : (
         <FeedRow
           message={message}
@@ -1357,6 +1381,7 @@ export function MessageList({
   ownAckIds,
   typing = [],
   jumpTo = null,
+  endedConferenceId = null,
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
@@ -1573,6 +1598,7 @@ export function MessageList({
     peerAvatarInitials,
     seat,
     localIds: localIdsRef.current,
+    endedConferenceId,
   }
 
   return (

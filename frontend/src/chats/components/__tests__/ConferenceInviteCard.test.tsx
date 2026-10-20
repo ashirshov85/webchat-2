@@ -5,6 +5,7 @@ import type { Message } from '../../../api/chats'
 import type { ConferenceView } from '../../../conferences/api/conferences'
 import { stubLocationAssign } from '../../../test/location'
 import { formatTime } from '../../../ui/time'
+import { ConferenceInviteCard } from '../ConferenceInviteCard'
 import { MessageList } from '../MessageList'
 
 /**
@@ -16,6 +17,18 @@ import { MessageList } from '../MessageList'
  * ссылке, Q20=A), живая — переход `/conference/{id}?mode={mode из
  * ответа}`; неизвестные `payload.type` — нейтральный плейсхолдер
  * «Системное сообщение» (OCP, конституция IV), без кнопки.
+ *
+ * T069 (US5, баг-фикс проводки T024×T059): ЖИВАЯ проекция завершения
+ * на карточке — пропс `ended` (tombstone `endedByChat` live-среза
+ * useConferenceRealtime, пробрасывается MessengerPage → MessageList →
+ * SystemRow → карточка): `true` — терминальная подпись «Конференция
+ * завершена» БЕЗ кнопки и БЕЗ запроса №45 (кадр №18 уже доставлен
+ * мессенджеру); липкое терминальное состояние — узнав «завершено»,
+ * карточка не откатывается (endedByChat хранит только ПОСЛЕДНЮЮ
+ * завершённую конференцию чата: ended B вытесняет A из среза, карточка
+ * A остаётся завершённой); `false`/`undefined` — текущее поведение
+ * без регресса (клик-проверка №45 остаётся страховкой для конференций,
+ * завершённых вне живой сессии).
  */
 
 const conferences = vi.hoisted(() => ({ getConference: vi.fn() }))
@@ -178,5 +191,110 @@ describe('ConferenceInviteCard / системные виджеты ленты (0
     ])
     expect(screen.getAllByText('Системное сообщение')).toHaveLength(2)
     expect(screen.queryByRole('button')).toBeNull()
+  })
+})
+
+describe('живая проекция завершения — пропс ended (009 T069)', () => {
+  beforeEach(() => {
+    conferences.getConference.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('ended=true → терминальная «Конференция завершена» БЕЗ кнопки и БЕЗ запроса №45', () => {
+    render(
+      <ConferenceInviteCard
+        conferenceId="c-1"
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended
+      />,
+    )
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(conferences.getConference).not.toHaveBeenCalled()
+  })
+
+  it('ended не передан / false → текущее поведение: кнопка «Подключиться» на месте', () => {
+    const { rerender } = render(
+      <ConferenceInviteCard conferenceId="c-1" mode="video" createdAt="2026-10-17T12:00:00.000Z" />,
+    )
+    expect(screen.getByRole('button', { name: 'Подключиться' })).toBeTruthy()
+    rerender(
+      <ConferenceInviteCard
+        conferenceId="c-1"
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended={false}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Подключиться' })).toBeTruthy()
+    expect(screen.queryByText('Конференция завершена')).toBeNull()
+  })
+
+  it('ended=false без регресса: клик-проверка №45 остаётся — переход по живой конференции', async () => {
+    const assignSpy = stubLocationAssign()
+    conferences.getConference.mockResolvedValue(conferenceView())
+    render(
+      <ConferenceInviteCard
+        conferenceId="c-1"
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended={false}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Подключиться' }))
+    await waitFor(() => {
+      expect(assignSpy).toHaveBeenCalledWith('/conference/c-1?mode=video')
+    })
+  })
+
+  it('липкое терминальное состояние: ended true → false не возвращает кнопку (ended B вытеснил A из среза)', () => {
+    const { rerender } = render(
+      <ConferenceInviteCard
+        conferenceId="c-1"
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended
+      />,
+    )
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    rerender(
+      <ConferenceInviteCard
+        conferenceId="c-1"
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended={false}
+      />,
+    )
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('проводка MessageList → SystemRow → карточка: endedConferenceId гасит только СВОЮ карточку', () => {
+    render(
+      <MessageList
+        messages={[
+          systemMessage({ type: 'conference_invite', conferenceId: 'c-1', mode: 'video' }),
+          systemMessage(
+            { type: 'conference_invite', conferenceId: 'c-2', mode: 'audio' },
+            { id: 'm-sys-2', seq: 2 },
+          ),
+        ]}
+        currentUserId={ME}
+        meUsername="alice"
+        endedConferenceId="c-1"
+      />,
+    )
+    // карточка c-1 — терминальная (совпала с tombstone endedByChat)
+    expect(screen.getByText('Видеоконференция')).toBeTruthy()
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    // карточка c-2 (другая конференция того же чата) — живая, кнопка остаётся
+    expect(screen.getByRole('button', { name: 'Подключиться' })).toBeTruthy()
+    expect(screen.getByText('Аудиоконференция')).toBeTruthy()
+    expect(screen.getAllByText('Конференция завершена')).toHaveLength(1)
   })
 })
