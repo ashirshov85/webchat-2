@@ -117,6 +117,32 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     expect(conferences.joinConference).not.toHaveBeenCalled()
   })
 
+  it('shows the duration on the ended screen when №45 carries startedAt/endedAt (T071)', async () => {
+    resolveBundle(
+      conferenceView({
+        status: 'ended',
+        endReason: 'moderator',
+        startedAt: '2026-10-17T12:00:00.000Z',
+        endedAt: '2026-10-17T12:30:00.000Z',
+      }),
+    )
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    const ended = await screen.findByText('Конференция завершена · 30 мин')
+    expect(ended.tagName).toBe('OUTPUT')
+    expect(screen.queryByRole('button', { name: 'Войти' })).not.toBeInTheDocument()
+    expect(conferences.joinConference).not.toHaveBeenCalled()
+  })
+
+  it('ended without startedAt (never started, room_lost) — plain label without duration (T071)', async () => {
+    resolveBundle(conferenceView({ status: 'ended', endReason: 'room_lost' }))
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    const ended = await screen.findByText('Конференция завершена')
+    expect(ended.tagName).toBe('OUTPUT')
+    expect(screen.queryByText(/Конференция завершена ·/)).not.toBeInTheDocument()
+  })
+
   it('«Войти» on pre-join mints №47 and renders the joined block; leave returns to pre-join', async () => {
     resolveBundle()
     const ticket = joinTicket()

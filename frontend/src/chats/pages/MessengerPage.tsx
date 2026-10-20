@@ -2672,6 +2672,12 @@ function MessengerMachine() {
                   jumpTo={searchJump}
                   endedConferenceId={
                     activeChat !== null
+                      ? (liveConferenceSlice.endedByChat.get(activeChat.chatId)?.conferenceId ??
+                        null)
+                      : null
+                  }
+                  endedConferenceSpan={
+                    activeChat !== null
                       ? (liveConferenceSlice.endedByChat.get(activeChat.chatId) ?? null)
                       : null
                   }

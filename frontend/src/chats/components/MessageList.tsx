@@ -219,6 +219,7 @@ import type { OutboxRecord } from '../outbox'
 import { Avatar } from '../../ui/Avatar'
 import { initialsOf } from '../../ui/avatar'
 import { resolveDisplayName } from '../../ui/names'
+import type { DurationSpan } from '../../ui/duration'
 import { formatDate, formatTime } from '../../ui/time'
 import { TypingRow, renderableTyping } from './TypingRow'
 import type { TypingParticipant } from './TypingRow'
@@ -1035,6 +1036,16 @@ export interface MessageListProps {
    * — чужие кадры карточку не трогают.
    */
   readonly endedConferenceId?: string | null
+  /**
+   * T071 (009, US5): span длительности tombstone завершённой
+   * конференции открытого чата (startedAt из бейджа №17 + endedAt
+   * кадра №18 / №45-фолбэка; MessengerPage пробрасывает из live-среза
+   * useConferenceRealtime). Применяется ТОЛЬКО к карточке, чей
+   * conferenceId совпал с `endedConferenceId` — терминальная подпись
+   * получает «· {длительность}»; null/нет startedAt — подпись без
+   * длительности (деривация T070 и старые карточки span не получают).
+   */
+  readonly endedConferenceSpan?: Readonly<DurationSpan> | null
 }
 
 /**
@@ -1177,39 +1188,52 @@ const FeedRow = memo(function FeedRow({
  * не конфликтуют: ended-проп T069 покрывает последнюю карточку, всё
  * старое — деривация; внепорядковый `started` ничего не оживляет
  * (конституция III).
+ *
+ * T071 (US5): длительность терминальной подписи — `endedConferenceSpan`
+ * (только карточке, совпавшей с tombstone живого среза: endedAt кадра
+ * №18 + startedAt бейджа №17); деривация T070 и №45-пути карточки
+ * разбираются внутри ConferenceInviteCard.
  */
 const SystemRow = memo(function SystemRow({
   message,
   seatAnchor,
   endedConferenceId,
+  endedConferenceSpan,
   newestInviteConferenceId,
 }: {
   readonly message: Message
   readonly seatAnchor: ScrollLogicalPosition | undefined
   readonly endedConferenceId: string | null
+  readonly endedConferenceSpan: Readonly<DurationSpan> | null
   readonly newestInviteConferenceId: string | null
 }) {
   const payload = message.payload ?? null
+  const invite = isConferenceInvitePayload(payload) ? payload : null
+  const endedByTombstone = invite !== null && endedConferenceId === invite.conferenceId
   return (
     <li
       className="message system-message msg system"
       data-mid={message.id}
       data-seat-anchor={seatAnchor}
     >
-      {isConferenceInvitePayload(payload) ? (
+      {invite !== null ? (
         <ConferenceInviteCard
-          conferenceId={payload.conferenceId}
-          mode={payload.mode}
+          conferenceId={invite.conferenceId}
+          mode={invite.mode}
           createdAt={message.createdAt}
           ended={
-            (endedConferenceId !== null && endedConferenceId === payload.conferenceId) ||
+            endedByTombstone ||
             // T070: деривация «одна активная на чат» — все карточки,
             // КРОМЕ новейшей, гарантированно завершены (без запросов)
-            payload.conferenceId !== newestInviteConferenceId
+            invite.conferenceId !== newestInviteConferenceId
           }
+          // T071: span длительности — только живому tombstone (кадр
+          // №18 + startedAt бейджа); деривация без №45-ответа остаётся
+          // без длительности
+          endedSpan={endedByTombstone ? endedConferenceSpan : null}
           // T070: единственная потенциально живая карточка — один
           // фоновый №45-чек на монтаж (сессионный кэш в карточке)
-          probe={payload.conferenceId === newestInviteConferenceId}
+          probe={invite.conferenceId === newestInviteConferenceId}
         />
       ) : (
         <div className="sys-placeholder">
@@ -1307,6 +1331,8 @@ interface FeedRowContext {
   readonly localIds: ReadonlySet<string>
   /** T069 (009 US5): tombstone endedByChat открытого чата — терминальная карточка. */
   readonly endedConferenceId: string | null
+  /** T071 (009 US5): span длительности tombstone (живой кадр №18 + бейдж №17). */
+  readonly endedConferenceSpan: Readonly<DurationSpan> | null
   /** T070 (009 US5): новейшая карточка-приглашение окна — деривация/probe. */
   readonly newestInviteConferenceId: string | null
 }
@@ -1393,6 +1419,7 @@ function renderMessageRow(message: Message, index: number, ctx: FeedRowContext) 
           message={message}
           seatAnchor={rowSeatAnchor(message.id, ctx.seat)}
           endedConferenceId={ctx.endedConferenceId}
+          endedConferenceSpan={ctx.endedConferenceSpan}
           newestInviteConferenceId={ctx.newestInviteConferenceId}
         />
       ) : (
@@ -1434,6 +1461,7 @@ export function MessageList({
   typing = [],
   jumpTo = null,
   endedConferenceId = null,
+  endedConferenceSpan = null,
 }: MessageListProps) {
   const listRef = useRef<HTMLOListElement>(null)
   /** scrollHeight captured when an older page is requested — the anchor. */
@@ -1655,6 +1683,7 @@ export function MessageList({
     seat,
     localIds: localIdsRef.current,
     endedConferenceId,
+    endedConferenceSpan,
     newestInviteConferenceId,
   }
 

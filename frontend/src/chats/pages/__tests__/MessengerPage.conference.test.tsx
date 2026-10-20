@@ -433,3 +433,30 @@ describe('терминальное состояние вне живой сесс
     expect(mockConferences.getConference).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('длительность живой сессии на карточке (009 T071)', () => {
+  it('кадры №17+№18 (startedAt бейджа + endedAt завершения) → «Конференция завершена · 20 мин»', async () => {
+    const stream = await renderPage()
+    await openAlice([inviteMessage(1, 'c-live-1', 'video')])
+    expect(screen.getByRole('button', { name: 'Подключиться' })).toBeTruthy()
+
+    emitStarted(stream, 'c-live-1')
+    emitEnded(stream, 'c-live-1')
+
+    // startedAt среза (№17) + endedAt кадра №18 — длительность без №45
+    expect(screen.getByText('Конференция завершена · 20 мин')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Подключиться' })).toBeNull()
+    expect(mockConferences.getConference).toHaveBeenCalledTimes(1)
+  })
+
+  it('живой кадр №18 без started-бейджа — терминальная подпись БЕЗ длительности (не выдумывать)', async () => {
+    const stream = await renderPage()
+    await openAlice([inviteMessage(1, 'c-live-1', 'video')])
+
+    emitEnded(stream, 'c-live-1')
+
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(screen.queryByText(/Конференция завершена ·/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Подключиться' })).toBeNull()
+  })
+})

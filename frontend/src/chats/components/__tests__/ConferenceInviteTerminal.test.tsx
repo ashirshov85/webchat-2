@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../../../api/chats'
 import type { ConferenceView } from '../../../conferences/api/conferences'
@@ -329,5 +329,87 @@ describe('регресс T069: живая сессия закрывает кар
     expect(screen.getAllByText('Конференция завершена')).toHaveLength(2)
     expect(screen.queryByRole('button')).toBeNull()
     expect(conferences.getConference).not.toHaveBeenCalled()
+  })
+})
+
+describe('длительность из №45-ответа новейшей карточки (009 T071)', () => {
+  beforeEach(() => {
+    resetInviteProbeCache()
+    conferences.getConference.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('newest-чек №45 ended с startedAt/endedAt → «Конференция завершена · 20 мин»', async () => {
+    conferences.getConference.mockResolvedValue(
+      conferenceView({
+        status: 'ended',
+        startedAt: '2026-10-17T12:10:00.000Z',
+        endedAt: '2026-10-17T12:30:00.000Z',
+      }),
+    )
+    renderFeed([systemInvite('m-new', 'c-new', 1)])
+    await waitFor(() => {
+      expect(screen.getByText('Конференция завершена · 20 мин')).toBeTruthy()
+    })
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(conferences.getConference).toHaveBeenCalledTimes(1)
+  })
+
+  it('ремоунт восстанавливает длительность из сессионного кэша БЕЗ повторного №45', async () => {
+    conferences.getConference.mockResolvedValue(
+      conferenceView({
+        status: 'ended',
+        startedAt: '2026-10-17T12:10:00.000Z',
+        endedAt: '2026-10-17T12:30:00.000Z',
+      }),
+    )
+    const first = renderFeed([systemInvite('m-new', 'c-new', 1)])
+    await waitFor(() => {
+      expect(screen.getByText('Конференция завершена · 20 мин')).toBeTruthy()
+    })
+    first.unmount()
+    cleanup()
+    renderFeed([systemInvite('m-new', 'c-new', 1)])
+    expect(screen.getByText('Конференция завершена · 20 мин')).toBeTruthy()
+    expect(conferences.getConference).toHaveBeenCalledTimes(1)
+  })
+
+  it('клик-путь после тихого фонового транспорта: №45 ended с полями → длительность', async () => {
+    const assignSpy = stubLocationAssign()
+    conferences.getConference.mockRejectedValueOnce(new Error('network')).mockResolvedValueOnce(
+      conferenceView({
+        status: 'ended',
+        startedAt: '2026-10-17T12:00:00.000Z',
+        endedAt: '2026-10-17T12:02:00.000Z',
+      }),
+    )
+    renderFeed([systemInvite('m-new', 'c-new', 1)])
+    fireEvent.click(screen.getByRole('button', { name: 'Подключиться' }))
+    await waitFor(() => {
+      expect(screen.getByText('Конференция завершена · 2 мин')).toBeTruthy()
+    })
+    expect(assignSpy).not.toHaveBeenCalled()
+  })
+
+  it('старые карточки (деривация) при длительности новейшей — БЕЗ длительности', async () => {
+    conferences.getConference.mockResolvedValue(
+      conferenceView({
+        status: 'ended',
+        startedAt: '2026-10-17T12:10:00.000Z',
+        endedAt: '2026-10-17T12:30:00.000Z',
+      }),
+    )
+    renderFeed([systemInvite('m-old', 'c-old', 1), systemInvite('m-new', 'c-new', 2)])
+    await waitFor(() => {
+      expect(screen.getByText('Конференция завершена · 20 мин')).toBeTruthy()
+    })
+    // деривация T070 не имеет №45-ответа — подпись без длительности
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(conferences.getConference).toHaveBeenCalledTimes(1)
+    expect(conferences.getConference).toHaveBeenCalledWith('c-new')
   })
 })

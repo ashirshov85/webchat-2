@@ -42,6 +42,7 @@ import { useEffect, useRef, useState } from 'react'
 import { getConference, isConferenceProblem } from '../api/conferences'
 import type { ConferenceMode, ConferenceRealtimeEvent, ConferenceView } from '../api/conferences'
 import { useRealtime } from '../../chats/hooks/useRealtime'
+import type { DurationSpan } from '../../ui/duration'
 
 /** Одна живая конференция чата — всё, что нужно индикатору и кнопке входа. */
 export interface LiveConference {
@@ -53,6 +54,18 @@ export interface LiveConference {
 }
 
 /**
+ * Tombstone ЗАВЕРШЁННОЙ конференции чата: id (функция статуса §4 —
+ * повторная доставка старого `started` находит id мёртвым) ПЛЮС span
+ * длительности (T071): startedAt из бейджа (кадр №17 был доставлен)
+ * и endedAt из кадра №18 / №45-ответа; отсутствующий startedAt
+ * (никогда не начинавшаяся / started-кадр потерян) — длительности
+ * нет, поля не выдумываются.
+ */
+export interface EndedConference extends DurationSpan {
+  readonly conferenceId: string
+}
+
+/**
  * Полный live-срез хука: поднятые бейджи `byChat` ПЛЮС tombstone
  * завершённых (§4 порядок доставки). Tombstone — то, что делает
  * `ended` окончательным: повторная доставка старого `started`
@@ -60,12 +73,12 @@ export interface LiveConference {
  */
 export interface ConferenceIndicatorSlice {
   readonly byChat: ReadonlyMap<string, LiveConference>
-  /** chatId → conferenceId последней ЗАВЕРШЁННОЙ конференции чата. */
-  readonly endedByChat: ReadonlyMap<string, string>
+  /** chatId → tombstone последней ЗАВЕРШЁННОЙ конференции чата. */
+  readonly endedByChat: ReadonlyMap<string, EndedConference>
 }
 
 const EMPTY_BY_CHAT: ReadonlyMap<string, LiveConference> = new Map()
-const EMPTY_ENDED: ReadonlyMap<string, string> = new Map()
+const EMPTY_ENDED: ReadonlyMap<string, EndedConference> = new Map()
 
 /** Стартовое состояние: до первого кадра индикаторов нет. */
 export const EMPTY_CONFERENCE_SLICE: ConferenceIndicatorSlice = {
@@ -86,7 +99,7 @@ export function applyConferenceEvent(
   event: ConferenceRealtimeEvent,
 ): ConferenceIndicatorSlice {
   if (event.type === 'conference.started') {
-    if (slice.endedByChat.get(event.chatId) === event.conferenceId) {
+    if (slice.endedByChat.get(event.chatId)?.conferenceId === event.conferenceId) {
       return slice
     }
     const current = slice.byChat.get(event.chatId)
@@ -103,16 +116,22 @@ export function applyConferenceEvent(
   }
   // conference.ended (§2): tombstone id + снятие бейджа, если он
   // стоит именно на эту конференцию; дубль `ended` — тот же срез.
+  // T071: tombstone несёт span — startedAt из бейджа (кадр №17 был
+  // доставлен этой же конференции) + endedAt кадра №18.
   const badged = slice.byChat.get(event.chatId)
   let nextByChat: Map<string, LiveConference> | null = null
   if (badged?.conferenceId === event.conferenceId) {
     nextByChat = new Map(slice.byChat)
     nextByChat.delete(event.chatId)
   }
-  let nextEnded: Map<string, string> | null = null
-  if (slice.endedByChat.get(event.chatId) !== event.conferenceId) {
+  let nextEnded: Map<string, EndedConference> | null = null
+  if (slice.endedByChat.get(event.chatId)?.conferenceId !== event.conferenceId) {
     nextEnded = new Map(slice.endedByChat)
-    nextEnded.set(event.chatId, event.conferenceId)
+    nextEnded.set(event.chatId, {
+      conferenceId: event.conferenceId,
+      startedAt: badged?.conferenceId === event.conferenceId ? badged.startedAt : undefined,
+      endedAt: event.endedAt,
+    })
   }
   if (nextByChat === null && nextEnded === null) {
     return slice
@@ -163,10 +182,20 @@ export function applyConferenceView(
   if (view.status !== 'ended') {
     return nextByChat === null ? slice : { ...slice, byChat: nextByChat }
   }
-  let nextEnded: Map<string, string> | null = null
-  if (slice.endedByChat.get(view.chatId) !== view.id) {
+  // T071: ended-ответ несёт startedAt/endedAt терминального вида —
+  // tombstone забирает их в span (startedAt бейджа №17 приоритетнее:
+  // кадр был доставлен раньше и этой же конференции).
+  let nextEnded: Map<string, EndedConference> | null = null
+  if (slice.endedByChat.get(view.chatId)?.conferenceId !== view.id) {
     nextEnded = new Map(slice.endedByChat)
-    nextEnded.set(view.chatId, view.id)
+    nextEnded.set(view.chatId, {
+      conferenceId: view.id,
+      startedAt:
+        badged?.conferenceId === view.id && badged.startedAt !== undefined
+          ? badged.startedAt
+          : view.startedAt,
+      endedAt: view.endedAt,
+    })
   }
   if (nextByChat === null && nextEnded === null) {
     return slice

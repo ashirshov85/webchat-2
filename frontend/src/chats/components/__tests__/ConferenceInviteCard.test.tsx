@@ -324,3 +324,99 @@ describe('живая проекция завершения — пропс ended 
     expect(screen.getAllByText('Конференция завершена')).toHaveLength(1)
   })
 })
+
+describe('длительность на терминальных поверхностях карточки (009 T071)', () => {
+  beforeEach(() => {
+    resetInviteProbeCache()
+    conferences.getConference.mockReset()
+    conferences.getConference.mockResolvedValue(conferenceView())
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('клик-проверка №45: ended с startedAt/endedAt → «Конференция завершена · 5 мин»', async () => {
+    // первый №45 — фоновый чек новейшей (active, кнопка остаётся),
+    // второй — клик-проверка: ended с полями → длительность из ответа
+    conferences.getConference
+      .mockResolvedValueOnce(conferenceView({ status: 'active' }))
+      .mockResolvedValueOnce(
+        conferenceView({
+          status: 'ended',
+          startedAt: '2026-10-17T12:00:00.000Z',
+          endedAt: '2026-10-17T12:05:00.000Z',
+        }),
+      )
+    renderFeed([systemMessage(invitePayload())])
+    fireEvent.click(screen.getByRole('button', { name: 'Подключиться' }))
+    await waitFor(() => {
+      expect(screen.getByText('Конференция завершена · 5 мин')).toBeTruthy()
+    })
+    expect(screen.queryByText('Конференция завершена')).toBeNull()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('деривация T070 (не-новейшая карточка, без №45-ответа) — терминальная подпись БЕЗ длительности', () => {
+    conferences.getConference.mockReturnValue(new Promise(() => {}))
+    renderFeed([
+      systemMessage({ type: 'conference_invite', conferenceId: 'c-old', mode: 'video' }),
+      systemMessage(
+        { type: 'conference_invite', conferenceId: 'c-1', mode: 'video' },
+        { id: 'm-sys-2', seq: 2 },
+      ),
+    ])
+    // старая карточка терминальна чистой деривацией — данных о
+    // длительности нет, дополнительных №45 НЕ вводится
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(screen.queryByText(/Конференция завершена ·/)).toBeNull()
+  })
+
+  it('живой кадр №18 (T069): endedSpan с startedAt+endedAt → длительность без №45', () => {
+    render(
+      <ConferenceInviteCard
+        conferenceId="c-1"
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended
+        endedSpan={{ startedAt: '2026-10-17T12:10:00.000Z', endedAt: '2026-10-17T12:35:00.000Z' }}
+      />,
+    )
+    expect(screen.getByText('Конференция завершена · 25 мин')).toBeTruthy()
+    expect(conferences.getConference).not.toHaveBeenCalled()
+  })
+
+  it('живой кадр №18 без startedAt (бейджа не было) — подпись БЕЗ длительности', () => {
+    render(
+      <ConferenceInviteCard
+        conferenceId="c-1"
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended
+        endedSpan={{ endedAt: '2026-10-17T12:35:00.000Z' }}
+      />,
+    )
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(screen.queryByText(/Конференция завершена ·/)).toBeNull()
+  })
+
+  it('липкая длительность живого пути: ended B вытеснил A из среза — длительность A остаётся', () => {
+    const card = (ended: boolean, endedSpan: { startedAt?: string; endedAt?: string } | null) => (
+      <ConferenceInviteCard
+        conferenceId="c-1"
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended={ended}
+        endedSpan={endedSpan}
+      />
+    )
+    const { rerender } = render(
+      card(true, { startedAt: '2026-10-17T12:10:00.000Z', endedAt: '2026-10-17T12:35:00.000Z' }),
+    )
+    expect(screen.getByText('Конференция завершена · 25 мин')).toBeTruthy()
+    rerender(card(false, null))
+    expect(screen.getByText('Конференция завершена · 25 мин')).toBeTruthy()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+})

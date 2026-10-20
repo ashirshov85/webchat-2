@@ -58,13 +58,31 @@
  * сессию; повторный монтаж восстанавливает осевший исход из кэша
  * (ленивый initial state) БЕЗ запроса. Уже-терминальная живым кадром
  * карточка (ended на монтаже) не проверяется вовсе.
+ *
+ * T071 (US5, длительность — частичный пересмотр Q20=A): терминальная
+ * подпись дополняется «· {N мин}» ТОЛЬКО там, где данные уже в руках
+ * клиента: (1) клик-проверка №45 и фоновый чек T070 — view несёт
+ * startedAt/endedAt (раньше клик-ветка его отбрасывала; span живёт
+ * в сессионном кэше чека и состоянии карточки); (2) живая сессия
+ * T069 — пропс `endedSpan` (endedAt кадра №18 + startedAt бейджа
+ * T059 из tombstone live-среза). Деривация T070 (терминальная БЕЗ
+ * запроса) и кадр без timestamp'ов — подпись без длительности (не
+ * выдумывать); дополнительных №45 ради длительности НЕ вводится.
+ * Длительность живого пути липкая, как и само терминальное состояние
+ * (render-phase latch): ended B вытеснил A из среза — длительность
+ * A остаётся.
  */
 import { useEffect, useRef, useState } from 'react'
 import { conferenceErrorCode, getConference } from '../../conferences/api/conferences'
 import type { ConferenceMode } from '../../conferences/api/conferences'
+import { endedConferenceLabel, formatSpanDuration } from '../../ui/duration'
+import type { DurationSpan } from '../../ui/duration'
 import { formatTime } from '../../ui/time'
 import { cachedInviteProbeOutcome, rememberInviteProbeOutcome } from './conferenceInviteProbe'
-import type { ConferenceInviteProbeOutcome } from './conferenceInviteProbe'
+import type {
+  ConferenceInviteProbeOutcome,
+  ConferenceInviteProbeRecord,
+} from './conferenceInviteProbe'
 
 /** Состояние клика «Подключиться»: проверка №45 → переход/подпись. */
 type JoinState = 'idle' | 'checking' | 'ended' | 'missing' | 'error'
@@ -73,11 +91,19 @@ type JoinState = 'idle' | 'checking' | 'ended' | 'missing' | 'error'
  * T070: исход фонового №45-чека → состояние карточки (`live` —
  * active/created/транспортный отказ — кнопка остаётся, «idle»).
  */
-function probeOutcomeToJoinState(outcome: ConferenceInviteProbeOutcome | undefined): JoinState {
+function probeOutcomeToJoinState(outcome: ConferenceInviteProbeOutcome): JoinState {
   if (outcome === 'ended' || outcome === 'missing') {
     return outcome
   }
   return 'idle'
+}
+
+/** T071: span завершённой конференции из №45-ответа (клик/фоновый чек). */
+function endedSpanOfView(view: {
+  readonly startedAt?: string | undefined
+  readonly endedAt?: string | undefined
+}): DurationSpan {
+  return { startedAt: view.startedAt, endedAt: view.endedAt }
 }
 
 /** Первый системный виджет 009 — payload сообщения-приглашения (§4). */
@@ -136,6 +162,14 @@ export interface ConferenceInviteCardProps {
    * — карточка фоново не проверяется (прямые рендеры, старые карточки).
    */
   readonly probe?: boolean
+  /**
+   * T071: span живого завершения — endedAt кадра №18 + startedAt
+   * бейджа T059 (tombstone live-среза, MessengerPage → MessageList →
+   * SystemRow по паре chatId+conferenceId). Применяется ТОЛЬКО в
+   * терминальной ветке `ended` (липкая, как и само состояние): нет
+   * timestamp'ов — подпись без длительности.
+   */
+  readonly endedSpan?: DurationSpan | null
 }
 
 export function ConferenceInviteCard({
@@ -144,12 +178,18 @@ export function ConferenceInviteCard({
   createdAt,
   ended = false,
   probe = false,
+  endedSpan = null,
 }: ConferenceInviteCardProps) {
   // T070: осевший исход фонового чека восстанавливается из сессионного
   // кэша СРАЗУ (ленивый initial state) — повторный монтаж показывает
-  // терминальное состояние без повторного №45.
+  // терминальное состояние (с длительностью T071 из span'а записи)
+  // без повторного №45.
+  const cachedRecord = probe ? cachedInviteProbeOutcome(conferenceId) : undefined
   const [state, setState] = useState<JoinState>(() =>
-    probe ? probeOutcomeToJoinState(cachedInviteProbeOutcome(conferenceId)) : 'idle',
+    cachedRecord === undefined ? 'idle' : probeOutcomeToJoinState(cachedRecord.outcome),
+  )
+  const [endedSpanState, setEndedSpanState] = useState<DurationSpan | null>(
+    cachedRecord?.outcome === 'ended' ? (cachedRecord.span ?? null) : null,
   )
   // T069: липкий latch живого завершения (render-phase, идемпотентен —
   // паттерн Tick: однажды выставленный не сбрасывается, StrictMode-
@@ -159,6 +199,14 @@ export function ConferenceInviteCard({
     endedLiveRef.current = true
   }
   const endedLive = endedLiveRef.current
+  // T071: длительность живого пути липкая вместе с терминальным
+  // состоянием (tombstone хранит только ПОСЛЕДНЮЮ завершённую
+  // конференцию чата — ended B вытесняет A, span A уже не вернуть).
+  const endedLiveDurationRef = useRef<string | null>(null)
+  const liveDuration = formatSpanDuration(endedSpan)
+  if (liveDuration !== null) {
+    endedLiveDurationRef.current = liveDuration
+  }
 
   /**
    * T070: фоновый №45-чек новейшей карточки на монтаж — тихий (без
@@ -181,18 +229,25 @@ export function ConferenceInviteCard({
     probedRef.current = true
     void (async () => {
       let outcome: ConferenceInviteProbeOutcome = 'live'
+      let span: DurationSpan | undefined
       try {
         const view = await getConference(conferenceId)
         if (view.status === 'ended') {
+          // T071: терминальный №45 несёт startedAt/endedAt — span
+          // оседает в кэше чека (ремоунт покажет длительность без №45)
           outcome = 'ended'
+          span = endedSpanOfView(view)
         }
       } catch (cause) {
         if (conferenceErrorCode(cause) === 'conference_not_found') {
           outcome = 'missing'
         }
       }
-      rememberInviteProbeOutcome(conferenceId, outcome)
+      const record: ConferenceInviteProbeRecord =
+        span === undefined ? { outcome } : { outcome, span }
+      rememberInviteProbeOutcome(conferenceId, record)
       setState(probeOutcomeToJoinState(outcome))
+      setEndedSpanState(span ?? null)
     })()
   }, [probe, conferenceId])
 
@@ -205,6 +260,9 @@ export function ConferenceInviteCard({
       try {
         const view = await getConference(conferenceId)
         if (view.status === 'ended') {
+          // T071: длительность из №45-ответа (клик-ветка больше не
+          // отбрасывает поля терминального вида)
+          setEndedSpanState(endedSpanOfView(view))
           setState('ended')
           return
         }
@@ -221,10 +279,14 @@ export function ConferenceInviteCard({
       <div className="sys-row">
         {state === 'ended' || state === 'missing' ? (
           <output className="sys-status">
-            {state === 'ended' ? 'Конференция завершена' : 'Конференция недоступна'}
+            {state === 'ended'
+              ? endedConferenceLabel(formatSpanDuration(endedSpanState))
+              : 'Конференция недоступна'}
           </output>
         ) : endedLive ? (
-          <output className="sys-status">Конференция завершена</output>
+          <output className="sys-status">
+            {endedConferenceLabel(endedLiveDurationRef.current)}
+          </output>
         ) : (
           <>
             {state === 'error' && (

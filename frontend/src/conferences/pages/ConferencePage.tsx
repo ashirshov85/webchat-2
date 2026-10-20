@@ -24,7 +24,12 @@
  * «Конференция завершена» (Q20=A) показывается по обоим REST-лицам:
  * №45 `200 status='ended'` (старая ссылка) и №47 `409
  * conference_ended` — терминальное состояние без pre-join и кнопки
- * входа. Блок joined монтирует медиа-комнату ConferenceRoom (T027):
+ * входа. T071: терминальный экран дополняется длительностью
+ * `endedAt − startedAt` загруженного №45-вида (оба поля присутствуют
+ * для status='ended'; никогда не начинавшаяся — empty-timeout →
+ * room_lost без startedAt — длительность не выводится, не выдумывать);
+ * №47-409 без полей вида — подпись без длительности.
+ * Блок joined монтирует медиа-комнату ConferenceRoom (T027):
  * подключение по JoinTicket, тайлы участников и адаптацию качества
  * (FR-004); в слоте children — ParticipantsPanel (T041): список
  * участников из LiveKit (identity/name, роль, online, ограничения),
@@ -42,6 +47,7 @@ import { conferenceErrorCode } from '../api/conferences'
 import type { ConferenceErrorCode, ConferenceMode, JoinTicket, MeView } from '../api/conferences'
 import { useConference } from '../hooks/useConference'
 import type { ConferenceDeviceSelection } from '../hooks/useDevices'
+import { endedConferenceLabel, formatSpanDuration } from '../../ui/duration'
 import ConferenceRoom from '../components/ConferenceRoom'
 import type { ConferenceRoomInitialMedia } from '../components/ConferenceRoom'
 import MediaControls from '../components/MediaControls'
@@ -215,7 +221,7 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
             {me !== null && <p>Ваша роль: {me.role === 'moderator' ? 'модератор' : 'участник'}</p>}
           </header>
           {ended ? (
-            <output>Конференция завершена</output>
+            <output>{endedConferenceLabel(formatSpanDuration(conference))}</output>
           ) : (
             <div className="conference-join">
               {(joinStatus === 'idle' || joinStatus === 'joining') && (
