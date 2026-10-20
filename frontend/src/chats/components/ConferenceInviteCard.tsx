@@ -100,8 +100,8 @@ function probeOutcomeToJoinState(outcome: ConferenceInviteProbeOutcome): JoinSta
 
 /** T071: span завершённой конференции из №45-ответа (клик/фоновый чек). */
 function endedSpanOfView(view: {
-  readonly startedAt?: string | undefined
-  readonly endedAt?: string | undefined
+  readonly startedAt?: string
+  readonly endedAt?: string
 }): DurationSpan {
   return { startedAt: view.startedAt, endedAt: view.endedAt }
 }
@@ -273,20 +273,21 @@ export function ConferenceInviteCard({
     })()
   }
 
+  let terminalStatus: string | null = null
+  if (state === 'ended') {
+    terminalStatus = endedConferenceLabel(formatSpanDuration(endedSpanState))
+  } else if (state === 'missing') {
+    terminalStatus = 'Конференция недоступна'
+  } else if (endedLive) {
+    terminalStatus = endedConferenceLabel(endedLiveDurationRef.current)
+  }
+
   return (
     <div className="sys-card conference-invite">
       <div className="sys-title">{inviteTitle(mode)}</div>
       <div className="sys-row">
-        {state === 'ended' || state === 'missing' ? (
-          <output className="sys-status">
-            {state === 'ended'
-              ? endedConferenceLabel(formatSpanDuration(endedSpanState))
-              : 'Конференция недоступна'}
-          </output>
-        ) : endedLive ? (
-          <output className="sys-status">
-            {endedConferenceLabel(endedLiveDurationRef.current)}
-          </output>
+        {terminalStatus !== null ? (
+          <output className="sys-status">{terminalStatus}</output>
         ) : (
           <>
             {state === 'error' && (
