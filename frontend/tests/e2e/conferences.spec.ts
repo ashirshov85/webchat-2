@@ -22,6 +22,11 @@ import {
  * конференция занимает всё окно браузера (computed max-width:none у
  * #root + секция ≈ innerWidth) в фазах pre-join и joined.
  *
+ * 009, US1, T078 — e2e автопина демонстрации экрана: старт
+ * демонстрации одной вкладкой разворачивает тайл «Экран — …» на всю
+ * медиа-зону у ВСЕХ участников без ручного клика (пин-раскладка
+ * T074 поверх MediaControls «Экран»; завершение — возврат сетки).
+ *
  * 009, US3, T043 — e2e модерации (quickstart §3.3): мьют микрофона
  * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
  * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
@@ -411,6 +416,50 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       tilesSection(alicePage).getByText(bobNow.username, { exact: true }).first(),
     ).toBeVisible()
     await cdp.detach()
+  })
+
+  test('T078: старт демонстрации экрана — тайл разворачивается сам у всех вкладок без ручного клика', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
+      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+    ])
+
+    // до демонстрации пин-раскладки нет ни у кого
+    await expect(alicePage.locator('.conference-tile-pinned')).toHaveCount(0)
+    await expect(bobPage.locator('.conference-tile-pinned')).toHaveCount(0)
+
+    // alice включает демонстрацию (MediaControls «Экран»; Chromium
+    // auto-select-desktop-capture-source отдаёт поток без пикера —
+    // конфиг): появление screen-трека при пустом пине разворачивает
+    // тайл на всю медиа-зону БЕЗ клика по «Развернуть»
+    await alicePage.getByRole('button', { name: 'Экран', exact: true }).click()
+
+    // зритель bob: единственный развёрнутый тайл — «Экран — …»
+    const bobPinned = bobPage.locator('.conference-tile-pinned')
+    await expect(bobPinned).toHaveCount(1, { timeout: 10_000 })
+    await expect(bobPinned).toContainText('Экран — ')
+    // собственная вкладка демонстрирующего — тот же автопин (self-view)
+    const alicePinned = alicePage.locator('.conference-tile-pinned')
+    await expect(alicePinned).toHaveCount(1, { timeout: 10_000 })
+    await expect(alicePinned).toContainText('Экран — ')
+
+    // завершение демонстрации — автоматический возврат обычной сетки
+    await alicePage.getByRole('button', { name: 'Экран', exact: true }).click()
+    await expect(bobPinned).toHaveCount(0, { timeout: 10_000 })
+    await expect(alicePinned).toHaveCount(0, { timeout: 10_000 })
+    // звонок продолжается обычной сеткой
+    await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
+    await expect(alicePage.getByText('Вы в конференции')).toBeVisible()
   })
 })
 

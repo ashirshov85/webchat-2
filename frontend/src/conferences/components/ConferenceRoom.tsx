@@ -406,6 +406,22 @@ function tilePinKey(ref: TrackReferenceOrPlaceholder): string {
  * на размонтировании звонка исчезает). Треки подписаны
  * (onlySubscribed: false) — adaptiveStream (FR-004) сам поднимает
  * качество ставшему большим тайлу, ничего дособирать не нужно.
+ *
+ * Автопин демонстрации экрана (T078): появление НОВОГО screen-ref'а
+ * (переход «не было → появился», включая собственную демонстрацию)
+ * при ПУСТОМ пине разворачивает тайл на всю медиа-зону без ручного
+ * клика — у всех участников; завершение демонстрации сбрасывает пин
+ * обычной деривацией T074. Детерминированное правило «только при
+ * пустом пине»: ручной пин зрителя стартом демонстрации не
+ * перебивается, вторая одновременная демонстрация не переключает
+ * уже автозакреплённую первую, ручное сворачивание автопина при
+ * живой демонстрации возвращает сетку БЕЗ повторного автопина
+ * (решение принимается на появление нового ключа, не на инвариант
+ * «пустой пин + живые экраны» — иначе цикл); повторная публикация
+ * трека (переподключение демонстрирующего: ключ ушёл из живых и
+ * вернулся) считается новой демонстрацией. Решение — вывод в фазе
+ * рендера (derived state, React): атомарно с рендером, заметившим
+ * новый ref, без гонки эффекта с ручным кликом на первом коммите.
  */
 function ConferenceMedia() {
   const cameraTiles = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], {
@@ -415,6 +431,7 @@ function ConferenceMedia() {
   const speakers = useSpeakingParticipants()
   const speakerIdentities = new Set(speakers.map((participant) => participant.identity))
   const [pinnedTileKey, setPinnedTileKey] = useState<string | null>(null)
+  const [seenScreenKeys, setSeenScreenKeys] = useState<ReadonlySet<string>>(() => new Set<string>())
   // Пин-цель из живых рефов (undefined — цель исчезла: выход участника
   // из комнаты / завершение закреплённой демонстрации → обычная сетка).
   const pinnedScreen =
@@ -425,8 +442,27 @@ function ConferenceMedia() {
     pinnedTileKey !== null && pinnedScreen === undefined
       ? cameraTiles.find((ref) => tilePinKey(ref) === pinnedTileKey)
       : undefined
+  // Живой пин (цель существует): пустой пин для автопина T078 — именно
+  // отсутствие развёрнутого тайла (в т.ч. «висячий» ключ после ухода
+  // закреплённого участника), а не только null в состоянии.
+  const livePin = pinnedScreen !== undefined || pinnedCamera !== undefined
   const togglePin = (key: string): void => {
     setPinnedTileKey((current) => (current === key ? null : key))
+  }
+  // Замеченные демонстрации предыдущего рендера (T078): набор заменяется
+  // живыми ключами — ушедший ключ (завершение/переподключение) снова
+  // считается новым при возвращении. Появление нового ключа при пустом
+  // пине — автопин ровно на первом рендере появления (derived state,
+  // setState в фазе рендера своего компонента — React перерендерит до
+  // коммита; последующие ручные клики видят уже применённый автопин).
+  const appearedScreenKey = screenTiles
+    .map((ref) => tilePinKey(ref))
+    .find((key) => !seenScreenKeys.has(key))
+  if (appearedScreenKey !== undefined || seenScreenKeys.size !== screenTiles.length) {
+    if (appearedScreenKey !== undefined && !livePin) {
+      setPinnedTileKey(appearedScreenKey)
+    }
+    setSeenScreenKeys(new Set(screenTiles.map((ref) => tilePinKey(ref))))
   }
   if (pinnedScreen !== undefined || pinnedCamera !== undefined) {
     const restScreens = screenTiles.filter((ref) => ref !== pinnedScreen)
