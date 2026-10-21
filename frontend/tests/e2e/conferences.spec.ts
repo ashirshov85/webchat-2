@@ -18,6 +18,10 @@ import {
  * подключение сохраняется без обрыва, после снятия троттлинга звонок
  * продолжается.
  *
+ * 009, US1, T075 — e2e каркаса конференц-страницы: на широком окне
+ * конференция занимает всё окно браузера (computed max-width:none у
+ * #root + секция ≈ innerWidth) в фазах pre-join и joined.
+ *
  * 009, US3, T043 — e2e модерации (quickstart §3.3): мьют микрофона
  * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
  * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
@@ -193,13 +197,31 @@ function tilesSection(page: Page) {
   return page.getByRole('region', { name: 'Участники конференции' })
 }
 
-/** Вкладка участника: localStorage-сессия + экран /conference/:id. */
+/**
+ * T075: конференц-поверхность занимает окно — раскрытая корневая
+ * секция (маркер data-conference-id) почти на всю ширину окна
+ * (body-паттерн машины оставляет 16px полей с боков, допуск 64px);
+ * до правки секция жила в служебной колонке auth-страниц (480px).
+ */
+async function expectConferenceFillsWindow(page: Page): Promise<void> {
+  const box = await page.getByRole('region', { name: 'Конференция' }).boundingBox()
+  expect(box).not.toBeNull()
+  const innerWidth = page.viewportSize()?.width ?? 0
+  expect(
+    box?.width,
+    `ширина секции ${box?.width}px ≈ окну ${innerWidth}px (колонка 480px снята)`,
+  ).toBeGreaterThanOrEqual(innerWidth - 64)
+}
+
+/** Вкладка участника: localStorage-сессия + экран /conference/:id
+ *  (T075: опциональный широкий viewport — геометрия растянутой страницы). */
 async function openConferencePage(
   browser: import('@playwright/test').Browser,
   account: TestAccount,
   conferenceId: string,
+  viewport?: { width: number; height: number },
 ): Promise<Page> {
-  const context = await browser.newContext()
+  const context = await browser.newContext(viewport === undefined ? undefined : { viewport })
   await context.addInitScript((refreshToken) => {
     window.localStorage.setItem('webchat.auth.refreshToken', refreshToken)
   }, account.refreshToken)
@@ -296,6 +318,36 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     await bobPage.getByRole('button', { name: 'Покинуть' }).click()
     await expect(bobPage.getByRole('button', { name: 'Войти' })).toBeVisible()
     await expect(bobPage.getByText('Вы в конференции')).toHaveCount(0)
+  })
+
+  test('T075: на широком окне конференция занимает всё окно браузера (pre-join и звонок)', async ({
+    browser,
+  }) => {
+    const aliceNow = await login(api, alice.username)
+    const conference = await createConference(api, aliceNow, chatId)
+
+    // широкое окно (дефолт конфига 1280×720 — узкая подача): явный
+    // 1600×900 — растянутая геометрия видна без прокрутки
+    const page = await openConferencePage(browser, aliceNow, conference.id, {
+      width: 1600,
+      height: 900,
+    })
+    openedPages.push(page)
+
+    // pre-join — та же геометрия: служебная колонка #root снята,
+    // секция ≈ окну (правило body:has([data-conference-id], …) #root)
+    await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible()
+    const rootMaxWidth = await page.evaluate(() => {
+      const root = document.getElementById('root')
+      return root === null ? null : getComputedStyle(root).maxWidth
+    })
+    expect(rootMaxWidth).toBe('none')
+    await expectConferenceFillsWindow(page)
+
+    // joined — медиа-зона в той же растянутой геометрии
+    await page.getByRole('button', { name: 'Войти' }).click()
+    await expect(page.getByText('Вы в конференции')).toBeVisible({ timeout: 15_000 })
+    await expectConferenceFillsWindow(page)
   })
 
   test('FR-004: деградация сети одной вкладки (CDP throttling) не рвёт звонок; после снятия — продолжается', async ({
