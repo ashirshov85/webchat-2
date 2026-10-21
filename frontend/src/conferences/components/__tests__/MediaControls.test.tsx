@@ -335,3 +335,103 @@ describe('MediaControls: собственные ограничения (009 US3 
     expect(media.room.off).toHaveBeenCalledWith('participantPermissionsChanged', handler)
   })
 })
+
+describe('MediaControls: автоотключение камеры при демонстрации экрана (009 US1 T077)', () => {
+  beforeEach(() => {
+    media.state = {
+      mic: false,
+      camera: false,
+      screen: false,
+      connection: 2,
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+    }
+    media.setMicrophoneEnabled.mockReset()
+    media.setCameraEnabled.mockReset()
+    media.setScreenShareEnabled.mockReset()
+    media.room.on.mockReset()
+    media.room.off.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('успешный старт демонстрации при включённой камере гасит камеру ПОСЛЕ старта экрана', async () => {
+    media.state.camera = true
+    media.setScreenShareEnabled.mockResolvedValue(undefined)
+    media.setCameraEnabled.mockResolvedValue(undefined)
+    renderControls()
+
+    fireEvent.click(toggle('Экран'))
+
+    await waitFor(() => {
+      expect(media.setScreenShareEnabled).toHaveBeenCalledWith(true)
+      expect(media.setCameraEnabled).toHaveBeenCalledWith(false)
+    })
+    // порядок: демонстрация реально пошла — только потом камера гасится
+    const screenCall = media.setScreenShareEnabled.mock.invocationCallOrder[0]
+    const cameraCall = media.setCameraEnabled.mock.invocationCallOrder[0]
+    if (screenCall === undefined || cameraCall === undefined) {
+      throw new Error('сеттеры экрана/камеры не вызваны')
+    }
+    expect(screenCall).toBeLessThan(cameraCall)
+  })
+
+  it('старт демонстрации при ВЫКЛЮЧЕННОЙ камере — без лишних вызовов камеры', async () => {
+    media.setScreenShareEnabled.mockResolvedValue(undefined)
+    renderControls()
+
+    fireEvent.click(toggle('Экран'))
+
+    await waitFor(() => {
+      expect(media.setScreenShareEnabled).toHaveBeenCalledWith(true)
+    })
+    expect(media.setCameraEnabled).not.toHaveBeenCalled()
+  })
+
+  it('отмена браузерного пикера экрана (AbortError) — камера не тронута', async () => {
+    media.state.camera = true
+    const abort = Object.assign(new Error('Cancelled'), { name: 'AbortError' })
+    media.setScreenShareEnabled.mockRejectedValue(abort)
+    renderControls()
+
+    fireEvent.click(toggle('Экран'))
+
+    await waitFor(() => {
+      expect(media.setScreenShareEnabled).toHaveBeenCalled()
+    })
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10)
+    })
+    expect(media.setCameraEnabled).not.toHaveBeenCalled()
+  })
+
+  it('ошибка старта демонстрации (reject setScreenShareEnabled) — камера не тронута', async () => {
+    media.state.camera = true
+    media.setScreenShareEnabled.mockRejectedValue(new Error('NotAllowedError'))
+    renderControls()
+
+    fireEvent.click(toggle('Экран'))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Не удалось включить демонстрацию экрана',
+    )
+    expect(media.setCameraEnabled).not.toHaveBeenCalled()
+  })
+
+  it('остановка демонстрации НЕ включает камеру обратно (обратное включение — только вручную)', async () => {
+    // камера уже погашена стартом демонстрации, экран идёт
+    media.state.camera = false
+    media.state.screen = true
+    media.setScreenShareEnabled.mockResolvedValue(undefined)
+    renderControls()
+
+    fireEvent.click(toggle('Экран'))
+
+    await waitFor(() => {
+      expect(media.setScreenShareEnabled).toHaveBeenCalledWith(false)
+    })
+    expect(media.setCameraEnabled).not.toHaveBeenCalled()
+  })
+})
