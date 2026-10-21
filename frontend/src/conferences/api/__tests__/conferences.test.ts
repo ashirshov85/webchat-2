@@ -20,6 +20,7 @@ vi.mock('../../../api/auth', () => ({ toApiProblem: http.problem }))
 import {
   conferenceErrorCode,
   createConference,
+  createGuestInvite,
   endConference,
   getConference,
   getConferenceMe,
@@ -27,6 +28,8 @@ import {
   joinConference,
   kickParticipant,
   moderationErrorCode,
+  guestInviteErrorCode,
+  revokeGuestInvite,
   updateParticipantRestrictions,
   updateParticipantRole,
 } from '../conferences'
@@ -213,5 +216,42 @@ describe('conferences API client (009 US1 T022/T029)', () => {
     expect(moderationErrorCode(problem(404, 'participant_not_found'))).toBe('participant_not_found')
     expect(moderationErrorCode(problem(409, 'conference_ended'))).toBe('conference_ended')
     expect(moderationErrorCode(new Error('network'))).toBeNull()
+  })
+
+  it('№52 createGuestInvite: POST /conferences/{id}/guest-invite → GuestInviteView', async () => {
+    const view = { inviteUrl: 'https://app/join/nonce-1', expiresAt: '2026-10-22T10:00:00Z' }
+    http.fetch.mockResolvedValue(jsonResponse(201, view))
+
+    const answer = await createGuestInvite('c-1')
+
+    expect(answer).toEqual(view)
+    expect(answer.inviteUrl).toBeTypeOf('string')
+    expect(answer.expiresAt).toBeTypeOf('string')
+    const [path, init] = call()
+    expect(path).toBe('/conferences/c-1/guest-invite')
+    expect(init?.method).toBe('POST')
+    expect(init?.body).toBeUndefined()
+  })
+
+  it('№53 revokeGuestInvite: DELETE /conferences/{id}/guest-invite, 204 без тела', async () => {
+    http.fetch.mockResolvedValue(new Response(null, { status: 204 }))
+
+    await revokeGuestInvite('c-1')
+
+    const [path, init] = call()
+    expect(path).toBe('/conferences/c-1/guest-invite')
+    expect(init?.method).toBe('DELETE')
+    expect(init?.body).toBeUndefined()
+  })
+
+  it('guestInviteErrorCode: коды №52/№53 из errors; не-Problem — null', () => {
+    expect(guestInviteErrorCode(problem(403, 'moderator_required'))).toBe('moderator_required')
+    expect(guestInviteErrorCode(problem(404, 'conference_not_found'))).toBe('conference_not_found')
+    expect(guestInviteErrorCode(problem(409, 'conference_ended'))).toBe('conference_ended')
+    expect(guestInviteErrorCode(problem(404, 'guest_invite_not_found'))).toBe(
+      'guest_invite_not_found',
+    )
+    expect(guestInviteErrorCode(problem(400, 'invalid_uuid'))).toBe('invalid_uuid')
+    expect(guestInviteErrorCode(new Error('network'))).toBeNull()
   })
 })

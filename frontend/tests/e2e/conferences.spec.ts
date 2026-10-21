@@ -684,20 +684,20 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     const aliceNow = await login(api, alice.username)
     const conference = await createConference(api, aliceNow, chatId)
 
-    // №52: генерация гостевой ссылки модератором (создателем) — в чат не постится
-    const invite = await apiCall<{ inviteUrl: string; expiresAt: string }>(
-      api,
-      'post',
-      `/api/v1/conferences/${conference.id}/guest-invite`,
-      { token: aliceNow.accessToken },
-    )
-    expect(invite.inviteUrl).toContain('/join/')
-
     // alice (модератор) в звонке — наблюдатель входа гостя (T051)
     const alicePage = await openConferencePage(browser, aliceNow, conference.id)
     openedContexts.push(alicePage.context())
     await alicePage.getByRole('button', { name: 'Войти' }).click()
     await expect(alicePage.getByText('Вы в конференции')).toBeVisible({ timeout: 15_000 })
+
+    // №52 через UI блока «Гостевая ссылка» панели модерации (T081):
+    // «Пригласить гостя» → inviteUrl в readonly-поле (в чат не постится);
+    // прямая №52-нога apiCall удалена — ссылка берётся из приложения
+    await alicePage.getByRole('button', { name: 'Пригласить гостя' }).click()
+    const inviteField = alicePage.getByRole('textbox', { name: 'Ссылка-приглашение' })
+    await expect(inviteField).toBeVisible({ timeout: 10_000 })
+    const inviteUrl = await inviteField.inputValue()
+    expect(inviteUrl).toContain('/join/')
 
     // приватное окно без аккаунта открывает ссылку №52 (путь — из
     // inviteUrl; хостом остаётся baseURL стенда — app.public-base-url
@@ -705,7 +705,7 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     const guestName = `Гость${RUN_ID}`
     const guestContext = await newGuestContext(browser)
     const guestPage = await guestContext.newPage()
-    await guestPage.goto(new URL(invite.inviteUrl).pathname)
+    await guestPage.goto(new URL(inviteUrl).pathname)
 
     // №54 валиден → шаг имени; маршрут публичный — перенаправления на
     // login нет (FR-009), chat-поверхность не мелькает

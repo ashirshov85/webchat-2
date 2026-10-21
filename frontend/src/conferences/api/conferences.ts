@@ -1,7 +1,8 @@
 /**
- * Типизированный API-клиент тега `conferences` (009, №44–№51): создание
- * конференции из чата, статус, собственные права, JoinTicket и серверная
- * модерация (ограничения/роль/кик/завершение). Типы — из
+ * Типизированный API-клиент тега `conferences` (009, №44–№53): создание
+ * конференции из чата, статус, собственные права, JoinTicket, серверная
+ * модерация (ограничения/роль/кик/завершение) и гостевая ссылка
+ * (генерация №52/отзыв №53 — UI модератора T081). Типы — из
  * генерации `pnpm generate:api` (`contracts/openapi.yaml` — единственный
  * источник истины); ошибки — RFC 9457 Problem: каждый вызов бросает
  * типизированный ApiProblem, коды контракта едут в `errors: {field:
@@ -71,6 +72,24 @@ export type ModerationErrorCode =
   | 'conference_ended'
   | 'moderator_required'
   | 'participant_not_found'
+
+/** №52 GuestInviteView: гостевая ссылка — публичный маршрут + срок действия. */
+export type GuestInviteView = components['schemas']['GuestInviteView']
+
+/**
+ * Коды ошибок контракта гостевой ссылки №52/№53 (модератор): правовой
+ * гейт `moderator_required`, терминальное `conference_ended`, единый
+ * не-раскрывающий `conference_not_found` и `guest_invite_not_found` —
+ * №53 «нет активной ссылки» (уже отозвана другим модератором, Q21=A —
+ * клиент трактует как идемпотентный успех).
+ */
+export type GuestInviteErrorCode =
+  | 'invalid_uuid'
+  | 'malformed_request'
+  | 'conference_not_found'
+  | 'conference_ended'
+  | 'moderator_required'
+  | 'guest_invite_not_found'
 
 /**
  * №54 InviteInfoView: статус гостевой ссылки — минимум раскрытия
@@ -172,6 +191,16 @@ export function guestErrorCode(value: unknown): GuestErrorCode | null {
   if (!isConferenceProblem(value)) return null
   const code = Object.values(value.errors ?? {}).flat()[0]
   return (code as GuestErrorCode | undefined) ?? null
+}
+
+/**
+ * Единственный код ошибки из Problem гостевой ссылки №52/№53
+ * (`errors: {field: [code]}`); null — не Problem (сеть/транспорт).
+ */
+export function guestInviteErrorCode(value: unknown): GuestInviteErrorCode | null {
+  if (!isConferenceProblem(value)) return null
+  const code = Object.values(value.errors ?? {}).flat()[0]
+  return (code as GuestInviteErrorCode | undefined) ?? null
 }
 
 /**
@@ -299,6 +328,35 @@ export async function kickParticipant(conferenceId: string, identity: string): P
     `/conferences/${encodeURIComponent(conferenceId)}/participants/${encodeURIComponent(identity)}`,
     'DELETE',
   )
+}
+
+/**
+ * №52 `POST /conferences/{conferenceId}/guest-invite` (T081, US4):
+ * генерация гостевой ссылки — подписанный nonce публичного маршрута
+ * `/join/{inviteToken}` + срок (TTL дефолт 24 ч, Q19=A). Генерация
+ * атомарно отзывает предыдущую активную (Q17=A — вошедшие по ней
+ * отключаются, сервер делает это сам, клиент ничего не вычисляет);
+ * в чат ссылка не постится. Ошибки: `moderator_required`,
+ * `conference_not_found`, `conference_ended`.
+ */
+export async function createGuestInvite(conferenceId: string): Promise<GuestInviteView> {
+  const response = await authedRequest(
+    `/conferences/${encodeURIComponent(conferenceId)}/guest-invite`,
+    'POST',
+  )
+  return (await response.json()) as GuestInviteView
+}
+
+/**
+ * №53 `DELETE /conferences/{conferenceId}/guest-invite` (T081, US4):
+ * отзыв ссылки — вошедшие по ней гости отключаются немедленно (Q13=B),
+ * новые входы блокируются; кик ≠ бан — данные гостей не трогаются.
+ * `404 guest_invite_not_found` — «нет активной» (идемпотентность:
+ * ссылку мог отозвать другой модератор, Q21=A). Прочие ошибки:
+ * `moderator_required`, `conference_not_found`, `conference_ended`.
+ */
+export async function revokeGuestInvite(conferenceId: string): Promise<void> {
+  await authedRequest(`/conferences/${encodeURIComponent(conferenceId)}/guest-invite`, 'DELETE')
 }
 
 /**

@@ -836,6 +836,97 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
 }
 
 /* ============================================================
+ * Блок «Гостевая ссылка» панели модерации (T081, US4, №52/№53):
+ * по монтажу свёрнут в кнопку «Пригласить гостя» (GET статуса
+ * ссылки в контракте нет); после №52 — предупреждение Q17=A/Q13=B,
+ * readonly-поле inviteUrl (ручное выделение — страховка «Копировать»),
+ * срок действия локальным временем (ui/time) и «Отозвать ссылку»
+ * через подтверждение (деструктивное — отключение гостей).
+ * ============================================================ */
+
+.conference-guest-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+  padding: 8px 8px 10px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-panel);
+}
+
+.conference-guest-invite-generate {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 12px var(--font-body);
+  color: var(--gold-light);
+  cursor: pointer;
+}
+
+.conference-guest-invite-hint {
+  margin: 0;
+  font: italic 11.5px var(--font-body);
+  color: var(--muted);
+}
+
+.conference-guest-invite-url {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 12px var(--font-body);
+  color: var(--cream);
+}
+
+.conference-guest-invite-expires {
+  margin: 0;
+  font: 12px var(--font-body);
+  color: var(--muted);
+}
+
+.conference-guest-invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.conference-guest-invite-actions .conference-guest-invite-copy,
+.conference-guest-invite-actions .conference-guest-invite-revoke {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 12px var(--font-body);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+/* Отзыв — деструктивный акцент (класс conference-moderation-button-danger
+   красит текст/рамку, здесь — базовая геометрия кнопки блока). */
+.conference-guest-invite-actions .conference-guest-invite-revoke {
+  border-color: var(--err);
+  color: var(--err);
+}
+
+/* Статус «Скопировано» (<output> = role=status, aria-live=polite). */
+.conference-guest-invite-copied {
+  font: 12px var(--font-body);
+  color: var(--gold-light);
+}
+
+/* 008: фокус с клавиатуры — поле ссылки блока (кнопки — общим
+   правилом .conference-moderation button:focus-visible выше). */
+.conference-guest-invite-url:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+/* ============================================================
  * Гостевая join-страница (009, US4, T049): шаг имени, отказ
  * ссылки, обвязка pre-join. Публичный экран /join/:inviteToken —
  * та же тёмная лексика модуля (панель/крем/латунь, 008).

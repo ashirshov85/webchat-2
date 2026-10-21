@@ -11,6 +11,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * смены роли (Q9=A). Примитивы @livekit/components-react и API-клиент
  * заменены фейками: предмет теста — оркестрация действий и
  * подтверждения (набор US3 — T043).
+ *
+ * T081 (US4): блок «Гостевая ссылка» №52/№53 — генерация readonly-
+ * поля inviteUrl (срок + предупреждение Q17=A/Q13=B), «Копировать»
+ * через navigator.clipboard, отзыв с подтверждением (деструктивное —
+ * отключение гостей) и молчаливый коллапс по `404
+ * guest_invite_not_found` (идемпотентность отзыва, Q21=A).
  */
 
 /** Wire-константы TrackSource (@livekit/protocol) — как в панели. */
@@ -45,6 +51,8 @@ const api = vi.hoisted(() => ({
   kickParticipant: vi.fn(),
   updateParticipantRestrictions: vi.fn(),
   updateParticipantRole: vi.fn(),
+  createGuestInvite: vi.fn(),
+  revokeGuestInvite: vi.fn(),
 }))
 
 vi.mock('../../api/conferences', async (importOriginal) => ({
@@ -53,7 +61,19 @@ vi.mock('../../api/conferences', async (importOriginal) => ({
   kickParticipant: api.kickParticipant,
   updateParticipantRestrictions: api.updateParticipantRestrictions,
   updateParticipantRole: api.updateParticipantRole,
+  createGuestInvite: api.createGuestInvite,
+  revokeGuestInvite: api.revokeGuestInvite,
 }))
+
+/** navigator.clipboard (T081 «Копировать») — jsdom его не реализует. */
+const clipboard = vi.hoisted(() => ({ writeText: vi.fn() }))
+
+function installClipboard(): void {
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText: clipboard.writeText },
+    configurable: true,
+  })
+}
 
 import ModerationPanel from '../ModerationPanel'
 
@@ -109,6 +129,10 @@ describe('ModerationPanel (009 US3 T042)', () => {
     api.kickParticipant.mockReset()
     api.updateParticipantRestrictions.mockReset()
     api.updateParticipantRole.mockReset()
+    api.createGuestInvite.mockReset()
+    api.revokeGuestInvite.mockReset()
+    clipboard.writeText.mockReset()
+    installClipboard()
     lkc.useLocalParticipant.mockReturnValue({
       localParticipant: defaultRoom()[0],
     })
@@ -396,5 +420,211 @@ describe('ModerationPanel (009 US3 T042)', () => {
     lkc.useParticipants.mockReturnValue([promoted, room[1]])
     rerender(<ModerationPanel conferenceId="c-1" />)
     expect(screen.getByText('Модерация')).toBeInTheDocument()
+  })
+})
+
+describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T081)', () => {
+  /** Успешный №52-ответ: публичный маршрут /join/{nonce} + срок TTL. */
+  function inviteView(nonce: string): { inviteUrl: string; expiresAt: string } {
+    return { inviteUrl: `https://app.example/join/${nonce}`, expiresAt: '2026-10-22T10:00:00Z' }
+  }
+
+  /** Генерация №52 по кнопке блока → поле ссылки видно. */
+  async function generateInvite(nonce: string): Promise<void> {
+    api.createGuestInvite.mockResolvedValueOnce(inviteView(nonce))
+    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+    expect(await screen.findByDisplayValue(`https://app.example/join/${nonce}`)).toBeInTheDocument()
+  }
+
+  beforeEach(() => {
+    lkc.useParticipants.mockReset()
+    lkc.useLocalParticipant.mockReset()
+    api.createGuestInvite.mockReset()
+    api.revokeGuestInvite.mockReset()
+    clipboard.writeText.mockReset()
+    installClipboard()
+    lkc.useLocalParticipant.mockReturnValue({
+      localParticipant: defaultRoom()[0],
+    })
+    lkc.useParticipants.mockReturnValue(defaultRoom())
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('(а) по монтажу блок свёрнут; модератор: «Пригласить гостя» → №52 → ссылка/срок/предупреждение', async () => {
+    const { container } = render(<ModerationPanel conferenceId="c-1" />)
+
+    // свёрнуто: только кнопка генерации, без поля (GET статуса в контракте нет)
+    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeInTheDocument()
+    expect(container.querySelector('.conference-guest-invite-url')).toBeNull()
+
+    api.createGuestInvite.mockResolvedValueOnce(inviteView('nonce-1'))
+    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+
+    await waitFor(() => {
+      expect(api.createGuestInvite).toHaveBeenCalledWith('c-1')
+    })
+    // ссылка, срок (локальное время) и предупреждение Q17=A/Q13=B
+    expect(await screen.findByDisplayValue('https://app.example/join/nonce-1')).toBeInTheDocument()
+    expect(screen.getByText(/^Действует до /)).toBeInTheDocument()
+    expect(screen.getByText(/отзовёт предыдущую/i)).toBeInTheDocument()
+  })
+
+  it('(б) «Копировать» → clipboard.writeText(inviteUrl) и статус «Скопировано» (output aria-live)', async () => {
+    clipboard.writeText.mockResolvedValue(undefined)
+    render(<ModerationPanel conferenceId="c-1" />)
+    await generateInvite('nonce-1')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Копировать' }))
+
+    await waitFor(() => {
+      expect(clipboard.writeText).toHaveBeenCalledWith('https://app.example/join/nonce-1')
+    })
+    expect(await screen.findByText('Скопировано')).toBeInTheDocument()
+    expect(document.querySelector('.conference-guest-invite-copied')).not.toBeNull()
+  })
+
+  it('(в) «Отозвать ссылку» — деструктивное: подтверждение упоминает отключение гостей; Отмена не вызывает; Подтвердить → №53', async () => {
+    api.revokeGuestInvite.mockResolvedValue(undefined)
+    render(<ModerationPanel conferenceId="c-1" />)
+    await generateInvite('nonce-1')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
+
+    const dialog = screen.getByRole('alertdialog')
+    expect(within(dialog).getByText(/гост[ейы]/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(/отключ/i)).toBeInTheDocument()
+    expect(api.revokeGuestInvite).not.toHaveBeenCalled()
+
+    // «Отмена» закрывает подтверждение без вызова
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(api.revokeGuestInvite).not.toHaveBeenCalled()
+
+    // повтор + «Подтвердить» → №53
+    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
+    )
+    await waitFor(() => {
+      expect(api.revokeGuestInvite).toHaveBeenCalledWith('c-1')
+    })
+  })
+
+  it('(г) успешный отзыв — блок свёрнут; 404 guest_invite_not_found — молчаливый коллапс без notice (Q21=A)', async () => {
+    const { container } = render(<ModerationPanel conferenceId="c-1" />)
+    await generateInvite('nonce-1')
+
+    api.revokeGuestInvite.mockResolvedValueOnce(undefined)
+    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
+    )
+    await waitFor(() => {
+      expect(container.querySelector('.conference-guest-invite-url')).toBeNull()
+    })
+    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeInTheDocument()
+
+    // ссылку мог отозвать другой модератор — идемпотентность без notice
+    await generateInvite('nonce-2')
+    api.revokeGuestInvite.mockRejectedValueOnce(problemWith('guest_invite_not_found', 404))
+    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
+    )
+    await waitFor(() => {
+      expect(container.querySelector('.conference-guest-invite-url')).toBeNull()
+    })
+    expect(container.querySelector('.conference-moderation-notice')).toBeNull()
+  })
+
+  it('(д) повторная генерация при живой ссылке — та же кнопка №52, поле заменено новым inviteUrl', async () => {
+    render(<ModerationPanel conferenceId="c-1" />)
+    await generateInvite('nonce-1')
+
+    api.createGuestInvite.mockResolvedValueOnce(inviteView('nonce-2'))
+    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+
+    expect(await screen.findByDisplayValue('https://app.example/join/nonce-2')).toBeInTheDocument()
+    expect(screen.queryByDisplayValue('https://app.example/join/nonce-1')).not.toBeInTheDocument()
+    expect(api.createGuestInvite).toHaveBeenCalledTimes(2)
+  })
+
+  it('(е) не-модератор блока не видит (наследованный гейт — панель null)', () => {
+    const room = defaultRoom()
+    room[0] = participant({
+      identity: 'u:11111111-1111-1111-1111-111111111111:conn-1',
+      name: 'alice',
+      metadata: memberMetadata('participant'),
+      isLocal: true,
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+    })
+    lkc.useLocalParticipant.mockReturnValue({ localParticipant: room[0] })
+    lkc.useParticipants.mockReturnValue(room)
+
+    render(<ModerationPanel conferenceId="c-1" />)
+
+    expect(screen.queryByRole('button', { name: 'Пригласить гостя' })).not.toBeInTheDocument()
+    expect(api.createGuestInvite).not.toHaveBeenCalled()
+  })
+
+  it('(ж) отказы №52 — нейтральные строки: 403 moderator_required и 409 conference_ended', async () => {
+    render(<ModerationPanel conferenceId="c-1" />)
+
+    api.createGuestInvite.mockRejectedValueOnce(problemWith('moderator_required'))
+    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+    expect(await screen.findByText('Недостаточно прав')).toBeInTheDocument()
+
+    api.createGuestInvite.mockRejectedValueOnce(problemWith('conference_ended', 409))
+    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+    expect(await screen.findByText('Конференция завершена')).toBeInTheDocument()
+
+    // ссылка не появилась — блок остался свёрнут
+    expect(document.querySelector('.conference-guest-invite-url')).toBeNull()
+  })
+
+  it('(з) «в полёте» кнопки блока недоступны — повторные вызовы блокированы (единый pending панели)', async () => {
+    render(<ModerationPanel conferenceId="c-1" />)
+
+    // №52 в полёте: повторный клик по «Пригласить гостя» не плодит вызовы
+    let resolveCreate: (value: { inviteUrl: string; expiresAt: string }) => void = () => {}
+    api.createGuestInvite.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+    expect(api.createGuestInvite).toHaveBeenCalledTimes(1)
+
+    resolveCreate(inviteView('nonce-1'))
+    expect(await screen.findByDisplayValue('https://app.example/join/nonce-1')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeEnabled()
+
+    // №53 в полёте: все кнопки блока недоступны
+    let resolveRevoke: (value: undefined) => void = () => {}
+    api.revokeGuestInvite.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRevoke = resolve
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
+    )
+    await waitFor(() => {
+      expect(api.revokeGuestInvite).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Копировать' })).toBeDisabled()
+
+    resolveRevoke(undefined)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeEnabled()
+    })
   })
 })
