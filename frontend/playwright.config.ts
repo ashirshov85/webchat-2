@@ -9,7 +9,9 @@
  *
  * Chromium + fake media: `--use-fake-device-for-media-stream` даёт
  * зелёную камеру/тон микрофона без железа, `--use-fake-ui-for-media-stream`
- * автоматически удовлетворяет запросы разрешений (quickstart §2).
+ * автоматически удовлетворяет запросы разрешений (quickstart §2);
+ * `--auto-select-desktop-capture-source` отдаёт демонстрацию экрана
+ * без пикера (T078 e2e автопина: livekit-client getDisplayMedia).
  * Запуск: `pnpm --dir frontend exec playwright test tests/e2e/conferences.spec.ts`.
  */
 import { defineConfig } from '@playwright/test'
@@ -36,6 +38,7 @@ export default defineConfig({
       args: [
         '--use-fake-device-for-media-stream',
         '--use-fake-ui-for-media-stream',
+        '--auto-select-desktop-capture-source=Entire screen',
         '--autoplay-policy=no-user-gesture-required',
       ],
     },

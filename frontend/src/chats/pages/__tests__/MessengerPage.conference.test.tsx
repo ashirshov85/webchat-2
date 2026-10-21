@@ -34,6 +34,12 @@ import { MessengerPage } from '../MessengerPage'
  * делает один фоновый №45 (active/created → кнопка остаётся — кадр №18
  * закрывает её позже; ended → «Конференция завершена» без клика).
  *
+ * T076 (US5, продуктовое расширение T071): фоновый №45-чек — КАЖДОЙ
+ * карточке окна, КРОМЕ tombstone (бюджет «≤1 №45 на конференцию за
+ * сессию», сессионный кэш): прошлые конференции получают длительность
+ * «· N мин» по приходе своего ответа, терминальная подпись деривации
+ * рендерится сразу и липко.
+ *
  * Мок-паттерн MessengerPage-тестов (vi.hoisted + installStream): кадры
  * №18 подаются вручную в поток api/sse.
  */
@@ -327,12 +333,14 @@ describe('живая проекция завершения на карточке
     const stream = await renderPage()
     await openAlice([inviteMessage(1, 'c-a', 'video'), inviteMessage(2, 'c-b', 'audio')])
     // T070: старая карточка A терминальна СРАЗУ — чистая деривация
-    // (новая B создана только после ended A), фоновый №45 ходит только
-    // по новейшей B (active — кнопка остаётся)
+    // (новая B создана только после ended A); T076: фоновый №45 ходит
+    // по ОБЕИМ (B — статус, A — span длительности; active — кнопка B
+    // остаётся, подпись A не меняется)
     await waitFor(() => {
-      expect(mockConferences.getConference).toHaveBeenCalledTimes(1)
+      expect(mockConferences.getConference).toHaveBeenCalledTimes(2)
     })
-    expect(mockConferences.getConference).toHaveBeenCalledWith('c-b')
+    const asked = mockConferences.getConference.mock.calls.map((call) => call[0] as string).sort()
+    expect(asked).toEqual(['c-a', 'c-b'])
     expect(screen.getAllByText('Конференция завершена')).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: 'Подключиться' })).toHaveLength(1)
 
@@ -368,20 +376,42 @@ describe('терминальное состояние вне живой сесс
     expect(mockConferences.getConference).toHaveBeenCalledWith('c-offline-1')
   })
 
-  it('чат с двумя историческими звонками — обе карточки завершены, ровно один №45 на открытие', async () => {
+  it('чат с двумя историческими звонками — обе карточки завершены, №45 — каждой своя (T076)', async () => {
     await renderPage()
     mockConferences.getConference.mockResolvedValue(
       conferenceView({ id: 'c-hist-2', status: 'ended' }),
     )
     await openAlice([inviteMessage(1, 'c-hist-1', 'video'), inviteMessage(2, 'c-hist-2', 'audio')])
 
-    // старая — деривация (без запроса), новейшая — фоновый №45 (ended)
+    // старая — терминальна деривацией сразу, новейшая — по фоновому №45
     await waitFor(() => {
       expect(screen.getAllByText('Конференция завершена')).toHaveLength(2)
     })
     expect(screen.queryByRole('button', { name: 'Подключиться' })).toBeNull()
-    expect(mockConferences.getConference).toHaveBeenCalledTimes(1)
-    expect(mockConferences.getConference).toHaveBeenCalledWith('c-hist-2')
+    expect(mockConferences.getConference).toHaveBeenCalledTimes(2)
+    const asked = mockConferences.getConference.mock.calls.map((call) => call[0] as string).sort()
+    expect(asked).toEqual(['c-hist-1', 'c-hist-2'])
+  })
+
+  it('T076: обе исторические карточки получают длительность своими фоновыми №45', async () => {
+    await renderPage()
+    mockConferences.getConference.mockImplementation((id: string) =>
+      Promise.resolve(
+        conferenceView({
+          id,
+          status: 'ended',
+          startedAt: id === 'c-hist-1' ? '2026-10-17T11:50:00.000Z' : '2026-10-17T12:10:00.000Z',
+          endedAt: id === 'c-hist-1' ? '2026-10-17T12:00:00.000Z' : '2026-10-17T12:30:00.000Z',
+        }),
+      ),
+    )
+    await openAlice([inviteMessage(1, 'c-hist-1', 'video'), inviteMessage(2, 'c-hist-2', 'audio')])
+
+    await waitFor(() => {
+      expect(screen.getByText('Конференция завершена · 10 мин')).toBeTruthy()
+    })
+    expect(screen.getByText('Конференция завершена · 20 мин')).toBeTruthy()
+    expect(mockConferences.getConference).toHaveBeenCalledTimes(2)
   })
 
   it('Problem conference_not_found новейшей карточки — «Конференция недоступна»', async () => {
