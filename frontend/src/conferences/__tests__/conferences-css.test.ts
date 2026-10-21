@@ -14,6 +14,13 @@ import { describe, expect, it } from 'vitest'
  * auth-наследия <section> (index.css), вертикаль 100dvh. Правила живут
  * в conferences.css и скоуплены ТОЛЬКО конференц-маркерами: index.css
  * и messenger.css не правятся (регресс-пины источников ниже).
+ *
+ * T079 — полноэкранный пин-оверлей: маркер conference-room-pinned на
+ * корневом div комнаты (живой пин T074/T078) → position: fixed на весь
+ * вьюпорт без скроллбаров, служебные панели страницы скрыты
+ * body:has(…), controls absolute снизу по центру поверх тайла,
+ * статус-строки/тост — absolute-оверлеи сверху; обычная геометрия
+ * тайлов T075 не регрессирует.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -84,5 +91,91 @@ describe('каркас конференц-страницы (T075): статич�
     const machine = messengerCss.match(/body:has\(\.machine\) #root\s*\{([^}]*)\}/)
     expect(machine?.[1]).toContain('max-width: none')
     expect(machine?.[1]).toContain('padding: 0')
+  })
+})
+
+describe('полноэкранный пин-оверлей (T079): статический пин CSS', () => {
+  it('маркер комнаты: fixed+inset — оверлей на весь вьюпорт, страховка overflow у body', () => {
+    const overlay = conferencesCss.match(/\.conference-room-pinned\s*\{([^}]*)\}/)
+    expect(overlay).not.toBeNull()
+    // комната вынимается из потока документа — контента выше вьюпорта
+    // не остаётся → скроллбаров нет; overflow — страховка границ
+    expect(overlay?.[1]).toContain('position: fixed')
+    expect(overlay?.[1]).toContain('inset: 0')
+    expect(overlay?.[1]).toContain('z-index')
+    expect(overlay?.[1]).toContain('overflow: hidden')
+    const body = conferencesCss.match(/body:has\(\.conference-room-pinned\)\s*\{([^}]*)\}/)
+    expect(body).not.toBeNull()
+    expect(body?.[1]).toContain('overflow: hidden')
+  })
+
+  it('пин-тайл внутри маркера — на весь экран: height 100%, потолки сняты, flex-рост', () => {
+    const tile = conferencesCss.match(
+      /\.conference-room-pinned \.conference-tile-pinned\s*\{([^}]*)\}/,
+    )
+    expect(tile).not.toBeNull()
+    expect(tile?.[1]).toContain('height: 100%')
+    expect(tile?.[1]).toContain('max-height: none')
+    expect(tile?.[1]).toContain('flex: 1')
+    expect(tile?.[1]).toContain('min-height: 0')
+  })
+
+  it('controls — absolute снизу по центру поверх тайла (DOM не покидает, хуки livekit живы)', () => {
+    const controls = conferencesCss.match(
+      /\.conference-room-pinned \.conference-controls\s*\{([^}]*)\}/,
+    )
+    expect(controls).not.toBeNull()
+    expect(controls?.[1]).toContain('position: absolute')
+    expect(controls?.[1]).toContain('bottom:')
+    expect(controls?.[1]).toContain('left: 50%')
+    expect(controls?.[1]).toContain('transform: translateX(-50%)')
+    expect(controls?.[1]).toContain('z-index')
+  })
+
+  it('служебные панели страницы скрыты по body:has; статус-строки и тост — absolute-оверлеи сверху', () => {
+    // скрытие остального: заголовок, «Вы в конференции»/identity, панели
+    // участников/модерации (у гостя её нет — правило не матчится),
+    // компактная полоса остальных тайлов
+    const hidden = conferencesCss.match(
+      /body:has\(\.conference-room-pinned\) \.conference-header[\s\S]{0,600}?\{([^}]*)\}/,
+    )
+    expect(hidden).not.toBeNull()
+    expect(hidden?.[1]).toContain('display: none')
+    for (const selector of [
+      'body:has(.conference-room-pinned) .conference-header',
+      'body:has(.conference-room-pinned) .conference-participants',
+      'body:has(.conference-room-pinned) .conference-moderation',
+      'body:has(.conference-room-pinned) .conference-identity',
+      'body:has(.conference-room-pinned) .conference-joined > output',
+      'body:has(.conference-room-pinned) .conference-tiles-compact',
+    ]) {
+      expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
+    }
+    // статус-строка реконнекта и тост conference.warning — в потоке
+    // отожмут высоту тайла: absolute-оверлеем сверху
+    const statusOverlay = conferencesCss.match(
+      /\.conference-room-pinned \.conference-room-status,\s*\.conference-room-pinned \.conference-room-media,\s*\.conference-room-pinned \.conference-warning-toast\s*\{([^}]*)\}/,
+    )
+    expect(statusOverlay).not.toBeNull()
+    expect(statusOverlay?.[1]).toContain('position: absolute')
+    expect(statusOverlay?.[1]).toContain('top:')
+    expect(statusOverlay?.[1]).toContain('transform: translateX(-50%)')
+  })
+
+  it('регресс T075/T074: обычный тайл хранит потолок 62dvh, пин-тайл вне оверлея — clamp', () => {
+    const tile = conferencesCss.match(/\.conference-tile\s*\{([^}]*)\}/)
+    expect(tile?.[1]).toContain('max-height: 62dvh')
+    const pinned = conferencesCss.match(/\.conference-tile-pinned\s*\{([^}]*)\}/)
+    expect(pinned?.[1]).toContain('height: clamp(260px, 62dvh, 1080px)')
+  })
+
+  it('T080: живой счётчик шапки — строка комнаты, скрытая полноэкранным пином вместе с панелями', () => {
+    // базовая строка живого счёта (children ConferenceRoom — над панелями)
+    const line = conferencesCss.match(/\.conference-live-count\s*\{([^}]*)\}/)
+    expect(line).not.toBeNull()
+    expect(line?.[1]).toContain('margin: 0')
+    // полноэкранный пин T079 накрывает счётчик CSS-скрытием — иначе
+    // строка висит поверх оверлея (добавлена к панелям body:has(…))
+    expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-live-count')
   })
 })

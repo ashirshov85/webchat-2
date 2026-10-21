@@ -3,7 +3,11 @@
  * каркас конференц-страницы T075 (растягивание обеих точек входа на
  * всё окно браузера), медиа-комната T027 (сетка тайлов, статус-строка,
  * тайлы экранов), панель управления T028 (тумблеры микрофона/камеры/
- * экрана, «Покинуть»), далее pre-join (T030), панели модерации/
+ * экрана, «Покинуть»), пин-раскладка T074 (закреплённый тайл большим
+ * внутри комнаты + компактная полоса) и её полноэкранный оверлей T079
+ * (маркер conference-room-pinned — комната position: fixed на весь
+ * вьюпорт без скроллбаров, скрытие служебных панелей, controls
+ * поверх тайла), далее pre-join (T030), панели модерации/
  * участников (US3) и гостевая страница (US4) дополняют этот же файл.
  * Стили — на токенах дизайн-системы «Aethergram» (theme/tokens.css,
  * FR-002): панельные подложки --panel-bg/--input-bg, кремовый текст
@@ -224,6 +228,7 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
  * на всю медиа-зону ВНУТРИ окна браузера (без Fullscreen API),
  * остальные — компактной горизонтальной полосой. Управление —
  * кнопка-тумблер на каждом тайле (двойной клик — дополнение).
+ * Полноэкранный режим закреплённого тайла — оверлей T079 ниже.
  * ============================================================ */
 
 /* Тумблер пина: правый верхний угол тайла, полупрозрачная подложка
@@ -260,7 +265,8 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
     62vh → 62dvh (мобильная динамика адресной строки); пол 260px
     держит юзабельность на низких окнах. Перекрывает и 16:9 камеры,
     и 21:9 демонстрации (после них в каскаде); под тайлом —
-    компактная полоса и панель управления. */
+    компактная полоса и панель управления. В полноэкранном оверлее
+    T079 эти границы снимаются правилом ниже (height 100%). */
 .conference-tile-pinned {
   aspect-ratio: auto;
   height: clamp(260px, 62dvh, 1080px);
@@ -277,6 +283,103 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
 .conference-tiles-compact .conference-tile {
   flex: 0 0 auto;
   width: clamp(140px, 18vw, 240px);
+}
+
+/* ============================================================
+ * Полноэкранный пин-оверлей (T079, US1): закреплённый тайл — на
+ * весь вьюпорт браузера БЕЗ скроллбаров вместо разворачивания
+ * внутри медиа-зоны (T074) среди служебных панелей. Маркер
+ * conference-room-pinned навешивается корневым div комнаты ровно
+ * на живой пин (ConferenceRoom: цель в живых рефах T074/автопин
+ * T078) — комната вынимается из потока документа (position: fixed;
+ * inset: 0), контента выше вьюпорта не остаётся; body overflow —
+ * страховка остаточной высоты секции. Служебные поверхности
+ * страницы (заголовок, «Вы в конференции»/identity, панели
+ * участников/модерации, компактная полоса) скрываются по
+ * body:has(…) — DOM жив: MediaControls (T028) остаётся под
+ * RoomContext (хуки livekit, переносить нельзя) и позиционируется
+ * absolute снизу по центру поверх тайла; статус-строки и тост
+ * conference.warning — absolute-оверлеи сверху (в потоке отожмут
+ * высоту тайла — «весь экран» не получится). Живой счётчик шапки
+ * (T080, ConferenceLiveCount в children) скрыт вместе со служебными
+ * панелями — иначе строка висит поверх оверлея. Скоуп — ТОЛЬКО маркер
+ * комнаты: обе точки входа (член ConferencePage и гость
+ * GuestJoinPage монтируют общий контур) получают одинаковую
+ * геометрию; у гостя части панелей нет — правило не матчится.
+ * Fullscreen API — по-прежнему вне scope (паритет T074/T075).
+ * ============================================================ */
+
+.conference-room-pinned {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow: hidden;
+}
+
+body:has(.conference-room-pinned) {
+  overflow: hidden;
+}
+
+/* Скрытие служебного окружения страницы: заголовок .conference-header,
+   строка «Вы в конференции» (output прямой ребёнок .conference-joined),
+   identity, панели участников/модерации, живой счётчик подключённых
+   (T080), компактная полоса тайлов. */
+body:has(.conference-room-pinned) .conference-header,
+body:has(.conference-room-pinned) .conference-participants,
+body:has(.conference-room-pinned) .conference-moderation,
+body:has(.conference-room-pinned) .conference-identity,
+body:has(.conference-room-pinned) .conference-live-count,
+body:has(.conference-room-pinned) .conference-joined > output,
+body:has(.conference-room-pinned) .conference-tiles-compact {
+  display: none;
+}
+
+/* Пин-тайл — на весь экран комнаты: потолок clamp T074/T075 снят,
+   flex-рост в колонке комнаты; видео уже абсолютная поверхность
+   object-fit contain (T075) — intrinsic-размеры трека не расширяют
+   тайл и не порождают скролл. */
+.conference-room-pinned .conference-tile-pinned {
+  height: 100%;
+  max-height: none;
+  flex: 1;
+  min-height: 0;
+}
+
+/* MediaControls остаётся в DOM под RoomContext (хуки livekit) —
+   только позиционирование: снизу по центру поверх тайла. */
+.conference-room-pinned .conference-controls {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  max-width: calc(100% - 24px);
+}
+
+/* Статус-строка реконнекта и тост conference.warning —
+   absolute-оверлеи сверху: в потоке отожмут высоту тайла. */
+.conference-room-pinned .conference-room-status,
+.conference-room-pinned .conference-room-media,
+.conference-room-pinned .conference-warning-toast {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  margin: 0;
+  width: max-content;
+  max-width: calc(100% - 24px);
+}
+
+/* Живой счётчик подключённых участников шапки joined-состояния
+   (T080): ConferenceLiveCount в слоте children комнаты — над панелями
+   участников/модерации; та же лексика подписи, что строка снимка №45
+   в header (pre-join). Скрыт полноэкранным пином T079 — см. блок
+   оверлея ниже. */
+.conference-live-count {
+  margin: 0;
+  font: 12.5px var(--font-body);
+  color: var(--muted);
 }
 
 /* Панель управления конференцией (T028): тумблеры микрофона/камеры/экрана

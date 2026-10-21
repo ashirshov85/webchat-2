@@ -115,6 +115,41 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     expect(screen.getByText('Ваша роль: модератор')).toBeInTheDocument()
   })
 
+  it('joined: живой счётчик useParticipants вместо застывшего снимка №45 в шапке (T080)', async () => {
+    // снимок №45 устарел уже через минуту в звонке: здесь 3 — чтобы
+    // статическая строка и живой счётчик различались в DOM
+    resolveBundle(conferenceView({ activeParticipants: 3 }))
+    conferences.joinConference.mockResolvedValue(joinTicket())
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Войти' }))
+
+    await screen.findByText('Вы в конференции')
+    // статическая строка снимка №45 в header уходит (дубль цифр)…
+    expect(screen.queryByText('Участники: 3 / 16')).not.toBeInTheDocument()
+    // …её замещает живой счётчик в слоте children комнаты: jsdom-комната
+    // livekit — только localParticipant (1); источник — useParticipants,
+    // тот же, что панель «Участники (N)» (T041, конституция III)
+    expect(await screen.findByText('Участники: 1 / 16')).toBeInTheDocument()
+  })
+
+  it('после «Покинуть» снимок №45+№46 обновляется один раз — без запрос-циклов (T080)', async () => {
+    resolveBundle(conferenceView({ activeParticipants: 2 }))
+    conferences.joinConference.mockResolvedValue(joinTicket())
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Войти' }))
+    await screen.findByText('Вы в конференции')
+    fireEvent.click(await screen.findByRole('button', { name: 'Покинуть' }))
+
+    // возврат на pre-join (снимок №45 снова в шапке) + ровно один
+    // повтор пакета №45+№46 — актуализация activeParticipants после выхода
+    expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
+    expect(screen.getByText('Участники: 2 / 16')).toBeInTheDocument()
+    await waitFor(() => expect(conferences.getConference).toHaveBeenCalledTimes(2))
+    expect(conferences.getConferenceMe).toHaveBeenCalledTimes(2)
+  })
+
   it('shows «Конференция завершена» for a №45 ended status without a pre-join', async () => {
     resolveBundle(conferenceView({ status: 'ended', endReason: 'last_left' }))
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
