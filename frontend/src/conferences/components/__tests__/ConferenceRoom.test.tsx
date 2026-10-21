@@ -28,6 +28,13 @@ import type { JoinTicket } from '../../api/conferences'
  * участников, включая собственную демонстрацию); правило «только
  * при пустом пине»: ручной пин не перебивается, вторая демонстрация
  * не переключает первую, ручное сворачивание не зацикливает автопин.
+ *
+ * 009, US1, T079 — полноэкранный пин-оверлей: живой пин навешивает
+ * маркер-класс conference-room-pinned на корневой div комнаты
+ * (поднятие pinnedTileKey в контур комнаты), сворачивание/уход цели/
+ * завершение демонстрации снимают; инварианты T074/T078 не меняются,
+ * children (MediaControls) остаются в DOM под RoomContext —
+ * позиционирование поверх тайла — CSS (conferences.css).
  */
 
 const lk = vi.hoisted(() => {
@@ -1437,5 +1444,161 @@ describe('ConferenceRoom — автопин демонстрации экран�
     expect(document.querySelector('.conference-tile-pinned')).toBeNull()
     expect(screensSection()).toHaveTextContent('Экран — carol')
     expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+  })
+})
+
+describe('ConferenceRoom — полноэкранный пин-оверлей (009 US1 T079)', () => {
+  /** Тайл по подписи-имени участника (figcaption). */
+  function tileByLabel(name: string): HTMLElement {
+    const label = screen.getByText(name, { exact: false })
+    const tile = label.closest('figure')
+    if (tile === null) {
+      throw new Error(`тайл участника «${name}» не найден`)
+    }
+    return tile
+  }
+
+  /** Корневой div комнаты — несёт маркер оверлея в пин-состоянии (T079). */
+  function roomRoot(): HTMLElement {
+    const root = document.querySelector<HTMLElement>('.conference-room')
+    if (root === null) {
+      throw new Error('корневой div комнаты не найден')
+    }
+    return root
+  }
+
+  function renderRoom(): ReturnType<typeof render> {
+    return render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Живое обновление track-рефов (переходы «не было → появился» и уход). */
+  function rerenderRoom(view: ReturnType<typeof render>): void {
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Пин тайла кнопкой-тумблером «Развернуть» (явный путь, 008). */
+  function pinTile(tile: HTMLElement): void {
+    fireEvent.click(within(tile).getByRole('button', { name: 'Развернуть' }))
+  }
+
+  /** Свернуть закреплённый тайл кнопкой-тумблером «Свернуть». */
+  function collapseTile(tile: HTMLElement): void {
+    fireEvent.click(within(tile).getByRole('button', { name: 'Свернуть' }))
+  }
+
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+    lkc.speakers = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('(а) ручной пин навешивает маркер-класс conference-room-pinned на комнату, сворачивание снимает', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    renderRoom()
+    await waitFor(() => tileByLabel('bob'))
+    // обычная сетка — маркера оверлея нет
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(false)
+
+    pinTile(tileByLabel('bob'))
+    // живой пин → корневой div комнаты несёт маркер (CSS разворачивает
+    // полноэкранный оверлей), закреплённый тайл на месте
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(true)
+    expect(tileByLabel('bob')).toHaveClass('conference-tile-pinned')
+
+    // сворачивание — маркер снят тем же рендером, что вернул сетку
+    collapseTile(tileByLabel('bob'))
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(false)
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+  })
+
+  it('(б) автопин демонстрации T078 навешивает маркер, завершение демонстрации снимает', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    await waitFor(() => tileByLabel('bob'))
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(false)
+
+    // старт демонстрации при пустом пине — автопин разворачивает оверлей
+    // БЕЗ ручного клика
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+    await waitFor(() => {
+      expect(roomRoot().classList.contains('conference-room-pinned')).toBe(true)
+    })
+    expect(tileByLabel('Экран — bob')).toHaveClass('conference-tile-pinned')
+
+    // завершение демонстрации — сброс пина наследует снятие маркера
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    rerenderRoom(view)
+    await waitFor(() => {
+      expect(screen.queryByText('Экран — bob')).toBeNull()
+    })
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(false)
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+  })
+
+  it('(в) закреплённый покидает комнату — маркер снимается (цель ушла из живых рефов)', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    pinTile(await waitFor(() => tileByLabel('bob')))
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(true)
+
+    lkc.trackRefs = [{ participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' }]
+    rerenderRoom(view)
+    await waitFor(() => {
+      expect(roomRoot().classList.contains('conference-room-pinned')).toBe(false)
+    })
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+  })
+
+  it('(г) в оверлее children (MediaControls) и аудио остаются в DOM — позиционирование CSS', async () => {
+    // T079 (3): MediaControls НЕ переносится — хуки livekit живут в
+    // RoomContext; полноэкранная геометрия и показ поверх тайла — CSS
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    renderRoom()
+    pinTile(await waitFor(() => tileByLabel('bob')))
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(true)
+    expect(screen.getByTestId('controls-slot')).not.toBeNull()
+    expect(screen.getByTestId('lk-audio-renderer')).not.toBeNull()
   })
 })

@@ -27,6 +27,12 @@ import {
  * медиа-зону у ВСЕХ участников без ручного клика (пин-раскладка
  * T074 поверх MediaControls «Экран»; завершение — возврат сетки).
  *
+ * 009, US1, T079 — e2e полноэкранного пин-оверлея: ручной пин
+ * разворачивает закреплённый тайл на весь вьюпорт БЕЗ скроллбаров
+ * (scrollHeight/scrollWidth === окну), controls остаются видимы
+ * поверх тайла снизу по центру, служебные панели скрыты; сворачивание
+ * возвращает обычную раскладку со всеми панелями.
+ *
  * 009, US3, T043 — e2e модерации (quickstart §3.3): мьют микрофона
  * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
  * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
@@ -460,6 +466,72 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     // звонок продолжается обычной сеткой
     await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
     await expect(alicePage.getByText('Вы в конференции')).toBeVisible()
+  })
+
+  test('T079: пин — тайл на весь экран без скроллбаров, controls поверх тайла; сворачивание возвращает раскладку', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+
+    // широкое окно (паритет T075): полноэкранная геометрия видна
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id, { width: 1600, height: 900 }),
+      openConferencePage(browser, bobNow, conference.id, { width: 1600, height: 900 }),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
+      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+    ])
+
+    // обычная раскладка: маркера полноэкранного оверлея нет
+    await expect(bobPage.locator('.conference-room-pinned')).toHaveCount(0)
+
+    // bob разворачивает тайл собеседника — комната уходит в оверлей
+    // на весь вьюпорт (маркер на корневом div комнаты)
+    await tilesSection(bobPage).getByRole('button', { name: 'Развернуть' }).first().click()
+    await expect(bobPage.locator('.conference-room-pinned')).toHaveCount(1)
+    await expect(bobPage.locator('.conference-tile-pinned')).toHaveCount(1)
+
+    // контента выше вьюпорта нет — скроллбаров нет (суть T079)
+    const fitsViewport = await bobPage.evaluate(() => {
+      const doc = document.documentElement
+      return doc.scrollHeight === window.innerHeight && doc.scrollWidth === window.innerWidth
+    })
+    expect(fitsViewport, 'полноэкранный пин: scrollHeight/scrollWidth === вьюпорту').toBe(true)
+
+    // controls видимы поверх тайла — снизу по центру, в границах окна
+    const controls = bobPage.getByRole('group', { name: 'Управление конференцией' })
+    await expect(controls).toBeVisible()
+    const controlsBox = await controls.boundingBox()
+    const viewport = bobPage.viewportSize()
+    expect(controlsBox).not.toBeNull()
+    expect(controlsBox?.x, 'controls не выходят за левый край').toBeGreaterThanOrEqual(0)
+    expect(controlsBox?.y, 'controls — в нижней половине окна').toBeGreaterThan(
+      (viewport?.height ?? 0) / 2,
+    )
+    expect(
+      (controlsBox?.x ?? 0) + (controlsBox?.width ?? 0),
+      'controls не выходят за правый край',
+    ).toBeLessThanOrEqual(viewport?.width ?? 0)
+
+    // служебные панели страницы скрыты (заголовок, «Вы в конференции»)
+    await expect(bobPage.locator('.conference-header')).toBeHidden()
+    await expect(bobPage.getByText('Вы в конференции')).toBeHidden()
+
+    // свернул — обычная раскладка со всеми панелями вернулась
+    await bobPage
+      .locator('.conference-tile-pinned')
+      .getByRole('button', { name: 'Свернуть' })
+      .click()
+    await expect(bobPage.locator('.conference-room-pinned')).toHaveCount(0)
+    await expect(bobPage.locator('.conference-header')).toBeVisible()
+    await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
+    // звонок продолжается обычной сеткой
+    await expect(
+      tilesSection(bobPage).getByText(aliceNow.username, { exact: true }).first(),
+    ).toBeVisible()
   })
 })
 

@@ -65,6 +65,15 @@
  * RoomEvent.DataReceived по теме → тост «конференция завершится по
  * лимиту длительности» (закрывается вручную — событие одно, до
  * контролируемого завершения остаётся warning-before-end).
+ *
+ * Полноэкранный пин-оверлей (T079): живой пин (T074/T078) навешивает
+ * маркер-класс conference-room-pinned на корневой div комнаты —
+ * пин-состояние поднято в живой контур комнаты ConferenceRoomLive
+ * (хукам тайлов нужна живая комната под RoomContext); CSS
+ * (conferences.css) разворачивает комнату на весь вьюпорт браузера
+ * без скроллбаров — семантика пина T074/T078 не меняется, слот
+ * children (MediaControls/панели) остаётся в DOM и позиционируется
+ * поверх тайла. Fullscreen API — вне scope (паритет T074/T075).
  */
 import {
   isTrackReference,
@@ -388,16 +397,19 @@ function tilePinKey(ref: TrackReferenceOrPlaceholder): string {
 }
 
 /**
- * Медиа-слой комнаты (внутри RoomContext): аудио всех удалённых
+ * Медиа-слой + корневой контур комнаты (T079 — пин-состояние поднято
+ * сюда из медиа-слоя; внутри RoomContext — хукам useTracks/
+ * useSpeakingParticipants нужна живая комната): аудио всех удалённых
  * участников — RoomAudioRenderer (микрофоны и звук демонстраций
  * экрана), видео — тайлы: сетка камер/заглушек-аватаров участников
  * (CameraTile: имя, индикатор речи, аватар без камеры — T073) и
  * широкие тайлы демонстраций экрана (VideoTrack). adaptiveStream
- * держит паузу невидимых тайлов (FR-004).
+ * держит паузу невидимых тайлов (FR-004). Слот children
+ * (MediaControls/панели US3/US4) остаётся в DOM под RoomContext —
+ * переносить нельзя (хуки livekit), геометрия пин-оверлея — CSS.
  *
  * Пин-раскладка (T074): локальное состояние закреплённого тайла
- * (identity:source) — закреплённый рендерится большим на всю
- * медиа-зону ВНУТРИ окна браузера (без Fullscreen API), остальные —
+ * (identity:source) — закреплённый рендерится большим, остальные —
  * компактной полосой; повторный пин другого тайла — переключение
  * (закреплён всегда ≤1), закреплённого — сворачивание. Пин-цель
  * выводится из живых track-рефов: выход участника из комнаты или
@@ -407,9 +419,20 @@ function tilePinKey(ref: TrackReferenceOrPlaceholder): string {
  * (onlySubscribed: false) — adaptiveStream (FR-004) сам поднимает
  * качество ставшему большим тайлу, ничего дособирать не нужно.
  *
+ * Полноэкранный пин-оверлей (T079): живой пин → маркер-класс
+ * conference-room-pinned на корневом div комнаты — CSS (conferences.css)
+ * разворачивает комнату на весь вьюпорт браузера без скроллбаров
+ * (position: fixed; скрытие служебных панелей страницы по body:has(…);
+ * MediaControls — absolute снизу по центру поверх тайла; статус-строки
+ * и тост — absolute-оверлеи сверху). Снятие пина (сворачивание/уход
+ * цели/завершение демонстрации) снимает маркер тем же рендером, что
+ * возвращает обычную сетку. Обе точки входа (член/гость) получают
+ * одинаковую геометрию одним маркером. Fullscreen API — вне scope
+ * (паритет T074/T075).
+ *
  * Автопин демонстрации экрана (T078): появление НОВОГО screen-ref'а
  * (переход «не было → появился», включая собственную демонстрацию)
- * при ПУСТОМ пине разворачивает тайл на всю медиа-зону без ручного
+ * при ПУСТОМ пине разворачивает тайл на весь экран без ручного
  * клика — у всех участников; завершение демонстрации сбрасывает пин
  * обычной деривацией T074. Детерминированное правило «только при
  * пустом пине»: ручной пин зрителя стартом демонстрации не
@@ -423,7 +446,23 @@ function tilePinKey(ref: TrackReferenceOrPlaceholder): string {
  * рендера (derived state, React): атомарно с рендером, заметившим
  * новый ref, без гонки эффекта с ручным кликом на первом коммите.
  */
-function ConferenceMedia() {
+function ConferenceRoomLive({
+  conferenceId,
+  phase,
+  mediaNotice,
+  warningVisible,
+  onWarningDismiss,
+  children,
+}: {
+  readonly conferenceId: string
+  readonly phase: ConferenceRoomPhase
+  /** Текст предупреждения об отказе устройств (T032) — null, если отказа нет. */
+  readonly mediaNotice: string | null
+  /** Тост conference.warning показан (T060 ← T056). */
+  readonly warningVisible: boolean
+  readonly onWarningDismiss: () => void
+  readonly children?: ReactNode
+}) {
   const cameraTiles = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], {
     onlySubscribed: false,
   })
@@ -432,6 +471,9 @@ function ConferenceMedia() {
   const speakerIdentities = new Set(speakers.map((participant) => participant.identity))
   const [pinnedTileKey, setPinnedTileKey] = useState<string | null>(null)
   const [seenScreenKeys, setSeenScreenKeys] = useState<ReadonlySet<string>>(() => new Set<string>())
+  // Медиа-тайлы рендерятся только в живых фазах (как монтаж медиа-слоя
+  // до T079): маркер оверлея и автопин следуют тому же окну.
+  const mediaVisible = phase === 'connected' || phase === 'reconnecting'
   // Пин-цель из живых рефов (undefined — цель исчезла: выход участника
   // из комнаты / завершение закреплённой демонстрации → обычная сетка).
   const pinnedScreen =
@@ -445,7 +487,10 @@ function ConferenceMedia() {
   // Живой пин (цель существует): пустой пин для автопина T078 — именно
   // отсутствие развёрнутого тайла (в т.ч. «висячий» ключ после ухода
   // закреплённого участника), а не только null в состоянии.
-  const livePin = pinnedScreen !== undefined || pinnedCamera !== undefined
+  const livePinTarget = pinnedScreen !== undefined || pinnedCamera !== undefined
+  // Маркер оверлея — ровно когда развёрнутый тайл реально рендерится
+  // (T079): терминальные/служебные фазы маркер не поднимают.
+  const roomPinned = mediaVisible && livePinTarget
   const togglePin = (key: string): void => {
     setPinnedTileKey((current) => (current === key ? null : key))
   }
@@ -458,81 +503,100 @@ function ConferenceMedia() {
   const appearedScreenKey = screenTiles
     .map((ref) => tilePinKey(ref))
     .find((key) => !seenScreenKeys.has(key))
-  if (appearedScreenKey !== undefined || seenScreenKeys.size !== screenTiles.length) {
-    if (appearedScreenKey !== undefined && !livePin) {
+  if (
+    mediaVisible &&
+    (appearedScreenKey !== undefined || seenScreenKeys.size !== screenTiles.length)
+  ) {
+    if (appearedScreenKey !== undefined && !livePinTarget) {
       setPinnedTileKey(appearedScreenKey)
     }
     setSeenScreenKeys(new Set(screenTiles.map((ref) => tilePinKey(ref))))
   }
-  if (pinnedScreen !== undefined || pinnedCamera !== undefined) {
-    const restScreens = screenTiles.filter((ref) => ref !== pinnedScreen)
-    const restCameras = cameraTiles.filter((ref) => ref !== pinnedCamera)
-    return (
-      <>
-        <RoomAudioRenderer />
-        {pinnedScreen !== undefined && (
-          <ScreenTile
-            trackRef={pinnedScreen}
-            pinned
-            onTogglePin={() => togglePin(tilePinKey(pinnedScreen))}
-          />
-        )}
-        {pinnedCamera !== undefined && (
-          <CameraTile
-            trackRef={pinnedCamera}
-            pinned
-            speaking={speakerIdentities.has(pinnedCamera.participant.identity)}
-            onTogglePin={() => togglePin(tilePinKey(pinnedCamera))}
-          />
-        )}
-        <section
-          className="conference-tiles conference-tiles-compact"
-          aria-label="Участники конференции"
-        >
-          {restScreens.map((ref) => (
-            <ScreenTile
-              trackRef={ref}
-              key={tilePinKey(ref)}
-              onTogglePin={() => togglePin(tilePinKey(ref))}
-            />
-          ))}
-          {restCameras.map((ref) => (
-            <CameraTile
-              trackRef={ref}
-              key={tilePinKey(ref)}
-              speaking={speakerIdentities.has(ref.participant.identity)}
-              onTogglePin={() => togglePin(tilePinKey(ref))}
-            />
-          ))}
-        </section>
-      </>
-    )
-  }
+  const statusText = phaseStatusText(phase)
+  const roomClass = roomPinned ? 'conference-room conference-room-pinned' : 'conference-room'
+  const pinnedLayout = pinnedScreen !== undefined || pinnedCamera !== undefined
+  const restScreens = pinnedLayout ? screenTiles.filter((ref) => ref !== pinnedScreen) : []
+  const restCameras = pinnedLayout ? cameraTiles.filter((ref) => ref !== pinnedCamera) : []
   return (
-    <>
-      <RoomAudioRenderer />
-      {screenTiles.length > 0 && (
-        <section className="conference-screens" aria-label="Демонстрации экрана">
-          {screenTiles.map((ref) => (
-            <ScreenTile
-              trackRef={ref}
-              key={tilePinKey(ref)}
-              onTogglePin={() => togglePin(tilePinKey(ref))}
-            />
-          ))}
-        </section>
+    <div className={roomClass} data-conference-room={conferenceId}>
+      {statusText !== null && <output className="conference-room-status">{statusText}</output>}
+      {mediaNotice !== null && <output className="conference-room-media">{mediaNotice}</output>}
+      {warningVisible && (
+        <output className="conference-warning-toast" data-conference-warning>
+          <span>{WARNING_TOAST_TEXT}</span>
+          <button type="button" onClick={onWarningDismiss}>
+            Закрыть
+          </button>
+        </output>
       )}
-      <section className="conference-tiles" aria-label="Участники конференции">
-        {cameraTiles.map((ref) => (
-          <CameraTile
-            key={tilePinKey(ref)}
-            trackRef={ref}
-            speaking={speakerIdentities.has(ref.participant.identity)}
-            onTogglePin={() => togglePin(tilePinKey(ref))}
-          />
+      {mediaVisible &&
+        (pinnedLayout ? (
+          <>
+            <RoomAudioRenderer />
+            {pinnedScreen !== undefined && (
+              <ScreenTile
+                trackRef={pinnedScreen}
+                pinned
+                onTogglePin={() => togglePin(tilePinKey(pinnedScreen))}
+              />
+            )}
+            {pinnedCamera !== undefined && (
+              <CameraTile
+                trackRef={pinnedCamera}
+                pinned
+                speaking={speakerIdentities.has(pinnedCamera.participant.identity)}
+                onTogglePin={() => togglePin(tilePinKey(pinnedCamera))}
+              />
+            )}
+            <section
+              className="conference-tiles conference-tiles-compact"
+              aria-label="Участники конференции"
+            >
+              {restScreens.map((ref) => (
+                <ScreenTile
+                  trackRef={ref}
+                  key={tilePinKey(ref)}
+                  onTogglePin={() => togglePin(tilePinKey(ref))}
+                />
+              ))}
+              {restCameras.map((ref) => (
+                <CameraTile
+                  trackRef={ref}
+                  key={tilePinKey(ref)}
+                  speaking={speakerIdentities.has(ref.participant.identity)}
+                  onTogglePin={() => togglePin(tilePinKey(ref))}
+                />
+              ))}
+            </section>
+          </>
+        ) : (
+          <>
+            <RoomAudioRenderer />
+            {screenTiles.length > 0 && (
+              <section className="conference-screens" aria-label="Демонстрации экрана">
+                {screenTiles.map((ref) => (
+                  <ScreenTile
+                    trackRef={ref}
+                    key={tilePinKey(ref)}
+                    onTogglePin={() => togglePin(tilePinKey(ref))}
+                  />
+                ))}
+              </section>
+            )}
+            <section className="conference-tiles" aria-label="Участники конференции">
+              {cameraTiles.map((ref) => (
+                <CameraTile
+                  key={tilePinKey(ref)}
+                  trackRef={ref}
+                  speaking={speakerIdentities.has(ref.participant.identity)}
+                  onTogglePin={() => togglePin(tilePinKey(ref))}
+                />
+              ))}
+            </section>
+          </>
         ))}
-      </section>
-    </>
+      {children}
+    </div>
   )
 }
 
@@ -823,22 +887,22 @@ export default function ConferenceRoom({
       </div>
     )
   }
+  // Живой контур (T079): под RoomContext (хукам тайлов нужна живая
+  // комната) — корневой div + медиа-слой + children; пин-состояние и
+  // маркер полноэкранного оверлея — в контуре.
   return (
     <RoomContext.Provider value={room}>
-      <div className="conference-room" data-conference-room={conferenceId}>
-        {statusText !== null && <output className="conference-room-status">{statusText}</output>}
-        {mediaNotice !== null && <output className="conference-room-media">{mediaNotice}</output>}
-        {warningVisible && (
-          <output className="conference-warning-toast" data-conference-warning>
-            <span>{WARNING_TOAST_TEXT}</span>
-            <button type="button" onClick={() => setWarningVisible(false)}>
-              Закрыть
-            </button>
-          </output>
-        )}
-        {(phase === 'connected' || phase === 'reconnecting') && <ConferenceMedia />}
+      <ConferenceRoomLive
+        conferenceId={conferenceId}
+        phase={phase}
+        mediaNotice={mediaNotice}
+        warningVisible={warningVisible}
+        onWarningDismiss={() => {
+          setWarningVisible(false)
+        }}
+      >
         {children}
-      </div>
+      </ConferenceRoomLive>
     </RoomContext.Provider>
   )
 }
