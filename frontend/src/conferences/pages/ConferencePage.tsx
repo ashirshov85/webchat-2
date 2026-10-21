@@ -38,6 +38,13 @@
  * снятия роли), и MediaControls (T028): тумблеры микрофона/камеры/
  * экрана и «Покинуть» (выход — leave слота вкладки,
  * Q10=A, возврат на pre-join для возможного повторного входа).
+ * T080: в звонке шапка показывает ЖИВОЕ число подключённых —
+ * ConferenceLiveCount в слоте children комнаты (useParticipants —
+ * источник T041, совпадает с «Участники (N)» панели), статическая
+ * строка снимка №45 в header на joined-состоянии убирается (дубль
+ * цифр); pre-join/после выхода — снимок №45 (leave обновляет пакет
+ * №45+№46 один раз, без запрос-циклов), реалтайм-канала у
+ * не-подключённого нет — поллинг сознательно не вводится.
  * Сообщения об ошибках — нейтральные, без раскрытия деталей
  * (существование не раскрывается, api-contract §1): ветвление UX по
  * коду Problem, а не HTTP-статусу (конвенция 002).
@@ -50,6 +57,7 @@ import { useParticipantProfiles } from '../hooks/useParticipantProfiles'
 import { ParticipantProfilesContext } from '../profiles'
 import type { ConferenceDeviceSelection } from '../hooks/useDevices'
 import { endedConferenceLabel, formatSpanDuration } from '../../ui/duration'
+import ConferenceLiveCount from '../components/ConferenceLiveCount'
 import ConferenceRoom from '../components/ConferenceRoom'
 import type { ConferenceRoomInitialMedia } from '../components/ConferenceRoom'
 import MediaControls from '../components/MediaControls'
@@ -108,11 +116,12 @@ function loadErrorMessage(code: ConferenceErrorCode | null): string {
     : 'Не удалось загрузить конференцию'
 }
 
-/** Блок подключенной вкладки (T026/T027/T028 + панель участников T041): медиа-комната + список участников + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
+/** Блок подключенной вкладки (T026/T027/T028 + панель участников T041 + живой счётчик шапки T080): медиа-комната + живое число подключённых + список участников + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
 function JoinedPanel({
   conferenceId,
   ticket,
   mode,
+  maxParticipants,
   initialMedia,
   initialDevices,
   refreshTicket,
@@ -123,6 +132,12 @@ function JoinedPanel({
   readonly conferenceId: string
   readonly ticket: JoinTicket
   readonly mode: ConferenceMode
+  /**
+   * Потолок квоты №45-вида (T080): проброс в живой счётчик шапки —
+   * ConferenceLiveCount в слоте children комнаты (внутри RoomContext —
+   * хуку нужна живая комната), новый запрос не вводится.
+   */
+  readonly maxParticipants: number
   /** Стартовое состояние pre-join (T034): оба выкл — «только слушаю» (FR-006). */
   readonly initialMedia?: ConferenceRoomInitialMedia
   /** Стартовый выбор устройств pre-join (T034) — применение в useDevices комнаты. */
@@ -150,6 +165,7 @@ function JoinedPanel({
         initialDevices={initialDevices}
         refreshTicket={refreshTicket}
       >
+        <ConferenceLiveCount maxParticipants={maxParticipants} />
         <ParticipantsPanel />
         <ModerationPanel conferenceId={conferenceId} />
         <MediaControls
@@ -226,9 +242,15 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
         <>
           <header className="conference-header">
             <h1>{conferenceTitle(conference.mode)}</h1>
-            <p>
-              Участники: {conference.activeParticipants} / {conference.maxParticipants}
-            </p>
+            {/* Снимок №45 «на момент запроса» (T080): в joined-состоянии
+                строку держит живой счётчик комнаты (ConferenceLiveCount —
+                useParticipants, источник T041) — статический дубль убран;
+                pre-join/после выхода/терминальные фазы — снимок №45. */}
+            {joinStatus !== 'joined' && (
+              <p>
+                Участники: {conference.activeParticipants} / {conference.maxParticipants}
+              </p>
+            )}
             {me !== null && <p>Ваша роль: {me.role === 'moderator' ? 'модератор' : 'участник'}</p>}
           </header>
           {ended ? (
@@ -250,6 +272,7 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
                     conferenceId={conferenceId}
                     ticket={ticket}
                     mode={conference.mode}
+                    maxParticipants={conference.maxParticipants}
                     initialMedia={
                       selection !== null
                         ? { microphone: selection.microphone, camera: selection.camera }

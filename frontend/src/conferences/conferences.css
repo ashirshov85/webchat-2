@@ -300,7 +300,9 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
  * RoomContext (хуки livekit, переносить нельзя) и позиционируется
  * absolute снизу по центру поверх тайла; статус-строки и тост
  * conference.warning — absolute-оверлеи сверху (в потоке отожмут
- * высоту тайла — «весь экран» не получится). Скоуп — ТОЛЬКО маркер
+ * высоту тайла — «весь экран» не получится). Живой счётчик шапки
+ * (T080, ConferenceLiveCount в children) скрыт вместе со служебными
+ * панелями — иначе строка висит поверх оверлея. Скоуп — ТОЛЬКО маркер
  * комнаты: обе точки входа (член ConferencePage и гость
  * GuestJoinPage монтируют общий контур) получают одинаковую
  * геометрию; у гостя части панелей нет — правило не матчится.
@@ -320,11 +322,13 @@ body:has(.conference-room-pinned) {
 
 /* Скрытие служебного окружения страницы: заголовок .conference-header,
    строка «Вы в конференции» (output прямой ребёнок .conference-joined),
-   identity, панели участников/модерации, компактная полоса тайлов. */
+   identity, панели участников/модерации, живой счётчик подключённых
+   (T080), компактная полоса тайлов. */
 body:has(.conference-room-pinned) .conference-header,
 body:has(.conference-room-pinned) .conference-participants,
 body:has(.conference-room-pinned) .conference-moderation,
 body:has(.conference-room-pinned) .conference-identity,
+body:has(.conference-room-pinned) .conference-live-count,
 body:has(.conference-room-pinned) .conference-joined > output,
 body:has(.conference-room-pinned) .conference-tiles-compact {
   display: none;
@@ -365,6 +369,17 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   margin: 0;
   width: max-content;
   max-width: calc(100% - 24px);
+}
+
+/* Живой счётчик подключённых участников шапки joined-состояния
+   (T080): ConferenceLiveCount в слоте children комнаты — над панелями
+   участников/модерации; та же лексика подписи, что строка снимка №45
+   в header (pre-join). Скрыт полноэкранным пином T079 — см. блок
+   оверлея ниже. */
+.conference-live-count {
+  margin: 0;
+  font: 12.5px var(--font-body);
+  color: var(--muted);
 }
 
 /* Панель управления конференцией (T028): тумблеры микрофона/камеры/экрана

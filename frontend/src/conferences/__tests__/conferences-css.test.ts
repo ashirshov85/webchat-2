@@ -168,4 +168,14 @@ describe('полноэкранный пин-оверлей (T079): статич�
     const pinned = conferencesCss.match(/\.conference-tile-pinned\s*\{([^}]*)\}/)
     expect(pinned?.[1]).toContain('height: clamp(260px, 62dvh, 1080px)')
   })
+
+  it('T080: живой счётчик шапки — строка комнаты, скрытая полноэкранным пином вместе с панелями', () => {
+    // базовая строка живого счёта (children ConferenceRoom — над панелями)
+    const line = conferencesCss.match(/\.conference-live-count\s*\{([^}]*)\}/)
+    expect(line).not.toBeNull()
+    expect(line?.[1]).toContain('margin: 0')
+    // полноэкранный пин T079 накрывает счётчик CSS-скрытием — иначе
+    // строка висит поверх оверлея (добавлена к панелям body:has(…))
+    expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-live-count')
+  })
 })

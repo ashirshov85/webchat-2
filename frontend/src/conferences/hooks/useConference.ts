@@ -84,7 +84,14 @@ export interface UseConferenceResult {
    * Возвращает тикет или null при сбое/устаревании ответа.
    */
   readonly refreshTicket: () => Promise<JoinTicket | null>
-  /** Корректный выход: disconnect слота + возврат к idle (повторный join возможен). */
+  /**
+   * Корректный выход: disconnect слота + возврат к idle (повторный join
+   * возможен). T080 — после выхода снимок №45+№46 обновляется ОДИН раз
+   * (best-effort, тихо): activeParticipants на pre-join догоняет
+   * медиа-плоскость после собственного ухода без поллинга; повторный
+   * вход/смена экрана до ответа гасит применение (guard по joinStatus),
+   * отказ ничего не меняет — экран не рушится.
+   */
   readonly leave: () => void
 }
 
@@ -312,6 +319,18 @@ export function useConference(conferenceId: string): UseConferenceResult {
     setTicket(null)
     setJoinError(null)
     applyJoinStatus('idle')
+    // T080: обновление снимка после leave — один повтор пакета №45+№46,
+    // применение только пока вкладка остаётся на idle (повторный вход
+    // раньше ответа — снимок не применяется, конституция III); тихий
+    // best-effort — отказ не рушит pre-join, запрос-циклов нет.
+    void Promise.all([getConference(conferenceId), getConferenceMe(conferenceId)])
+      .then(([view, meView]) => {
+        if (joinStatusRef.current === 'idle') {
+          setConference(view)
+          setMe(meView)
+        }
+      })
+      .catch(() => {})
   }, [applyJoinStatus, conferenceId])
 
   const ended = conference?.status === 'ended' || joinStatus === 'ended'
