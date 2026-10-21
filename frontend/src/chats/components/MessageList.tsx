@@ -1043,7 +1043,8 @@ export interface MessageListProps {
    * useConferenceRealtime). Применяется ТОЛЬКО к карточке, чей
    * conferenceId совпал с `endedConferenceId` — терминальная подпись
    * получает «· {длительность}»; null/нет startedAt — подпись без
-   * длительности (деривация T070 и старые карточки span не получают).
+   * длительности (деривационные карточки берут span из своего
+   * фонового №45 — T076).
    */
   readonly endedConferenceSpan?: Readonly<DurationSpan> | null
 }
@@ -1181,24 +1182,32 @@ const FeedRow = memo(function FeedRow({
  * `newestInviteConferenceId` по messages переводит каждую НЕ-последнюю
  * карточку в терминальное «Конференция завершена» чистой деривацией,
  * БЕЗ запросов. (2) Единственная потенциально живая (последняя)
- * карточка получает `probe` — один фоновый №45-чек на монтаж
- * (сессионный кэш в карточке): ended → терминальная подпись,
- * active/created → кнопка остаётся (живая сходится кадрами T069),
- * 404 → «Конференция недоступна», транспорт — тихо. Деривация и кадр
- * не конфликтуют: ended-проп T069 покрывает последнюю карточку, всё
- * старое — деривация; внепорядковый `started` ничего не оживляет
- * (конституция III).
+ * карточка делает фоновый №45-чек (сессионный кэш в карточке): ended →
+ * терминальная подпись, active/created → кнопка остаётся (живая
+ * сходится кадрами T069), 404 → «Конференция недоступна», транспорт —
+ * тихо. Деривация и кадр не конфликтуют: ended-проп T069 покрывает
+ * последнюю карточку, всё старое — деривация; внепорядковый `started`
+ * ничего не оживляет (конституция III).
  *
  * T071 (US5): длительность терминальной подписи — `endedConferenceSpan`
  * (только карточке, совпавшей с tombstone живого среза: endedAt кадра
- * №18 + startedAt бейджа №17); деривация T070 и №45-пути карточки
- * разбираются внутри ConferenceInviteCard.
+ * №18 + startedAt бейджа №17); №45-пути карточки разбираются внутри
+ * ConferenceInviteCard.
  *
  * T072 (US1): строка-карточка `conference_invite` несёт модификатор
  * `sys-invite` — карточка прижата ВЛЕВО по геометрии входящих
  * (.msg.them: отступ на колонку аватара, ширина по лексике пузыря;
  * message-list.css). Нейтральный плейсхолдер центрируется прежним
  * правилом `.msg.system` (встроенная подпись ленты, решение T024).
+ *
+ * T076 (US5): длительность на ВСЕХ карточках окна — probe получают
+ * ВСЕ карточки `conference_invite`, КРОМЕ tombstone (живой кадр №18
+ * уже дал span, запрос не нужен): деривационные (T070, `endedDerived`)
+ * проверяются фоновым №45 ради span — подпись деривации рендерится
+ * сразу и липко, «· N мин» ДОПОЛНЯЕТ её по приходе ответа. Бюджет
+ * «≤1 №45 на конференцию за сессию» — сессионный кэш
+ * conferenceInviteProbe (T070) без правок; контракт/backend/история
+ * не меняются.
  */
 const SystemRow = memo(function SystemRow({
   message,
@@ -1216,6 +1225,10 @@ const SystemRow = memo(function SystemRow({
   const payload = message.payload ?? null
   const invite = isConferenceInvitePayload(payload) ? payload : null
   const endedByTombstone = invite !== null && endedConferenceId === invite.conferenceId
+  // T076: деривация T070 — не-новейшая карточка БЕЗ tombstone: №45
+  // такому карточке нужен ТОЛЬКО ради span длительности
+  const endedByDerivation =
+    invite !== null && !endedByTombstone && invite.conferenceId !== newestInviteConferenceId
   return (
     <li
       className={
@@ -1237,15 +1250,18 @@ const SystemRow = memo(function SystemRow({
             endedByTombstone ||
             // T070: деривация «одна активная на чат» — все карточки,
             // КРОМЕ новейшей, гарантированно завершены (без запросов)
-            invite.conferenceId !== newestInviteConferenceId
+            endedByDerivation
           }
           // T071: span длительности — только живому tombstone (кадр
-          // №18 + startedAt бейджа); деривация без №45-ответа остаётся
-          // без длительности
+          // №18 + startedAt бейджа); деривация берёт span из своего
+          // фонового №45 (T076)
           endedSpan={endedByTombstone ? endedConferenceSpan : null}
-          // T070: единственная потенциально живая карточка — один
-          // фоновый №45-чек на монтаж (сессионный кэш в карточке)
-          probe={invite.conferenceId === newestInviteConferenceId}
+          // T076: probe — ВСЕ карточки окна, КРОМЕ tombstone (живой
+          // кадр уже дал span): новейшая — терминальное состояние,
+          // деривационные — длительность; ≤1 №45 на конференцию за
+          // сессию (сессионный кэш в карточке)
+          probe={!endedByTombstone}
+          endedDerived={endedByDerivation}
         />
       ) : (
         <div className="sys-placeholder">
@@ -1345,7 +1361,11 @@ interface FeedRowContext {
   readonly endedConferenceId: string | null
   /** T071 (009 US5): span длительности tombstone (живой кадр №18 + бейдж №17). */
   readonly endedConferenceSpan: Readonly<DurationSpan> | null
-  /** T070 (009 US5): новейшая карточка-приглашение окна — деривация/probe. */
+  /**
+   * T070/T076 (009 US5): новейшая карточка-приглашение окна —
+   * деривация терминальности остальных; probe (T076) получают все
+   * карточки, кроме tombstone.
+   */
   readonly newestInviteConferenceId: string | null
 }
 

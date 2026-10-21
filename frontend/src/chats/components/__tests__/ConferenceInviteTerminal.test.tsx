@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../../../api/chats'
 import type { ConferenceView } from '../../../conferences/api/conferences'
@@ -32,6 +32,11 @@ import { MessageList } from '../MessageList'
  * более одного №45 на конференцию за сессию (кэш по conferenceId;
  * уже-терминальная карточка не рефетчится, живая сходится кадрами
  * T069).
+ *
+ * T076 (US5, продуктовое расширение T071): бюджет «≤1 №45 на открытие
+ * чата» пересмотрен в «≤1 №45 на конференцию за сессию» — probe
+ * получают ВСЕ карточки окна (кроме tombstone), прошлые — ради span
+ * длительности; см. describe T076 ниже.
  */
 
 const conferences = vi.hoisted(() => ({ getConference: vi.fn() }))
@@ -113,32 +118,34 @@ describe('деривация «одна активная на чат» — вс�
     vi.clearAllMocks()
   })
 
-  it('≥2 карточки: все, кроме последней, — «Конференция завершена» без кнопки и БЕЗ №45; последняя — с кнопкой', async () => {
+  it('≥2 карточки: все, кроме последней, — «Конференция завершена» без кнопки (деривация не ждёт ответа); фоновый №45 — по обеим (T076)', async () => {
     renderFeed([
       systemInvite('m-old', 'c-old', 1, 'audio'),
       systemInvite('m-new', 'c-new', 2, 'video'),
     ])
     // старая конференция завершена чистой деривацией (новая создана
-    // только после ended предыдущей) — без запроса по её id
+    // только после ended предыдущей) — подпись сразу, ответа не ждёт
     expect(within(inviteRow('m-old')).getByText('Конференция завершена')).toBeTruthy()
     expect(within(inviteRow('m-old')).queryByRole('button')).toBeNull()
     // последняя (новейшая) карточка — потенциально живая, кнопка на месте
     expect(within(inviteRow('m-new')).getByRole('button', { name: 'Подключиться' })).toBeTruthy()
     expect(within(inviteRow('m-new')).queryByText('Конференция завершена')).toBeNull()
-    // №45 ходит ТОЛЬКО по новейшей (фоновый чек), старые id не спрашиваются
+    // T076: фоновый №45 ходит по ОБЕИМ карточкам — каждой свой, ровно
+    // один (висящий мок не меняет DOM: деривация уже терминальна)
     await waitFor(() => {
-      expect(conferences.getConference).toHaveBeenCalledTimes(1)
+      expect(conferences.getConference).toHaveBeenCalledTimes(2)
     })
-    expect(conferences.getConference).toHaveBeenCalledWith('c-new')
+    const asked = conferences.getConference.mock.calls.map((call) => call[0] as string).sort()
+    expect(asked).toEqual(['c-new', 'c-old'])
   })
 
-  it('догрузка старой страницы не меняет статус новых карточек и не добавляет №45', async () => {
+  it('догрузка старой страницы не меняет статус новых карточек; №45 — только новой карточке страницы', async () => {
     const { rerender } = renderFeed([
       systemInvite('m-old', 'c-old', 2, 'audio'),
       systemInvite('m-new', 'c-new', 3, 'video'),
     ])
     await waitFor(() => {
-      expect(conferences.getConference).toHaveBeenCalledTimes(1)
+      expect(conferences.getConference).toHaveBeenCalledTimes(2)
     })
     // prepend старой страницы (окно догружается только вверх): древняя
     // карточка терминальна деривацией, статусы прежних не изменились
@@ -156,9 +163,11 @@ describe('деривация «одна активная на чат» — вс�
     expect(within(inviteRow('m-ancient')).getByText('Конференция завершена')).toBeTruthy()
     expect(within(inviteRow('m-old')).getByText('Конференция завершена')).toBeTruthy()
     expect(within(inviteRow('m-new')).getByRole('button', { name: 'Подключиться' })).toBeTruthy()
-    // новейшая не рефетчится повторно (мемоизация инстанса), старые не спрашиваются
-    expect(conferences.getConference).toHaveBeenCalledTimes(1)
-    expect(conferences.getConference).toHaveBeenCalledWith('c-new')
+    // смонтированные карточки не рефетчатся повторно (мемоизация
+    // инстанса), №45 добавляется только НОВОЙ карточке страницы
+    expect(conferences.getConference).toHaveBeenCalledTimes(3)
+    const asked = conferences.getConference.mock.calls.map((call) => call[0] as string).sort()
+    expect(asked).toEqual(['c-ancient', 'c-new', 'c-old'])
   })
 })
 
@@ -322,13 +331,17 @@ describe('регресс T069: живая сессия закрывает кар
     expect(conferences.getConference).not.toHaveBeenCalled()
   })
 
-  it('деривация и tombstone не конфликтуют: старая — деривация, новейшая — кадр №18', () => {
+  it('деривация и tombstone не конфликтуют: старая — деривация (+ №45 ради span, T076), новейшая — кадр №18', () => {
+    conferences.getConference.mockReturnValue(new Promise(() => {}))
     renderFeed([systemInvite('m-old', 'c-old', 1), systemInvite('m-live', 'c-live', 2)], {
       endedConferenceId: 'c-live',
     })
     expect(screen.getAllByText('Конференция завершена')).toHaveLength(2)
     expect(screen.queryByRole('button')).toBeNull()
-    expect(conferences.getConference).not.toHaveBeenCalled()
+    // T076: tombstone (живой кадр) не рефетчится; деривационная
+    // карточка делает свой фоновый №45 — только ради длительности
+    expect(conferences.getConference).toHaveBeenCalledTimes(1)
+    expect(conferences.getConference).toHaveBeenCalledWith('c-old')
   })
 })
 
@@ -395,21 +408,187 @@ describe('длительность из №45-ответа новейшей ка
     expect(assignSpy).not.toHaveBeenCalled()
   })
 
-  it('старые карточки (деривация) при длительности новейшей — БЕЗ длительности', async () => {
-    conferences.getConference.mockResolvedValue(
-      conferenceView({
-        status: 'ended',
-        startedAt: '2026-10-17T12:10:00.000Z',
-        endedAt: '2026-10-17T12:30:00.000Z',
-      }),
+  it('T076: прошлые карточки получают СВОЮ длительность фоновым №45 — каждая своя', async () => {
+    conferences.getConference.mockImplementation((id: string) =>
+      Promise.resolve(
+        conferenceView({
+          id,
+          status: 'ended',
+          startedAt: id === 'c-old' ? '2026-10-17T11:50:00.000Z' : '2026-10-17T12:10:00.000Z',
+          endedAt: id === 'c-old' ? '2026-10-17T12:00:00.000Z' : '2026-10-17T12:30:00.000Z',
+        }),
+      ),
     )
     renderFeed([systemInvite('m-old', 'c-old', 1), systemInvite('m-new', 'c-new', 2)])
     await waitFor(() => {
-      expect(screen.getByText('Конференция завершена · 20 мин')).toBeTruthy()
+      expect(within(inviteRow('m-old')).getByText('Конференция завершена · 10 мин')).toBeTruthy()
     })
-    // деривация T070 не имеет №45-ответа — подпись без длительности
-    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(within(inviteRow('m-new')).getByText('Конференция завершена · 20 мин')).toBeTruthy()
+    expect(conferences.getConference).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('длительность на ВСЕХ карточках окна — фоновый №45-чек каждой (009 T076)', () => {
+  /**
+   * T076 (продуктовое расширение T071, запрос пользователя 2026-10-21;
+   * бюджет пересмотрен с «≤1 №45 на открытие чата» на «≤1 №45 на
+   * конференцию за сессию» — сессионный кэш T070 уже обеспечивает его
+   * без правок): probe получают ВСЕ карточки `conference_invite` окна
+   * ленты, КРОМЕ tombstone (живой кадр №18 — span уже в руках). Прошлые
+   * конференции терминальны деривацией T070 СРАЗУ (без длительности),
+   * «· N мин» ДОПОЛНЯЕТ подпись по приходе их собственного №45 — без
+   * замигания и без возврата кнопки (состояние липкое).
+   */
+  beforeEach(() => {
+    resetInviteProbeCache()
+    conferences.getConference.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('≥2 прошлые + новейшая: КАЖДАЯ запрашивает свой №45 ровно один раз и получает длительность', async () => {
+    conferences.getConference.mockImplementation((id: string) =>
+      Promise.resolve(
+        conferenceView({
+          id,
+          status: 'ended',
+          startedAt: '2026-10-17T12:00:00.000Z',
+          endedAt: '2026-10-17T12:05:00.000Z',
+        }),
+      ),
+    )
+    renderFeed([
+      systemInvite('m-old-1', 'c-old-1', 1, 'audio'),
+      systemInvite('m-old-2', 'c-old-2', 2, 'audio'),
+      systemInvite('m-new', 'c-new', 3, 'video'),
+    ])
+    await waitFor(() => {
+      expect(within(inviteRow('m-old-1')).getByText('Конференция завершена · 5 мин')).toBeTruthy()
+    })
+    expect(within(inviteRow('m-old-2')).getByText('Конференция завершена · 5 мин')).toBeTruthy()
+    expect(within(inviteRow('m-new')).getByText('Конференция завершена · 5 мин')).toBeTruthy()
+    expect(screen.queryByRole('button')).toBeNull()
+    expect(conferences.getConference).toHaveBeenCalledTimes(3)
+    const asked = conferences.getConference.mock.calls.map((call) => call[0] as string).sort()
+    expect(asked).toEqual(['c-new', 'c-old-1', 'c-old-2'])
+  })
+
+  it('терминальная подпись деривации — СРАЗУ (без длительности), «· N мин» дополняет по приходе №45, кнопка не возвращается', async () => {
+    let resolveOld!: (view: ConferenceView) => void
+    const oldProbe = new Promise<ConferenceView>((resolve) => {
+      resolveOld = resolve
+    })
+    conferences.getConference.mockImplementation((id: string) =>
+      id === 'c-old' ? oldProbe : Promise.resolve(conferenceView({ id, status: 'active' })),
+    )
+    renderFeed([systemInvite('m-old', 'c-old', 1), systemInvite('m-new', 'c-new', 2)])
+    // деривация не ждёт ответа: старая терминальна сразу, без длительности
+    expect(within(inviteRow('m-old')).getByText('Конференция завершена')).toBeTruthy()
+    expect(within(inviteRow('m-old')).queryByRole('button')).toBeNull()
+    // новейшая — потенциально живая (active), кнопка на месте
+    expect(within(inviteRow('m-new')).getByRole('button', { name: 'Подключиться' })).toBeTruthy()
+    await act(async () => {
+      resolveOld(
+        conferenceView({
+          id: 'c-old',
+          status: 'ended',
+          startedAt: '2026-10-17T12:00:00.000Z',
+          endedAt: '2026-10-17T12:42:00.000Z',
+        }),
+      )
+      await Promise.resolve()
+    })
+    expect(within(inviteRow('m-old')).getByText('Конференция завершена · 42 мин')).toBeTruthy()
+    expect(within(inviteRow('m-old')).queryByRole('button')).toBeNull()
+  })
+
+  it('tombstone-карточка (живой кадр №18 + span среза) не рефетчится — №45 только деривационной', async () => {
+    conferences.getConference.mockImplementation((id: string) =>
+      Promise.resolve(
+        conferenceView({
+          id,
+          status: 'ended',
+          startedAt: '2026-10-17T12:00:00.000Z',
+          endedAt: '2026-10-17T12:05:00.000Z',
+        }),
+      ),
+    )
+    renderFeed([systemInvite('m-old', 'c-old', 1), systemInvite('m-live', 'c-live', 2)], {
+      endedConferenceId: 'c-live',
+      endedConferenceSpan: {
+        startedAt: '2026-10-17T12:10:00.000Z',
+        endedAt: '2026-10-17T12:30:00.000Z',
+      },
+    })
+    await waitFor(() => {
+      expect(within(inviteRow('m-old')).getByText('Конференция завершена · 5 мин')).toBeTruthy()
+    })
+    // tombstone берёт span из живого среза — «· 20 мин» без запроса
+    expect(within(inviteRow('m-live')).getByText('Конференция завершена · 20 мин')).toBeTruthy()
     expect(conferences.getConference).toHaveBeenCalledTimes(1)
-    expect(conferences.getConference).toHaveBeenCalledWith('c-new')
+    expect(conferences.getConference).toHaveBeenCalledWith('c-old')
+  })
+
+  it('ended без startedAt на деривационной карточке — подпись без длительности', async () => {
+    conferences.getConference.mockImplementation((id: string) =>
+      id === 'c-old'
+        ? Promise.resolve(
+            conferenceView({ id, status: 'ended', endedAt: '2026-10-17T12:03:00.000Z' }),
+          )
+        : Promise.resolve(conferenceView({ id, status: 'active' })),
+    )
+    renderFeed([systemInvite('m-old', 'c-old', 1), systemInvite('m-new', 'c-new', 2)])
+    await waitFor(() => {
+      expect(conferences.getConference).toHaveBeenCalledTimes(2)
+    })
+    expect(within(inviteRow('m-old')).getByText('Конференция завершена')).toBeTruthy()
+    expect(within(inviteRow('m-old')).queryByText(/Конференция завершена ·/)).toBeNull()
+  })
+
+  it('Problem/транспорт на деривационной карточке — тихо подпись деривации; новейшая — по правилам T070', async () => {
+    const notFound = Object.assign(new Error('conference_not_found'), {
+      status: 404,
+      errors: { conference: ['conference_not_found'] },
+    })
+    conferences.getConference.mockImplementation((id: string) =>
+      id === 'c-old'
+        ? Promise.reject(notFound)
+        : Promise.resolve(conferenceView({ id, status: 'active' })),
+    )
+    renderFeed([systemInvite('m-old', 'c-old', 1), systemInvite('m-new', 'c-new', 2)])
+    await waitFor(() => {
+      expect(conferences.getConference).toHaveBeenCalledTimes(2)
+    })
+    // деривационная: тихо сохранена подпись деривации (не «недоступна»)
+    expect(within(inviteRow('m-old')).getByText('Конференция завершена')).toBeTruthy()
+    expect(within(inviteRow('m-old')).queryByText('Конференция недоступна')).toBeNull()
+    // новейшая (потенциально живая) — прежние правила T070: кнопка
+    expect(within(inviteRow('m-new')).getByRole('button', { name: 'Подключиться' })).toBeTruthy()
+  })
+
+  it('ремоунт окна восстанавливает длительность из сессионного кэша без повторных №45', async () => {
+    conferences.getConference.mockImplementation((id: string) =>
+      Promise.resolve(
+        conferenceView({
+          id,
+          status: 'ended',
+          startedAt: '2026-10-17T12:00:00.000Z',
+          endedAt: '2026-10-17T12:05:00.000Z',
+        }),
+      ),
+    )
+    const first = renderFeed([systemInvite('m-old', 'c-old', 1), systemInvite('m-new', 'c-new', 2)])
+    await waitFor(() => {
+      expect(within(inviteRow('m-old')).getByText('Конференция завершена · 5 мин')).toBeTruthy()
+    })
+    first.unmount()
+    cleanup()
+    renderFeed([systemInvite('m-old', 'c-old', 1), systemInvite('m-new', 'c-new', 2)])
+    expect(within(inviteRow('m-old')).getByText('Конференция завершена · 5 мин')).toBeTruthy()
+    expect(within(inviteRow('m-new')).getByText('Конференция завершена · 5 мин')).toBeTruthy()
+    expect(conferences.getConference).toHaveBeenCalledTimes(2)
   })
 })

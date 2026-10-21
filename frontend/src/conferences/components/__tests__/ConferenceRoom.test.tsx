@@ -21,6 +21,13 @@ import type { JoinTicket } from '../../api/conferences'
  * data-пакету topic `conference.warning` (T056 → T060, FR-015,
  * Q16=B) с ручным закрытием и нейтральным игнором чужих тем/битого
  * payload.
+ *
+ * 009, US1, T078 — автопин тайла демонстрации экрана поверх пин-
+ * раскладки T074: появление НОВОГО screen-ref'а при пустом пине
+ * разворачивает тайл на всю медиа-зону без ручного клика (у всех
+ * участников, включая собственную демонстрацию); правило «только
+ * при пустом пине»: ручной пин не перебивается, вторая демонстрация
+ * не переключает первую, ручное сворачивание не зацикливает автопин.
  */
 
 const lk = vi.hoisted(() => {
@@ -582,7 +589,7 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     expect(room.disconnectCalls).toBeGreaterThanOrEqual(1)
   })
 
-  it('медиа-слой: сетка участников и широкие тайлы демонстраций экрана', async () => {
+  it('медиа-слой: сетка участников и тайлы демонстраций экрана (T078 — демонстрация автозакреплена)', async () => {
     lkc.trackRefs = [
       // камера не опубликована — тайл-заглушка с аватаром и именем (T073)
       { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
@@ -601,12 +608,21 @@ describe('ConferenceRoom (009 US1 T027/T029)', () => {
     // подпись тайла — отображаемое имя участника (participantLabel)
     expect(tiles).toHaveTextContent('alice')
     expect(tiles.querySelector('.avatar')).not.toBeNull()
-    const screens = screen.getByRole('region', { name: 'Демонстрации экрана' })
-    // подпись широкого тайла — отображаемое имя участника (participantLabel)
-    expect(screens).toHaveTextContent('Экран — bob')
-    expect(screens.querySelector('video')).not.toBeNull()
-    // тайлы демонстраций — без аватара (T073)
-    expect(screens.querySelector('.avatar')).toBeNull()
+    // демонстрация с момента появления развёрнута автопином (T078):
+    // подпись широкого тайла — отображаемое имя (participantLabel),
+    // видео прикреплено, аватара нет (T073); сетка камер — компактная
+    const pinned = await waitFor(() => {
+      const tile = document.querySelector<HTMLElement>('.conference-tile-pinned')
+      expect(tile).not.toBeNull()
+      return tile
+    })
+    expect(pinned).toHaveTextContent('Экран — bob')
+    expect(pinned?.querySelector('video')).not.toBeNull()
+    expect(pinned?.querySelector('.avatar')).toBeNull()
+    // после автопина секция перерендерена компактной полосой — живой запрос
+    expect(screen.getByRole('region', { name: 'Участники конференции' })).toHaveClass(
+      'conference-tiles-compact',
+    )
   })
 })
 
@@ -1108,30 +1124,318 @@ describe('ConferenceRoom — пин-раскладка тайлов (009 US1 T07
     expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
   })
 
-  it('(е) регресс без пина: экранная секция широкой сеткой, аудио-рендер и children не тронуты', async () => {
+  it('(е) регресс T074 без демонстраций: обычная сетка и ручной пин, аудио-рендер и children не тронуты', async () => {
+    // T078 автопинит любую появившуюся демонстрацию — регресс «широких
+    // секций без пина» проверяется на чистых камерах (демонстраций нет)
     lkc.trackRefs = [
       { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
-      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
     ]
     renderRoom()
 
-    const screens = await waitFor(() => {
-      const section = screen.getByRole('region', { name: 'Демонстрации экрана' })
-      expect(section).toHaveClass('conference-screens')
-      return section
+    // до пина — обычная сетка (не компактная), развёрнутых тайлов нет
+    await waitFor(() => {
+      expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
     })
-    expect(screens.classList.contains('conference-tiles-compact')).toBe(false)
-    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
     // аудио удалённых участников смонтировано; слот MediaControls/панелей жив
     expect(screen.getByTestId('lk-audio-renderer')).not.toBeNull()
     expect(screen.getByTestId('controls-slot')).not.toBeNull()
 
-    // и в пин-раскладке аудио-рендер и children остаются на месте
+    // и в пин-раскладке аудио-рендер и children остаются на месте,
+    // остальные тайлы уходят в компактную полосу
     pinTile(tileByLabel('alice'))
     expect(screen.getByTestId('lk-audio-renderer')).not.toBeNull()
     expect(screen.getByTestId('controls-slot')).not.toBeNull()
-    // невыключенная чужая демонстрация уходит в компактную полосу
+    expect(tilesSection()).toHaveClass('conference-tiles-compact')
+    expect(tilesSection()).toHaveTextContent('bob')
+  })
+})
+
+describe('ConferenceRoom — автопин демонстрации экрана (009 US1 T078)', () => {
+  /** Собственный identity тикета — собственная демонстрация тоже автопинится. */
+  const OWN_IDENTITY = 'u:11111111-1111-1111-1111-111111111111:conn-1'
+
+  /** Тайл по подписи-имени участника (figcaption). */
+  function tileByLabel(name: string): HTMLElement {
+    const label = screen.getByText(name, { exact: false })
+    const tile = label.closest('figure')
+    if (tile === null) {
+      throw new Error(`тайл участника «${name}» не найден`)
+    }
+    return tile
+  }
+
+  /** Закреплённый тайл демонстрации по подписи «Экран — …» (ожидание автопина). */
+  async function pinnedScreenTile(label: string): Promise<HTMLElement> {
+    return waitFor(() => {
+      const target = tileByLabel(label)
+      expect(target).toHaveClass('conference-tile-pinned')
+      return target
+    })
+  }
+
+  /** Сетка/полоса участников (region «Участники конференции»). */
+  function tilesSection(): HTMLElement {
+    return screen.getByRole('region', { name: 'Участники конференции' })
+  }
+
+  function renderRoom(): ReturnType<typeof render> {
+    return render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Живое обновление track-рефов (переходы «не было → появился» и уход). */
+  function rerenderRoom(view: ReturnType<typeof render>): void {
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Пин тайла кнопкой-тумблером «Развернуть» (явный путь, 008). */
+  function pinTile(tile: HTMLElement): void {
+    fireEvent.click(within(tile).getByRole('button', { name: 'Развернуть' }))
+  }
+
+  /** Свернуть закреплённый тайл кнопкой-тумблером «Свернуть». */
+  function collapseTile(tile: HTMLElement): void {
+    fireEvent.click(within(tile).getByRole('button', { name: 'Свернуть' }))
+  }
+
+  /** Широкая секция демонстраций (region «Демонстрации экрана»). */
+  function screensSection(): HTMLElement {
+    return screen.getByRole('region', { name: 'Демонстрации экрана' })
+  }
+
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+    lkc.speakers = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('(а) старт демонстрации при пустом пине — тайл развёрнут без клика, камеры уходят в компактную полосу', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    await waitFor(() => tileByLabel('bob'))
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+
+    // bob включил демонстрацию — появился НОВЫЙ screen-ref при пустом пине
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+
+    const pinned = await pinnedScreenTile('Экран — bob')
+    // тумблер закреплённого тайла — «Свернуть» (ручное сворачивание доступно)
+    expect(within(pinned).getByRole('button', { name: 'Свернуть' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    // тайлы камер — компактная полоса T074
+    expect(tilesSection()).toHaveClass('conference-tiles-compact')
+    expect(document.querySelectorAll('.conference-tile-pinned')).toHaveLength(1)
+  })
+
+  it('(б) ручной пин зрителя стартом демонстрации НЕ перебивается', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    pinTile(await waitFor(() => tileByLabel('alice')))
+    expect(tileByLabel('alice')).toHaveClass('conference-tile-pinned')
+
+    // демонстрация пошла при ЖИВОМ ручном пине — правило «только при
+    // пустом пине»: закреплена камера alice, экран — в компактной полосе
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+
+    expect(tileByLabel('alice')).toHaveClass('conference-tile-pinned')
     expect(tilesSection()).toHaveTextContent('Экран — bob')
-    expect(screen.queryByRole('region', { name: 'Демонстрации экрана' })).toBeNull()
+    expect(document.querySelectorAll('.conference-tile-pinned')).toHaveLength(1)
+  })
+
+  it('(в) вторая одновременная демонстрация не переключает уже автозакреплённую первую', async () => {
+    lkc.trackRefs = [{ participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' }]
+    const view = renderRoom()
+    await waitFor(() => tileByLabel('alice'))
+
+    // первая демонстрация — автопин (пин пуст)
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+    await pinnedScreenTile('Экран — bob')
+
+    // вторая демонстрация при живом (авто)пине — раскладка не дёргается
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: 'u:3:c', name: 'carol' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+
+    await waitFor(() => {
+      expect(tilesSection()).toHaveTextContent('Экран — carol')
+    })
+    expect(tileByLabel('Экран — bob')).toHaveClass('conference-tile-pinned')
+    expect(document.querySelectorAll('.conference-tile-pinned')).toHaveLength(1)
+  })
+
+  it('(г) завершение автозакреплённой демонстрации — автоматический возврат обычной сетки', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    await waitFor(() => tileByLabel('bob'))
+
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+    await pinnedScreenTile('Экран — bob')
+
+    // bob завершил демонстрацию — сброс пина наследуется от T074 бесплатно
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    rerenderRoom(view)
+
+    await waitFor(() => {
+      expect(screen.queryByText('Экран — bob')).toBeNull()
+    })
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+  })
+
+  it('(д) ручное «Свернуть» автопина при живой демонстрации — сетка БЕЗ повторного автопина', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    await waitFor(() => tileByLabel('bob'))
+
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+    const pinned = await pinnedScreenTile('Экран — bob')
+
+    // осознанное сворачивание при живой демонстрации — обычная сетка
+    // с широкой секцией демонстраций
+    collapseTile(pinned)
+    await waitFor(() => {
+      expect(screensSection()).toHaveTextContent('Экран — bob')
+    })
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+
+    // повторного автопина НЕТ: эффект срабатывает на появление НОВОГО
+    // ref'а, а не на инвариант «пустой пин + живые экраны» — иначе цикл;
+    // перерендёры и пауза подтвержают устойчивость
+    rerenderRoom(view)
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50)
+    })
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    expect(screensSection()).toHaveTextContent('Экран — bob')
+  })
+
+  it('(е) собственная демонстрация автопинится (self-view)', async () => {
+    lkc.trackRefs = [{ participant: { identity: OWN_IDENTITY, name: 'alice' }, source: 'camera' }]
+    const view = renderRoom()
+    await waitFor(() => tileByLabel('alice'))
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+
+    // собственный screen-ref (self-view) — тот же переход «не было →
+    // появился» при пустом пине
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: OWN_IDENTITY, name: 'alice' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+
+    const pinned = await pinnedScreenTile('Экран — alice')
+    expect(within(pinned).getByRole('button', { name: 'Свернуть' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    // собственный тайл камеры — компактная полоса
+    expect(tilesSection()).toHaveTextContent('alice')
+    expect(tilesSection()).toHaveClass('conference-tiles-compact')
+  })
+
+  it('(ж) регресс ручного пина T074: двойной клик, сброс выходом участника — уже замеченная демонстрация не автопинится', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    await waitFor(() => tileByLabel('bob'))
+
+    // двойной клик — допустимый путь ручного пина (T074, без изменений)
+    fireEvent.dblClick(tileByLabel('bob'))
+    expect(tileByLabel('bob')).toHaveClass('conference-tile-pinned')
+
+    // демонстрация пошла при живом ручном пине — замечена, не закреплена
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: 'u:3:c', name: 'carol' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+    await waitFor(() => {
+      expect(tilesSection()).toHaveTextContent('Экран — carol')
+    })
+    expect(tileByLabel('bob')).toHaveClass('conference-tile-pinned')
+
+    // закреплённый bob покинул комнату — возврат сетки; демонстрация
+    // carol уже замечена эффектом — автопина НЕ происходит (правило
+    // «на появление нового ref'а», не инвариант)
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:3:c', name: 'carol' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+
+    await waitFor(() => {
+      expect(screen.queryByText('bob')).toBeNull()
+    })
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50)
+    })
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    expect(screensSection()).toHaveTextContent('Экран — carol')
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
   })
 })

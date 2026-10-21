@@ -47,30 +47,41 @@
  * T070 (US5, баг-фикс после T069): терминальное состояние конференций,
  * завершённых ВНЕ живой сессии (пользователь был офлайн в момент
  * завершения / открыл чат позже — кадр №18 не доставлен). Пропс
- * `probe` (MessageList помечает им НОВЕЙШУЮ карточку-приглашение окна
- * ленты): `true` — ОДИН фоновый №45-чек на монтаж: `status='ended'` →
- * терминальная подпись (как клик-ветка); `created`/`active` → кнопка
- * остаётся (живая сходится кадрами T069); Problem
- * `conference_not_found` → нейтральная «Конференция недоступна»;
- * транспортный сбой — тихо (без баннера; кнопка остаётся, клик-проверка
- * №45 — страховка), ретрай-цикл НЕ вводится. Мемоизация — сессионный
- * кэш conferenceInviteProbe: не более одного №45 на конференцию за
+ * `probe` (фоновый №45-чек на монтаж): `true` — ОДИН запрос:
+ * `status='ended'` → терминальная подпись (как клик-ветка);
+ * `created`/`active` → кнопка остаётся (живая сходится кадрами T069);
+ * Problem `conference_not_found` у потенциально живой (новейшей)
+ * карточки → нейтральная «Конференция недоступна»; транспортный сбой —
+ * тихо (без баннера; кнопка остаётся, клик-проверка №45 — страховка),
+ * ретрай-цикл НЕ вводится. Мемоизация — сессионный кэш
+ * conferenceInviteProbe: не более одного №45 на конференцию за
  * сессию; повторный монтаж восстанавливает осевший исход из кэша
  * (ленивый initial state) БЕЗ запроса. Уже-терминальная живым кадром
- * карточка (ended на монтаже) не проверяется вовсе.
+ * карточка (ended на монтаже БЕЗ `endedDerived`) не проверяется вовсе.
  *
  * T071 (US5, длительность — частичный пересмотр Q20=A): терминальная
- * подпись дополняется «· {N мин}» ТОЛЬКО там, где данные уже в руках
- * клиента: (1) клик-проверка №45 и фоновый чек T070 — view несёт
- * startedAt/endedAt (раньше клик-ветка его отбрасывала; span живёт
- * в сессионном кэше чека и состоянии карточки); (2) живая сессия
- * T069 — пропс `endedSpan` (endedAt кадра №18 + startedAt бейджа
- * T059 из tombstone live-среза). Деривация T070 (терминальная БЕЗ
- * запроса) и кадр без timestamp'ов — подпись без длительности (не
- * выдумывать); дополнительных №45 ради длительности НЕ вводится.
+ * подпись дополняется «· {N мин}» там, где данные уже в руках клиента:
+ * (1) клик-проверка №45 и фоновый чек — view несёт startedAt/endedAt
+ * (раньше клик-ветка его отбрасывала; span живёт в сессионном кэше
+ * чека и состоянии карточки); (2) живая сессия T069 — пропс `endedSpan`
+ * (endedAt кадра №18 + startedAt бейджа T059 из tombstone live-среза).
+ * Кадр без timestamp'ов — подпись без длительности (не выдумывать).
  * Длительность живого пути липкая, как и само терминальное состояние
  * (render-phase latch): ended B вытеснил A из среза — длительность
  * A остаётся.
+ *
+ * T076 (US5, продуктовое расширение T071): длительность на ВСЕХ
+ * карточках-приглашениях окна ленты — probe получают ВСЕ карточки,
+ * КРОМЕ tombstone (MessageList; живой кадр №18 уже дал span — запрос
+ * не нужен). Деривационные карточки (пропс `endedDerived` — терминальные
+ * «одна активная на чат» БЕЗ запроса) проверяются РАДИ span: №45 нужен
+ * только для длительности, терминальная подпись рендерится сразу и
+ * липко (без «замигания» и без возврата кнопки), «· N мин» ДОПОЛНЯЕТ
+ * её по приходе ответа. Problem/транспортный сбой на деривационной
+ * карточке — тихо подпись деривации без длительности («недоступна» —
+ * только потенциально живой новейшей); никогда не начинавшаяся (ended
+ * без startedAt) — без длительности. Бюджет «≤1 №45 на конференцию за
+ * сессию» — сессионный кэш conferenceInviteProbe (T070) без правок.
  */
 import { useEffect, useRef, useState } from 'react'
 import { conferenceErrorCode, getConference } from '../../conferences/api/conferences'
@@ -88,12 +99,22 @@ import type {
 type JoinState = 'idle' | 'checking' | 'ended' | 'missing' | 'error'
 
 /**
- * T070: исход фонового №45-чека → состояние карточки (`live` —
+ * T070/T076: исход фонового №45-чека → состояние карточки (`live` —
  * active/created/транспортный отказ — кнопка остаётся, «idle»).
+ * T076: деривационная карточка (`derived`) при Problem
+ * `conference_not_found` остаётся при подписи деривации — терминальное
+ * состояние уже выведено инвариантом «одна активная на чат», «недоступна»
+ * показывается только потенциально живой (новейшей) карточке.
  */
-function probeOutcomeToJoinState(outcome: ConferenceInviteProbeOutcome): JoinState {
-  if (outcome === 'ended' || outcome === 'missing') {
-    return outcome
+function probeOutcomeToJoinState(
+  outcome: ConferenceInviteProbeOutcome,
+  derived: boolean,
+): JoinState {
+  if (outcome === 'ended') {
+    return 'ended'
+  }
+  if (outcome === 'missing') {
+    return derived ? 'idle' : 'missing'
   }
   return 'idle'
 }
@@ -154,14 +175,23 @@ export interface ConferenceInviteCardProps {
    */
   readonly ended?: boolean
   /**
-   * T070: фоновый №45-чек на монтаж — MessageList помечает им НОВЕЙШУЮ
-   * карточку-приглашение окна ленты (единственную потенциально живую;
-   * все предыдущие завершены по инварианту «одна активная на чат» и
-   * терминальны чистой деривацией). Один запрос на конференцию за
-   * сессию (сессионный кэш conferenceInviteProbe); `false`/`undefined`
-   * — карточка фоново не проверяется (прямые рендеры, старые карточки).
+   * T070: фоновый №45-чек на монтаж. T076: его получают ВСЕ карточки
+   * `conference_invite` окна ленты, КРОМЕ tombstone (MessageList):
+   * новейшая — единственная потенциально живая (терминальное состояние
+   * по исходу чека), деривационные — ради span длительности (№45 нужен
+   * только для «· N мин»). Один запрос на конференцию за сессию
+   * (сессионный кэш conferenceInviteProbe); `false`/`undefined` —
+   * карточка фоново не проверяется (tombstone-карточки, прямые
+   * рендеры без ленты).
    */
   readonly probe?: boolean
+  /**
+   * T076: источник терминальности — деривация T070 («одна активная на
+   * чат»: не-новейшая карточка окна, tombstone не совпал). `true` —
+   * №45 нужен ТОЛЬКО ради span: подпись деривации рендерится сразу и
+   * липко, Problem/транспорт тихо сохраняют её без длительности.
+   */
+  readonly endedDerived?: boolean
   /**
    * T071: span живого завершения — endedAt кадра №18 + startedAt
    * бейджа T059 (tombstone live-среза, MessengerPage → MessageList →
@@ -178,15 +208,19 @@ export function ConferenceInviteCard({
   createdAt,
   ended = false,
   probe = false,
+  endedDerived = false,
   endedSpan = null,
 }: ConferenceInviteCardProps) {
   // T070: осевший исход фонового чека восстанавливается из сессионного
   // кэша СРАЗУ (ленивый initial state) — повторный монтаж показывает
   // терминальное состояние (с длительностью T071 из span'а записи)
-  // без повторного №45.
+  // без повторного №45. T076: деривационная карточка сводит Problem
+  // `conference_not_found` в подпись деривации («idle»).
   const cachedRecord = probe ? cachedInviteProbeOutcome(conferenceId) : undefined
   const [state, setState] = useState<JoinState>(() =>
-    cachedRecord === undefined ? 'idle' : probeOutcomeToJoinState(cachedRecord.outcome),
+    cachedRecord === undefined
+      ? 'idle'
+      : probeOutcomeToJoinState(cachedRecord.outcome, endedDerived),
   )
   const [endedSpanState, setEndedSpanState] = useState<DurationSpan | null>(
     cachedRecord?.outcome === 'ended' ? (cachedRecord.span ?? null) : null,
@@ -199,6 +233,11 @@ export function ConferenceInviteCard({
     endedLiveRef.current = true
   }
   const endedLive = endedLiveRef.current
+  // T076: источник терминальности (деривация T070) — ref, чтобы исход
+  // №45 сверялся с актуальным состоянием карточки, а не снимком
+  // момента запроса
+  const endedDerivedRef = useRef(endedDerived)
+  endedDerivedRef.current = endedDerived
   // T071: длительность живого пути липкая вместе с терминальным
   // состоянием (tombstone хранит только ПОСЛЕДНЮЮ завершённую
   // конференцию чата — ended B вытесняет A, span A уже не вернуть).
@@ -209,18 +248,21 @@ export function ConferenceInviteCard({
   }
 
   /**
-   * T070: фоновый №45-чек новейшей карточки на монтаж — тихий (без
+   * T070/T076: фоновый №45-чек карточки на монтаж — тихий (без
    * `checking`: кнопка не «замигает»), один на конференцию за сессию.
-   * Гварды: already-terminal живым кадром (ended на монтаже — кадр №18
-   * уже доставлен, запроса не нужно), осевший кэш, повторные рендеры
-   * этого инстанса (probedRef). Исход сводится в состояние карточки:
-   * ended → терминальная подпись, missing → «Конференция недоступна»,
-   * live (active/created/транспорт) → кнопка остаётся — клик-проверка
-   * №45 остаётся страховкой; ретрай-цикл не вводится.
+   * Гварды: tombstone-терминальность живым кадром (ended на монтаже
+   * БЕЗ endedDerived — кадр №18 уже доставлен, запроса не нужно),
+   * осевший кэш, повторные рендеры этого инстанса (probedRef);
+   * деривационная карточка (endedDerived) проверяется — №45 нужен
+   * только ради span длительности. Исход сводится в состояние
+   * карточки: ended → терминальная подпись (+ «· N мин»), missing →
+   * «Конференция недоступна» только НЕ-деривационной, live
+   * (active/created/транспорт) → кнопка остаётся — клик-проверка №45
+   * остаётся страховкой; ретрай-цикл не вводится.
    */
   const probedRef = useRef(false)
   useEffect(() => {
-    if (!probe || probedRef.current || endedLiveRef.current) {
+    if (!probe || probedRef.current || (endedLiveRef.current && !endedDerivedRef.current)) {
       return
     }
     if (cachedInviteProbeOutcome(conferenceId) !== undefined) {
@@ -246,7 +288,7 @@ export function ConferenceInviteCard({
       const record: ConferenceInviteProbeRecord =
         span === undefined ? { outcome } : { outcome, span }
       rememberInviteProbeOutcome(conferenceId, record)
-      setState(probeOutcomeToJoinState(outcome))
+      setState(probeOutcomeToJoinState(outcome, endedDerivedRef.current))
       setEndedSpanState(span ?? null)
     })()
   }, [probe, conferenceId])
