@@ -35,6 +35,13 @@ import type { JoinTicket } from '../../api/conferences'
  * завершение демонстрации снимают; инварианты T074/T078 не меняются,
  * children (MediaControls) остаются в DOM под RoomContext —
  * позиционирование поверх тайла — CSS (conferences.css).
+ *
+ * 009, US1, T082 — клавиатурный выход из пин-оверлея: keydown Escape
+ * при живом пине сворачивает закреплённый тайл (семантика кнопки
+ * «Свернуть»); слушатель на window живёт ТОЛЬКО в пин-состоянии и
+ * снимается при сворачивании/размонтировании (пустой пин — Esc no-op);
+ * Esc-сворачивание автопина T078 при живой демонстрации не повторяет
+ * автопин, ручной пин после Esc работает; Esc не завершает звонок.
  */
 
 const lk = vi.hoisted(() => {
@@ -1600,5 +1607,199 @@ describe('ConferenceRoom — полноэкранный пин-оверлей (0
     expect(roomRoot().classList.contains('conference-room-pinned')).toBe(true)
     expect(screen.getByTestId('controls-slot')).not.toBeNull()
     expect(screen.getByTestId('lk-audio-renderer')).not.toBeNull()
+  })
+})
+
+describe('ConferenceRoom — Esc-выход из пин-оверлея (009 US1 T082)', () => {
+  /** Тайл по подписи-имени участника (figcaption). */
+  function tileByLabel(name: string): HTMLElement {
+    const label = screen.getByText(name, { exact: false })
+    const tile = label.closest('figure')
+    if (tile === null) {
+      throw new Error(`тайл участника «${name}» не найден`)
+    }
+    return tile
+  }
+
+  /** Корневой div комнаты — несёт маркер оверлея в пин-состоянии (T079). */
+  function roomRoot(): HTMLElement {
+    const root = document.querySelector<HTMLElement>('.conference-room')
+    if (root === null) {
+      throw new Error('корневой div комнаты не найден')
+    }
+    return root
+  }
+
+  /** Сетка/полоса участников (region «Участники конференции»). */
+  function tilesSection(): HTMLElement {
+    return screen.getByRole('region', { name: 'Участники конференции' })
+  }
+
+  /** Широкая секция демонстраций (region «Демонстрации экрана»). */
+  function screensSection(): HTMLElement {
+    return screen.getByRole('region', { name: 'Демонстрации экрана' })
+  }
+
+  function renderRoom(): ReturnType<typeof render> {
+    return render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Живое обновление track-рефов (переходы «не было → появился» и уход). */
+  function rerenderRoom(view: ReturnType<typeof render>): void {
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Пин тайла кнопкой-тумблером «Развернуть» (явный путь, 008). */
+  function pinTile(tile: HTMLElement): void {
+    fireEvent.click(within(tile).getByRole('button', { name: 'Развернуть' }))
+  }
+
+  /** Клавиатурный путь T082 — прикладной keydown Escape (не браузерный fullscreen). */
+  function pressEscape(): void {
+    fireEvent.keyDown(window, { key: 'Escape' })
+  }
+
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+    lkc.speakers = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+    vi.clearAllMocks()
+  })
+
+  it('(а) keydown Escape при закреплённом тайле — обычная сетка, маркер-класс оверлея снят', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    renderRoom()
+    pinTile(await waitFor(() => tileByLabel('bob')))
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(true)
+
+    // Esc — та же семантика, что кнопка «Свернуть»: сетка возвращается,
+    // маркер полноэкранного оверлея снят, звонок продолжается
+    pressEscape()
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(false)
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+    expect(tilesSection()).toHaveTextContent('bob')
+  })
+
+  it('(б) Escape при обычной сетке — no-op: слушателя keydown нет, сетка не меняется', async () => {
+    const addSpy = vi.spyOn(window, 'addEventListener')
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    renderRoom()
+    await waitFor(() => tileByLabel('bob'))
+
+    // слушатель навешивается эффектом ТОЛЬКО в пин-состоянии
+    expect(addSpy.mock.calls.filter(([type]) => type === 'keydown')).toHaveLength(0)
+
+    // Esc без пина — пустой no-op, раскладка не меняется
+    pressEscape()
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+    expect(screen.queryByText('Вы отключены от конференции')).toBeNull()
+  })
+
+  it('(в) Esc-сворачивание автопина демонстрации при живой демонстрации — сетка БЕЗ повторного автопина', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    await waitFor(() => tileByLabel('bob'))
+
+    // старт демонстрации при пустом пине — автопин T078
+    lkc.trackRefs = [
+      ...lkc.trackRefs,
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    rerenderRoom(view)
+    await waitFor(() => {
+      expect(tileByLabel('Экран — bob')).toHaveClass('conference-tile-pinned')
+    })
+
+    // Esc сворачивает автопин при живой демонстрации — обычная сетка
+    // с широкой секцией демонстраций
+    pressEscape()
+    await waitFor(() => {
+      expect(screensSection()).toHaveTextContent('Экран — bob')
+    })
+    expect(tilesSection().classList.contains('conference-tiles-compact')).toBe(false)
+
+    // повторного автопина НЕТ (паритет T078: решение на появление НОВОГО
+    // screen-ключа, не на инвариант «пустой пин + живые экраны»)
+    rerenderRoom(view)
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50)
+    })
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    expect(screensSection()).toHaveTextContent('Экран — bob')
+  })
+
+  it('(г) ручной пин после Esc работает — клик «Развернуть» снова разворачивает тайл', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    renderRoom()
+    pinTile(await waitFor(() => tileByLabel('bob')))
+    pressEscape()
+    expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+
+    // повторный пин после Esc — обычный путь T074 без изменений
+    pinTile(tileByLabel('bob'))
+    expect(tileByLabel('bob')).toHaveClass('conference-tile-pinned')
+    expect(roomRoot().classList.contains('conference-room-pinned')).toBe(true)
+  })
+
+  it('(д) размонтирование комнаты снимает слушатель (unmount без утечки)', async () => {
+    const addSpy = vi.spyOn(window, 'addEventListener')
+    const removeSpy = vi.spyOn(window, 'removeEventListener')
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+    pinTile(await waitFor(() => tileByLabel('bob')))
+
+    // живой пин — слушатель keydown навешан (ровно один)
+    const added = addSpy.mock.calls
+      .filter(([type]) => type === 'keydown')
+      .map(([, listener]) => listener)
+    expect(added).toHaveLength(1)
+
+    view.unmount()
+
+    // размонтирование снимает слушатель — по ссылке, без утечки
+    const removed = removeSpy.mock.calls
+      .filter(([type]) => type === 'keydown')
+      .map(([, listener]) => listener)
+    expect(removed).toEqual(added)
   })
 })

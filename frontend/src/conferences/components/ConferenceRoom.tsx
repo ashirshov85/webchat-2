@@ -74,6 +74,15 @@
  * без скроллбаров — семантика пина T074/T078 не меняется, слот
  * children (MediaControls/панели) остаётся в DOM и позиционируется
  * поверх тайла. Fullscreen API — вне scope (паритет T074/T075).
+ *
+ * Клавиатурный выход из пин-оверлея (T082, доступность 008): keydown
+ * Escape при живом пине сворачивает закреплённый тайл — та же
+ * семантика, что кнопка-тумблер «Свернуть»; слушатель на window
+ * навешивается эффектом ТОЛЬКО в пин-состоянии и снимается при
+ * сворачивании/размонтировании (пустой пин — Esc no-op без
+ * обработчика). Esc — прикладная обработка, НЕ выход браузерного
+ * fullscreen (Fullscreen API по-прежнему вне scope — паритет
+ * T074/T075/T079) и НЕ выход из звонка (выход — MediaControls).
  */
 import {
   isTrackReference,
@@ -512,6 +521,39 @@ function ConferenceRoomLive({
     }
     setSeenScreenKeys(new Set(screenTiles.map((ref) => tilePinKey(ref))))
   }
+  // Клавиатурный выход из пин-оверлея (T082, доступность 008): Esc при
+  // живом пине сворачивает закреплённый тайл — та же семантика, что
+  // кнопка «Свернуть» (setPinnedTileKey(null), ≤1 закреплён, состояние
+  // комнаты — без localStorage). Слушатель keydown на window живёт
+  // ТОЛЬКО в пин-состоянии (roomPinned) и снимается эффектом при
+  // сворачивании/уходе цели/размонтировании — при пустом пине Esc —
+  // no-op, обработчика нет; прочие клавиши игнорируются; ввод в полях
+  // (input/textarea/contenteditable) не перехватывается. Esc НЕ
+  // завершает конференцию и НЕ покидает комнату; повторный автопин
+  // T078 невозможен (решение на появление НОВОГО screen-ключа),
+  // повторный ручной пин работает (паритет детерминированных правил).
+  useEffect(() => {
+    if (!roomPinned) {
+      return
+    }
+    const collapsePinnedTile = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return
+      }
+      const target = event.target
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return
+      }
+      setPinnedTileKey(null)
+    }
+    window.addEventListener('keydown', collapsePinnedTile)
+    return () => {
+      window.removeEventListener('keydown', collapsePinnedTile)
+    }
+  }, [roomPinned])
   const statusText = phaseStatusText(phase)
   const roomClass = roomPinned ? 'conference-room conference-room-pinned' : 'conference-room'
   const pinnedLayout = pinnedScreen !== undefined || pinnedCamera !== undefined
