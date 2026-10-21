@@ -25,13 +25,27 @@
  * доступны для ЛЮБОЙ строки, включая других модераторов, создателя и
  * себя — правовой гейт единый на сервере (403 moderator_required).
  *
- * Деструктивные действия — кик (немедленный разрыв подключения) и
- * завершение (все отключаются) — требуют явного подтверждения
- * (role=alertdialog, подтверждение отдельным нажатием); ограничения и
- * смена роли обратимы — выполняются сразу. Отказ — нейтральная строка
- * по коду Problem (moderator_required/participant_not_found/
- * conference_ended), без раскрытия деталей; live-строки обновляются
- * сами событиями LiveKit — ручной отккат состояния не нужен.
+ * Деструктивные действия — кик (немедленный разрыв подключения),
+ * завершение (все отключаются) и отзыв гостевой ссылки №53 (вошедшие
+ * по ней гости отключаются немедленно, Q13=B) — требуют явного
+ * подтверждения (role=alertdialog, подтверждение отдельным нажатием);
+ * ограничения и смена роли обратимы — выполняются сразу. Отказ —
+ * нейтральная строка по коду Problem (moderator_required/
+ * participant_not_found/conference_ended), без раскрытия деталей;
+ * live-строки обновляются сами событиями LiveKit — ручной отккат
+ * состояния не нужен.
+ *
+ * Блок «Гостевая ссылка» (T081, US4, №52/№53): по монтажу свёрнут в
+ * кнопку «Пригласить гостя» — GET статуса ссылки в контракте нет,
+ * наблюдать активную без генерации невозможно (FR-009 минимум
+ * раскрытия); после размонтирования панели — снова свёрнуто (кэш не
+ * вводится). Успешный №52 — readonly-поле inviteUrl + «Копировать»
+ * (navigator.clipboard; сбой — молча, ручное выделение остаётся
+ * страховкой) + срок из expiresAt локальным временем + предупреждение
+ * Q17=A/Q13=B; повторная генерация — та же кнопка №52 (сервер сам
+ * отзывает предыдущую). Отзыв №53 с подтверждением; `404
+ * guest_invite_not_found` — не ошибка: молчаливый коллапс блока
+ * (идемпотентность — ссылку мог отозвать другой модератор, Q21=A).
  *
  * Доступность — стандарты 008: section aria-labelledby, группы
  * действий row — fieldset (implicit role=group), фокус с клавиатуры
@@ -42,13 +56,22 @@ import { useLocalParticipant, useParticipants } from '@livekit/components-react'
 import type { LocalParticipant, RemoteParticipant } from 'livekit-client'
 import { useId, useState } from 'react'
 import {
+  createGuestInvite,
   endConference,
+  guestInviteErrorCode,
   kickParticipant,
   moderationErrorCode,
+  revokeGuestInvite,
   updateParticipantRestrictions,
   updateParticipantRole,
 } from '../api/conferences'
-import type { ModerationErrorCode, UpdateParticipantRestrictionsRequest } from '../api/conferences'
+import type {
+  GuestInviteErrorCode,
+  GuestInviteView,
+  ModerationErrorCode,
+  UpdateParticipantRestrictionsRequest,
+} from '../api/conferences'
+import { inviteExpiresLabel } from '../invite'
 import {
   orderParticipants,
   parseParticipantMarks,
@@ -59,7 +82,7 @@ import type { ConferenceParticipantRole } from './ParticipantsPanel'
 import '../conferences.css'
 
 export interface ModerationPanelProps {
-  /** Адрес REST-действий №48–№51 (идентификатор конференции). */
+  /** Адрес REST-действий №48–№53 (идентификатор конференции). */
   readonly conferenceId: string
 }
 
@@ -71,15 +94,18 @@ type ModerationAction =
   | { readonly kind: 'restrictions'; readonly identity: string; readonly field: RestrictionField }
   | { readonly kind: 'role'; readonly identity: string }
   | { readonly kind: 'kick'; readonly identity: string }
+  | { readonly kind: 'invite' }
+  | { readonly kind: 'revoke_invite' }
   | { readonly kind: 'end' }
 
 /** Ожидаемое подтверждение деструктивного действия. */
 type ModerationConfirmation =
   | { readonly kind: 'kick'; readonly identity: string; readonly label: string }
+  | { readonly kind: 'revoke_invite' }
   | { readonly kind: 'end' }
 
 /** Нейтральное сообщение об отказе действия по коду Problem (без деталей). */
-function moderationNotice(code: ModerationErrorCode | null): string {
+function moderationNotice(code: ModerationErrorCode | GuestInviteErrorCode | null): string {
   switch (code) {
     case 'moderator_required':
       return 'Недостаточно прав'
@@ -87,6 +113,8 @@ function moderationNotice(code: ModerationErrorCode | null): string {
       return 'Участник уже не в конференции'
     case 'conference_ended':
       return 'Конференция завершена'
+    case 'conference_not_found':
+      return 'Конференция не найдена'
     default:
       return 'Не удалось выполнить действие'
   }
@@ -96,6 +124,9 @@ function moderationNotice(code: ModerationErrorCode | null): string {
 function confirmationText(confirmation: ModerationConfirmation): string {
   if (confirmation.kind === 'end') {
     return 'Завершить конференцию для всех? Все участники отключатся немедленно.'
+  }
+  if (confirmation.kind === 'revoke_invite') {
+    return 'Отозвать гостевую ссылку? Все вошедшие по ней гости отключатся немедленно, новые входы блокируются.'
   }
   return `Исключить ${confirmation.label} из конференции? Участник отключится немедленно и сможет вернуться по действующей ссылке.`
 }
@@ -217,10 +248,14 @@ export default function ModerationPanel({ conferenceId }: ModerationPanelProps) 
   const participants = useParticipants()
   /** Действие в полёте: одна операция REST-модерации единовременно. */
   const [pending, setPending] = useState<ModerationAction | null>(null)
-  /** Ожидаемое подтверждение деструктивного действия (кик/завершение). */
+  /** Ожидаемое подтверждение деструктивного действия (кик/отзыв/завершение). */
   const [confirmation, setConfirmation] = useState<ModerationConfirmation | null>(null)
   /** Нейтральная строка последнего отказа (сбрасывается следующей попыткой). */
   const [notice, setNotice] = useState<string | null>(null)
+  /** Действующая гостевая ссылка в руках модератора (T081; null — блок свёрнут). */
+  const [guestInvite, setGuestInvite] = useState<GuestInviteView | null>(null)
+  /** Статус «Скопировано» после успешного clipboard.writeText. */
+  const [copied, setCopied] = useState(false)
 
   const localMarks = parseParticipantMarks(localParticipant.metadata)
   if (localMarks.role !== 'moderator') {
@@ -231,14 +266,24 @@ export default function ModerationPanel({ conferenceId }: ModerationPanelProps) 
   const ordered = [...participants].sort(orderParticipants)
   const busy = pending !== null || confirmation !== null
 
-  /** Единое выполнение действия: нейтральный отказ по коду, без локального отката. */
-  async function run(action: ModerationAction, call: () => Promise<unknown>): Promise<void> {
+  /**
+   * Единое выполнение действия: нейтральный отказ по коду, без локального
+   * отката; извлечение кода переопределяется для гостевой ссылки (№52/№53
+   * несут guestInviteErrorCode вместо ModerationErrorCode).
+   */
+  async function run(
+    action: ModerationAction,
+    call: () => Promise<unknown>,
+    codeOf: (
+      cause: unknown,
+    ) => ModerationErrorCode | GuestInviteErrorCode | null = moderationErrorCode,
+  ): Promise<void> {
     setNotice(null)
     setPending(action)
     try {
       await call()
     } catch (cause) {
-      setNotice(moderationNotice(moderationErrorCode(cause)))
+      setNotice(moderationNotice(codeOf(cause)))
     } finally {
       setPending(null)
     }
@@ -281,10 +326,69 @@ export default function ModerationPanel({ conferenceId }: ModerationPanelProps) 
     void run({ kind: 'kick', identity }, () => kickParticipant(conferenceId, identity))
   }
 
+  /**
+   * №52: генерация ссылки — первая и повторная той же кнопкой (сервер
+   * атомарно отзывает предыдущую, Q17=A — клиент ничего не вычисляет).
+   */
+  function inviteGuest(): void {
+    setCopied(false)
+    void run(
+      { kind: 'invite' },
+      async () => {
+        setGuestInvite(await createGuestInvite(conferenceId))
+      },
+      guestInviteErrorCode,
+    )
+  }
+
+  /**
+   * №53: отзыв после явного подтверждения (деструктивное — отключение
+   * гостей, Q13=B); `404 guest_invite_not_found` — идемпотентный успех
+   * (ссылку мог отозвать другой модератор, Q21=A): молчаливый коллапс.
+   */
+  function revokeInvite(): void {
+    void run(
+      { kind: 'revoke_invite' },
+      async () => {
+        try {
+          await revokeGuestInvite(conferenceId)
+        } catch (cause) {
+          if (guestInviteErrorCode(cause) !== 'guest_invite_not_found') {
+            throw cause
+          }
+        }
+        setGuestInvite(null)
+        setCopied(false)
+      },
+      guestInviteErrorCode,
+    )
+  }
+
+  /**
+   * «Копировать» — локальное действие без REST-вызова (pending не
+   * поднимает; кнопка следует общему busy блока); сбой клипборда —
+   * молча, ручное выделение readonly-поля остаётся страховкой.
+   */
+  async function copyInvite(): Promise<void> {
+    if (guestInvite === null) {
+      return
+    }
+    setCopied(false)
+    try {
+      await navigator.clipboard.writeText(guestInvite.inviteUrl)
+      setCopied(true)
+    } catch {
+      // без статуса: поле доступно для ручного выделения
+    }
+  }
+
   /** №48: завершение после явного подтверждения (деструктивное действие). */
   function end(): void {
     void run({ kind: 'end' }, () => endConference(conferenceId))
   }
+
+  /** Подпись срока ссылки (локальное время; null — невалидный expiresAt). */
+  const expiresLabel = guestInvite === null ? null : inviteExpiresLabel(guestInvite.expiresAt)
 
   return (
     <section className="conference-moderation" aria-labelledby={titleId}>
@@ -305,6 +409,62 @@ export default function ModerationPanel({ conferenceId }: ModerationPanelProps) 
           />
         ))}
       </ul>
+      <fieldset className="conference-guest-invite" aria-label="Гостевая ссылка">
+        <button
+          type="button"
+          className="conference-guest-invite-generate"
+          disabled={busy}
+          onClick={inviteGuest}
+        >
+          Пригласить гостя
+        </button>
+        {guestInvite !== null && (
+          <>
+            {/* Q17=A/Q13=B: генерация отзывает предыдущую — заранее о последствиях */}
+            <p className="conference-guest-invite-hint">
+              Новая ссылка отзовёт предыдущую — вошедшие по ней гости отключатся.
+            </p>
+            <input
+              className="conference-guest-invite-url"
+              type="text"
+              aria-label="Ссылка-приглашение"
+              readOnly
+              aria-readonly="true"
+              value={guestInvite.inviteUrl}
+            />
+            {expiresLabel !== null && (
+              <p className="conference-guest-invite-expires">Действует {expiresLabel}</p>
+            )}
+            <div className="conference-guest-invite-actions">
+              <button
+                type="button"
+                className="conference-guest-invite-copy"
+                disabled={busy}
+                onClick={() => {
+                  void copyInvite()
+                }}
+              >
+                Копировать
+              </button>
+              <button
+                type="button"
+                className="conference-guest-invite-revoke conference-moderation-button-danger"
+                disabled={busy}
+                onClick={() => {
+                  setConfirmation({ kind: 'revoke_invite' })
+                }}
+              >
+                Отозвать ссылку
+              </button>
+            </div>
+            {copied && (
+              <output className="conference-guest-invite-copied" aria-live="polite">
+                Скопировано
+              </output>
+            )}
+          </>
+        )}
+      </fieldset>
       <button
         type="button"
         className="conference-moderation-end"
@@ -336,6 +496,8 @@ export default function ModerationPanel({ conferenceId }: ModerationPanelProps) 
                 setConfirmation(null)
                 if (confirmed.kind === 'kick') {
                   kick(confirmed.identity)
+                } else if (confirmed.kind === 'revoke_invite') {
+                  revokeInvite()
                 } else {
                   end()
                 }
