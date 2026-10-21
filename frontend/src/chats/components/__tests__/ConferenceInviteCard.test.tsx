@@ -420,3 +420,138 @@ describe('длительность на терминальных поверхн�
     expect(screen.queryByRole('button')).toBeNull()
   })
 })
+
+describe('длительность деривации — фоновый №45-чек карточки (009 T076)', () => {
+  /**
+   * T076 (продуктовое расширение T071, запрос пользователя 2026-10-21):
+   * прошлые конференции окна ленты терминальны чистой деривацией T070
+   * (без запроса) — span у клиента нет. Решение: фоновый №45-чек КАЖДОЙ
+   * карточки окна (`endedDerived` + `probe`, MessageList помечает все,
+   * КРОМЕ tombstone) — «· N мин» ДОПОЛНЯЕТ терминальную подпись по
+   * приходе ответа (без замигания и без возврата кнопки — состояние
+   * липкое). Бюджет «≤1 №45 на конференцию за сессию» — сессионный кэш
+   * conferenceInviteProbe (T070) без правок. Problem/транспорт на
+   * деривационной карточке — тихо подпись деривации без длительности
+   * (не выдумывать; «Конференция недоступна» — только потенциально
+   * живой новейшей).
+   */
+  beforeEach(() => {
+    resetInviteProbeCache()
+    conferences.getConference.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  function derivedCard(conferenceId = 'c-old') {
+    return (
+      <ConferenceInviteCard
+        conferenceId={conferenceId}
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended
+        endedDerived
+        probe
+      />
+    )
+  }
+
+  it('ended-деривация + probe → ОДИН №45 на монтаж → «Конференция завершена · 7 мин» (span из ответа)', async () => {
+    conferences.getConference.mockResolvedValue(
+      conferenceView({
+        id: 'c-old',
+        status: 'ended',
+        startedAt: '2026-10-17T12:00:00.000Z',
+        endedAt: '2026-10-17T12:07:00.000Z',
+      }),
+    )
+    render(derivedCard())
+    // терминальная подпись деривации — СРАЗУ, без длительности и без
+    // возврата кнопки (липкое состояние)
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(screen.queryByRole('button')).toBeNull()
+    // «· N мин» ДОПОЛНЯЕТ подпись по приходе №45
+    await waitFor(() => {
+      expect(screen.getByText('Конференция завершена · 7 мин')).toBeTruthy()
+    })
+    expect(conferences.getConference).toHaveBeenCalledTimes(1)
+    expect(conferences.getConference).toHaveBeenCalledWith('c-old')
+  })
+
+  it('транспортный сбой → тихо подпись деривации БЕЗ длительности, без ошибок UI', async () => {
+    conferences.getConference.mockRejectedValue(new Error('network'))
+    render(derivedCard())
+    await waitFor(() => {
+      expect(conferences.getConference).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(screen.queryByText(/Конференция завершена ·/)).toBeNull()
+    expect(screen.queryByText('Не удалось подключиться')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('Problem conference_not_found на деривационной карточке — тихо подпись деривации (не «недоступна»)', async () => {
+    conferences.getConference.mockRejectedValue({
+      status: 404,
+      errors: { conference: ['conference_not_found'] },
+    })
+    render(derivedCard())
+    await waitFor(() => {
+      expect(conferences.getConference).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(screen.queryByText('Конференция недоступна')).toBeNull()
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('повторный монтаж — исход+span из сессионного кэша, ноль запросов', async () => {
+    conferences.getConference.mockResolvedValue(
+      conferenceView({
+        id: 'c-old',
+        status: 'ended',
+        startedAt: '2026-10-17T12:00:00.000Z',
+        endedAt: '2026-10-17T12:07:00.000Z',
+      }),
+    )
+    const first = render(derivedCard())
+    await waitFor(() => {
+      expect(screen.getByText('Конференция завершена · 7 мин')).toBeTruthy()
+    })
+    first.unmount()
+    cleanup()
+    render(derivedCard())
+    expect(screen.getByText('Конференция завершена · 7 мин')).toBeTruthy()
+    expect(conferences.getConference).toHaveBeenCalledTimes(1)
+  })
+
+  it('никогда не начинавшаяся (ended без startedAt, empty-timeout) — подпись без длительности', async () => {
+    conferences.getConference.mockResolvedValue(
+      conferenceView({ id: 'c-old', status: 'ended', endedAt: '2026-10-17T12:03:00.000Z' }),
+    )
+    render(derivedCard())
+    await waitFor(() => {
+      expect(conferences.getConference).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.getByText('Конференция завершена')).toBeTruthy()
+    expect(screen.queryByText(/Конференция завершена ·/)).toBeNull()
+  })
+
+  it('tombstone-карточка (ended живым кадром + endedSpan, без endedDerived) — БЕЗ №45 даже с probe (регресс T069/T071)', () => {
+    conferences.getConference.mockResolvedValue(conferenceView({ status: 'ended' }))
+    render(
+      <ConferenceInviteCard
+        conferenceId="c-1"
+        mode="video"
+        createdAt="2026-10-17T12:00:00.000Z"
+        ended
+        probe
+        endedSpan={{ startedAt: '2026-10-17T12:10:00.000Z', endedAt: '2026-10-17T12:35:00.000Z' }}
+      />,
+    )
+    expect(screen.getByText('Конференция завершена · 25 мин')).toBeTruthy()
+    expect(conferences.getConference).not.toHaveBeenCalled()
+  })
+})
