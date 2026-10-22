@@ -21,6 +21,12 @@ import { describe, expect, it } from 'vitest'
  * body:has(…), controls absolute снизу по центру поверх тайла,
  * статус-строки/тост — absolute-оверлеи сверху; обычная геометрия
  * тайлов T075 не регрессирует.
+ *
+ * T084 — слитый тайл участника: широкая секция демонстраций
+ * (.conference-screens) и 21:9-тайл экрана (.conference-tile-screen)
+ * удалены — единая сетка тайлов 16:9, экран вписывается object-fit
+ * contain; живая демонстрация маркируется текстовым бейджем
+ * «демонстрирует экран» (лексика conference-tile-speaking, 008).
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -177,5 +183,24 @@ describe('полноэкранный пин-оверлей (T079): статич�
     // полноэкранный пин T079 накрывает счётчик CSS-скрытием — иначе
     // строка висит поверх оверлея (добавлена к панелям body:has(…))
     expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-live-count')
+  })
+})
+
+describe('слитый тайл участника (T084): статический пин CSS', () => {
+  it('широкая секция демонстраций и 21:9-тайл экрана удалены — единая сетка тайлов 16:9', () => {
+    expect(conferencesCss).not.toContain('.conference-screens')
+    expect(conferencesCss).not.toContain('.conference-tile-screen')
+    // 21:9-геометрия упразднена: экран вписывается в 16:9 (object-fit contain)
+    expect(conferencesCss).not.toContain('21 / 9')
+    const tile = conferencesCss.match(/\.conference-tile\s*\{([^}]*)\}/)
+    expect(tile?.[1]).toContain('aspect-ratio: 16 / 9')
+  })
+
+  it('бейдж «демонстрирует экран» — правило в лексике conference-tile-speaking', () => {
+    const badge = conferencesCss.match(/\.conference-tile-sharing\s*\{([^}]*)\}/)
+    expect(badge).not.toBeNull()
+    expect(badge?.[1]).toContain('margin-left: 6px')
+    expect(badge?.[1]).toContain('font-style: italic')
+    expect(badge?.[1]).toContain('color: var(--gold-light)')
   })
 })

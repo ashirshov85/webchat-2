@@ -38,8 +38,8 @@
  * снимает свою часть предупреждения; ограничения права/источников уже
  * срезаны в grants токена сервером (FR-007) — публикация просто не
  * проходит. Своя демонстрация экрана публикуется тумблером
- * MediaControls (T028), удалённые рендерятся широкими тайлами над
- * сеткой камер.
+ * MediaControls (T028); экран и камера участника рендерятся СЛИТЫМ
+ * тайлом (T084) — см. комментарий ConferenceTile ниже.
  *
  * Реконнект (T060, FR-014, Q15=B): подключённому LiveKit продлевает
  * токен сам (livekit-integration §3); транзиентная потеря связи —
@@ -83,6 +83,27 @@
  * обработчика). Esc — прикладная обработка, НЕ выход браузерного
  * fullscreen (Fullscreen API по-прежнему вне scope — паритет
  * T074/T075/T079) и НЕ выход из звонка (выход — MediaControls).
+ *
+ * Слитый тайл участника (T084): камера и демонстрация экрана одного
+ * участника — ОДИН тайл (React-ключ identity, приоритет
+ * screen > camera > аватар-заглушка T073): живое переключение
+ * камера↔экран (T077 гасит камеру при старте демонстрации) меняет
+ * содержимое ТОГО ЖЕ DOM-узла — сетка не перестраивается, второй
+ * тайл не рождается; video-элемент на тайл один — VideoTrack
+ * перевешивает attach при смене trackRef (кроссфейд из двух video
+ * не вводится). Пин-ключ — identity: пин переживает переключения
+ * камера↔экран в свёрнутом и развёрнутом режимах, сброс — ТОЛЬКО
+ * ручное сворачивание («Свернуть»/Esc T082) или уход участника из
+ * комнаты (прежний автосброс завершением демонстрации T074/T078
+ * отменён — тайл жив и остаётся развёрнутым с камерой/аватаром);
+ * автопин T078 сохраняет правило «новый screen-ключ при пустом
+ * пине», ключом становится identity (повторная публикация трека —
+ * переподключение демонстрирующего — считается новой демонстрацией).
+ * Подпись — имя участника + видимый бейдж «демонстрирует экран» при
+ * живой демонстрации (формат «Экран — имя» упразднён; доступность
+ * 008 — состояние дублируется текстом); геометрия единая 16:9 —
+ * object-fit contain вписывает экран, сетка/компактная полоса не
+ * перестраиваются при переключениях.
  */
 import {
   isTrackReference,
@@ -308,37 +329,52 @@ function TilePinButton({
 }
 
 /**
- * Тайл камеры участника (T073): published-реф — видео с подписью
- * имени; placeholder-реф (камера выключена/недоступна — собственный
- * тайл тоже) — своя заглушка вместо дефолтной ParticipantTile:
- * ui/Avatar (ParticipantAvatar, «как в контактах») + имя +
- * индикатор речи. Живой переход камера вкл/выкл меняет набор
- * track-рефов useTracks — аватар уходит/возвращается сам; тайлы
- * демонстраций экрана — ConferenceMedia, без аватара.
+ * Слитый тайл участника (T084): экран, камера и аватар-заглушка
+ * одного участника — ОДИН элемент с React-ключом identity. Содержимое
+ * — производное состояния модели (приоритет screen > camera >
+ * placeholder): published-экран/камера — VideoTrack (ОДИН
+ * video-элемент на тайл: смена trackRef перевешивает attach того же
+ * элемента, DOM-узел переиспользуется — переключения без
+ * размонтирования тайла и перестройки сетки), placeholder (камера
+ * выключена/недоступна — собственный тайл тоже) — своя заглушка
+ * вместо дефолтной ParticipantTile: ui/Avatar (ParticipantAvatar,
+ * «как в контактах» T073) + имя + индикатор речи. Живая
+ * демонстрация маркируется текстовым бейджем «демонстрирует экран»
+ * рядом с именем (доступность 008 — состояние дублируется текстом;
+ * формат «Экран — имя» упразднён).
  *
- * Пин-раскладка (T074): pinned — тайл развёрнут большим на всю
- * медиа-зону (conference-tile-pinned; аватар заглушки крупнее),
- * onTogglePin — тумблер кнопкой/двойным кликом.
+ * Пин-раскладка (T074, ключ identity — T084): pinned — тайл
+ * развёрнут большим на всю медиа-зону (conference-tile-pinned;
+ * аватар заглушки крупнее), onTogglePin — тумблер кнопкой/двойным
+ * кликом.
  */
-function CameraTile({
-  trackRef,
+function ConferenceTile({
+  model,
   speaking,
   pinned = false,
   onTogglePin,
 }: {
-  readonly trackRef: TrackReferenceOrPlaceholder
+  readonly model: ParticipantTileModel
   readonly speaking: boolean
   readonly pinned?: boolean
   readonly onTogglePin: () => void
 }) {
-  const label = participantLabel(trackRef.participant.name, trackRef.participant.identity)
+  const label = participantLabel(model.participant.name, model.participant.identity)
+  const cameraPublished =
+    model.cameraRef !== undefined && isTrackReference(model.cameraRef) ? model.cameraRef : undefined
+  const videoRef = model.screenRef ?? cameraPublished
   const tileClass = pinned ? 'conference-tile conference-tile-pinned' : 'conference-tile'
-  if (isTrackReference(trackRef)) {
+  if (videoRef !== undefined) {
     return (
       <figure className={tileClass} onDoubleClick={onTogglePin}>
-        <VideoTrack trackRef={trackRef} />
+        <VideoTrack trackRef={videoRef} />
         <TilePinButton pinned={pinned} onToggle={onTogglePin} />
-        <figcaption className="conference-tile-name">{label}</figcaption>
+        <figcaption className="conference-tile-name">
+          {label}
+          {model.screenRef !== undefined && (
+            <span className="conference-tile-sharing">демонстрирует экран</span>
+          )}
+        </figcaption>
       </figure>
     )
   }
@@ -350,7 +386,7 @@ function CameraTile({
       onDoubleClick={onTogglePin}
     >
       <ParticipantAvatar
-        participant={trackRef.participant}
+        participant={model.participant}
         size={pinned ? 144 : 96}
         className="conference-tile-avatar"
       />
@@ -364,45 +400,22 @@ function CameraTile({
 }
 
 /**
- * Широкий тайл демонстрации экрана (T027); в пин-раскладке (T074) —
- * закрепляем большим на всю медиа-зону, без аватара (T073).
- * Рефы демонстраций всегда published (useTracks без placeholder).
+ * View-model слитого тайла участника (T084): слияние camera- и
+ * screen-рефов useTracks по identity с приоритетом screen > camera >
+ * placeholder. T077 гарантирует взаимоисключительность для
+ * собственного пользователя (старт демонстрации гасит камеру);
+ * чужой клиент, публикующий оба трека, детерминированно виден
+ * экраном — камера вытесняется до завершения демонстрации, второй
+ * тайл НЕ рождается.
  */
-function ScreenTile({
-  trackRef,
-  pinned = false,
-  onTogglePin,
-}: {
-  readonly trackRef: TrackReference
-  readonly pinned?: boolean
-  readonly onTogglePin: () => void
-}) {
-  return (
-    <figure
-      className={
-        pinned
-          ? 'conference-tile conference-tile-screen conference-tile-pinned'
-          : 'conference-tile conference-tile-screen'
-      }
-      onDoubleClick={onTogglePin}
-    >
-      <VideoTrack trackRef={trackRef} />
-      <TilePinButton pinned={pinned} onToggle={onTogglePin} />
-      <figcaption className="conference-tile-name">
-        Экран — {participantLabel(trackRef.participant.name, trackRef.participant.identity)}
-      </figcaption>
-    </figure>
-  )
-}
-
-/**
- * Ключ тайла для пин-раскладки (T074): identity+source — зеркалит
- * React-ключ тайлов. Один участник с камерой И демонстрацией даёт
- * два разных пин-ключа: пин конкретного тайла, повторный пин другого
- * тайла — переключение, того же — сворачивание.
- */
-function tilePinKey(ref: TrackReferenceOrPlaceholder): string {
-  return `${ref.participant.identity}:${ref.source}`
+interface ParticipantTileModel {
+  /** Ключ тайла и пина (T084): identity участника, НЕ identity:source. */
+  readonly identity: string
+  readonly participant: TrackReferenceOrPlaceholder['participant']
+  /** Живая демонстрация экрана участника (published-реф) или undefined. */
+  readonly screenRef: TrackReference | undefined
+  /** Camera-реф участника (published или placeholder) или undefined. */
+  readonly cameraRef: TrackReferenceOrPlaceholder | undefined
 }
 
 /**
@@ -410,21 +423,21 @@ function tilePinKey(ref: TrackReferenceOrPlaceholder): string {
  * сюда из медиа-слоя; внутри RoomContext — хукам useTracks/
  * useSpeakingParticipants нужна живая комната): аудио всех удалённых
  * участников — RoomAudioRenderer (микрофоны и звук демонстраций
- * экрана), видео — тайлы: сетка камер/заглушек-аватаров участников
- * (CameraTile: имя, индикатор речи, аватар без камеры — T073) и
- * широкие тайлы демонстраций экрана (VideoTrack). adaptiveStream
- * держит паузу невидимых тайлов (FR-004). Слот children
- * (MediaControls/панели US3/US4) остаётся в DOM под RoomContext —
- * переносить нельзя (хуки livekit), геометрия пин-оверлея — CSS.
+ * экрана), видео — ЕДИНАЯ сетка слитых тайлов участников (T084:
+ * ConferenceTile — экран/камера/аватар в одном элементе по identity;
+ * широкой секции демонстраций больше нет). adaptiveStream держит
+ * паузу невидимых тайлов (FR-004). Слот children (MediaControls/
+ * панели US3/US4) остаётся в DOM под RoomContext — переносить нельзя
+ * (хуки livekit), геометрия пин-оверлея — CSS.
  *
- * Пин-раскладка (T074): локальное состояние закреплённого тайла
- * (identity:source) — закреплённый рендерится большим, остальные —
- * компактной полосой; повторный пин другого тайла — переключение
- * (закреплён всегда ≤1), закреплённого — сворачивание. Пин-цель
- * выводится из живых track-рефов: выход участника из комнаты или
- * завершение закреплённой демонстрации — цель исчезает из
- * useTracks → обычная сетка (состояние комнаты, без localStorage —
- * на размонтировании звонка исчезает). Треки подписаны
+ * Пин-раскладка (T074, ключ identity — T084): локальное состояние
+ * закреплённого тайла (identity участника) — закреплённый рендерится
+ * большим, остальные — компактной полосой; повторный пин другого
+ * тайла — переключение (закреплён всегда ≤1), закреплённого —
+ * сворачивание. Пин-цель выводится из живых тайлов: выход участника
+ * из комнаты — цель исчезает → обычная сетка (состояние комнаты, без
+ * localStorage — на размонтировании звонка исчезает); переключения
+ * камера↔экран пин НЕ сбрасывают — тайл жив (T084). Треки подписаны
  * (onlySubscribed: false) — adaptiveStream (FR-004) сам поднимает
  * качество ставшему большим тайлу, ничего дособирать не нужно.
  *
@@ -434,26 +447,25 @@ function tilePinKey(ref: TrackReferenceOrPlaceholder): string {
  * (position: fixed; скрытие служебных панелей страницы по body:has(…);
  * MediaControls — absolute снизу по центру поверх тайла; статус-строки
  * и тост — absolute-оверлеи сверху). Снятие пина (сворачивание/уход
- * цели/завершение демонстрации) снимает маркер тем же рендером, что
- * возвращает обычную сетку. Обе точки входа (член/гость) получают
- * одинаковую геометрию одним маркером. Fullscreen API — вне scope
- * (паритет T074/T075).
+ * цели) снимает маркер тем же рендером, что возвращает обычную сетку.
+ * Обе точки входа (член/гость) получают одинаковую геометрию одним
+ * маркером. Fullscreen API — вне scope (паритет T074/T075).
  *
- * Автопин демонстрации экрана (T078): появление НОВОГО screen-ref'а
- * (переход «не было → появился», включая собственную демонстрацию)
- * при ПУСТОМ пине разворачивает тайл на весь экран без ручного
- * клика — у всех участников; завершение демонстрации сбрасывает пин
- * обычной деривацией T074. Детерминированное правило «только при
- * пустом пине»: ручной пин зрителя стартом демонстрации не
- * перебивается, вторая одновременная демонстрация не переключает
- * уже автозакреплённую первую, ручное сворачивание автопина при
- * живой демонстрации возвращает сетку БЕЗ повторного автопина
- * (решение принимается на появление нового ключа, не на инвариант
- * «пустой пин + живые экраны» — иначе цикл); повторная публикация
- * трека (переподключение демонстрирующего: ключ ушёл из живых и
- * вернулся) считается новой демонстрацией. Решение — вывод в фазе
- * рендера (derived state, React): атомарно с рендером, заметившим
- * новый ref, без гонки эффекта с ручным кликом на первом коммите.
+ * Автопин демонстрации экрана (T078, ключ identity — T084):
+ * появление НОВОГО screen-ключа (переход «не было → появился»,
+ * включая собственную демонстрацию) при ПУСТОМ пине разворачивает
+ * слитый тайл демонстрирующего на весь экран без ручного клика — у
+ * всех участников. Детерминированное правило «только при пустом
+ * пине»: ручной пин зрителя стартом демонстрации не перебивается,
+ * вторая одновременная демонстрация не переключает уже
+ * автозакреплённую первую, ручное сворачивание автопина при живой
+ * демонстрации возвращает сетку БЕЗ повторного автопина (решение
+ * принимается на появление нового ключа, не на инвариант «пустой пин
+ * + живые экраны» — иначе цикл); повторная публикация трека
+ * (переподключение демонстрирующего: ключ ушёл из живых и вернулся)
+ * считается новой демонстрацией. Решение — вывод в фазе рендера
+ * (derived state, React): атомарно с рендером, заметившим новый ref,
+ * без гонки эффекта с ручным кликом на первом коммите.
  */
 function ConferenceRoomLive({
   conferenceId,
@@ -483,43 +495,68 @@ function ConferenceRoomLive({
   // Медиа-тайлы рендерятся только в живых фазах (как монтаж медиа-слоя
   // до T079): маркер оверлея и автопин следуют тому же окну.
   const mediaVisible = phase === 'connected' || phase === 'reconnecting'
-  // Пин-цель из живых рефов (undefined — цель исчезла: выход участника
-  // из комнаты / завершение закреплённой демонстрации → обычная сетка).
-  const pinnedScreen =
-    pinnedTileKey === null
-      ? undefined
-      : screenTiles.find((ref) => tilePinKey(ref) === pinnedTileKey)
-  const pinnedCamera =
-    pinnedTileKey !== null && pinnedScreen === undefined
-      ? cameraTiles.find((ref) => tilePinKey(ref) === pinnedTileKey)
-      : undefined
+  // Слияние camera+screen в один тайл по участнику (T084): приоритет
+  // screen > camera > placeholder; порядок стабильный — камеры по
+  // порядку useTracks, затем экраны участников без camera-рефа.
+  // React-ключ — identity: смена набора рефов (переключения камеры/
+  // экрана/заглушки) переиспользует те же DOM-узлы, сетка не
+  // перестраивается, второй тайл участника не рождается.
+  const cameraIdentities = new Set(cameraTiles.map((ref) => ref.participant.identity))
+  const screenByIdentity = new Map<string, TrackReference>()
+  for (const ref of screenTiles) {
+    screenByIdentity.set(ref.participant.identity, ref)
+  }
+  const tiles: ParticipantTileModel[] = cameraTiles.map((ref) => {
+    const identity = ref.participant.identity
+    return {
+      identity,
+      participant: ref.participant,
+      cameraRef: ref,
+      screenRef: screenByIdentity.get(identity),
+    }
+  })
+  for (const [identity, screenRef] of screenByIdentity) {
+    if (!cameraIdentities.has(identity)) {
+      tiles.push({
+        identity,
+        participant: screenRef.participant,
+        cameraRef: undefined,
+        screenRef,
+      })
+    }
+  }
+  // Пин-цель из живых тайлов по identity (undefined — цель исчезла:
+  // выход участника из комнаты → обычная сетка; переключения
+  // камера↔экран цель НЕ роняют — тайл жив, T084).
+  const pinnedTile =
+    pinnedTileKey === null ? undefined : tiles.find((tile) => tile.identity === pinnedTileKey)
   // Живой пин (цель существует): пустой пин для автопина T078 — именно
   // отсутствие развёрнутого тайла (в т.ч. «висячий» ключ после ухода
   // закреплённого участника), а не только null в состоянии.
-  const livePinTarget = pinnedScreen !== undefined || pinnedCamera !== undefined
+  const livePinTarget = pinnedTile !== undefined
   // Маркер оверлея — ровно когда развёрнутый тайл реально рендерится
   // (T079): терминальные/служебные фазы маркер не поднимают.
   const roomPinned = mediaVisible && livePinTarget
-  const togglePin = (key: string): void => {
-    setPinnedTileKey((current) => (current === key ? null : key))
+  const togglePin = (identity: string): void => {
+    setPinnedTileKey((current) => (current === identity ? null : identity))
   }
-  // Замеченные демонстрации предыдущего рендера (T078): набор заменяется
-  // живыми ключами — ушедший ключ (завершение/переподключение) снова
-  // считается новым при возвращении. Появление нового ключа при пустом
-  // пине — автопин ровно на первом рендере появления (derived state,
-  // setState в фазе рендера своего компонента — React перерендерит до
-  // коммита; последующие ручные клики видят уже применённый автопин).
-  const appearedScreenKey = screenTiles
-    .map((ref) => tilePinKey(ref))
-    .find((key) => !seenScreenKeys.has(key))
+  // Замеченные демонстрации предыдущего рендера (T078, ключ identity):
+  // набор заменяется живыми ключами — ушедший ключ (завершение/
+  // переподключение) снова считается новым при возвращении.
+  // Появление нового ключа при пустом пине — автопин ровно на первом
+  // рендере появления (derived state, setState в фазе рендера своего
+  // компонента — React перерендерит до коммита; последующие ручные
+  // клики видят уже применённый автопин).
+  const screenIdentities = screenTiles.map((ref) => ref.participant.identity)
+  const appearedScreenIdentity = screenIdentities.find((identity) => !seenScreenKeys.has(identity))
   if (
     mediaVisible &&
-    (appearedScreenKey !== undefined || seenScreenKeys.size !== screenTiles.length)
+    (appearedScreenIdentity !== undefined || seenScreenKeys.size !== screenIdentities.length)
   ) {
-    if (appearedScreenKey !== undefined && !livePinTarget) {
-      setPinnedTileKey(appearedScreenKey)
+    if (appearedScreenIdentity !== undefined && !livePinTarget) {
+      setPinnedTileKey(appearedScreenIdentity)
     }
-    setSeenScreenKeys(new Set(screenTiles.map((ref) => tilePinKey(ref))))
+    setSeenScreenKeys(new Set(screenIdentities))
   }
   // Клавиатурный выход из пин-оверлея (T082, доступность 008): Esc при
   // живом пине сворачивает закреплённый тайл — та же семантика, что
@@ -556,9 +593,7 @@ function ConferenceRoomLive({
   }, [roomPinned])
   const statusText = phaseStatusText(phase)
   const roomClass = roomPinned ? 'conference-room conference-room-pinned' : 'conference-room'
-  const pinnedLayout = pinnedScreen !== undefined || pinnedCamera !== undefined
-  const restScreens = pinnedLayout ? screenTiles.filter((ref) => ref !== pinnedScreen) : []
-  const restCameras = pinnedLayout ? cameraTiles.filter((ref) => ref !== pinnedCamera) : []
+  const restTiles = pinnedTile === undefined ? tiles : tiles.filter((tile) => tile !== pinnedTile)
   return (
     <div className={roomClass} data-conference-room={conferenceId}>
       {statusText !== null && <output className="conference-room-status">{statusText}</output>}
@@ -571,72 +606,36 @@ function ConferenceRoomLive({
           </button>
         </output>
       )}
-      {mediaVisible &&
-        (pinnedLayout ? (
-          <>
-            <RoomAudioRenderer />
-            {pinnedScreen !== undefined && (
-              <ScreenTile
-                trackRef={pinnedScreen}
-                pinned
-                onTogglePin={() => togglePin(tilePinKey(pinnedScreen))}
+      {mediaVisible && (
+        <>
+          <RoomAudioRenderer />
+          {pinnedTile !== undefined && (
+            <ConferenceTile
+              model={pinnedTile}
+              pinned
+              speaking={speakerIdentities.has(pinnedTile.identity)}
+              onTogglePin={() => togglePin(pinnedTile.identity)}
+            />
+          )}
+          <section
+            className={
+              pinnedTile === undefined
+                ? 'conference-tiles'
+                : 'conference-tiles conference-tiles-compact'
+            }
+            aria-label="Участники конференции"
+          >
+            {restTiles.map((tile) => (
+              <ConferenceTile
+                key={tile.identity}
+                model={tile}
+                speaking={speakerIdentities.has(tile.identity)}
+                onTogglePin={() => togglePin(tile.identity)}
               />
-            )}
-            {pinnedCamera !== undefined && (
-              <CameraTile
-                trackRef={pinnedCamera}
-                pinned
-                speaking={speakerIdentities.has(pinnedCamera.participant.identity)}
-                onTogglePin={() => togglePin(tilePinKey(pinnedCamera))}
-              />
-            )}
-            <section
-              className="conference-tiles conference-tiles-compact"
-              aria-label="Участники конференции"
-            >
-              {restScreens.map((ref) => (
-                <ScreenTile
-                  trackRef={ref}
-                  key={tilePinKey(ref)}
-                  onTogglePin={() => togglePin(tilePinKey(ref))}
-                />
-              ))}
-              {restCameras.map((ref) => (
-                <CameraTile
-                  trackRef={ref}
-                  key={tilePinKey(ref)}
-                  speaking={speakerIdentities.has(ref.participant.identity)}
-                  onTogglePin={() => togglePin(tilePinKey(ref))}
-                />
-              ))}
-            </section>
-          </>
-        ) : (
-          <>
-            <RoomAudioRenderer />
-            {screenTiles.length > 0 && (
-              <section className="conference-screens" aria-label="Демонстрации экрана">
-                {screenTiles.map((ref) => (
-                  <ScreenTile
-                    trackRef={ref}
-                    key={tilePinKey(ref)}
-                    onTogglePin={() => togglePin(tilePinKey(ref))}
-                  />
-                ))}
-              </section>
-            )}
-            <section className="conference-tiles" aria-label="Участники конференции">
-              {cameraTiles.map((ref) => (
-                <CameraTile
-                  key={tilePinKey(ref)}
-                  trackRef={ref}
-                  speaking={speakerIdentities.has(ref.participant.identity)}
-                  onTogglePin={() => togglePin(tilePinKey(ref))}
-                />
-              ))}
-            </section>
-          </>
-        ))}
+            ))}
+          </section>
+        </>
+      )}
       {children}
     </div>
   )
