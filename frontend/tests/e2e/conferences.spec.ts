@@ -22,10 +22,12 @@ import {
  * конференция занимает всё окно браузера (computed max-width:none у
  * #root + секция ≈ innerWidth) в фазах pre-join и joined.
  *
- * 009, US1, T078 — e2e автопина демонстрации экрана: старт
- * демонстрации одной вкладкой разворачивает тайл «Экран — …» на всю
- * медиа-зону у ВСЕХ участников без ручного клика (пин-раскладка
- * T074 поверх MediaControls «Экран»; завершение — возврат сетки).
+ * 009, US1, T078/T084 — e2e автопина демонстрации экрана: старт
+ * демонстрации одной вкладкой разворачивает СЛИТЫЙ тайл участника
+ * (бейдж «демонстрирует экран», T084) на всю медиа-зону у ВСЕХ
+ * участников без ручного клика (пин-раскладка T074 поверх
+ * MediaControls «Экран»; завершение демонстрации тайл не роняет —
+ * пин остаётся на камере/аватаре, сброс сворачиванием).
  *
  * 009, US1, T079 — e2e полноэкранного пин-оверлея: ручной пин
  * разворачивает закреплённый тайл на весь вьюпорт БЕЗ скроллбаров
@@ -424,7 +426,7 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     await cdp.detach()
   })
 
-  test('T078: старт демонстрации экрана — тайл разворачивается сам у всех вкладок без ручного клика', async ({
+  test('T078/T084: старт демонстрации экрана — слитый тайл участника разворачивается сам у всех вкладок без ручного клика', async ({
     browser,
   }) => {
     const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
@@ -447,23 +449,36 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     // alice включает демонстрацию (MediaControls «Экран»; Chromium
     // auto-select-desktop-capture-source отдаёт поток без пикера —
     // конфиг): появление screen-трека при пустом пине разворачивает
-    // тайл на всю медиа-зону БЕЗ клика по «Развернуть»
+    // СЛИТЫЙ тайл alice (T084: экран в тайле участника, имя + бейдж
+    // «демонстрирует экран») на всю медиа-зону БЕЗ клика по «Развернуть»
     await alicePage.getByRole('button', { name: 'Экран', exact: true }).click()
 
-    // зритель bob: единственный развёрнутый тайл — «Экран — …»
+    // зритель bob: единственный развёрнутый тайл — слитый тайл alice
     const bobPinned = bobPage.locator('.conference-tile-pinned')
     await expect(bobPinned).toHaveCount(1, { timeout: 10_000 })
-    await expect(bobPinned).toContainText('Экран — ')
-    // собственная вкладка демонстрирующего — тот же автопин (self-view)
+    await expect(bobPinned).toContainText(aliceNow.username)
+    await expect(bobPinned).toContainText('демонстрирует экран')
+    // собственная вкладка демонстрирующего — тот же автопин (self-view):
+    // свой тайл бесшовно переключился на экран-видео (T077 гасит камеру)
     const alicePinned = alicePage.locator('.conference-tile-pinned')
     await expect(alicePinned).toHaveCount(1, { timeout: 10_000 })
-    await expect(alicePinned).toContainText('Экран — ')
+    await expect(alicePinned).toContainText('демонстрирует экран')
 
-    // завершение демонстрации — автоматический возврат обычной сетки
+    // завершение демонстрации — пин ОСТАЁТСЯ на слитом тайле alice
+    // (T084): тайл жив с камерой/аватаром, бейдж ушёл
     await alicePage.getByRole('button', { name: 'Экран', exact: true }).click()
-    await expect(bobPinned).toHaveCount(0, { timeout: 10_000 })
-    await expect(alicePinned).toHaveCount(0, { timeout: 10_000 })
-    // звонок продолжается обычной сеткой
+    await expect(bobPinned).not.toContainText('демонстрирует экран', { timeout: 10_000 })
+    await expect(bobPinned).toHaveCount(1)
+    await expect(bobPinned).toContainText(aliceNow.username)
+    await expect(alicePinned).not.toContainText('демонстрирует экран', { timeout: 10_000 })
+    await expect(alicePinned).toHaveCount(1)
+
+    // сворачивание возвращает сетку (кнопка «Свернуть» у зрителя,
+    // Esc T082 у демонстрирующего); звонок продолжается обычной сеткой
+    await bobPinned.getByRole('button', { name: 'Свернуть' }).click()
+    await expect(bobPage.locator('.conference-tile-pinned')).toHaveCount(0)
+    await alicePage.keyboard.press('Escape')
+    await expect(alicePage.locator('.conference-tile-pinned')).toHaveCount(0)
     await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
     await expect(alicePage.getByText('Вы в конференции')).toBeVisible()
   })
