@@ -116,8 +116,13 @@
  * block:'end' on the LAST unread row (the whole block in view); they
  * do NOT fit → block:'start' on the DIVIDER (the block is read from
  * its beginning — the bug 14 intent with the divider as the anchor).
- * The unread run is `senderId ≠ me && seq > unreadFromSeq` (the
- * open-time №13 `myReadUpToSeq` latched by useChatMessages): own
+ * The unread run is `senderId ≠ me && senderId ≠ null && seq >
+ * unreadFromSeq` (the open-time №13 `myReadUpToSeq` latched by
+ * useChatMessages) — system rows (009 kind='system', senderId=null)
+ * NEVER enter the unread block (T083): the server badge №12/№26
+ * counts user rows only, and the direct-chat №17 watermark cannot
+ * pass a system row, so a divider over one could never be cleared
+ * by reading; own
  * outgoing rows are read by the author the moment they leave, so a
  * chat whose tail is own sends carries no unread incoming and the
  * seat degenerates to the feed's very last row with block:'end' —
@@ -487,8 +492,9 @@ function requestSeatCatchUp(deps: OpenSeatDeps): void {
  * T078/T085 → T092/T066 open-seat application: seats the feed exactly
  * once per open by the SIZE of the unread block (see the component
  * doc above) and freezes the unread-divider snapshot at the fire
- * commit (T066) — the seq of the FIRST unread incoming of THIS open
- * (`null` — none). Later realtime appends and prepends render against
+ * commit (T066) — the seq of the FIRST unread incoming USER row of
+ * THIS open (`null` — none; system rows never enter the unread
+ * block, T083). Later realtime appends and prepends render against
  * the frozen value, so the divider never moves or sprouts after the
  * open decided.
  */
@@ -517,7 +523,7 @@ function applyOpenSeat(deps: OpenSeatDeps): void {
   deps.seatArmedRef.current = false
   deps.unreadBarrierSeqRef.current =
     messages.find(
-      (message) => message.senderId !== deps.currentUserId && message.seq > unreadFromSeq,
+      (message) => isUserIncoming(message, deps.currentUserId) && message.seq > unreadFromSeq,
     )?.seq ?? null
   const seat = pickSeat(dividerSeat, tailSeat, list)
   if (seat === null || typeof seat.element.scrollIntoView !== 'function') {
@@ -772,13 +778,30 @@ function lastLocalKeyOf(
 }
 
 /**
+ * T083: an incoming USER row — the only kind that may open or join
+ * the unread block. A system row (senderId === null, 009
+ * kind='system' — conference_invite cards and future widgets) NEVER
+ * does: the direct-chat №17 planner counts only the peer's user rows
+ * (its watermark never passes a system row), and the server badge
+ * №12/№26 counts `kind=USER && senderId ≠ me` only — a divider over
+ * a system row could never be cleared by reading (the invariant
+ * «the divider stands only over rows a read can clear»). The rule
+ * rides the ROW KIND (senderId === null), not payload.type — future
+ * system widgets (constitution IV) inherit it automatically.
+ */
+function isUserIncoming(message: Message, currentUserId: string): boolean {
+  return message.senderId !== null && message.senderId !== currentUserId
+}
+
+/**
  * T066: the unread barrier — the index the «Непрочитанные
  * сообщения» divider renders above. Until the seat fires it follows
- * the LIVE boundary (the FIRST unread INCOMING row of the window,
- * `senderId ≠ me && seq > unreadFromSeq`); the fire freezes the
- * boundary seq, and every later render of this open places the
- * divider by the FROZEN value (−1 when the open carried no unread
- * barrier at all).
+ * the LIVE boundary (the FIRST unread incoming USER row of the
+ * window, `senderId ≠ me && senderId ≠ null && seq > unreadFromSeq`
+ * — system rows never enter the unread block, T083); the fire
+ * freezes the boundary seq, and every later render of this open
+ * places the divider by the FROZEN value (−1 when the open carried
+ * no unread barrier at all).
  */
 function findBarrierIndex(
   messages: readonly Message[],
@@ -791,7 +814,7 @@ function findBarrierIndex(
   }
   if (frozen === undefined) {
     return messages.findIndex(
-      (message) => message.senderId !== currentUserId && message.seq > unreadFromSeq,
+      (message) => isUserIncoming(message, currentUserId) && message.seq > unreadFromSeq,
     )
   }
   return messages.findIndex((message) => message.seq === frozen)
@@ -816,8 +839,9 @@ const NO_SEAT_CANDIDATES: SeatCandidates = {
  * T092/T066 seat-candidate resolution —
  *  • a window WITH unread incoming inside it (barrierIndex > 0 — a
  *    loaded row precedes the run's head): the divider carries
- *    'start' and the LAST unread incoming row 'end'; the seat effect
- *    measures the block and picks one (T066);
+ *    'start' and the LAST unread incoming USER row 'end' (system
+ *    rows are never candidates, T083); the seat effect measures the
+ *    block and picks one (T066);
  *  • NO unread incoming in the window (barrierIndex −1): the feed's
  *    very last row with block:'end' — the degenerate seat (the open
  *    lands in the end — a chat ending with own sends opens at its
@@ -844,7 +868,7 @@ function seatCandidatesOf(
   let lastUnreadId: string | undefined
   for (let index = messages.length - 1; index >= barrierIndex; index -= 1) {
     const candidate = messages[index]
-    if (candidate !== undefined && candidate.senderId !== currentUserId) {
+    if (candidate !== undefined && isUserIncoming(candidate, currentUserId)) {
       lastUnreadId = candidate.id
       break
     }
@@ -1162,9 +1186,15 @@ const FeedRow = memo(function FeedRow({
  * нейтральный плейсхолдер «Системное сообщение» (OCP, конституция
  * IV: новые типы виджетов добавляются аддитивно, неизвестные
  * клиентам не ломают ленту). Строка несёт те же `data-mid` (прыжок
- * поиска T068) и `data-seat-anchor` (T092), что и пользовательские:
- * системное сообщение входит в непрочитанный блок на общих
- * основаниях (senderId ≠ me).
+ * поиска T068) и `data-seat-anchor` (T092), что и пользовательские;
+ * T083: системное сообщение НИКОГДА не входит в непрочитанный блок —
+ * по РОДУ строки (senderId=null), не по payload.type: выравнивание с
+ * серверным бейджем №12/№26 (kind=USER && senderId ≠ me) и инвариант
+ * «разделитель стоит только над строками, которые чтение №17 способно
+ * снять» (в личном чате водуотметка не переваливает за системную
+ * строку). Вырожденная посадка 'end' на последнюю строку окна
+ * садиться на системную строку может — кандидатом барьера она быть
+ * не может.
  *
  * T069 (US5): `endedConferenceId` — tombstone `endedByChat` открытого
  * чата (live-срез №18, MessageList-проп): карточка СВОЕЙ конференции
@@ -1551,11 +1581,12 @@ export function MessageList({
   const seatLoadedOldestRef = useRef<number | null>(null)
   /**
    * T066 snapshot of the unread-divider boundary: the seq of the
-   * FIRST unread incoming of the commit the seat fired at (`null` —
-   * this open carried no unread barrier at all), `undefined` — the
-   * seat has not fired yet and the divider follows the live boundary
-   * (№14 catch-up, wholly-unread natural top). Frozen once per open
-   * so realtime appends and later prepends never move or sprout the
+   * FIRST unread incoming USER row of the commit the seat fired at
+   * (`null` — this open carried no unread barrier at all; system
+   * rows never enter the block, T083), `undefined` — the seat has
+   * not fired yet and the divider follows the live boundary (№14
+   * catch-up, wholly-unread natural top). Frozen once per open so
+   * realtime appends and later prepends never move or sprout the
    * divider; reset by the chat-switch re-arm below.
    */
   const unreadBarrierSeqRef = useRef<number | null | undefined>(undefined)

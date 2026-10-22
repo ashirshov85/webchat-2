@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getChat, listMessages, markChatRead } from '../../../api/chats'
 import type { ChatView, Message, MessagePage } from '../../../api/chats'
+import type { GroupMember } from '../../../api/groups'
 import { colorOf, initialsOf } from '../../../ui/avatar'
 import { formatDate, formatTime } from '../../../ui/time'
 import { useChatMessages } from '../../hooks/useChatMessages'
@@ -2227,6 +2228,225 @@ describe('MessageList unread divider and conditional seat (008a Phase 9, T066)',
     const rows = Array.from(container.querySelectorAll('.message-list > li'))
     expect(rows[0]).toBe(dividerOf(container))
     expect(rows[1]?.textContent).toContain('прочитанное 1')
+  })
+})
+
+/**
+ * 009, US1, T083 — разделитель «Непрочитанные сообщения» не учитывает
+ * системные строки (kind='system', senderId=null — карточки-приглашения
+ * conference_invite и будущие виджеты): единое правило «пропускать
+ * senderId === null» по РОДУ строки (не по payload.type — будущие
+ * виджеты наследуют правило автоматически, OCP-паритет плейсхолдера
+ * T024) во всех трёх предикатах барьера: живая граница
+ * findBarrierIndex, заморозка applyOpenSeat, якорь 'end' в
+ * seatCandidatesOf. Выравнивание с семантикой серверного бейджа
+ * №12/№26 (kind=USER && senderId ≠ me) и инвариантом «разделитель
+ * стоит только над строками, которые чтение №17 способно снять» —
+ * водуотметка личного чата не переваливает за системную строку, из-за
+ * чего разделитель над карточкой «не перемещался» при переоткрытии.
+ */
+describe('MessageList unread divider skips system rows (009 T083)', () => {
+  let scrolled: Array<{ element: Element; block?: string }>
+  let rafQueue: Array<() => void>
+
+  beforeEach(() => {
+    scrolled = []
+    rafQueue = []
+    Element.prototype.scrollIntoView = function (
+      this: Element,
+      options?: boolean | ScrollIntoViewOptions,
+    ): void {
+      scrolled.push({
+        element: this,
+        block: typeof options === 'object' && options !== null ? options.block : undefined,
+      })
+    }
+    // rAF-очередь не прогоняется: корректирующие циклы посадки не
+    // меняют проверяемые цели (синхронный scrollIntoView посадки —
+    // единственный интересующий вызов).
+    vi.stubGlobal('requestAnimationFrame', (callback: () => void): number => {
+      rafQueue.push(callback)
+      return rafQueue.length
+    })
+    // invite-карточки тянут фоновый №45-чек (T070/T076) — висящее
+    // обещание не меняет DOM; сессионный кэш сбрасывается между
+    // тестами, conferenceId уникальны.
+    resetInviteProbeCache()
+    conferences.getConference.mockReset()
+    conferences.getConference.mockReturnValue(new Promise(() => {}))
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
+  function systemInvite(id: string, seq: number, conferenceId: string): Message {
+    return message({
+      id,
+      senderId: null,
+      text: '',
+      seq,
+      kind: 'system',
+      // schema.d.ts даёт payload как free-form object (Record<string,
+      // never>) — тот же cast через unknown, что в T072-блоке
+      payload: {
+        type: 'conference_invite',
+        conferenceId,
+        mode: 'video',
+      } as unknown as Message['payload'],
+    })
+  }
+
+  /** data-mid строки сразу под разделителем (null — разделителя нет). */
+  function rowUnderDivider(container: HTMLElement): string | null {
+    const divider = container.querySelector('.unread-divider')
+    if (divider === null) {
+      return null
+    }
+    const rows = Array.from(container.querySelectorAll('.message-list > li'))
+    return rows[rows.indexOf(divider) + 1]?.getAttribute('data-mid') ?? null
+  }
+
+  it('(а) личный чат: инвайт над водуотметкой НЕ открывает непрочитанный блок — разделитель над сообщением пира, НЕ над карточкой', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          dialogMessage('r-in-1', 1, PEER, 'прочитанное пира'),
+          dialogMessage('r-out-2', 2, ME, 'прочитанное своё'),
+          systemInvite('invite-3', 3, 'conf-t083-a'),
+          dialogMessage('u-out-4', 4, ME, 'своё над непрочитанным'),
+          dialogMessage('u-in-5', 5, PEER, 'непрочитанное пира'),
+        ]}
+        currentUserId={ME}
+        unreadFromSeq={2}
+      />,
+    )
+
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    expect(rowUnderDivider(container)).toBe('u-in-5')
+    // якорь 'end' — последняя непрочитанная ПОЛЬЗОВАТЕЛЬСКАЯ строка
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.getAttribute('data-mid')).toBe('u-in-5')
+    expect(scrolled[0]?.block).toBe('end')
+  })
+
+  it('(б) инвайт — единственный «непрочитанный» хвост: разделителя НЕТ, вырожденная посадка на последнюю строку (можно на системную)', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          dialogMessage('r-in-1', 1, PEER, 'прочитанное пира'),
+          dialogMessage('r-out-2', 2, ME, 'прочитанное своё'),
+          systemInvite('invite-3', 3, 'conf-t083-b'),
+        ]}
+        currentUserId={ME}
+        unreadFromSeq={2}
+      />,
+    )
+
+    expect(container.querySelector('.unread-divider')).toBeNull()
+    // вырожденная посадка сохраняется: 'end' на последней строке окна —
+    // системная строка САДИТЬСЯ может, кандидатом барьера быть не может
+    expect(container.querySelector('[data-seat-anchor="end"]')?.getAttribute('data-mid')).toBe(
+      'invite-3',
+    )
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.getAttribute('data-mid')).toBe('invite-3')
+    expect(scrolled[0]?.block).toBe('end')
+  })
+
+  it('(в) заморозка: applyOpenSeat морозит seq первой непрочитанной ПОЛЬЗОВАТЕЛЬСКОЙ строки, не seq инвайта', () => {
+    const window0 = [
+      dialogMessage('r-in-1', 1, PEER, 'прочитанное пира'),
+      dialogMessage('r-out-2', 2, ME, 'прочитанное своё'),
+      systemInvite('invite-3', 3, 'conf-t083-c'),
+      dialogMessage('u-in-4', 4, PEER, 'первое непрочитанное пира'),
+      dialogMessage('u-in-5', 5, PEER, 'второе непрочитанное пира'),
+    ]
+    const props = (messages: readonly Message[]) => (
+      <MessageList messages={messages} currentUserId={ME} unreadFromSeq={2} />
+    )
+    const { container, rerender } = render(props(window0))
+    expect(rowUnderDivider(container)).toBe('u-in-4')
+    expect(scrolled).toHaveLength(1)
+
+    // realtime-входящее после посадки: замороженный барьер ищется по
+    // seq — разделитель остаётся над u-in-4 (заморожен seq 4, НЕ seq 3
+    // инвайта: иначе разделитель перескочил бы на карточку)
+    rerender(props([...window0, dialogMessage('new-in-6', 6, PEER, 'новое входящее')]))
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    expect(rowUnderDivider(container)).toBe('u-in-4')
+  })
+
+  it('(г) регресс: окно без системных строк — разделитель над первым непрочитанным входящим как раньше', () => {
+    const { container } = render(
+      <MessageList
+        messages={[
+          dialogMessage('r-in-1', 1, PEER, 'прочитанное пира'),
+          dialogMessage('r-out-2', 2, ME, 'прочитанное своё'),
+          dialogMessage('u-out-3', 3, ME, 'своё над непрочитанным'),
+          dialogMessage('u-in-4', 4, PEER, 'первое непрочитанное'),
+          dialogMessage('u-in-5', 5, PEER, 'второе непрочитанное'),
+        ]}
+        currentUserId={ME}
+        unreadFromSeq={2}
+      />,
+    )
+
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    expect(rowUnderDivider(container)).toBe('u-in-4')
+    // свои строки по-прежнему пропускаются; 'end' — последняя
+    // непрочитанная входящая
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.getAttribute('data-mid')).toBe('u-in-5')
+    expect(scrolled[0]?.block).toBe('end')
+  })
+
+  it('(г) регресс: групповой чат с инвайтом — разделитель над сообщением участника, не над карточкой', () => {
+    const ALICE = '33333333-3333-3333-3333-333333333333'
+    const roster: readonly GroupMember[] = [
+      {
+        user: {
+          id: ME,
+          username: 'me',
+          email: 'me@example.com',
+          status: 'active',
+          createdAt: '2026-09-01T00:00:00.000Z',
+        },
+        role: 'owner',
+        joinedAt: '2026-09-01T00:00:00.000Z',
+      },
+      {
+        user: {
+          id: ALICE,
+          username: 'alice',
+          email: 'alice@example.com',
+          status: 'active',
+          createdAt: '2026-09-01T00:00:00.000Z',
+        },
+        role: 'member',
+        joinedAt: '2026-09-01T00:00:00.000Z',
+      },
+    ]
+    const { container } = render(
+      <MessageList
+        messages={[
+          dialogMessage('r-in-1', 1, ALICE, 'прочитанное участницы'),
+          dialogMessage('r-out-2', 2, ME, 'прочитанное своё'),
+          systemInvite('invite-3', 3, 'conf-t083-group'),
+          dialogMessage('u-in-4', 4, ALICE, 'непрочитанное участницы'),
+        ]}
+        currentUserId={ME}
+        members={roster}
+        unreadFromSeq={2}
+      />,
+    )
+
+    expect(container.querySelectorAll('.unread-divider')).toHaveLength(1)
+    expect(rowUnderDivider(container)).toBe('u-in-4')
+    expect(scrolled).toHaveLength(1)
+    expect(scrolled[0]?.element.getAttribute('data-mid')).toBe('u-in-4')
+    expect(scrolled[0]?.block).toBe('end')
   })
 })
 
