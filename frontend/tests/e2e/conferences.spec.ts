@@ -531,8 +531,8 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       'controls не выходят за правый край',
     ).toBeLessThanOrEqual(viewport?.width ?? 0)
 
-    // служебные панели страницы скрыты (заголовок, «Вы в конференции»)
-    await expect(bobPage.locator('.conference-header')).toBeHidden()
+    // служебные панели страницы скрыты («Вы в конференции»);
+    // шапка .conference-header удалена целиком (T087) — ассертов на неё нет
     await expect(bobPage.getByText('Вы в конференции')).toBeHidden()
 
     // свернул — обычная раскладка со всеми панелями вернулась
@@ -541,7 +541,6 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       .getByRole('button', { name: 'Свернуть' })
       .click()
     await expect(bobPage.locator('.conference-room-pinned')).toHaveCount(0)
-    await expect(bobPage.locator('.conference-header')).toBeVisible()
     await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
     // звонок продолжается обычной сеткой
     await expect(

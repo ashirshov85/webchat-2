@@ -295,18 +295,20 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
  * T078) — комната вынимается из потока документа (position: fixed;
  * inset: 0), контента выше вьюпорта не остаётся; body overflow —
  * страховка остаточной высоты секции. Служебные поверхности
- * страницы (заголовок, «Вы в конференции»/identity, панели
- * участников/модерации, компактная полоса) скрываются по
- * body:has(…) — DOM жив: MediaControls (T028) остаётся под
- * RoomContext (хуки livekit, переносить нельзя) и позиционируется
- * absolute снизу по центру поверх тайла; статус-строки и тост
- * conference.warning — absolute-оверлеи сверху (в потоке отожмут
- * высоту тайла — «весь экран» не получится). Живой счётчик шапки
- * (T080, ConferenceLiveCount в children) скрыт вместе со служебными
- * панелями — иначе строка висит поверх оверлея. Скоуп — ТОЛЬКО маркер
- * комнаты: обе точки входа (член ConferencePage и гость
- * GuestJoinPage монтируют общий контур) получают одинаковую
- * геометрию; у гостя части панелей нет — правило не матчится.
+ * страницы (строка «Вы в конференции», панели участников/модерации,
+ * компактная полоса) скрываются по body:has(…) — DOM жив:
+ * MediaControls (T028) остаётся под RoomContext (хуки livekit,
+ * переносить нельзя) и позиционируется absolute снизу по центру
+ * поверх тайла; статус-строки и тост conference.warning —
+ * absolute-оверлеи сверху (в потоке отожмут высоту тайла — «весь
+ * экран» не получится). Живой счётчик подключённых (T080,
+ * ConferenceLiveCount в children) скрыт вместе со служебными
+ * панелями — иначе строка висит поверх оверлея. Шапка страницы и
+ * identity-строка удалены целиком (T087) — их селекторов здесь
+ * больше нет. Скоуп — ТОЛЬКО маркер комнаты: обе точки входа (член
+ * ConferencePage и гость GuestJoinPage монтируют общий контур)
+ * получают одинаковую геометрию; у гостя части панелей нет —
+ * правило не матчится.
  * Fullscreen API — по-прежнему вне scope (паритет T074/T075).
  * ============================================================ */
 
@@ -321,14 +323,13 @@ body:has(.conference-room-pinned) {
   overflow: hidden;
 }
 
-/* Скрытие служебного окружения страницы: заголовок .conference-header,
-   строка «Вы в конференции» (output прямой ребёнок .conference-joined),
-   identity, панели участников/модерации, живой счётчик подключённых
-   (T080), компактная полоса тайлов. */
-body:has(.conference-room-pinned) .conference-header,
+/* Скрытие служебного окружения страницы (T079): строка «Вы в
+   конференции» (output прямой ребёнок .conference-joined), панели
+   участников/модерации, живой счётчик подключённых (T080), компактная
+   полоса тайлов. Шапка страницы и identity-строка удалены из страниц
+   целиком (T087) — селекторов скрытия для них больше не нужно. */
 body:has(.conference-room-pinned) .conference-participants,
 body:has(.conference-room-pinned) .conference-moderation,
-body:has(.conference-room-pinned) .conference-identity,
 body:has(.conference-room-pinned) .conference-live-count,
 body:has(.conference-room-pinned) .conference-joined > output,
 body:has(.conference-room-pinned) .conference-tiles-compact {
@@ -372,11 +373,11 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   max-width: calc(100% - 24px);
 }
 
-/* Живой счётчик подключённых участников шапки joined-состояния
-   (T080): ConferenceLiveCount в слоте children комнаты — над панелями
-   участников/модерации; та же лексика подписи, что строка снимка №45
-   в header (pre-join). Скрыт полноэкранным пином T079 — см. блок
-   оверлея ниже. */
+/* Живой счётчик подключённых участников joined-состояния (T080):
+   ConferenceLiveCount в слоте children комнаты — над панелями
+   участников/модерации; после удаления шапки (T087) — единственная
+   строка «Участники: N / M» страницы. Скрыт полноэкранным пином
+   T079 — см. блок оверлея ниже. */
 .conference-live-count {
   margin: 0;
   font: 12.5px var(--font-body);

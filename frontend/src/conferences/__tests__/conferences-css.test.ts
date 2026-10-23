@@ -139,19 +139,20 @@ describe('полноэкранный пин-оверлей (T079): статич�
   })
 
   it('служебные панели страницы скрыты по body:has; статус-строки и тост — absolute-оверлеи сверху', () => {
-    // скрытие остального: заголовок, «Вы в конференции»/identity, панели
-    // участников/модерации (у гостя её нет — правило не матчится),
-    // компактная полоса остальных тайлов
+    // скрытие остального: строка «Вы в конференции» (output прямой
+    // ребёнок .conference-joined), панели участников/модерации (у гостя
+    // её нет — правило не матчится), живой счётчик (T080), компактная
+    // полоса остальных тайлов; шапка и identity-строка удалены целиком
+    // (T087) — их селекторов в источнике больше нет
     const hidden = conferencesCss.match(
-      /body:has\(\.conference-room-pinned\) \.conference-header[\s\S]{0,600}?\{([^}]*)\}/,
+      /body:has\(\.conference-room-pinned\) \.conference-participants[\s\S]{0,600}?\{([^}]*)\}/,
     )
     expect(hidden).not.toBeNull()
     expect(hidden?.[1]).toContain('display: none')
     for (const selector of [
-      'body:has(.conference-room-pinned) .conference-header',
       'body:has(.conference-room-pinned) .conference-participants',
       'body:has(.conference-room-pinned) .conference-moderation',
-      'body:has(.conference-room-pinned) .conference-identity',
+      'body:has(.conference-room-pinned) .conference-live-count',
       'body:has(.conference-room-pinned) .conference-joined > output',
       'body:has(.conference-room-pinned) .conference-tiles-compact',
     ]) {
@@ -175,7 +176,7 @@ describe('полноэкранный пин-оверлей (T079): статич�
     expect(pinned?.[1]).toContain('height: clamp(260px, 62dvh, 1080px)')
   })
 
-  it('T080: живой счётчик шапки — строка комнаты, скрытая полноэкранным пином вместе с панелями', () => {
+  it('T080: живой счётчик подключённых — строка комнаты, скрытая полноэкранным пином вместе с панелями', () => {
     // базовая строка живого счёта (children ConferenceRoom — над панелями)
     const line = conferencesCss.match(/\.conference-live-count\s*\{([^}]*)\}/)
     expect(line).not.toBeNull()
@@ -183,6 +184,28 @@ describe('полноэкранный пин-оверлей (T079): статич�
     // полноэкранный пин T079 накрывает счётчик CSS-скрытием — иначе
     // строка висит поверх оверлея (добавлена к панелям body:has(…))
     expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-live-count')
+  })
+})
+
+describe('санитаризация шапки/identity (T087): статический пин CSS', () => {
+  it('шапка .conference-header и строка .conference-identity удалены из источника целиком', () => {
+    // шапка ушла из всех фаз страницы (ConferencePage/GuestJoinPage),
+    // identity-строка — из joined-форм: мёртвые правила (включая
+    // селекторы скрытия пин-оверлея T079) не остаются в CSS
+    expect(conferencesCss).not.toContain('.conference-header')
+    expect(conferencesCss).not.toContain('.conference-identity')
+  })
+
+  it('селекторы пин-оверлея T079 для оставшихся поверхностей сохранены', () => {
+    for (const selector of [
+      'body:has(.conference-room-pinned) .conference-participants',
+      'body:has(.conference-room-pinned) .conference-moderation',
+      'body:has(.conference-room-pinned) .conference-live-count',
+      'body:has(.conference-room-pinned) .conference-joined > output',
+      'body:has(.conference-room-pinned) .conference-tiles-compact',
+    ]) {
+      expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
+    }
   })
 })
 
