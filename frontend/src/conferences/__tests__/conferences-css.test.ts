@@ -27,6 +27,11 @@ import { describe, expect, it } from 'vitest'
  * удалены — единая сетка тайлов 16:9, экран вписывается object-fit
  * contain; живая демонстрация маркируется текстовым бейджем
  * «демонстрирует экран» (лексика conference-tile-speaking, 008).
+ *
+ * T089 — «Покинуть» только в стандартном режиме: в пин-оверлее T079
+ * кнопка скрыта display: none по маркеру conference-room-pinned
+ * (вне a11y-дерева и таб-порядка), базовое правило и тумблеры
+ * (absolute-controls T079) не регрессируют.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -184,6 +189,42 @@ describe('полноэкранный пин-оверлей (T079): статич�
     // полноэкранный пин T079 накрывает счётчик CSS-скрытием — иначе
     // строка висит поверх оверлея (добавлена к панелям body:has(…))
     expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-live-count')
+  })
+})
+
+describe('кнопка «Покинуть» только в стандартном режиме (T089): статический пин CSS', () => {
+  it('пин-оверлей T079 скрывает .conference-controls-leave через display: none', () => {
+    // «Покинуть» доступна только когда все тайлы свёрнуты: выход из
+    // развёрнутого тайла двухшаговый — «Свернуть»/Esc (T082), затем
+    // «Покинуть». Кнопка остаётся в DOM (MediaControls под RoomContext),
+    // display: none выводит её из a11y-дерева и таб-порядка (008)
+    const hidden = conferencesCss.match(
+      /\.conference-room-pinned \.conference-controls-leave\s*\{([^}]*)\}/,
+    )
+    expect(hidden).not.toBeNull()
+    expect(hidden?.[1]).toContain('display: none')
+  })
+
+  it('базовое правило .conference-controls-leave сохранено — стандартный режим', () => {
+    // сворачивание тайла тем же рендером снимает маркер
+    // conference-room-pinned — кнопка возвращается без дополнительной
+    // синхронизации; геометрия базовой кнопки не регрессирует
+    // (^ и m — селектор с начала строки: не цеплять хвост правила
+    // пин-оверлея .conference-room-pinned .conference-controls-leave)
+    const leave = conferencesCss.match(/^\.conference-controls-leave\s*\{([^}]*)\}/m)
+    expect(leave).not.toBeNull()
+    expect(leave?.[1]).toContain('margin-left: auto')
+    expect(leave?.[1]).toContain('cursor: pointer')
+  })
+
+  it('тумблеры в пин-оверлее остаются доступны — правится только кнопка выхода', () => {
+    // регресс T079: controls — absolute снизу по центру поверх тайла;
+    // правило скрытия НЕ накрывает тумблеры (нет blanket-скрытия
+    // .conference-controls целиком и нет скрытия .conference-controls-toggle)
+    expect(conferencesCss).not.toMatch(
+      /\.conference-room-pinned \.conference-controls\s*\{[^}]*display:\s*none/,
+    )
+    expect(conferencesCss).not.toContain('.conference-room-pinned .conference-controls-toggle')
   })
 })
 

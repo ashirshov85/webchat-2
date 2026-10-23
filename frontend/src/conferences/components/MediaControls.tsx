@@ -40,10 +40,17 @@
  *
  * «Покинуть» — onLeave (useConference.leave): слот вкладки (Q10=A)
  * разрывает медиа-подключение через bindConferenceDisconnect (T027),
- * остальные видят выход (departure_timeout). Доступность — стандарты
- * 008: aria-pressed тумблеров (стабильное aria-label + визуальный
- * индикатор «вкл/выкл» aria-hidden), focus-visible (conferences.css),
- * fieldset-семантика группы панели (implicit role=group).
+ * остальные видят выход (departure_timeout). Кнопка доступна только
+ * в стандартном режиме конференции: в полноэкранном пин-оверлее T079
+ * скрыта CSS (T089, conferences.css: display: none по маркеру
+ * conference-room-pinned — из a11y-дерева и таб-порядка), выход из
+ * развёрнутого тайла двухшаговый — «Свернуть»/Esc (T082), затем
+ * «Покинуть»; DOM/JS панели не меняются — сворачивание тайла тем же
+ * рендером снимает маркер, кнопка возвращается. Доступность —
+ * стандарты 008: aria-pressed тумблеров (стабильное aria-label +
+ * визуальный индикатор «вкл/выкл» aria-hidden), focus-visible
+ * (conferences.css), fieldset-семантика группы панели (implicit
+ * role=group).
  */
 import { useConnectionState, useLocalParticipant, useRoomContext } from '@livekit/components-react'
 import { ConnectionState, RoomEvent } from 'livekit-client'
