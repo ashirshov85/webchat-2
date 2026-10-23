@@ -319,7 +319,6 @@ import { useGroup } from '../../groups/hooks/useGroup'
 import type { GroupStatus } from '../../groups/hooks/useGroup'
 import { useGroupMembers } from '../../groups/hooks/useGroupMembers'
 import type { UseGroupMembersResult } from '../../groups/hooks/useGroupMembers'
-import { usePresenceHeartbeat } from '../../presence/usePresence'
 import { ConfirmDialog } from '../../ui/ConfirmDialog'
 import type { ConfirmVariant } from '../../ui/ConfirmDialog'
 import { FOCUSABLE_SELECTOR, ModalShell } from '../../ui/ModalShell'
@@ -1332,12 +1331,14 @@ function MessengerMachine() {
   // узнаёт завершение кадром №18 без клика «Подключиться».
   const liveConferenceSlice = useConferenceRealtime()
 
-  // №37 presence heartbeat (007 research.md §E2; 008 T076): keep THIS
-  // connection's registration alive on the shared №18 stream — every
-  // `connected` frame restarts the 30 s beats against the 90 s TTL,
-  // and 404 reconnects the channel immediately. Without it a live
-  // connection expired and the observers saw «офлайн».
-  usePresenceHeartbeat(realtime)
+  // №37 presence heartbeat (007 research.md §E2; 008 T076) — с T086
+  // (009) биение держит App-хранитель присутствия (App.tsx,
+  // монтируется в ProtectedRoute на каждой authed-поверхности, включая
+  // /conference/:id): собственный планировщик страницы демонтирован —
+  // два независимых планировщика удваивали бы частоту биений по тому
+  // же connectionId общего №18-стрима. Realtime-стрим и остальные
+  // потребители страницы (useSync/useChatList/useConferenceRealtime/…)
+  // не меняются — refcount общего стрима корректен.
 
   // №28 reconnect convergence of the open group window (T046a,
   // realtime-group-events.md §5.4): the at-most-once channel may have
