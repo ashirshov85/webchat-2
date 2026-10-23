@@ -808,4 +808,31 @@ describe('useSync — cursor-tail top-up (T052, вторичное окно)', (
 
     expect(mockedDeliveryAck).not.toHaveBeenCalled()
   })
+
+  /**
+   * T088: drop() of the per-account batcher also FORGETS the persisted
+   * cursor, so a later cycle's T052 re-feed no longer resurrects the
+   * dead chatId — neither into the №26 body nor into №25. Without the
+   * forgetting, a hard-deleted group (№30) re-entered the re-feed from
+   * localStorage every new session and its 404 chat_not_found poisoned
+   * the whole №25 batch (all-or-refusal) forever.
+   */
+  it('T088: after drop() the next cycle neither syncs nor re-feeds the dead chatId', async () => {
+    advanceCursor(USER, CHAT_A, 7)
+    advanceCursor(USER, CHAT_B, 9)
+    getAckBatcher(USER).drop(CHAT_A)
+    mockedSync.mockResolvedValue(syncResponse([]))
+    const result = mountSync()
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    // the cursor map no longer carries CHAT_A: №26 asks from B only…
+    expect(mockedSync).toHaveBeenCalledWith([{ chatId: CHAT_B, upToSeq: 9 }], 20, 50)
+    // …and the T052 re-feed batch carries B only — A never reaches №25
+    expect(mockedDeliveryAck).toHaveBeenCalledTimes(1)
+    expect(mockedDeliveryAck).toHaveBeenCalledWith([{ chatId: CHAT_B, upToSeq: 9 }])
+    expect(getCursor(USER, CHAT_A)).toBe(0)
+  })
 })
