@@ -11,10 +11,13 @@ import ConferencePage from '../ConferencePage'
  * 009, US1, T026 + US2, T034 — экран конференции: контракт маршрута
  * (region «Конференция» + data-conference-id, App.test T025), пакет
  * №45+№46, pre-join перед подключением (T034: «Войти» → №47, «Отмена» —
- * отмена подключения без последствий, US2-6), блок joined с identity и
- * «Покинуть» (возврат на pre-join), «Конференция завершена» по обоим
+ * отмена подключения без последствий, US2-6), блок joined с «Покинуть»
+ * (возврат на pre-join), «Конференция завершена» по обоим
  * лицам (№45 status='ended' и №47 409 conference_ended) и нейтральные
- * ошибки загрузки/join с «Повторить». jsdom без mediaDevices —
+ * ошибки загрузки/join с «Повторить». T087: шапка страницы (заголовок
+ * conferenceTitle, статический снимок «Участники: N / M» не-joined
+ * фаз, строка «Ваша роль: …») и identity-строка joined-формы удалены —
+ * их нет НИ В ОДНОЙ фазе. jsdom без mediaDevices —
  * acquisition превью камеры на pre-join тихо отклоняется (T032),
  * «Войти» остаётся доступной (Q6=A).
  */
@@ -110,9 +113,41 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
 
     const region = await screen.findByRole('region', { name: 'Конференция' })
     expect(region).toHaveAttribute('data-conference-id', CONFERENCE_ID)
-    expect(screen.getByRole('heading', { name: 'Видеоконференция' })).toBeInTheDocument()
-    expect(screen.getByText('Участники: 1 / 16')).toBeInTheDocument()
-    expect(screen.getByText('Ваша роль: модератор')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Войти' })).toBeInTheDocument()
+    // T087: шапка удалена — ни заголовка conferenceTitle, ни снимка
+    // «Участники: N / M», ни строки роли №46 (ниже — во всех фазах)
+    expect(screen.queryByRole('heading', { name: 'Видеоконференция' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Участники: 1 / 16')).not.toBeInTheDocument()
+    expect(screen.queryByText('Ваша роль: модератор')).not.toBeInTheDocument()
+  })
+
+  it('T087: шапка .conference-header и identity-строка отсутствуют во всех фазах страницы', async () => {
+    // pre-join
+    resolveBundle()
+    const { unmount } = render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+    await screen.findByRole('button', { name: 'Войти' })
+    expect(document.querySelector('.conference-header')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Видеоконференция' })).not.toBeInTheDocument()
+
+    // joined: output-подпись остаётся, identity-строка удалена
+    conferences.joinConference.mockResolvedValue(joinTicket())
+    fireEvent.click(screen.getByRole('button', { name: 'Войти' }))
+    await screen.findByText('Вы в конференции')
+    expect(document.querySelector('.conference-header')).toBeNull()
+    expect(document.querySelector('.conference-identity')).toBeNull()
+    expect(screen.queryByText(`u:${ME}:conn-1`)).not.toBeInTheDocument()
+    expect(screen.queryByText('Ваша роль: модератор')).not.toBeInTheDocument()
+
+    unmount()
+    cleanup()
+    // терминальная фаза — только подпись завершения (T071 без регресса)
+    conferences.getConference.mockResolvedValue(
+      conferenceView({ status: 'ended', endReason: 'moderator' }),
+    )
+    conferences.getConferenceMe.mockResolvedValue(meView())
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+    expect(await screen.findByText('Конференция завершена')).toBeInTheDocument()
+    expect(document.querySelector('.conference-header')).toBeNull()
   })
 
   it('joined: живой счётчик useParticipants вместо застывшего снимка №45 в шапке (T080)', async () => {
@@ -142,10 +177,11 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     await screen.findByText('Вы в конференции')
     fireEvent.click(await screen.findByRole('button', { name: 'Покинуть' }))
 
-    // возврат на pre-join (снимок №45 снова в шапке) + ровно один
-    // повтор пакета №45+№46 — актуализация activeParticipants после выхода
+    // возврат на pre-join + ровно один повтор пакета №45+№46 —
+    // актуализация вида после выхода; шапка со снимком удалена (T087) —
+    // статическая строка «Участники: 2 / 16» больше не выводится
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
-    expect(screen.getByText('Участники: 2 / 16')).toBeInTheDocument()
+    expect(screen.queryByText('Участники: 2 / 16')).not.toBeInTheDocument()
     await waitFor(() => expect(conferences.getConference).toHaveBeenCalledTimes(2))
     expect(conferences.getConferenceMe).toHaveBeenCalledTimes(2)
   })
@@ -199,7 +235,8 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
 
     const joined = await screen.findByText('Вы в конференции')
     expect(joined.tagName).toBe('OUTPUT')
-    expect(screen.getByText(`u:${ME}:conn-1`)).toBeInTheDocument()
+    // T087: технический LiveKit identity в joined-форме не выводится
+    expect(screen.queryByText(`u:${ME}:conn-1`)).not.toBeInTheDocument()
     expect(conferences.joinConference).toHaveBeenCalledWith(CONFERENCE_ID)
 
     // комната (и панель управления в её слоте) появляется следующим
@@ -255,7 +292,7 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     resolveBundle(conferenceView({ chatId: 'chat-42' }))
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
 
-    await screen.findByRole('heading', { name: 'Видеоконференция' })
+    await screen.findByRole('button', { name: 'Войти' })
     expect(profiles.useParticipantProfiles).toHaveBeenCalledWith('chat-42')
   })
 
@@ -272,9 +309,7 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
 
-    await waitFor(() =>
-      expect(screen.getByRole('heading', { name: 'Видеоконференция' })).toBeInTheDocument(),
-    )
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Войти' })).toBeInTheDocument())
     expect(conferences.getConference).toHaveBeenCalledTimes(2)
   })
 })

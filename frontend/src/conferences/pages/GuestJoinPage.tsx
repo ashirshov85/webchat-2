@@ -440,7 +440,6 @@ export default function GuestJoinPage({ inviteToken }: GuestJoinPageProps) {
       {phase === 'joined' && ticket !== null && (
         <div className="conference-joined">
           <output>Вы в конференции как гость</output>
-          <p className="conference-identity">{ticket.name}</p>
           <ConferenceRoom
             conferenceId={slotKey}
             ticket={ticket}

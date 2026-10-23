@@ -10,11 +10,15 @@
  * (ACK_DEBOUNCE_MS); items arriving inside the window merge into the
  * same flush through the per-chat max. Requests carry at most
  * ACK_BATCH_LIMIT items (contract №25): an oversized pending set drains
- * in sequential ≤100-item requests within one flush. A failed request
- * keeps its entries pending (№25 is atomic — no partial effects) and
- * re-arms the timer, so the unsuccessful ack is retried by the NEXT
- * flush (≤ 1 s later even without new traffic); retries are safe — №25
- * is idempotent and monotonic server-side (GREATEST).
+ * in sequential ≤100-item requests within one flush. A TRANSIENTLY
+ * failed request keeps its entries pending (№25 is atomic — no partial
+ * effects) and re-arms the timer with an exponential backoff (T088:
+ * 1 s → 2 s → 4 s … cap 30 s, reset on success), so the unsuccessful
+ * ack is retried by the NEXT flush even without new traffic; retries
+ * are safe — №25 is idempotent and monotonic server-side (GREATEST).
+ * A TERMINALLY refused request (dead chatId, T088) never retries: the
+ * culprit is dropped and the drain confirms the rest (see the T088
+ * section below).
  *
  * The batcher is in-memory transport buffering, deliberately NOT
  * persisted: the local cursor (cursors.ts, T017) may legitimately run
@@ -39,15 +43,86 @@
  * useChatMessages/useSync, and those late acks must not poison the
  * batch. The tombstone is session-local like the pending map itself;
  * dispose() drops it together with the tail.
+ *
+ * T088 (009, bug-fix of the eternal №25 retry loop): a missed
+ * `group.deleted` frame (closed tab) left the dead chatId in the
+ * PERSISTED cursors, so each new session's T052 re-feed re-queued it
+ * and №25 rejected the whole batch 404 chat_not_found once a second —
+ * the live chats merged into the same batch never confirmed either.
+ * The drain now CLASSIFIES failures by ApiProblem:
+ * - terminal codes (404 chat_not_found, 403 not_participant,
+ *   400 invalid_up_to_seq — the position is unreachable forever: the
+ *   chat/membership is gone and last_seq never rolls back) isolate the
+ *   culprit: a one-element chunk drops it outright; a multi-element
+ *   chunk is replayed element-by-element (sequential ≤100-item
+ *   requests are already the contract's drain shape), single terminal
+ *   refusals drop and the rest confirm. `drop()` of a per-account
+ *   batcher ALSO forgets the persisted cursor (cursors.ts
+ *   forgetCursor) — the only deletion of the cursor map — so the dead
+ *   chatId cannot resurrect from localStorage next session.
+ * - everything else (network, 408, 429, 503, 5xx) is transient:
+ *   entries stay pending and the retry backs off exponentially
+ *   (1 s → 2 s → 4 s … capped at ACK_RETRY_MAX_MS, reset on success,
+ *   honoring `retryAfterSec` on 429/503) instead of the fixed 1 s
+ *   hammer. 401 stays outside the classification — apiFetch runs its
+ *   single-flight refresh cycle and a retried request passes normally.
  */
 import { deliveryAck } from '../api/chats'
 import type { DeliveryAckItem } from '../api/chats'
+import type { ApiProblem } from '../api/auth'
+import { forgetCursor } from './cursors'
 
 /** Upper bound on the age of the oldest pending item (sync-protocol.md §2). */
 export const ACK_DEBOUNCE_MS = 1000
 
 /** Contract limit of №25: `acks` must not exceed 100 items (api-contract.md §1). */
 export const ACK_BATCH_LIMIT = 100
+
+/** Cap of the transient-retry backoff (T088): 1 s → 2 s → … → 30 s. */
+export const ACK_RETRY_MAX_MS = 30_000
+
+function isApiProblem(value: unknown): value is ApiProblem {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { status?: unknown }).status === 'number'
+  )
+}
+
+/** Contract codes ride in `errors: {field: [code]}` (openapi Problem). */
+function problemErrorCodes(problem: ApiProblem): string[] {
+  return Object.values(problem.errors ?? {}).flat()
+}
+
+/**
+ * №25 failures whose retry can never succeed (T088), matched as exact
+ * status+code pairs of api-contract.md №25 — 404 {chat:
+ * [chat_not_found]}, 403 {chat: [not_participant]}, 400 {upToSeq:
+ * [invalid_up_to_seq]}; the codes ride in `Problem.errors`.
+ */
+function isTerminalAckProblem(cause: unknown): boolean {
+  if (!isApiProblem(cause)) {
+    return false
+  }
+  const codes = problemErrorCodes(cause)
+  return (
+    (cause.status === 404 && codes.includes('chat_not_found')) ||
+    (cause.status === 403 && codes.includes('not_participant')) ||
+    (cause.status === 400 && codes.includes('invalid_up_to_seq'))
+  )
+}
+
+/** A transient №25 failure plus the server's deferral hint, if any. */
+interface TransientAckFailure {
+  readonly retryAfterSec?: number
+}
+
+function asTransientAckFailure(cause: unknown): TransientAckFailure {
+  if (isApiProblem(cause) && cause.retryAfterSec !== undefined && cause.retryAfterSec > 0) {
+    return { retryAfterSec: cause.retryAfterSec }
+  }
+  return {}
+}
 
 export interface AckBatcher {
   /**
@@ -65,15 +140,22 @@ export interface AckBatcher {
    * all-or-refusal: a batch carrying a non-participant chatId would
    * be rejected whole (403 not_participant). Idempotent; a chat with
    * nothing pending is tombstoned all the same (the §1 race may feed
-   * late acks later).
+   * late acks later). A per-account batcher (getAckBatcher) ALSO
+   * forgets the chat's persisted cursor (cursors.ts forgetCursor,
+   * T088) — the dead chatId must not resurrect from localStorage by
+   * the next session's T052 re-feed; a standalone batcher has no
+   * account context and stays session-local.
    */
   drop(chatId: string): void
   /**
    * Sends everything pending now (sequential ≤100-item requests).
    * Resolves when the whole tail is confirmed; rejects on the first
-   * failed request — the entries stay pending and the retry timer is
-   * already re-armed, so a rejection only reports, never strands.
-   * A call while a flush is in flight joins it (single-flight).
+   * transient failure — the entries stay pending and the retry timer
+   * is already re-armed (exponential backoff, T088), so a rejection
+   * only reports, never strands. A TERMINAL №25 refusal (404/403/
+   * invalid_up_to_seq) never rejects: the culprit is isolated and
+   * dropped, the drain confirms the rest and resolves. A call while a
+   * flush is in flight joins it (single-flight).
    */
   flush(): Promise<void>
   /** Number of chats with an unconfirmed position (diagnostics/tests). */
@@ -86,8 +168,19 @@ class DeliveryAckBatcher implements AckBatcher {
   private readonly pending = new Map<string, number>()
   /** §5.5 tombstones: chatIds whose acks must never reach №25 again. */
   private readonly dropped = new Set<string>()
+  /**
+   * Owner of the persisted cursors this batcher may forget on drop()
+   * (T088); null on standalone instances — they stay session-local.
+   */
+  private readonly userId: string | null
+  /** Transient retries armed so far without an intervening success (T088 backoff). */
+  private transientRetries = 0
   private timer: number | null = null
   private inFlight: Promise<void> | null = null
+
+  constructor(userId: string | null = null) {
+    this.userId = userId
+  }
 
   ack(chatId: string, seq: number): void {
     if (typeof chatId !== 'string' || chatId.length === 0) {
@@ -116,6 +209,11 @@ class DeliveryAckBatcher implements AckBatcher {
     }
     this.dropped.add(chatId)
     this.pending.delete(chatId)
+    if (this.userId !== null) {
+      // T088: the dead chatId must not resurrect from localStorage by
+      // the next session's T052 re-feed (useSync).
+      forgetCursor(this.userId, chatId)
+    }
   }
 
   flush(): Promise<void> {
@@ -146,9 +244,11 @@ class DeliveryAckBatcher implements AckBatcher {
    * Leading-edge debounce: armed by the first pending item and never
    * reset, so the oldest entry is confirmed within ACK_DEBOUNCE_MS. A
    * timer firing during an in-flight drain is harmless — the drain loop
-   * re-checks the map on every iteration and flush() joins it.
+   * re-checks the map on every iteration and flush() joins it. A
+   * transient-failure re-arm passes the T088 backoff delay (with the
+   * 429/503 `retryAfterSec` floor) instead of the debounce window.
    */
-  private schedule(): void {
+  private schedule(delayMs: number = ACK_DEBOUNCE_MS): void {
     if (this.timer !== null) {
       return
     }
@@ -157,7 +257,63 @@ class DeliveryAckBatcher implements AckBatcher {
       this.flush().catch(() => {
         // entries stay pending; drain() has re-armed the retry timer
       })
-    }, ACK_DEBOUNCE_MS)
+    }, delayMs)
+  }
+
+  /**
+   * T088 backoff of the nth consecutive transient retry:
+   * 1 s → 2 s → 4 s → … capped at ACK_RETRY_MAX_MS (30 s); a 429/503
+   * `retryAfterSec` raises the delay to the server's window. Reset by
+   * any successful №25 request (batch or isolated single).
+   */
+  private transientRetryDelayMs(failure: TransientAckFailure): number {
+    const backoffMs = Math.min(ACK_DEBOUNCE_MS * 2 ** this.transientRetries, ACK_RETRY_MAX_MS)
+    this.transientRetries += 1
+    const deferredMs = failure.retryAfterSec !== undefined ? failure.retryAfterSec * 1000 : 0
+    return Math.max(backoffMs, deferredMs)
+  }
+
+  private armTransientRetry(failure: TransientAckFailure): void {
+    this.schedule(this.transientRetryDelayMs(failure))
+  }
+
+  /**
+   * Consumes a confirmed position: only the value actually sent is
+   * removed — a larger seq merged while the request was in flight
+   * stays for the drain loop's next iteration, never lost.
+   */
+  private consumeConfirmed(chunk: Map<string, number>): void {
+    for (const [chatId, seq] of chunk) {
+      if (this.pending.get(chatId) === seq) {
+        this.pending.delete(chatId)
+      }
+    }
+  }
+
+  /**
+   * T088 terminal isolation of a refused multi-element chunk: №25 is
+   * all-or-refusal, so the elements are replayed one by one (the
+   * contract's sequential ≤100-item requests) — a single terminal
+   * refusal drops its culprit, a success consumes the entry. A
+   * transient failure mid-isolation never gets stuck: the remaining
+   * entries stay pending, the retry timer is armed with the backoff
+   * and the cause propagates like any transient drain failure.
+   */
+  private async isolateTerminalCulprit(chunk: Map<string, number>): Promise<void> {
+    for (const [chatId, seq] of chunk) {
+      const single = new Map<string, number>([[chatId, seq]])
+      try {
+        await deliveryAck([{ chatId, upToSeq: seq }])
+        this.transientRetries = 0
+        this.consumeConfirmed(single)
+      } catch (cause) {
+        if (!isTerminalAckProblem(cause)) {
+          this.armTransientRetry(asTransientAckFailure(cause))
+          throw cause
+        }
+        this.drop(chatId)
+      }
+    }
   }
 
   private async drain(): Promise<void> {
@@ -175,24 +331,37 @@ class DeliveryAckBatcher implements AckBatcher {
       }))
       try {
         await deliveryAck(items)
+        this.transientRetries = 0
       } catch (cause) {
-        this.schedule()
-        throw cause
+        if (!isTerminalAckProblem(cause)) {
+          // transient (network/408/429/5xx): entries stay pending and
+          // the backoff re-arm replaces the old fixed-1 s hammer
+          this.armTransientRetry(asTransientAckFailure(cause))
+          throw cause
+        }
+        // terminal (T088): retrying is pointless — the position is
+        // unreachable forever. A one-element chunk IS the culprit; a
+        // multi-element one is replayed per element to find it.
+        if (chunk.size === 1) {
+          this.drop(chunk.keys().next().value as string)
+        } else {
+          await this.isolateTerminalCulprit(chunk)
+        }
+        continue
       }
       // A larger seq may have merged for the same chat while the
       // request was in flight — only the confirmed value is consumed.
-      for (const chatId of chunk.keys()) {
-        if (this.pending.get(chatId) === chunk.get(chatId)) {
-          this.pending.delete(chatId)
-        }
-      }
+      this.consumeConfirmed(chunk)
     }
   }
 }
 
-/** Standalone batcher for custom owners and tests (no shared registry). */
-export function createAckBatcher(): AckBatcher {
-  return new DeliveryAckBatcher()
+/**
+ * Standalone batcher for custom owners and tests (no shared registry,
+ * no persisted-cursor forgetting — an optional userId opts in to it).
+ */
+export function createAckBatcher(userId?: string): AckBatcher {
+  return new DeliveryAckBatcher(userId ?? null)
 }
 
 const sharedBatchers = new Map<string, AckBatcher>()
@@ -208,7 +377,7 @@ export function getAckBatcher(userId: string): AckBatcher {
   if (registered !== undefined) {
     return registered
   }
-  const instance = createAckBatcher()
+  const instance = createAckBatcher(userId)
   const batcher: AckBatcher = {
     ack: (chatId, seq) => instance.ack(chatId, seq),
     drop: (chatId) => instance.drop(chatId),

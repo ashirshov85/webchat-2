@@ -435,3 +435,84 @@ describe('MediaControls: автоотключение камеры при дем
     expect(media.setCameraEnabled).not.toHaveBeenCalled()
   })
 })
+
+describe('MediaControls: взаимное исключение «камера ↔ экран» (009 US1 T085)', () => {
+  beforeEach(() => {
+    media.state = {
+      mic: false,
+      camera: false,
+      screen: false,
+      connection: 2,
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+    }
+    media.setMicrophoneEnabled.mockReset()
+    media.setCameraEnabled.mockReset()
+    media.setScreenShareEnabled.mockReset()
+    media.room.on.mockReset()
+    media.room.off.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('успешное включение камеры при живой демонстрации останавливает демонстрацию ПОСЛЕ старта камеры', async () => {
+    media.state.screen = true
+    media.setCameraEnabled.mockResolvedValue(undefined)
+    media.setScreenShareEnabled.mockResolvedValue(undefined)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+
+    await waitFor(() => {
+      expect(media.setCameraEnabled).toHaveBeenCalledWith(true)
+      expect(media.setScreenShareEnabled).toHaveBeenCalledWith(false)
+    })
+    // порядок: камера реально публикуется — только потом демонстрация гасится
+    const cameraCall = media.setCameraEnabled.mock.invocationCallOrder[0]
+    const screenCall = media.setScreenShareEnabled.mock.invocationCallOrder[0]
+    if (cameraCall === undefined || screenCall === undefined) {
+      throw new Error('сеттеры камеры/экрана не вызваны')
+    }
+    expect(cameraCall).toBeLessThan(screenCall)
+  })
+
+  it('включение камеры БЕЗ демонстрации — setScreenShareEnabled не вызывается вовсе', async () => {
+    media.setCameraEnabled.mockResolvedValue(undefined)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+
+    await waitFor(() => {
+      expect(media.setCameraEnabled).toHaveBeenCalledWith(true)
+    })
+    expect(media.setScreenShareEnabled).not.toHaveBeenCalled()
+  })
+
+  it('ошибка включения камеры (reject setCameraEnabled) — демонстрация не тронута', async () => {
+    media.state.screen = true
+    media.setCameraEnabled.mockRejectedValue(new Error('NotAllowedError'))
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Не удалось включить камеру')
+    expect(media.setScreenShareEnabled).not.toHaveBeenCalled()
+  })
+
+  it('выключение камеры при живой демонстрации — демонстрация продолжается', async () => {
+    // оба источника живут (короткое окно двойной публикации T085)
+    media.state.camera = true
+    media.state.screen = true
+    media.setCameraEnabled.mockResolvedValue(undefined)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+
+    await waitFor(() => {
+      expect(media.setCameraEnabled).toHaveBeenCalledWith(false)
+    })
+    expect(media.setScreenShareEnabled).not.toHaveBeenCalled()
+  })
+})

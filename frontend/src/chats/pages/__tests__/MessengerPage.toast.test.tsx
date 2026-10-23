@@ -258,11 +258,15 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
-describe('MessengerPage №37 heartbeat wiring (008 T076 — живое соединение не экспайрится)', () => {
-  it('страница монтирует heartbeat-планировщик присутствия на общем №18-стриме', async () => {
+describe('MessengerPage №37 heartbeat wiring (008 T076; 009 T086 — дубль демонтирован)', () => {
+  it('страница НЕ монтирует собственный планировщик №37 — биение держит App-хранитель (T086)', async () => {
     await renderPage()
 
-    expect(mockPresence.createPresenceHeartbeat).toHaveBeenCalledTimes(1)
+    // Демонтаж дубля (T086): App-хранитель уже бьёт №37 по тому же
+    // connectionId общего стрима — второй планировщик удваивал бы
+    // частоту биений (безвредно, но расточительно). Покрытие самого
+    // биения на `/` — App.test.tsx (маршруты / и /conference/:id).
+    expect(mockPresence.createPresenceHeartbeat).not.toHaveBeenCalled()
   })
 })
 

@@ -175,9 +175,10 @@ describe('GuestJoinPage (009 US4 T049/T052)', () => {
 
     await joinAsGuest()
 
-    // звонок с пометкой «гость» и именем тикета №55
+    // звонок с пометкой «гость»; T087: identity-строка joined-формы
+    // (имя тикета №55) удалена — остаётся только output-подпись
     expect(screen.getByText('Вы в конференции как гость')).toBeInTheDocument()
-    expect(screen.getByText('Виктор')).toBeInTheDocument()
+    expect(screen.queryByText('Виктор')).not.toBeInTheDocument()
     expect(conferences.joinConferenceByInvite).toHaveBeenCalledTimes(1)
     expect(conferences.joinConferenceByInvite).toHaveBeenCalledWith(INVITE_TOKEN, 'Виктор')
 

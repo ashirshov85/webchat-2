@@ -38,13 +38,14 @@
  * снятия роли), и MediaControls (T028): тумблеры микрофона/камеры/
  * экрана и «Покинуть» (выход — leave слота вкладки,
  * Q10=A, возврат на pre-join для возможного повторного входа).
- * T080: в звонке шапка показывает ЖИВОЕ число подключённых —
- * ConferenceLiveCount в слоте children комнаты (useParticipants —
- * источник T041, совпадает с «Участники (N)» панели), статическая
- * строка снимка №45 в header на joined-состоянии убирается (дубль
- * цифр); pre-join/после выхода — снимок №45 (leave обновляет пакет
- * №45+№46 один раз, без запрос-циклов), реалтайм-канала у
- * не-подключённого нет — поллинг сознательно не вводится.
+ * T080: в звонке ЖИВОЕ число подключённых держит ConferenceLiveCount
+ * в слоте children комнаты (useParticipants — источник T041, совпадает
+ * с «Участники (N)» панели); leave обновляет пакет №45+№46 один раз,
+ * без запрос-циклов. T087: шапка страницы (заголовок conferenceTitle,
+ * статический снимок «Участники: N / M» не-joined фаз, строка «Ваша
+ * роль: …» №46-снимка) удалена во ВСЕХ фазах, identity-строка
+ * joined-формы — тоже: остаётся только output-подпись «Вы в
+ * конференции».
  * Сообщения об ошибках — нейтральные, без раскрытия деталей
  * (существование не раскрывается, api-contract §1): ветвление UX по
  * коду Problem, а не HTTP-статусу (конвенция 002).
@@ -83,11 +84,6 @@ function entryModeFromSearch(search: string): ConferenceMode | null {
   return mode === 'video' || mode === 'audio' ? mode : null
 }
 
-/** Заголовок экрана по режиму конференции (№45 view.mode — фиксация сервера). */
-function conferenceTitle(mode: ConferenceMode): string {
-  return mode === 'video' ? 'Видеоконференция' : 'Аудиоконференция'
-}
-
 /**
  * Нейтральное сообщение об ошибке №47 по коду Problem: детали не
  * раскрываются, коды контракта → фиксированные подписи.
@@ -116,7 +112,7 @@ function loadErrorMessage(code: ConferenceErrorCode | null): string {
     : 'Не удалось загрузить конференцию'
 }
 
-/** Блок подключенной вкладки (T026/T027/T028 + панель участников T041 + живой счётчик шапки T080): медиа-комната + живое число подключённых + список участников + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
+/** Блок подключенной вкладки (T026/T027/T028 + панель участников T041 + живой счётчик T080): медиа-комната + живое число подключённых + список участников + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
 function JoinedPanel({
   conferenceId,
   ticket,
@@ -133,7 +129,7 @@ function JoinedPanel({
   readonly ticket: JoinTicket
   readonly mode: ConferenceMode
   /**
-   * Потолок квоты №45-вида (T080): проброс в живой счётчик шапки —
+   * Потолок квоты №45-вида (T080): проброс в живой счётчик —
    * ConferenceLiveCount в слоте children комнаты (внутри RoomContext —
    * хуку нужна живая комната), новый запрос не вводится.
    */
@@ -156,7 +152,6 @@ function JoinedPanel({
   return (
     <div className="conference-joined">
       <output>Вы в конференции</output>
-      <p className="conference-identity">{ticket.identity}</p>
       <ConferenceRoom
         conferenceId={conferenceId}
         ticket={ticket}
@@ -240,19 +235,6 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
       )}
       {status === 'ready' && conference !== null && (
         <>
-          <header className="conference-header">
-            <h1>{conferenceTitle(conference.mode)}</h1>
-            {/* Снимок №45 «на момент запроса» (T080): в joined-состоянии
-                строку держит живой счётчик комнаты (ConferenceLiveCount —
-                useParticipants, источник T041) — статический дубль убран;
-                pre-join/после выхода/терминальные фазы — снимок №45. */}
-            {joinStatus !== 'joined' && (
-              <p>
-                Участники: {conference.activeParticipants} / {conference.maxParticipants}
-              </p>
-            )}
-            {me !== null && <p>Ваша роль: {me.role === 'moderator' ? 'модератор' : 'участник'}</p>}
-          </header>
           {ended ? (
             <output>{endedConferenceLabel(formatSpanDuration(conference))}</output>
           ) : (

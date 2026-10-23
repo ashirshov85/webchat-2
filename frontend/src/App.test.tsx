@@ -1,7 +1,8 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MockInstance } from 'vitest'
 import { App } from './App'
+import { HEARTBEAT_INTERVAL_MS } from './presence/presenceApi'
 import { stubLocationAssign } from './test/location'
 
 /**
@@ -15,9 +16,30 @@ const conferences = vi.hoisted(() => ({
   getInviteInfo: vi.fn(),
 }))
 
+/**
+ * 009, US1, T086 — хранитель присутствия на уровне App: мок №18-
+ * транспорта (installStream по образцу MessengerPage-тестов) + мок
+ * транспорта apiFetch — шов наблюдения №37-биений (тот же, что в
+ * presenceApi.test.ts: НАСТОЯЩИЙ планировщик presenceApi бьёт в
+ * /users/me/presence/heartbeat; кадр `connected` подаётся вручную,
+ * fake timers прокручивают 30-секундный интервал). Прочие REST-вызовы
+ * дерева отклоняются — сетевой слой маршрутным тестам не нужен.
+ */
+const { mockSse, mockApiFetch } = vi.hoisted(() => ({
+  mockSse: { streamUserEvents: vi.fn() },
+  mockApiFetch: vi.fn(),
+}))
+
 vi.mock('./conferences/api/conferences', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./conferences/api/conferences')>()),
   getInviteInfo: conferences.getInviteInfo,
+}))
+
+vi.mock('./api/sse', () => mockSse)
+
+vi.mock('./api/client', () => ({
+  apiFetch: mockApiFetch,
+  refreshTokens: vi.fn(() => Promise.resolve(null)),
 }))
 
 const REFRESH_TOKEN_STORAGE_KEY = 'webchat.auth.refreshToken'
@@ -32,10 +54,52 @@ function authenticate(): void {
   window.localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, 'refresh-token-1')
 }
 
+interface MockStream {
+  emit(eventType: string, data: string): void
+}
+
+/** Ручная подача кадров №18 (паттерн MessengerPage.conference.test). */
+let stream: MockStream
+
+function installStream(): MockStream {
+  const listeners = new Map<string, (data: string) => void>()
+  const mock: MockStream = {
+    emit(eventType, data) {
+      listeners.get(eventType)?.(data)
+    },
+  }
+  mockSse.streamUserEvents.mockImplementation(() => ({
+    subscribe(eventType: string, listener: (data: string) => void) {
+      listeners.set(eventType, listener)
+      return () => {
+        listeners.delete(eventType)
+      }
+    },
+    close(): void {
+      // not asserted here (covered by useRealtime tests)
+    },
+    reconnect(): void {
+      // №37 404-recovery seam — not asserted here
+    },
+  }))
+  return mock
+}
+
 beforeEach(() => {
   assignMock = stubLocationAssign()
   conferences.getInviteInfo.mockReset()
+  mockSse.streamUserEvents.mockReset()
+  mockApiFetch.mockReset()
+  mockApiFetch.mockRejectedValue(new Error('api offline in route tests'))
+  stream = installStream()
 })
+
+/** №37-биения в моке транспорта (шов presenceApi.test.ts). */
+function heartbeatCalls(): Array<[string, RequestInit | undefined]> {
+  return (mockApiFetch.mock.calls as Array<[string, RequestInit | undefined]>).filter(
+    ([path]) => path === '/users/me/presence/heartbeat',
+  )
+}
 
 afterEach(() => {
   cleanup()
@@ -213,5 +277,103 @@ describe('App guest join route /join/:inviteToken (009 US4, T050)', () => {
     ).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Create an account' })).toBeInTheDocument()
     expect(conferences.getInviteInfo).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * 009, US1, T086 — хранитель присутствия на уровне App: пользователь в
+ * звонке остаётся «онлайн» в чатах. Корень бага: №18-стрим и №37-биения
+ * монтировались ТОЛЬКО MessengerPage, а вход в конференцию — full page
+ * load (`window.location.assign('/conference/{id}…')`) — выгружал
+ * мессенджер, сервер снимал регистрацию, и планировщик (TTL 90 с,
+ * гистерезис 45 с) флипал «офлайн» всем наблюдателям на весь звонок.
+ * Хранитель (null-компонент, `useRealtime` + `usePresenceHeartbeat`)
+ * монтируется ВНУТРИ ProtectedRoute рядом с children — присутствие
+ * получает семантику «авторизованная вкладка приложения открыта»
+ * (`/`, `/chat`, `/conference/:id`); публичные поверхности исключены
+ * автоматически: `/join/:inviteToken` (гость без userId, T050 без
+ * ProtectedRoute) и auth-страницы стрим не открывают.
+ */
+describe('App presence keeper (009 T086 — в конференции пользователь остаётся «онлайн» в чатах)', () => {
+  it('opens №18 on /conference/:id under auth and beats №37 from the connected frame', async () => {
+    authenticate()
+    navigate('/conference/c-1')
+    render(<App />)
+
+    // Хранитель монтируется вместе с ProtectedRoute — №18 открывается
+    // ещё до разрешения ленивого чанка конференции.
+    await waitFor(() => {
+      expect(mockSse.streamUserEvents).toHaveBeenCalledTimes(1)
+    })
+    expect(await screen.findByRole('region', { name: 'Конференция' })).toBeInTheDocument()
+
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        stream.emit('connected', JSON.stringify({ connectionId: 'conn-conf-1' }))
+      })
+      expect(heartbeatCalls()).toHaveLength(0)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+      })
+      const beats = heartbeatCalls()
+      expect(beats).toHaveLength(1)
+      expect(JSON.parse(beats[0]![1]?.body as string)).toEqual({ connectionId: 'conn-conf-1' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('opens №18 on / and beats №37 exactly once (keeper replaced the dismantled MessengerPage wiring)', async () => {
+    authenticate()
+    navigate('/')
+    render(<App />)
+
+    expect(screen.getByRole('complementary', { name: 'Чаты и контакты' })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockSse.streamUserEvents).toHaveBeenCalledTimes(1)
+    })
+
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        stream.emit('connected', JSON.stringify({ connectionId: 'conn-home-1' }))
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS)
+      })
+      // Ровно ОДИН планировщик №37: дубль MessengerPage демонтирован
+      // (T086) — удвоение частоты биений невозможно.
+      const beats = heartbeatCalls()
+      expect(beats).toHaveLength(1)
+      expect(JSON.parse(beats[0]![1]?.body as string)).toEqual({ connectionId: 'conn-home-1' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not open №18 on /join/:inviteToken (public guest surface, FR-010)', async () => {
+    conferences.getInviteInfo.mockResolvedValue({ valid: true, live: true })
+    navigate('/join/guest.nonce-token')
+    render(<App />)
+
+    await screen.findByRole('region', { name: 'Подключение к конференции' })
+    expect(mockSse.streamUserEvents).not.toHaveBeenCalled()
+  })
+
+  it('does not open №18 on /login (auth surface)', () => {
+    navigate('/login')
+    render(<App />)
+
+    expect(screen.getByLabelText('Email или имя пользователя')).toBeInTheDocument()
+    expect(mockSse.streamUserEvents).not.toHaveBeenCalled()
+  })
+
+  it('does not open №18 for an unauthenticated visitor of /conference/:id (pending redirect)', () => {
+    navigate('/conference/c-1')
+    render(<App />)
+
+    expect(assignMock).toHaveBeenCalledWith('/login?returnTo=%2Fconference%2Fc-1')
+    expect(mockSse.streamUserEvents).not.toHaveBeenCalled()
   })
 })

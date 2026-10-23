@@ -141,6 +141,31 @@ export function rewindCursor(userId: string, chatId: string, seq: number): numbe
 }
 
 /**
+ * The ONLY deletion of a cursor entry (T088, 009 bug-fix): a chat the
+ * account can never confirm again — a hard-deleted group (№30) whose
+ * `group.deleted` frame was missed, or a terminal №25 refusal
+ * (404 chat_not_found / 403 not_participant) isolated by the ack
+ * batcher — must leave the PERSISTED map too: otherwise the T052
+ * cycle-start re-feed (useSync) resurrects the dead chatId from
+ * localStorage every new session and №25 (all-or-refusal) rejects its
+ * whole batch forever. Called by `drop()` of the per-account batcher
+ * (ack.ts) alongside the §5.5 tombstone; a chat with no stored cursor
+ * is a no-op. Everything else keeps the only-grow/rewind discipline:
+ * live chats never lose their resume position.
+ */
+export function forgetCursor(userId: string, chatId: string): void {
+  if (!isChatId(chatId)) {
+    return
+  }
+  const map = loadCursors(userId)
+  if (!(chatId in map)) {
+    return
+  }
+  delete map[chatId]
+  writeCursors(userId, map)
+}
+
+/**
  * Self-heal step of the catch-up loop (§3.1), applied to the local
  * cursor BEFORE the delta's messages render: a `desynced` chat rewinds
  * to `serverUpToSeq`; otherwise the cursor adopts the server's resume
