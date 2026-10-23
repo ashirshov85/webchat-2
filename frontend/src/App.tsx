@@ -76,7 +76,13 @@ function PresenceKeeper() {
  * flashes for unauthenticated visitors. Every authenticated route
  * also mounts the presence keeper (T086) next to its children.
  */
-function ProtectedRoute({ children, pathname }: { children: ReactNode; pathname: string }) {
+function ProtectedRoute({
+  children,
+  pathname,
+}: {
+  readonly children: ReactNode
+  readonly pathname: string
+}) {
   const authenticated = !isSessionExpired()
   useEffect(() => {
     if (!authenticated) {
