@@ -508,11 +508,14 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   color: var(--cream);
 }
 
+/* Заголовок pre-join: центрирован по панели (T091) — паритет центрированного
+ * плейсхолдера превью; типографика без изменений. */
 .conference-prejoin-title {
   margin: 0;
   font: 17px var(--font-heading);
   letter-spacing: 0.04em;
   color: var(--cream-bright);
+  text-align: center;
 }
 
 /* Превью: тёмная видеоповерхность 16:9 (как тайлы комнаты), плейсхолдер по центру. */
@@ -1004,11 +1007,14 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   color: var(--cream);
 }
 
+/* Заголовок шага имени: центрирован внутри формы (T091) — паритет заголовка
+ * pre-join, гостевой паритет Q1=C; типографика без изменений. */
 .guest-join-title {
   margin: 0;
   font: 17px var(--font-heading);
   letter-spacing: 0.04em;
   color: var(--cream-bright);
+  text-align: center;
 }
 
 /* live-подсказка №54: конференция уже идёт (<output> = role=status). */

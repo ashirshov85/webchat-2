@@ -250,6 +250,38 @@ describe('санитаризация шапки/identity (T087): статиче�
   })
 })
 
+describe('центрирование заголовков pre-join и гостевого шага имени (T091): статический пин CSS', () => {
+  it('заголовок .conference-prejoin-title центрирован по панели', () => {
+    // h2 — первый ребёнок flex-колонки .conference-prejoin без text-align
+    // наследует left от панели, тогда как плейсхолдер превью центрирован;
+    // центрируется только текст заголовка — flex-геометрия панели не трогается
+    const title = conferencesCss.match(/^\.conference-prejoin-title\s*\{([^}]*)\}/m)
+    expect(title).not.toBeNull()
+    expect(title?.[1]).toContain('text-align: center')
+  })
+
+  it('заголовок .guest-join-title центрирован внутри формы .guest-join-name', () => {
+    // симметрия гостевой точки входа (паритет Q1=C): тот же первый ребёнок
+    // flex-колонки .guest-join-name — центрируется тем же правилом
+    const title = conferencesCss.match(/^\.guest-join-title\s*\{([^}]*)\}/m)
+    expect(title).not.toBeNull()
+    expect(title?.[1]).toContain('text-align: center')
+  })
+
+  it('регресс-пин: типографика обоих заголовков сохранена', () => {
+    for (const selector of ['.conference-prejoin-title', '.guest-join-title']) {
+      const rule = conferencesCss.match(
+        new RegExp(`^\\.${selector.slice(1)}\\s*\\{([^}]*)\\}`, 'm'),
+      )
+      expect(rule, `правило ${selector}`).not.toBeNull()
+      expect(rule?.[1], `правило ${selector}`).toContain('margin: 0')
+      expect(rule?.[1], `правило ${selector}`).toContain('font: 17px var(--font-heading)')
+      expect(rule?.[1], `правило ${selector}`).toContain('letter-spacing: 0.04em')
+      expect(rule?.[1], `правило ${selector}`).toContain('color: var(--cream-bright)')
+    }
+  })
+})
+
 describe('слитый тайл участника (T084): статический пин CSS', () => {
   it('широкая секция демонстраций и 21:9-тайл экрана удалены — единая сетка тайлов 16:9', () => {
     expect(conferencesCss).not.toContain('.conference-screens')
