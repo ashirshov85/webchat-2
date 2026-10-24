@@ -51,6 +51,17 @@ import type { JoinTicket } from '../../api/conferences'
  * или уход участника; прежний сброс завершением демонстрации T074/T078
  * отменён); автопин T078 ключом identity; подпись — имя + видимый бейдж
  * «демонстрирует экран» (формат «Экран — имя» упразднён).
+ *
+ * 009, US1, T090 — инвариант «камера выкл + без демонстрации экрана =
+ * аватар»: выключение камеры — это mute трека, НЕ unpublish (с
+ * публикации LiveKit снимает только демонстрацию экрана), поэтому
+ * published-but-muted camera-реф — НЕ видеоисточник: тайл рендерит
+ * аватар-заглушку (репродукция «тёмный фон вместо аватара после
+ * вкл/выкл камеры»); published+unmuted — VideoTrack; живая
+ * демонстрация при замученной камере — экран-видео с бейджем
+ * (приоритет T084 сохраняется); переход muted→unmuted — бесшовный
+ * возврат видео в том же DOM-узле тайла; placeholder-реф (камера
+ * никогда не публиковалась) и симметрия local/remote — аватар у всех.
  */
 
 const lk = vi.hoisted(() => {
@@ -181,10 +192,12 @@ vi.mock('livekit-client', () => ({
 
 /** Состояние треков/спикеров useTracks/useSpeakingParticipants (управляется тестом). */
 const lkc = vi.hoisted(() => ({
+  // publication.isMuted — зеркало TrackPublication.isMuted livekit-client
+  // (T090: published-but-muted camera-трек от настоящего рефа неотличим)
   trackRefs: [] as ReadonlyArray<{
     participant: { identity: string; name?: string }
     source: string
-    publication?: { trackSid: string }
+    publication?: { trackSid: string; isMuted?: boolean }
   }>,
   speakers: [] as ReadonlyArray<{ identity: string }>,
 }))
@@ -2210,5 +2223,205 @@ describe('ConferenceRoom — слитый тайл участника (009 US1 T
     expect(pinned.querySelector('video')).not.toBeNull()
     expect(pinned.querySelector('.avatar')).toBeNull()
     expect(pinned).toHaveTextContent('демонстрирует экран')
+  })
+})
+
+describe('ConferenceRoom — аватар при выключенной камере после её включения (009 US1 T090)', () => {
+  /** Собственный identity тикета — собственный и чужие тайлы симметричны. */
+  const OWN_IDENTITY = 'u:11111111-1111-1111-1111-111111111111:conn-1'
+
+  /** Тайл по подписи-имени участника (figcaption). */
+  function tileByLabel(name: string): HTMLElement {
+    const label = screen.getByText(name, { exact: false })
+    const tile = label.closest('figure')
+    if (tile === null) {
+      throw new Error(`тайл участника «${name}» не найден`)
+    }
+    return tile
+  }
+
+  function renderRoom(): ReturnType<typeof render> {
+    return render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Живое обновление track-рефов (мьют-переходы камеры useTracks). */
+  function rerenderRoom(view: ReturnType<typeof render>): void {
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+    lkc.speakers = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('(а) камера published+muted, экрана нет — аватар-заглушка с именем и индикатором речи, VideoTrack не монтируется (репродукция бага)', async () => {
+    lkc.speakers = [{ identity: 'u:2:b' }]
+    lkc.trackRefs = [
+      {
+        participant: { identity: 'u:1:a', name: 'alice' },
+        source: 'camera',
+        publication: { trackSid: 'cam-a', isMuted: true },
+      },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'camera',
+        publication: { trackSid: 'cam-b', isMuted: true },
+      },
+    ]
+    renderRoom()
+
+    // «включил камеру → выключил»: трек published-but-muted — реф
+    // НАСТОЯЩИЙ (не placeholder), но видео из него не рендерится —
+    // тайл в аватар-заглушке T073, как при аудиозвонке
+    const bobTile = await waitFor(() => {
+      const tile = tileByLabel('bob')
+      expect(tile).toHaveClass('conference-tile-idle')
+      return tile
+    })
+    expect(bobTile.querySelector('.avatar')).not.toBeNull()
+    expect(bobTile.querySelector('video')).toBeNull()
+    expect(bobTile).toHaveTextContent('bob')
+    expect(bobTile).toHaveTextContent('говорит')
+  })
+
+  it('(б) камера published+unmuted — VideoTrack (регресс базового видео)', async () => {
+    lkc.trackRefs = [
+      {
+        participant: { identity: 'u:1:a', name: 'alice' },
+        source: 'camera',
+        publication: { trackSid: 'cam-a', isMuted: false },
+      },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'camera',
+        publication: { trackSid: 'cam-b', isMuted: false },
+      },
+    ]
+    renderRoom()
+
+    const bobTile = await waitFor(() => tileByLabel('bob'))
+    expect(bobTile.querySelector('video')).not.toBeNull()
+    expect(bobTile.querySelector('.avatar')).toBeNull()
+    expect(bobTile).not.toHaveClass('conference-tile-idle')
+  })
+
+  it('(в) камера published+muted + живая демонстрация — экран-видео с бейджем «демонстрирует экран», аватар не рендерится (приоритет T084)', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'camera',
+        publication: { trackSid: 'cam-b', isMuted: true },
+      },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    renderRoom()
+
+    // чужой клиент публикует оба трека (для собственного сочетание
+    // недостижимо — T077/T085): тайл детерминированно показывает ЭКРАН
+    const bobTile = await waitFor(() => {
+      const tile = tileByLabel('bob')
+      expect(tile).toHaveTextContent('демонстрирует экран')
+      return tile
+    })
+    expect(bobTile.querySelector('video')).not.toBeNull()
+    expect(bobTile.querySelector('.avatar')).toBeNull()
+  })
+
+  it('(г) переход muted→unmuted в одном тайле — тот же DOM-узел (ключ identity), видео бесшовно возвращается', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'camera',
+        publication: { trackSid: 'cam-b', isMuted: true },
+      },
+    ]
+    const view = renderRoom()
+    const bobTile = await waitFor(() => tileByLabel('bob'))
+    expect(bobTile.querySelector('.avatar')).not.toBeNull()
+    expect(bobTile.querySelector('video')).toBeNull()
+
+    // повторное включение — unmute того же published-трека: слитый тайл
+    // жив, DOM-узел переиспользуется (T084), видео возвращается
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'camera',
+        publication: { trackSid: 'cam-b', isMuted: false },
+      },
+    ]
+    rerenderRoom(view)
+
+    expect(tileByLabel('bob')).toBe(bobTile)
+    expect(bobTile.querySelector('video')).not.toBeNull()
+    expect(bobTile.querySelector('.avatar')).toBeNull()
+  })
+
+  it('(д) placeholder-реф (камера никогда не публиковалась) — аватар (регресс T073/T084-«в»)', async () => {
+    lkc.trackRefs = [
+      {
+        participant: { identity: 'u:1:a', name: 'alice' },
+        source: 'camera',
+        publication: { trackSid: 'cam-a', isMuted: true },
+      },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    renderRoom()
+
+    const bobTile = await waitFor(() => tileByLabel('bob'))
+    expect(bobTile).toHaveClass('conference-tile-idle')
+    expect(bobTile.querySelector('.avatar')).not.toBeNull()
+    expect(bobTile.querySelector('video')).toBeNull()
+  })
+
+  it('(е) симметрия local/remote: замученная камера — аватар и в собственном тайле, и в чужом', async () => {
+    lkc.trackRefs = [
+      {
+        participant: { identity: OWN_IDENTITY, name: 'alice' },
+        source: 'camera',
+        publication: { trackSid: 'cam-own', isMuted: true },
+      },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'camera',
+        publication: { trackSid: 'cam-b', isMuted: true },
+      },
+    ]
+    renderRoom()
+
+    // мьют локальной камеры — тот же published-but-muted трек:
+    // собственный self-view тайл уходит в аватар симметрично чужим
+    const ownTile = await waitFor(() => tileByLabel('alice'))
+    expect(ownTile.querySelector('.avatar')).not.toBeNull()
+    expect(ownTile.querySelector('video')).toBeNull()
+    const bobTile = tileByLabel('bob')
+    expect(bobTile.querySelector('.avatar')).not.toBeNull()
+    expect(bobTile.querySelector('video')).toBeNull()
   })
 })

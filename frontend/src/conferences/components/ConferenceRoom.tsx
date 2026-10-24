@@ -86,7 +86,9 @@
  *
  * Слитый тайл участника (T084): камера и демонстрация экрана одного
  * участника — ОДИН тайл (React-ключ identity, приоритет
- * screen > camera > аватар-заглушка T073): живое переключение
+ * screen > published-и-незамученная camera > аватар-заглушка T073:
+ * выключение камеры — mute трека, НЕ unpublish, замученный
+ * published-реф = аватар, T090): живое переключение
  * камера↔экран (T077 гасит камеру при старте демонстрации) меняет
  * содержимое ТОГО ЖЕ DOM-узла — сетка не перестраивается, второй
  * тайл не рождается; video-элемент на тайл один — VideoTrack
@@ -329,19 +331,20 @@ function TilePinButton({
 }
 
 /**
- * Слитый тайл участника (T084): экран, камера и аватар-заглушка
+ * Слитный тайл участника (T084): экран, камера и аватар-заглушка
  * одного участника — ОДИН элемент с React-ключом identity. Содержимое
- * — производное состояния модели (приоритет screen > camera >
- * placeholder): published-экран/камера — VideoTrack (ОДИН
- * video-элемент на тайл: смена trackRef перевешивает attach того же
- * элемента, DOM-узел переиспользуется — переключения без
- * размонтирования тайла и перестройки сетки), placeholder (камера
- * выключена/недоступна — собственный тайл тоже) — своя заглушка
- * вместо дефолтной ParticipantTile: ui/Avatar (ParticipantAvatar,
- * «как в контактах» T073) + имя + индикатор речи. Живая
- * демонстрация маркируется текстовым бейджем «демонстрирует экран»
- * рядом с именем (доступность 008 — состояние дублируется текстом;
- * формат «Экран — имя» упразднён).
+ * — производное состояния модели (приоритет screen >
+ * published-и-незамученная camera > placeholder, T090): published-экран
+ * / незамученная камера — VideoTrack (ОДИН video-элемент на тайл:
+ * смена trackRef перевешивает attach того же элемента, DOM-узел
+ * переиспользуется — переключения без размонтирования тайла и
+ * перестройки сетки), замученная (выключенная) камера и placeholder
+ * (камера никогда не публиковалась/недоступна — собственный тайл тоже)
+ * — своя заглушка вместо дефолтной ParticipantTile: ui/Avatar
+ * (ParticipantAvatar, «как в контактах» T073) + имя + индикатор речи.
+ * Живая демонстрация маркируется текстовым бейджем «демонстрирует
+ * экран» рядом с именем (доступность 008 — состояние дублируется
+ * текстом; формат «Экран — имя» упразднён).
  *
  * Пин-раскладка (T074, ключ identity — T084): pinned — тайл
  * развёрнут большим на всю медиа-зону (conference-tile-pinned;
@@ -360,8 +363,20 @@ function ConferenceTile({
   readonly onTogglePin: () => void
 }) {
   const label = participantLabel(model.participant.name, model.participant.identity)
+  // Muted-камера = нет видео (T090): выключение камеры (тумблер
+  // MediaControls / модерация MutePublishedTrack) — это mute трека,
+  // НЕ unpublish (с публикации LiveKit снимает только демонстрация
+  // экрана), published-but-muted реф рендерил бы чёрный кадр вместо
+  // аватара — камера считается видеоисточником только published И
+  // незамученной (publication.isMuted одинаков для local/remote —
+  // зеркало useIsMuted из @livekit/components-react; реактивность —
+  // useTracks перевыпускает рефы на TrackMuted/TrackUnmuted).
   const cameraPublished =
-    model.cameraRef !== undefined && isTrackReference(model.cameraRef) ? model.cameraRef : undefined
+    model.cameraRef !== undefined &&
+    isTrackReference(model.cameraRef) &&
+    model.cameraRef.publication.isMuted !== true
+      ? model.cameraRef
+      : undefined
   const videoRef = model.screenRef ?? cameraPublished
   const tileClass = pinned ? 'conference-tile conference-tile-pinned' : 'conference-tile'
   if (videoRef !== undefined) {
@@ -401,12 +416,15 @@ function ConferenceTile({
 
 /**
  * View-model слитого тайла участника (T084): слияние camera- и
- * screen-рефов useTracks по identity с приоритетом screen > camera >
- * placeholder. T077+T085 гарантируют взаимоисключительность для
- * собственного пользователя симметрично (старт демонстрации гасит
- * камеру, включение камеры останавливает демонстрацию); чужой клиент,
- * публикующий оба трека, детерминированно виден экраном — камера
- * вытесняется до завершения демонстрации, второй тайл НЕ рождается.
+ * screen-рефов useTracks по identity с приоритетом screen >
+ * published-и-незамученная camera > placeholder (T090: выключение
+ * камеры — mute трека, НЕ unpublish — замученный published-реф
+ * видеоисточником НЕ считается). T077+T085 гарантируют
+ * взаимоисключительность для собственного пользователя симметрично
+ * (старт демонстрации гасит камеру, включение камеры останавливает
+ * демонстрацию); чужой клиент, публикующий оба трека,
+ * детерминированно виден экраном — камера вытесняется до завершения
+ * демонстрации (в т.ч. замученная), второй тайл НЕ рождается.
  */
 interface ParticipantTileModel {
   /** Ключ тайла и пина (T084): identity участника, НЕ identity:source. */
