@@ -39,8 +39,8 @@ Self-hosting) на 2026-10-15.
 | `name` | username пользователя | введённое имя (валидировано: trim, 1–50) |
 | `video.room` / `roomJoin` | `c:{conferenceId}` / `true` | то же |
 | `video.canSubscribe` | `true` | `true` |
-| `video.canPublish` | `true`, либо `false` при `speech_restricted` (право слова, Q4=A) | `true` |
-| `video.canPublishSources` | все источники минус ограниченные: `mic_restricted` → − microphone; `camera_restricted` → − camera; `screen_restricted` → − screen_share, screen_share_audio (Q22=A) | не урезаются (Q1=C: видео/экран включаются в звонке; старт «только микрофон» — клиентское состояние, soft как Q3=A) |
+| `video.canPublish` | `true`, либо `false` при `speech_restricted` (право слова, Q4=A) или при всех трёх точечных одновременно (T094: пустой остаток источников означал бы «разрешено всё») | `true` |
+| `video.canPublishSources` | все источники минус ограниченные: `mic_restricted` → − microphone; `camera_restricted` → − camera; `screen_restricted` → − screen_share, screen_share_audio (Q22=A); пустой набор = «все разрешены» (семантика LiveKit) — из домена не возникает: все три точечных кодируются canPublish=false (T094) | не урезаются (Q1=C: видео/экран включаются в звонке; старт «только микрофон» — клиентское состояние, soft как Q3=A) |
 | `video.canPublishData` | `false` (v1) | `false` |
 | админ-grants (`roomAdmin/roomCreate/roomList/roomRecord/ingressAdmin`) | **никогда клиенту** — вся модерация серверная (FR-008) | никогда |
 | `metadata` (participant) | `{"role":"moderator"|"participant","guest":false}` | `{"role":"participant","guest":true,"inviteId":"<uuid>"}` — поле для отзыва ссылки (§6) |

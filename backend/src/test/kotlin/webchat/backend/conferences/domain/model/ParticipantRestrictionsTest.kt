@@ -8,8 +8,11 @@ import org.junit.jupiter.api.Test
  * (research §4/§5, data-model 009 §Сущность 2): «право слова» blocks
  * ALL publications (Q4=A), a source restriction removes its source(s) —
  * screen removes BOTH screen_share and screen_share_audio (Q22=A) — and
- * the unrestricted state grants the full source set. The re-mint
- * reproduction (Q5=A, invariant 3) is the IT of T040.
+ * the unrestricted state grants the full source set. T094: ALL THREE
+ * point restrictions together also encode as canPublish=false — an
+ * empty canPublishSources remainder would mean «everything allowed»
+ * in LiveKit. The re-mint reproduction (Q5=A, invariant 3) is the IT
+ * of T040.
  */
 class ParticipantRestrictionsTest {
     @Test
@@ -69,7 +72,12 @@ class ParticipantRestrictionsTest {
     }
 
     @Test
-    fun `all source restrictions leave an empty source set while canPublish stays true`() {
+    fun `all three point restrictions encode as canPublish=false`() {
+        // T094: mic+camera+screen together empty the subtraction remainder,
+        // but an EMPTY canPublishSources in LiveKit means «every source
+        // allowed» (livekit-integration §3) — the grants therefore encode
+        // the state as canPublish=false (the source set is then not
+        // consulted), NOT as an empty «allowed everything» set.
         val grants =
             ParticipantRestrictions(
                 micRestricted = true,
@@ -77,7 +85,7 @@ class ParticipantRestrictionsTest {
                 screenRestricted = true,
             ).grants()
 
-        assertThat(grants.canPublish).isTrue
+        assertThat(grants.canPublish).isFalse
         assertThat(grants.canPublishSources).isEmpty()
     }
 

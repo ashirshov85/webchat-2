@@ -39,6 +39,10 @@ import {
  * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
  * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
  * (SET-семантика №49, live-обновление permission-событием + refetch №46).
+ * T094: тумблеры панели — постоянные подписи + aria-pressed; сценарий
+ * «три точечных подряд» — всё остаётся отключено и мастер «Все
+ * источники» нажат (фикс кодирования canPublish=false), отжатие
+ * мастера включает всё.
  *
  * 009, US4, T052 — e2e гостевого доступа (quickstart §3.4): приватное
  * окно БЕЗ аккаунта по инвайт-ссылке №52 (SC-003 — ≤ 3 действий от
@@ -448,7 +452,13 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     // конфиг): появление screen-трека при пустом пине разворачивает
     // СЛИТЫЙ тайл alice (T084: экран в тайле участника, имя + бейдж
     // «демонстрирует экран») на всю медиа-зону БЕЗ клика по «Развернуть»
-    await alicePage.getByRole('button', { name: 'Экран', exact: true }).click()
+    // (T094: скоуп группы controls — у модератора тот же «Экран»
+    // есть и в тумблерах строки панели модерации)
+    const aliceControls = (name: string) =>
+      alicePage
+        .getByRole('group', { name: 'Управление конференцией' })
+        .getByRole('button', { name, exact: true })
+    await aliceControls('Экран').click()
 
     // зритель bob: единственный развёрнутый тайл — слитый тайл alice
     const bobPinned = bobPage.locator('.conference-tile-pinned')
@@ -463,7 +473,7 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
 
     // завершение демонстрации — пин ОСТАЁТСЯ на слитом тайле alice
     // (T084): тайл жив с камерой/аватаром, бейдж ушёл
-    await alicePage.getByRole('button', { name: 'Экран', exact: true }).click()
+    await aliceControls('Экран').click()
     await expect(bobPinned).not.toContainText('демонстрирует экран', { timeout: 10_000 })
     await expect(bobPinned).toHaveCount(1)
     await expect(bobPinned).toContainText(aliceNow.username)
@@ -554,6 +564,15 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
   let chatId: string
   /** Страницы теста — закрываются в afterEach (контексты LiveKit-вкладок). */
   let openedPages: Page[]
+  /**
+   * Конференция текущего теста — завершается №48 в afterEach: №44
+   * идемпотентен («одна активная на чат»), без чистки следующий тест
+   * унаследовал бы активную комнату со «свисающими» подключениями
+   * закрытых вкладок предыдущего (строгий локатор строки цели
+   * разрешался бы в несколько элементов).
+   */
+  let activeConference: ConferenceView | null = null
+  let creatorToken: string | null = null
 
   test.beforeAll(async () => {
     api = await request.newContext({ baseURL: API_URL })
@@ -573,6 +592,14 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     for (const page of openedPages) {
       await page.context().close()
     }
+    if (activeConference !== null && creatorToken !== null) {
+      // 409 conference_ended (уже завершена) чисткой не считается
+      await apiCall(api, 'post', `/api/v1/conferences/${activeConference.id}/end`, {
+        token: creatorToken,
+      }).catch(() => {})
+    }
+    activeConference = null
+    creatorToken = null
   })
 
   test('SC-005: мьют микрофона модератором блокирует тумблер цели с пояснением ≤ 2 c и виден всем; снятие разблокирует', async ({
@@ -582,6 +609,8 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     // микрофон bob опубликован (дефолты mode=video)
     const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
     const conference = await createConference(api, aliceNow, chatId)
+    activeConference = conference
+    creatorToken = aliceNow.accessToken
     const [alicePage, bobPage] = await Promise.all([
       openConferencePage(browser, aliceNow, conference.id),
       openConferencePage(browser, bobNow, conference.id),
@@ -592,11 +621,12 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
       connectAndAwaitMedia(bobPage, aliceNow.username),
     ])
 
-    // №49: alice глушит bob'у микрофон (строка панели модерации цели)
+    // №49: alice глушит bob'у микрофон (тумблер строки цели, T094 —
+    // постоянная подпись + aria-pressed по проекции)
     const startedAt = Date.now()
     await alicePage
       .getByRole('group', { name: bobNow.username })
-      .getByRole('button', { name: 'Отключить микрофон' })
+      .getByRole('button', { name: 'Микрофон', exact: true })
       .click()
 
     // у bob тумблер заблокирован с пояснением (T043) ≤ 2 c от клика
@@ -612,11 +642,17 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     await expect(alicePage.getByText('микрофон отключён', { exact: true }).first()).toBeVisible({
       timeout: SC005_MS,
     })
+    // тумблер строки цели нажат (проекция grants, SC-005)
+    await expect(
+      alicePage
+        .getByRole('group', { name: bobNow.username })
+        .getByRole('button', { name: 'Микрофон', exact: true }),
+    ).toHaveAttribute('aria-pressed', 'true', { timeout: SC005_MS })
 
     // снятие ограничения (SET false, Q22=A): блокировка у цели снята ≤ 2 c
     await alicePage
       .getByRole('group', { name: bobNow.username })
-      .getByRole('button', { name: 'Включить микрофон' })
+      .getByRole('button', { name: 'Микрофон', exact: true })
       .click()
     await expect(bobPage.getByText('Микрофон отключён модератором')).toHaveCount(0, {
       timeout: SC005_MS,
@@ -624,6 +660,67 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     await expect(bobPage.getByRole('button', { name: 'Микрофон' })).toBeEnabled({
       timeout: SC005_MS,
     })
+  })
+
+  test('SC-005/T094: три точечных подряд — всё остаётся отключено, мастер «Все источники» нажат; отжатие мастера включает всё', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+    activeConference = conference
+    creatorToken = aliceNow.accessToken
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
+    ])
+
+    // регресс бага T094: третья точечная не сбрасывает отключения —
+    // после mic+camera+screen grants цели canPublish=false, панель
+    // показывает все три нажатыми И мастер нажатым ≤ 2 c (SC-005)
+    const bobRow = alicePage.getByRole('group', { name: bobNow.username })
+    const startedAt = Date.now()
+    for (const label of ['Микрофон', 'Камера', 'Экран']) {
+      await bobRow.getByRole('button', { name: label, exact: true }).click()
+    }
+
+    for (const label of ['Микрофон', 'Камера', 'Экран', 'Все источники']) {
+      await expect(bobRow.getByRole('button', { name: label, exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+        { timeout: SC005_MS },
+      )
+    }
+    expect(
+      Date.now() - startedAt,
+      `SC-005: применение третьей точечной ${Date.now() - startedAt} мс`,
+    ).toBeLessThanOrEqual(SC005_MS)
+
+    // у цели фактическое «всё заблокировано»: все тумблеры MediaControls
+    // недоступны с единым пояснением (canPublish=false, Q4=A)
+    await expect(bobPage.getByText('Публикация отключена модератором (право слова)')).toBeVisible({
+      timeout: SC005_MS,
+    })
+    for (const label of ['Микрофон', 'Камера', 'Экран']) {
+      await expect(bobPage.getByRole('button', { name: label, exact: true })).toBeDisabled()
+    }
+
+    // отжатие мастера включает всё: точечные тумблеры цели доступны ≤ 2 c
+    await bobRow.getByRole('button', { name: 'Все источники', exact: true }).click()
+    await expect(bobPage.getByText('Публикация отключена модератором (право слова)')).toHaveCount(
+      0,
+      { timeout: SC005_MS },
+    )
+    await expect(bobPage.getByRole('button', { name: 'Микрофон', exact: true })).toBeEnabled({
+      timeout: SC005_MS,
+    })
+    await expect(
+      bobRow.getByRole('button', { name: 'Все источники', exact: true }),
+    ).toHaveAttribute('aria-pressed', 'false', { timeout: SC005_MS })
   })
 })
 

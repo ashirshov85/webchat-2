@@ -12,6 +12,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * заменены фейками: предмет теста — оркестрация действий и
  * подтверждения (набор US3 — T043).
  *
+ * T094: тумблеры источников — ПОСТОЯННЫЕ подписи («Микрофон»/
+ * «Камера»/«Экран», мастер «Все источники» = прежнее «право слова»)
+ * с aria-pressed по проекции grants; SET-семантика: точечный клик
+ * при отжатом мастере — flip одного поля, нажатие мастера
+ * нормализует точки в speech, отжатие включает всё; третья точечная
+ * (фикс grants canPublish=false) НЕ сбрасывает отключения — все три
+ * остаются нажатыми и мастер нажат.
+ *
  * T081 (US4): блок «Гостевая ссылка» №52/№53 — генерация readonly-
  * поля inviteUrl (срок + предупреждение Q17=A/Q13=B), «Копировать»
  * через navigator.clipboard, отзыв с подтверждением (деструктивное —
@@ -162,35 +170,48 @@ describe('ModerationPanel (009 US3 T042)', () => {
     expect(api.updateParticipantRestrictions).not.toHaveBeenCalled()
   })
 
-  it('модератор: строки участников с действиями, включая себя (равноправие, Q21=A)', () => {
+  it('модератор: строки участников с действиями, включая себя (равноправие, Q21=A); тумблеры №49 — постоянные подписи (T094)', () => {
     render(<ModerationPanel conferenceId="c-1" />)
 
     expect(screen.getByText('Модерация')).toBeInTheDocument()
     expect(screen.getByText('alice (вы)')).toBeInTheDocument()
     expect(screen.getByText('bob')).toBeInTheDocument()
-    // обе строки (в т.ч. своя и вторая) несут полный набор действий №49–№51
+    // обе строки (в т.ч. своя и вторая) несут полный набор действий №49–№51;
+    // тумблеры источников — постоянные подписи + aria-pressed по проекции
     for (const identity of [
       'u:11111111-1111-1111-1111-111111111111:conn-1',
       'u:22222222-2222-4222-8222-222222222222:conn-2',
     ]) {
       const row = rowOf(identity)
-      expect(within(row).getByRole('button', { name: 'Отключить микрофон' })).toBeInTheDocument()
-      expect(within(row).getByRole('button', { name: 'Отключить камеру' })).toBeInTheDocument()
-      expect(within(row).getByRole('button', { name: 'Отключить экран' })).toBeInTheDocument()
-      expect(within(row).getByRole('button', { name: 'Право слова' })).toBeInTheDocument()
+      expect(within(row).getByRole('button', { name: 'Микрофон' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
+      expect(within(row).getByRole('button', { name: 'Камера' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
+      expect(within(row).getByRole('button', { name: 'Экран' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
+      expect(within(row).getByRole('button', { name: 'Все источники' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
       expect(within(row).getByRole('button', { name: 'Исключить' })).toBeInTheDocument()
     }
     expect(screen.getByRole('button', { name: 'Назначить модератором' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Завершить конференцию' })).toBeInTheDocument()
   })
 
-  it('№49 мьют микрофона: полное SET-состояние из grants цели с переключённым полем', async () => {
+  it('№49 точечный тумблер: полное SET-состояние из grants цели с переключённым одним полем (мастер отжат — проекция точна)', async () => {
     api.updateParticipantRestrictions.mockResolvedValue({})
     render(<ModerationPanel conferenceId="c-1" />)
 
     fireEvent.click(
       within(rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')).getByRole('button', {
-        name: 'Отключить микрофон',
+        name: 'Микрофон',
       }),
     )
 
@@ -208,7 +229,7 @@ describe('ModerationPanel (009 US3 T042)', () => {
     })
   })
 
-  it('№49 переключатель отражает действующие ограничения: срезанный источник возвращает «включить»', async () => {
+  it('№49 тумблеры отражают действующие ограничения (aria-pressed); возврат микрофона сохраняет прочие состояния', async () => {
     api.updateParticipantRestrictions.mockResolvedValue({})
     // цель: микрофон и экран срезаны, камера разрешена
     lkc.useParticipants.mockReturnValue([
@@ -223,12 +244,25 @@ describe('ModerationPanel (009 US3 T042)', () => {
     render(<ModerationPanel conferenceId="c-1" />)
 
     const row = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
-    expect(within(row).getByRole('button', { name: 'Включить микрофон' })).toBeInTheDocument()
-    expect(within(row).getByRole('button', { name: 'Отключить камеру' })).toBeInTheDocument()
-    expect(within(row).getByRole('button', { name: 'Включить экран' })).toBeInTheDocument()
+    expect(within(row).getByRole('button', { name: 'Микрофон' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(within(row).getByRole('button', { name: 'Камера' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(within(row).getByRole('button', { name: 'Экран' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(within(row).getByRole('button', { name: 'Все источники' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
 
     // возврат микрофона: SET с mic=false, прочие состояния сохранены
-    fireEvent.click(within(row).getByRole('button', { name: 'Включить микрофон' }))
+    fireEvent.click(within(row).getByRole('button', { name: 'Микрофон' }))
     await waitFor(() => {
       expect(api.updateParticipantRestrictions).toHaveBeenCalledWith(
         'c-1',
@@ -243,8 +277,28 @@ describe('ModerationPanel (009 US3 T042)', () => {
     })
   })
 
-  it('№49 «право слова» (Q4=A): canPublish=false цели → кнопка возврата, SET ставит speechRestricted', async () => {
+  it('№49 мастер «Все источники» (Q4=A): нажатие нормализует точки в speech; точечные под мастером нажаты и недоступны с пояснением', async () => {
     api.updateParticipantRestrictions.mockResolvedValue({})
+    const { rerender } = render(<ModerationPanel conferenceId="c-1" />)
+
+    const row = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
+    fireEvent.click(within(row).getByRole('button', { name: 'Все источники' }))
+
+    await waitFor(() => {
+      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith(
+        'c-1',
+        'u:22222222-2222-4222-8222-222222222222:conn-2',
+        {
+          micRestricted: false,
+          cameraRestricted: false,
+          screenRestricted: false,
+          speechRestricted: true,
+        },
+      )
+    })
+
+    // после применения (broadcast permissions → canPublish=false): все
+    // четыре тумблера нажаты, точечные недоступны с доступным пояснением
     lkc.useParticipants.mockReturnValue([
       defaultRoom()[0],
       participant({
@@ -254,13 +308,24 @@ describe('ModerationPanel (009 US3 T042)', () => {
         permissions: { canPublish: false, canPublishSources: [] },
       }),
     ])
-    render(<ModerationPanel conferenceId="c-1" />)
+    rerender(<ModerationPanel conferenceId="c-1" />)
 
-    const row = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
-    fireEvent.click(within(row).getByRole('button', { name: 'Снять право слова' }))
-
+    const appliedRow = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
+    for (const label of ['Микрофон', 'Камера', 'Экран', 'Все источники']) {
+      expect(within(appliedRow).getByRole('button', { name: label })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+    }
+    for (const label of ['Микрофон', 'Камера', 'Экран']) {
+      const point = within(appliedRow).getByRole('button', { name: label })
+      expect(point).toBeDisabled()
+      expect(point).toHaveAttribute('title', 'Блокируется кнопкой «Все источники»')
+    }
+    // мастер остаётся доступным — отжатие включает всё
+    fireEvent.click(within(appliedRow).getByRole('button', { name: 'Все источники' }))
     await waitFor(() => {
-      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith(
+      expect(api.updateParticipantRestrictions).toHaveBeenLastCalledWith(
         'c-1',
         'u:22222222-2222-4222-8222-222222222222:conn-2',
         {
@@ -271,6 +336,63 @@ describe('ModerationPanel (009 US3 T042)', () => {
         },
       )
     })
+  })
+
+  it('№49 третья точечная не сбрасывает отключения (регресс бага T094): mic+camera+screen → grants canPublish=false, все три нажаты И мастер нажат', async () => {
+    api.updateParticipantRestrictions.mockResolvedValue({})
+    // цель: микрофон и камера уже срезаны (экран разрешён)
+    lkc.useParticipants.mockReturnValue([
+      defaultRoom()[0],
+      participant({
+        identity: 'u:22222222-2222-4222-8222-222222222222:conn-2',
+        name: 'bob',
+        metadata: memberMetadata('participant'),
+        permissions: { canPublish: true, canPublishSources: [SCREEN_SHARE, SCREEN_SHARE_AUDIO] },
+      }),
+    ])
+    const { rerender } = render(<ModerationPanel conferenceId="c-1" />)
+
+    const row = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
+    expect(within(row).getByRole('button', { name: 'Экран' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+
+    // третья точечная: SET экрана поверх двух действующих
+    fireEvent.click(within(row).getByRole('button', { name: 'Экран' }))
+    await waitFor(() => {
+      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith(
+        'c-1',
+        'u:22222222-2222-4222-8222-222222222222:conn-2',
+        {
+          micRestricted: true,
+          cameraRestricted: true,
+          screenRestricted: true,
+          speechRestricted: false,
+        },
+      )
+    })
+
+    // сервер применил (фикс T094): остаток-множество пуст → grants
+    // canPublish=false → проекция all-four-true — сброса не происходит
+    lkc.useParticipants.mockReturnValue([
+      defaultRoom()[0],
+      participant({
+        identity: 'u:22222222-2222-4222-8222-222222222222:conn-2',
+        name: 'bob',
+        metadata: memberMetadata('participant'),
+        permissions: { canPublish: false, canPublishSources: [] },
+      }),
+    ])
+    rerender(<ModerationPanel conferenceId="c-1" />)
+
+    const appliedRow = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
+    for (const label of ['Микрофон', 'Камера', 'Экран', 'Все источники']) {
+      expect(within(appliedRow).getByRole('button', { name: label })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+    }
   })
 
   it('№50 назначение/снятие модератора: противоположная роль цели — в т.ч. строки другого модератора и себя (Q21=A)', async () => {
@@ -377,7 +499,7 @@ describe('ModerationPanel (009 US3 T042)', () => {
 
     fireEvent.click(
       within(rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')).getByRole('button', {
-        name: 'Отключить микрофон',
+        name: 'Микрофон',
       }),
     )
 

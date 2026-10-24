@@ -26,13 +26,14 @@
  *
  * Индикация ограничений (FR-008, Q22=A) — зеркало доменных
  * ParticipantRestrictions по фактическим grants (§3):
- * `canPublish=false` — «право слова» (Q4=A: блокирует ВСЕ публикации,
- * источники при этом не консультируются); отсутствие источника в
- * `canPublishSources` — точечное ограничение; ПУСТОЙ набор источников
- * семантически «все разрешены» (LiveKit) — не помечается. Панель не
- * хранит состояний — это чистая проекция прав: ограничения применяются
- * сервером немедленно (SC-005) и воспроизводятся в новом минте при
- * переподключении (Q5=A).
+ * `canPublish=false` — «всё заблокировано» (Q4=A «право слова» и
+ * все-три-точечных T094 — grants неразличимы, пометка строки
+ * единая «право слова»); отсутствие источника в `canPublishSources`
+ * — точечное ограничение; ПУСТОЙ набор источников семантически
+ * «все разрешены» (LiveKit) — не помечается (защитная ветка).
+ * Панель не хранит состояний — это чистая проекция прав: ограничения
+ * применяются сервером немедленно (SC-005) и воспроизводятся в новом
+ * минте при переподключении (Q5=A).
  *
  * Доступность — стандарты 008: список ul/li, заголовок панели
  * aria-labelledby, индикаторы — текстом (не только цветом).
@@ -146,12 +147,16 @@ export function parseParticipantMarks(metadata: string | undefined): Participant
 
 /**
  * Индикация ограничений по фактическим grants (§3 — зеркало
- * ParticipantRestrictions.grants): «право слова» ⟺ canPublish=false
- * (источники не консультируются, Q4=A); иначе точечно — источника нет
- * в canPublishSources ⟺ срезан модератором. Пустой набор источников
- * = «все разрешены» (семантика LiveKit) — ограничений нет.
- * Экспортировано для ModerationPanel (T042): №49 SET-состояние
- * выводится из тех же grants (источник истины — LiveKit, SC-005).
+ * ParticipantRestrictions.grants): `canPublish=false` — ВСЕ ЧЕТЫРЕ
+ * метки true («всё заблокировано»: покрывает и «право слова» Q4=A, и
+ * все-три-точечных T094 — grants эти доменные состояния неразличимы,
+ * эффективное состояние одинаково; осознанная неразличимость);
+ * иначе точечно — источника нет в canPublishSources ⟺ срезан
+ * модератором. Пустой набор источников при canPublish=true =
+ * «все разрешены» (семантика LiveKit) — защитная ветка без пометок
+ * (после фикса grants T094 из домена не возникает). Экспортировано
+ * для ModerationPanel (T042): №49 SET-состояние выводится из тех же
+ * grants (источник истины — LiveKit, SC-005).
  */
 // eslint-disable-next-line react-refresh/only-export-components -- чистая проекция без состояния/хуков, разделяется с ModerationPanel (T042)
 export function restrictionMarks(
@@ -162,9 +167,9 @@ export function restrictionMarks(
   }
   if (!permissions.canPublish) {
     return {
-      micRestricted: false,
-      cameraRestricted: false,
-      screenRestricted: false,
+      micRestricted: true,
+      cameraRestricted: true,
+      screenRestricted: true,
       speechRestricted: true,
     }
   }

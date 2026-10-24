@@ -11,11 +11,16 @@
  * применяет его к медиа-плоскости (UpdateParticipant grants/metadata +
  * MutePublishedTrack, RemoveParticipant, DeleteRoom — livekit-integration
  * §4) немедленно ≤ 2 c (SC-005). Поэтому панель НЕ хранит ограничений
- * локально: состояние кнопок — проекция фактических grants LiveKit
+ * локально: состояние тумблеров — проекция фактических grants LiveKit
  * (restrictionMarks T041, источник истины — permission-события), а
  * №49 отправляет ПОЛНОЕ SET-состояние (контракт: частичное обновление
- * невозможно) — текущее из grants с переключённым полем. Роль цели —
- * из metadata (broadcast UpdateParticipant, Q9=A).
+ * невозможно). Тумблеры источников — ПОСТОЯННЫЕ подписи с aria-pressed
+ * (T094): точки «Микрофон»/«Камера»/«Экран» (flip одного поля при
+ * отжатом мастере — проекция точна), мастер «Все источники» —
+ * доменное speechRestricted («право слова», Q4=A; переименовано
+ * только UI): нажатие нормализует точки в speech, отжатие включает
+ * всё; под нажатым мастером точки недоступны (поглощение Q4=A).
+ * Роль цели — из metadata (broadcast UpdateParticipant, Q9=A).
  *
  * Видимость панели — роль ЛОКАЛЬНОГО подключения из его metadata
  * (не №46-снимок pre-join): назначение/снятие модератора №50 приходит
@@ -86,6 +91,9 @@ export interface ModerationPanelProps {
   readonly conferenceId: string
 }
 
+/** Точечное поле ограничения №49, переключаемое строкой панели (мастер — speechRestricted, T094). */
+type PointRestrictionField = 'micRestricted' | 'cameraRestricted' | 'screenRestricted'
+
 /** Поле ограничения №49, переключаемое строкой панели. */
 type RestrictionField = keyof UpdateParticipantRestrictionsRequest
 
@@ -135,81 +143,82 @@ interface ModerationRowProps {
   readonly participant: LocalParticipant | RemoteParticipant
   /** Все кнопки недоступны, пока летит любое действие панели. */
   readonly disabled: boolean
-  readonly onRestriction: (identity: string, field: RestrictionField) => void
+  readonly onPointRestriction: (identity: string, field: PointRestrictionField) => void
+  readonly onMasterRestriction: (identity: string) => void
   readonly onRole: (identity: string) => void
   readonly onKick: (identity: string, label: string) => void
 }
 
 /**
  * Строка модерации: цель (имя/«вы») и действия №49–№51 по её grants/
- * metadata. Состояния кнопок — проекция LiveKit (restrictionMarks/
- * parseParticipantMarks T041); «право слова» поглощает точечные
- * источники (Q4=A), поэтому при нём точечные переключатели отражают
- * свои доменные поля SET-состояния.
+ * metadata. Тумблеры №49 — ПОСТОЯННЫЕ подписи с aria-pressed по
+ * проекции LiveKit (restrictionMarks T041, T094): точки «Микрофон»/
+ * «Камера»/«Экран» и мастер «Все источники» (= доменное
+ * speechRestricted «право слова», Q4=A — переименовано только UI).
+ * Под нажатым мастером точечные отображаются нажатыми (эффективно
+ * «всё заблокировано» — truthful) и НЕДОСТУПНЫ: SET из неоднозначного
+ * состояния не вычисляется — поглощение Q4=A, управление мастером.
  */
 function ModerationRow({
   participant,
   disabled,
-  onRestriction,
+  onPointRestriction,
+  onMasterRestriction,
   onRole,
   onKick,
 }: ModerationRowProps) {
   const marks = parseParticipantMarks(participant.metadata)
   const restrictions = restrictionMarks(participant.permissions)
+  const masterPressed = restrictions.speechRestricted
   const label = participantLabel(participant.name, participant.identity)
   const rowLabel = participant.isLocal ? `${label} (вы)` : label
 
-  const restrictionButtons: ReadonlyArray<{
-    readonly field: RestrictionField
-    readonly restrict: boolean
-    readonly restrictText: string
-    readonly allowText: string
+  const pointButtons: ReadonlyArray<{
+    readonly field: PointRestrictionField
+    readonly pressed: boolean
+    readonly label: string
   }> = [
-    {
-      field: 'micRestricted',
-      restrict: restrictions.micRestricted,
-      restrictText: 'Включить микрофон',
-      allowText: 'Отключить микрофон',
-    },
-    {
-      field: 'cameraRestricted',
-      restrict: restrictions.cameraRestricted,
-      restrictText: 'Включить камеру',
-      allowText: 'Отключить камеру',
-    },
-    {
-      field: 'screenRestricted',
-      restrict: restrictions.screenRestricted,
-      restrictText: 'Включить экран',
-      allowText: 'Отключить экран',
-    },
-    {
-      field: 'speechRestricted',
-      restrict: restrictions.speechRestricted,
-      restrictText: 'Снять право слова',
-      allowText: 'Право слова',
-    },
+    { field: 'micRestricted', pressed: restrictions.micRestricted, label: 'Микрофон' },
+    { field: 'cameraRestricted', pressed: restrictions.cameraRestricted, label: 'Камера' },
+    { field: 'screenRestricted', pressed: restrictions.screenRestricted, label: 'Экран' },
   ]
 
   return (
     <li className="conference-moderation-item" data-participant-identity={participant.identity}>
       <span className="conference-moderation-name">{rowLabel}</span>
       <fieldset className="conference-moderation-actions" aria-label={rowLabel}>
-        {restrictionButtons.map(({ field, restrict, restrictText, allowText }) => (
+        {pointButtons.map(({ field, pressed, label: buttonLabel }) => (
           <button
             key={field}
             type="button"
-            className={`conference-moderation-button${
-              restrict ? ' conference-moderation-button-restricted' : ''
+            className={`conference-moderation-button conference-moderation-toggle${
+              pressed ? ' conference-moderation-button-restricted' : ''
             }`}
-            disabled={disabled}
+            aria-pressed={pressed}
+            disabled={disabled || masterPressed}
+            title={masterPressed ? 'Блокируется кнопкой «Все источники»' : undefined}
             onClick={() => {
-              onRestriction(participant.identity, field)
+              onPointRestriction(participant.identity, field)
             }}
           >
-            {restrict ? restrictText : allowText}
+            {buttonLabel}
           </button>
         ))}
+        {/* Мастер «Все источники» — прежнее speechRestricted («право
+            слова»): доменное поле №49 и семантика не меняются (T094) */}
+        <button
+          type="button"
+          className={`conference-moderation-button conference-moderation-toggle${
+            masterPressed ? ' conference-moderation-button-restricted' : ''
+          }`}
+          aria-pressed={masterPressed}
+          disabled={disabled}
+          onClick={() => {
+            onMasterRestriction(participant.identity)
+          }}
+        >
+          Все источники
+        </button>
         {/* №50: равноправие модераторов (Q21=A) — смена роли доступна любой строке */}
         <button
           type="button"
@@ -289,21 +298,62 @@ export default function ModerationPanel({ conferenceId }: ModerationPanelProps) 
     }
   }
 
-  /** №49: полное SET-состояние из текущих grants цели с переключённым полем. */
-  function flipRestriction(identity: string, field: RestrictionField): void {
+  /**
+   * №49 точечный тумблер (мастер отжат — ветка canPublish=true проекции
+   * точна, T094): полное SET-состояние из текущих grants цели с
+   * переключённым одним полем. Под нажатым мастером точки недоступны
+   * (disabled в UI) — гвард не вычисляет SET из неоднозначного
+   * состояния (поглощение Q4=A).
+   */
+  function flipPointRestriction(identity: string, field: PointRestrictionField): void {
     const target = participants.find((participant) => participant.identity === identity)
     if (target === undefined) {
       return
     }
     const current = restrictionMarks(target.permissions)
+    if (current.speechRestricted) {
+      return
+    }
     const next: UpdateParticipantRestrictionsRequest = {
       micRestricted: current.micRestricted,
       cameraRestricted: current.cameraRestricted,
       screenRestricted: current.screenRestricted,
-      speechRestricted: current.speechRestricted,
+      speechRestricted: false,
       [field]: !current[field],
     }
     void run({ kind: 'restrictions', identity, field }, () =>
+      updateParticipantRestrictions(conferenceId, identity, next),
+    )
+  }
+
+  /**
+   * №49 мастер «Все источники» (T094): нажатие нормализует точки в
+   * speech (SET {speechRestricted:true, точки false} — домен «право
+   * слова» Q4=A поглощает точечные); отжатие включает всё (SET все
+   * четыре false). Третьей точечной панели не пытается «снять»
+   * speech — после фикса grants canPublish=false держит и её
+   * состояние эффективным «всё отключено» (truthful).
+   */
+  function toggleMasterRestriction(identity: string): void {
+    const target = participants.find((participant) => participant.identity === identity)
+    if (target === undefined) {
+      return
+    }
+    const next: UpdateParticipantRestrictionsRequest = restrictionMarks(target.permissions)
+      .speechRestricted
+      ? {
+          micRestricted: false,
+          cameraRestricted: false,
+          screenRestricted: false,
+          speechRestricted: false,
+        }
+      : {
+          micRestricted: false,
+          cameraRestricted: false,
+          screenRestricted: false,
+          speechRestricted: true,
+        }
+    void run({ kind: 'restrictions', identity, field: 'speechRestricted' }, () =>
       updateParticipantRestrictions(conferenceId, identity, next),
     )
   }
@@ -401,7 +451,8 @@ export default function ModerationPanel({ conferenceId }: ModerationPanelProps) 
             key={participant.identity}
             participant={participant}
             disabled={busy}
-            onRestriction={flipRestriction}
+            onPointRestriction={flipPointRestriction}
+            onMasterRestriction={toggleMasterRestriction}
             onRole={flipRole}
             onKick={(identity, label) => {
               setConfirmation({ kind: 'kick', identity, label })

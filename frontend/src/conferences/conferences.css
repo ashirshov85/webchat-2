@@ -784,7 +784,14 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   cursor: pointer;
 }
 
-/* Действующее ограничение — приглушённая кнопка возврата (латунь). */
+/* Тумблеры источников №49 (T094): постоянные подписи «Микрофон»/
+   «Камера»/«Экран»/«Все источники», нажатое состояние — aria-pressed
+   (008: состояние дублируется визуалом) + класс -restricted ниже. */
+.conference-moderation-toggle[aria-pressed='true'] {
+  font-style: italic;
+}
+
+/* Действующее ограничение — нажатый тумблер (латунь). */
 .conference-moderation-button-restricted {
   border-color: var(--gold-dark);
   color: var(--gold-light);
