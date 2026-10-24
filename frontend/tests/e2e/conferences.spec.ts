@@ -16,7 +16,8 @@ import {
  * ?mode= — дефолты по №45 mode=video: камера+микрофон); устойчивость к
  * деградации сети (FR-004): CDP network throttling на вкладке —
  * подключение сохраняется без обрыва, после снятия троттлинга звонок
- * продолжается.
+ * продолжается; корректный выход — «Покинуть» возвращает в мессенджер
+ * с открытым чатом конференции (T095/FR-019: deep-link /chat?chat=…).
  *
  * 009, US1, T075 — e2e каркаса конференц-страницы: на широком окне
  * конференция занимает всё окно браузера (computed max-width:none у
@@ -327,10 +328,13 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       SC001_MS,
     )
 
-    // корректный выход (Q10=A): «Покинуть» возвращает на pre-join без следов
+    // корректный выход (Q10=A + FR-019, T095): «Покинуть» корректно рвёт
+    // подключение (слот освобождён, комната выгружается) и возвращает в
+    // мессенджер с открытым чатом конференции — deep-link
+    // /chat?chat={chatId}; возврат на pre-join отменён
     await bobPage.getByRole('button', { name: 'Покинуть' }).click()
-    await expect(bobPage.getByRole('button', { name: 'Войти' })).toBeVisible()
-    // T092: output-подпись удалена — выход маркирует размонтирование комнаты
+    await expect(bobPage).toHaveURL(new RegExp(`/chat\\?chat=${chatId}$`))
+    await expect(bobPage.getByRole('heading', { level: 2, name: aliceNow.username })).toBeVisible()
     await expect(bobPage.locator('.conference-room')).toHaveCount(0)
   })
 

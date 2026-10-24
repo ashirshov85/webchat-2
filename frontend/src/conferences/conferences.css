@@ -970,6 +970,22 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   background: var(--panel-bg);
 }
 
+/* Терминальное состояние «Конференция завершена» (T071/T076 — подпись
+ * с длительностью; T095/FR-019 — кнопка «Вернуться в чат» под ней,
+ * без автоперехода): центрированная колонка, нейтральная панель. */
+.conference-ended {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+}
+
 .conference-error p {
   margin: 0;
   font: 13px var(--font-body);

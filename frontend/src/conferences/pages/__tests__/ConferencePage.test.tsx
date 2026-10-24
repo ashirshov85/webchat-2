@@ -4,7 +4,7 @@ import type { MockInstance } from 'vitest'
 import type { ApiProblem } from '../../../api/auth'
 import { stubLocationAssign } from '../../../test/location'
 import type { ConferenceView, JoinTicket, MeView } from '../../api/conferences'
-import { leaveActiveConference } from '../../hooks/useConference'
+import { activeConferenceId, leaveActiveConference } from '../../hooks/useConference'
 import ConferencePage from '../ConferencePage'
 
 /**
@@ -12,8 +12,11 @@ import ConferencePage from '../ConferencePage'
  * (region «Конференция» + data-conference-id, App.test T025), пакет
  * №45+№46, pre-join перед подключением (T034: «Войти» → №47, «Отмена» —
  * отмена подключения без последствий, US2-6), блок joined с «Покинуть»
- * (возврат на pre-join), «Конференция завершена» по обоим
- * лицам (№45 status='ended' и №47 409 conference_ended) и нейтральные
+ * (T095/FR-019: leave + возврат в мессенджер с открытым чатом
+ * конференции по deep-link /chat?chat=… — возврат на pre-join отменён),
+ * «Конференция завершена» по обоим лицам (№45 status='ended' и №47 409
+ * conference_ended) — терминальный экран с кнопкой «Вернуться в чат»
+ * (FR-019, без автоперехода) — и нейтральные
  * ошибки загрузки/join с «Повторить». T087: шапка страницы (заголовок
  * conferenceTitle, статический снимок «Участники: N / M» не-joined
  * фаз, строка «Ваша роль: …») и identity-строка joined-формы удалены —
@@ -174,7 +177,7 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     expect(screen.queryByText(/Участники: \d+ \/ \d+/)).not.toBeInTheDocument()
   })
 
-  it('после «Покинуть» снимок №45+№46 обновляется один раз — без запрос-циклов', async () => {
+  it('после «Покинуть» снимок №45+№46 обновляется один раз — без запрос-циклов; навигация в чат (FR-019)', async () => {
     resolveBundle(conferenceView({ activeParticipants: 2 }))
     conferences.joinConference.mockResolvedValue(joinTicket())
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
@@ -183,10 +186,11 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     await waitFor(() => expect(document.querySelector('.conference-room')).not.toBeNull())
     fireEvent.click(await screen.findByRole('button', { name: 'Покинуть' }))
 
-    // возврат на pre-join + ровно один повтор пакета №45+№46 —
-    // актуализация вида после выхода; строки «Участники: N / M»
-    // не существует ни в одной форме (T087/T092)
-    expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
+    // FR-019 (T095): «Покинуть» = leave + assign '/chat?chat=…'; фоновое
+    // обновление снимка остаётся best-effort (гаснет выгрузкой вкладки —
+    // безвредно; в jsdom assign замокан, запрос доезжает); ровно один
+    // повтор пакета №45+№46 — запрос-циклов нет
+    expect(assignMock).toHaveBeenCalledWith('/chat?chat=chat-1')
     await waitFor(() => expect(conferences.getConference).toHaveBeenCalledTimes(2))
     expect(conferences.getConferenceMe).toHaveBeenCalledTimes(2)
   })
@@ -227,7 +231,39 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     expect(screen.queryByText(/Конференция завершена ·/)).not.toBeInTheDocument()
   })
 
-  it('«Войти» on pre-join mints №47 and renders the joined block; leave returns to pre-join', async () => {
+  it('терминальный экран №45 ended: кнопка «Вернуться в чат» — мессенджер с чатом конференции, без автоперехода (FR-019)', async () => {
+    resolveBundle(
+      conferenceView({
+        status: 'ended',
+        endReason: 'moderator',
+        startedAt: '2026-10-17T12:00:00.000Z',
+        endedAt: '2026-10-17T12:30:00.000Z',
+      }),
+    )
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    // терминальная подпись (с длительностью T071) остаётся видимой —
+    // кнопка возврата рядом, автоперехода нет (FR-019)
+    expect(await screen.findByText('Конференция завершена · 30 мин')).toBeInTheDocument()
+    expect(assignMock).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Вернуться в чат' }))
+
+    expect(assignMock).toHaveBeenCalledWith('/chat?chat=chat-1')
+  })
+
+  it('терминальный экран №47 409 conference_ended: кнопка «Вернуться в чат» — тот же адрес (FR-019)', async () => {
+    resolveBundle()
+    conferences.joinConference.mockRejectedValue(problem(409, 'conference_ended'))
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Войти' }))
+    await screen.findByText('Конференция завершена')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Вернуться в чат' }))
+    expect(assignMock).toHaveBeenCalledWith('/chat?chat=chat-1')
+  })
+
+  it('«Войти» on pre-join mints №47 and renders the joined block; «Покинуть» рвёт подключение и возвращает в чат конференции (FR-019)', async () => {
     resolveBundle()
     const ticket = joinTicket()
     conferences.joinConference.mockResolvedValue(ticket)
@@ -249,21 +285,27 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     // коммитом — Room создаётся эффектом жизненного цикла тикета (T027)
     fireEvent.click(await screen.findByRole('button', { name: 'Покинуть' }))
 
-    // выход возвращает на pre-join — повторный вход доступен (T034);
-    // комната размонтирована, output-подпись не появляется (T092)
-    expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
-    expect(document.querySelector('.conference-room')).toBeNull()
-    expect(screen.queryByText('Вы в конференции')).not.toBeInTheDocument()
+    // FR-019 (T095): «Покинуть» — leave (disconnect слота/медиа) и
+    // возврат в чат конференции: assign '/chat?chat={chatId}' из №45-вида
+    // (chatId всегда в руках — обе точки кнопок живут в ready-блоке);
+    // в jsdom assign замокан — видимые следы корректного выхода: комната
+    // размонтирована, слот освобождён (вкладку выгружает сама навигация,
+    // адрес разбирает MessengerPage deep-link-тест)
+    expect(assignMock).toHaveBeenCalledWith('/chat?chat=chat-1')
+    expect(activeConferenceId()).toBeNull()
+    await waitFor(() => expect(document.querySelector('.conference-room')).toBeNull())
   })
 
-  it('«Отмена» на pre-join отменяет подключение без последствий: №47 не вызывался, возврат в мессенджер (US2-6, T034)', async () => {
+  it('«Отмена» на pre-join отменяет подключение без последствий: №47 не вызывался, возврат в чат конференции (US2-6, FR-019)', async () => {
     resolveBundle()
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
 
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
 
-    expect(assignMock).toHaveBeenCalledWith('/')
+    // T095 (FR-019): «Отмена» ведёт в мессенджер с открытым чатом
+    // конференции (deep-link /chat?chat=…), а не на голый '/'
+    expect(assignMock).toHaveBeenCalledWith('/chat?chat=chat-1')
     expect(conferences.joinConference).not.toHaveBeenCalled()
   })
 

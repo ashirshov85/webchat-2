@@ -16,7 +16,8 @@ import { activeConferenceId, leaveActiveConference } from '../../hooks/useConfer
  * ConferenceRoom получает initialMedia {оба false} — подключение БЕЗ
  * публикации (сама публикация/её отсутствие проверены на FakeRoom в
  * ConferenceRoom.test), «Отмена» — отключение без следов (US2-6):
- * №47 нет, слот свободен, возврат в мессенджер.
+ * №47 нет, слот свободен, возврат в чат конференции (FR-019, T095:
+ * deep-link /chat?chat=… вместо голого '/').
  *
  * ConferenceRoom подменён заглушкой с захватом props (поведение комнаты
  * — отдельный сьют ConferenceRoom.test), createLocalVideoTrack подменён —
@@ -236,13 +237,15 @@ describe('ConferencePage pre-join: точки входа и стартовая �
     expect(activeConferenceId()).toBe(CONFERENCE_ID)
   })
 
-  it('«Отмена» — отключение без следов: №47 нет, слот свободен, возврат в мессенджер (US2-6)', async () => {
+  it('«Отмена» — отключение без следов: №47 нет, слот свободен, возврат в чат конференции (US2-6, FR-019)', async () => {
     openAt('?mode=video')
 
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Отмена' }))
 
-    expect(assignMock).toHaveBeenCalledWith('/')
+    // T095 (FR-019): «Отмена» ведёт в мессенджер с открытым чатом
+    // конференции (deep-link /chat?chat=… из №45-вида), не на голый '/'
+    expect(assignMock).toHaveBeenCalledWith('/chat?chat=chat-1')
     expect(conferences.joinConference).not.toHaveBeenCalled()
     expect(activeConferenceId()).toBeNull()
   })
