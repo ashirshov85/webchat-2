@@ -17,7 +17,11 @@ import ConferencePage from '../ConferencePage'
  * ошибки загрузки/join с «Повторить». T087: шапка страницы (заголовок
  * conferenceTitle, статический снимок «Участники: N / M» не-joined
  * фаз, строка «Ваша роль: …») и identity-строка joined-формы удалены —
- * их нет НИ В ОДНОЙ фазе. jsdom без mediaDevices —
+ * их нет НИ В ОДНОЙ фазе. T092: output-подпись «Вы в конференции»
+ * joined-формы и живой счётчик подключённых T080 (ConferenceLiveCount)
+ * демонтированы — joined-фазу маркирует корневой .conference-room
+ * (ранний сигнал: рендерится сразу при join), строки «Участники: N / M»
+ * нет ни в одной форме. jsdom без mediaDevices —
  * acquisition превью камеры на pre-join тихо отклоняется (T032),
  * «Войти» остаётся доступной (Q6=A).
  */
@@ -114,10 +118,11 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     const region = await screen.findByRole('region', { name: 'Конференция' })
     expect(region).toHaveAttribute('data-conference-id', CONFERENCE_ID)
     expect(screen.getByRole('button', { name: 'Войти' })).toBeInTheDocument()
-    // T087: шапка удалена — ни заголовка conferenceTitle, ни снимка
-    // «Участники: N / M», ни строки роли №46 (ниже — во всех фазах)
+    // T087: шапка удалена — ни заголовка conferenceTitle, ни строки
+    // роли №46 (ниже — во всех фазах); T092: строки «Участники: N / M»
+    // нет ни в одной форме (снимок №45 и живой счётчик демонтированы)
     expect(screen.queryByRole('heading', { name: 'Видеоконференция' })).not.toBeInTheDocument()
-    expect(screen.queryByText('Участники: 1 / 16')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Участники: \d+ \/ \d+/)).not.toBeInTheDocument()
     expect(screen.queryByText('Ваша роль: модератор')).not.toBeInTheDocument()
   })
 
@@ -129,10 +134,12 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     expect(document.querySelector('.conference-header')).toBeNull()
     expect(screen.queryByRole('heading', { name: 'Видеоконференция' })).not.toBeInTheDocument()
 
-    // joined: output-подпись остаётся, identity-строка удалена
+    // joined: комната смонтирована; identity-строка удалена (T087),
+    // output-подпись «Вы в конференции» — тоже (T092)
     conferences.joinConference.mockResolvedValue(joinTicket())
     fireEvent.click(screen.getByRole('button', { name: 'Войти' }))
-    await screen.findByText('Вы в конференции')
+    await waitFor(() => expect(document.querySelector('.conference-room')).not.toBeNull())
+    expect(screen.queryByText('Вы в конференции')).not.toBeInTheDocument()
     expect(document.querySelector('.conference-header')).toBeNull()
     expect(document.querySelector('.conference-identity')).toBeNull()
     expect(screen.queryByText(`u:${ME}:conn-1`)).not.toBeInTheDocument()
@@ -150,38 +157,36 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     expect(document.querySelector('.conference-header')).toBeNull()
   })
 
-  it('joined: живой счётчик useParticipants вместо застывшего снимка №45 в шапке (T080)', async () => {
-    // снимок №45 устарел уже через минуту в звонке: здесь 3 — чтобы
-    // статическая строка и живой счётчик различались в DOM
+  it('joined: строки «Участники: N / M» нет ни в одной форме — снимок №45 и живой счётчик T080 демонтированы (T092)', async () => {
+    // снимок №45 устарел уже через минуту в звонке, живой счётчик T080
+    // дублировал панель «Участники (N)» — строка удалена целиком; живое
+    // число подключённых остаётся в панели участников (T041,
+    // useParticipants), здесь 3 в №45 — чтобы счёт не «протек» в DOM
     resolveBundle(conferenceView({ activeParticipants: 3 }))
     conferences.joinConference.mockResolvedValue(joinTicket())
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Войти' }))
 
-    await screen.findByText('Вы в конференции')
-    // статическая строка снимка №45 в header уходит (дубль цифр)…
+    await waitFor(() => expect(document.querySelector('.conference-room')).not.toBeNull())
     expect(screen.queryByText('Участники: 3 / 16')).not.toBeInTheDocument()
-    // …её замещает живой счётчик в слоте children комнаты: jsdom-комната
-    // livekit — только localParticipant (1); источник — useParticipants,
-    // тот же, что панель «Участники (N)» (T041, конституция III)
-    expect(await screen.findByText('Участники: 1 / 16')).toBeInTheDocument()
+    expect(screen.queryByText('Участники: 1 / 16')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Участники: \d+ \/ \d+/)).not.toBeInTheDocument()
   })
 
-  it('после «Покинуть» снимок №45+№46 обновляется один раз — без запрос-циклов (T080)', async () => {
+  it('после «Покинуть» снимок №45+№46 обновляется один раз — без запрос-циклов', async () => {
     resolveBundle(conferenceView({ activeParticipants: 2 }))
     conferences.joinConference.mockResolvedValue(joinTicket())
     render(<ConferencePage conferenceId={CONFERENCE_ID} />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Войти' }))
-    await screen.findByText('Вы в конференции')
+    await waitFor(() => expect(document.querySelector('.conference-room')).not.toBeNull())
     fireEvent.click(await screen.findByRole('button', { name: 'Покинуть' }))
 
     // возврат на pre-join + ровно один повтор пакета №45+№46 —
-    // актуализация вида после выхода; шапка со снимком удалена (T087) —
-    // статическая строка «Участники: 2 / 16» больше не выводится
+    // актуализация вида после выхода; строки «Участники: N / M»
+    // не существует ни в одной форме (T087/T092)
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
-    expect(screen.queryByText('Участники: 2 / 16')).not.toBeInTheDocument()
     await waitFor(() => expect(conferences.getConference).toHaveBeenCalledTimes(2))
     expect(conferences.getConferenceMe).toHaveBeenCalledTimes(2)
   })
@@ -233,8 +238,9 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     expect(conferences.joinConference).not.toHaveBeenCalled()
     fireEvent.click(joinButton)
 
-    const joined = await screen.findByText('Вы в конференции')
-    expect(joined.tagName).toBe('OUTPUT')
+    // T092: joined-фазу маркирует корневой .conference-room — ранний
+    // сигнал (рендерится сразу при join, до создания live-комнаты)
+    await waitFor(() => expect(document.querySelector('.conference-room')).not.toBeNull())
     // T087: технический LiveKit identity в joined-форме не выводится
     expect(screen.queryByText(`u:${ME}:conn-1`)).not.toBeInTheDocument()
     expect(conferences.joinConference).toHaveBeenCalledWith(CONFERENCE_ID)
@@ -243,8 +249,10 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     // коммитом — Room создаётся эффектом жизненного цикла тикета (T027)
     fireEvent.click(await screen.findByRole('button', { name: 'Покинуть' }))
 
-    // выход возвращает на pre-join — повторный вход доступен (T034)
+    // выход возвращает на pre-join — повторный вход доступен (T034);
+    // комната размонтирована, output-подпись не появляется (T092)
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
+    expect(document.querySelector('.conference-room')).toBeNull()
     expect(screen.queryByText('Вы в конференции')).not.toBeInTheDocument()
   })
 
@@ -284,8 +292,8 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
 
-    const joined = await screen.findByText('Вы в конференции')
-    expect(joined.tagName).toBe('OUTPUT')
+    // T092: joined-маркер — корневой .conference-room (ранний сигнал)
+    await waitFor(() => expect(document.querySelector('.conference-room')).not.toBeNull())
   })
 
   it('догружает профили участников по chatId №45-вида (T073: аватары «как в контактах»)', async () => {
