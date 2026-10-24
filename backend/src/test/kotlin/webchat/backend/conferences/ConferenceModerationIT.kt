@@ -395,6 +395,61 @@ class ConferenceModerationIT : ConferencesTestSupport() {
         }
     }
 
+    /**
+     * T094: ALL THREE point restrictions (mic+camera+screen, speech
+     * NOT set) must reach the plane as `canPublish=false` — the
+     * subtraction remainder is empty, and an EMPTY canPublishSources
+     * in LiveKit means «every source allowed»
+     * (livekit-integration §3), so the grants encode the state through
+     * the publish gate instead of lifting the restrictions. The row
+     * keeps the three point flags verbatim (speech stays false) and
+     * the re-mint reproduces the same encoding (Q5=A, invariant 3).
+     */
+    @Test
+    fun `all three point restrictions push canPublish=false and reproduce in the re-mint`() {
+        val (owner, bob) = messagingPair()
+        val chatId = ensureChatOk(owner, bob.id)
+        val conferenceId = createConferenceOk(owner, chatId)
+        val room = roomNameOf(conferenceId)
+        val ticket = ticketOf(joinConferenceOk(bob, conferenceId))
+        val bobIdentity = ticket[IDENTITY_FIELD].asText()
+        connectTicket(ticket)
+        awaitRoomParticipants(room) { it.size == CONNECTED_ONE }
+
+        val restricted =
+            setParticipantRestrictions(
+                owner,
+                conferenceId,
+                memberPrincipalOf(bob.id),
+                micRestricted = true,
+                cameraRestricted = true,
+                screenRestricted = true,
+            )
+        assertThat(restricted.statusCode).isEqualTo(HttpStatus.OK)
+
+        val update =
+            recordingLiveKit.updatesOf(room).single { it.identity == bobIdentity }
+        assertThat(update.permission.canPublish)
+            .overridingErrorMessage(
+                "the third point restriction must NOT lift the others via an empty source set (T094)",
+            ).isFalse
+        assertThat(update.permission.canPublishSources).isEmpty()
+
+        val row = memberRowOf(conferenceId, bob.id)!!
+        assertThat(row[MIC_COLUMN]).isEqualTo(true)
+        assertThat(row[CAMERA_COLUMN]).isEqualTo(true)
+        assertThat(row[SCREEN_COLUMN]).isEqualTo(true)
+        assertThat(row[SPEECH_COLUMN])
+            .overridingErrorMessage("the domain state keeps the three POINT flags — speech stays false")
+            .isEqualTo(false)
+
+        val reMintGrants = videoClaimsOf(joinConferenceOk(bob, conferenceId))
+        assertThat(reMintGrants[CAN_PUBLISH_FIELD])
+            .overridingErrorMessage("the re-mint reproduces the canPublish=false encoding (Q5=A, invariant 3)")
+            .isEqualTo(false)
+        assertThat(reMintGrants[CAN_PUBLISH_SOURCES_FIELD]).isEqualTo(emptyList<String>())
+    }
+
     private companion object {
         const val CREATED_STATUS = "created"
 
@@ -409,6 +464,8 @@ class ConferenceModerationIT : ConferencesTestSupport() {
         const val SCREEN_COLUMN = "screen_restricted"
 
         const val SPEECH_COLUMN = "speech_restricted"
+
+        const val CONNECTED_ONE = 1
 
         const val CONNECTED_TWO = 2
 

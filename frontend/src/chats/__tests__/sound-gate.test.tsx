@@ -196,6 +196,21 @@ function installStream(): MockStream {
   return mock
 }
 
+/** connectionId of the mocked №18 `connected` frame (T093). */
+const CONNECTION_ID = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+
+/**
+ * (Re)open of the №18 stream as the app sees it: the raw onOpen
+ * (useChatList №12 refetch) AND the `connected` frame — the useSync
+ * cycle trigger since T093.
+ */
+function openStream(stream: MockStream): void {
+  act(() => {
+    stream.onOpen?.()
+    stream.emit('connected', JSON.stringify({ connectionId: CONNECTION_ID }))
+  })
+}
+
 function contacts(): ContactView[] {
   return []
 }
@@ -373,9 +388,7 @@ describe('sync-батч — входящие считаются per-chat (T059, 
       },
     ])
 
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockSound.chimeOnSyncBatch).toHaveBeenCalledTimes(1)
     })
@@ -404,9 +417,7 @@ describe('sync-батч — входящие считаются per-chat (T059, 
       ]),
     )
 
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockSound.chimeOnSyncBatch).toHaveBeenCalledTimes(1)
     })

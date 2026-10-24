@@ -98,7 +98,9 @@ Mapping путей завершения на `end_reason` (детерминиз�
 Семантика полей для grants (единая функция вычисления, [research.md §4/§5](./research.md)):
 `speech_restricted` ⟹ `canPublish=false`; иначе `canPublishSources = {mic, camera, screen_share,
 screen_share_audio} − {mic×mic_restricted, camera×camera_restricted, screen_share+
-screen_share_audio×screen_restricted}`. Ограничения меняются только PUT №49 (модератор), снимаются
+screen_share_audio×screen_restricted}`; одновременные все три точечных тоже дают `canPublish=false` —
+пустой остаток `canPublishSources` в LiveKit означает «разрешено всё», поэтому состояние кодируется
+через publish-гейт (T094). Ограничения меняются только PUT №49 (модератор), снимаются
 туда же; кик (№51) строку не трогает (кик ≠ бан — переподключение создаёт/реиспользует строку с
 прежними ограничениями). **На finalize конференции все строки удаляются** (Q18=A: состав
 завершённой конференции не сохраняется и не показывается — приватность, принцип V).

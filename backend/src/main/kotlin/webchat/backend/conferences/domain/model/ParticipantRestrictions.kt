@@ -65,14 +65,24 @@ data class ParticipantRestrictions(
      * `speech_restricted ⟹ canPublish=false` (sources are then not
      * consulted — the «иначе» branch of the data model); otherwise
      * `canPublishSources = {mic, camera, screen_share, screen_share_audio} − restricted`.
+     * T094: when the point restrictions cover EVERY source (all three
+     * together — screen removes both screen kinds, Q22=A), the
+     * subtraction remainder is empty, and an EMPTY canPublishSources in
+     * LiveKit semantically means «every source allowed»
+     * (livekit-integration §3) — the state therefore encodes as
+     * `canPublish=false` (the source set is then not consulted) instead
+     * of lifting the restrictions.
      */
-    fun grants(): PublishGrants =
-        if (speechRestricted) {
+    fun grants(): PublishGrants {
+        val restricted = restrictedSources()
+        val allPointSourcesRemoved = PublicationSource.entries.all(restricted::contains)
+        return if (speechRestricted || allPointSourcesRemoved) {
             PublishGrants(canPublish = false, canPublishSources = emptySet())
         } else {
             PublishGrants(
                 canPublish = true,
-                canPublishSources = PublicationSource.entries.toSet() - restrictedSources(),
+                canPublishSources = PublicationSource.entries.toSet() - restricted,
             )
         }
+    }
 }

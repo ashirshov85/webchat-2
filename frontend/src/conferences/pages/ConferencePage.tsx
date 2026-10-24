@@ -13,13 +13,13 @@
  * дефолты по №45 view.mode), ограничения прав — №46 MeView (T033).
  * До «Войти» НИЧЕГО не публикуется и слот квоты не занимается (FR-007):
  * №47 вызывается только из onJoin; «Отмена» (выход из pre-join без
- * «Войти») отменяет подключение без последствий — возврат в мессенджер,
- * слот не занимался, превью-трек уже освобождён самим pre-join
- * (US2-6). Стартовое состояние «Войти» (оба выкл — «только слушаю»,
- * FR-006) и выбранные устройства передаются в ConferenceRoom
- * (initialMedia/initialDevices), «Повторить» после ошибки join
- * повторяет №47 с той же выборкой (тумблеры/устройства на №47 не
- * влияют).
+ * «Войти») отменяет подключение без последствий — возврат в чат
+ * конференции (FR-019), слот не занимался, превью-трек уже освобождён
+ * самим pre-join (US2-6). Стартовое состояние «Войти» (оба выкл —
+ * «только слушаю», FR-006) и выбранные устройства передаются в
+ * ConferenceRoom (initialMedia/initialDevices), «Повторить» после
+ * ошибки join повторяет №47 с той же выборкой (тумблеры/устройства на
+ * №47 не влияют).
  *
  * «Конференция завершена» (Q20=A) показывается по обоим REST-лицам:
  * №45 `200 status='ended'` (старая ссылка) и №47 `409
@@ -28,7 +28,10 @@
  * `endedAt − startedAt` загруженного №45-вида (оба поля присутствуют
  * для status='ended'; никогда не начинавшаяся — empty-timeout →
  * room_lost без startedAt — длительность не выводится, не выдумывать);
- * №47-409 без полей вида — подпись без длительности.
+ * №47-409 без полей вида — подпись без длительности. T095 (FR-019):
+ * под терминальной подписью — кнопка «Вернуться в чат» (deep-link
+ * `/chat?chat=…`), автопереход НЕ выполняется — подпись и длительность
+ * остаются видимыми (Q20=A, уточнения T071/T076).
  * Блок joined монтирует медиа-комнату ConferenceRoom (T027):
  * подключение по JoinTicket, тайлы участников и адаптацию качества
  * (FR-004); в слоте children — ParticipantsPanel (T041): список
@@ -36,16 +39,18 @@
  * ModerationPanel (T042): панель действий модератора №48–№51
  * (рендерится только роли модератора — сама скрывается broadcast'ом
  * снятия роли), и MediaControls (T028): тумблеры микрофона/камеры/
- * экрана и «Покинуть» (выход — leave слота вкладки,
- * Q10=A, возврат на pre-join для возможного повторного входа).
- * T080: в звонке ЖИВОЕ число подключённых держит ConferenceLiveCount
- * в слоте children комнаты (useParticipants — источник T041, совпадает
- * с «Участники (N)» панели); leave обновляет пакет №45+№46 один раз,
- * без запрос-циклов. T087: шапка страницы (заголовок conferenceTitle,
- * статический снимок «Участники: N / M» не-joined фаз, строка «Ваша
- * роль: …» №46-снимка) удалена во ВСЕХ фазах, identity-строка
- * joined-формы — тоже: остаётся только output-подпись «Вы в
- * конференции».
+ * экрана и «Покинуть» — выход (leave слота вкладки, Q10=A) возвращает
+ * в мессенджер с открытым чатом конференции (FR-019, T095: возврат на
+ * pre-join отменён; путь модератора после №48 — комната 'closed' →
+ * «Покинуть» → чат — сходится этой же кнопкой).
+ * T087: шапка страницы (заголовок conferenceTitle, статический снимок
+ * «Участники: N / M» не-joined фаз, строка «Ваша роль: …» №46-снимка)
+ * удалена во ВСЕХ фазах, identity-строка joined-формы — тоже.
+ * T092: output-подпись «Вы в конференции» joined-формы и живой счётчик
+ * подключённых T080 (ConferenceLiveCount) демонтированы — живое число
+ * подключённых остаётся в панели «Участники (N)» (T041,
+ * useParticipants); leave обновляет пакет №45+№46 один раз, без
+ * запрос-циклов.
  * Сообщения об ошибках — нейтральные, без раскрытия деталей
  * (существование не раскрывается, api-contract §1): ветвление UX по
  * коду Problem, а не HTTP-статусу (конвенция 002).
@@ -58,7 +63,6 @@ import { useParticipantProfiles } from '../hooks/useParticipantProfiles'
 import { ParticipantProfilesContext } from '../profiles'
 import type { ConferenceDeviceSelection } from '../hooks/useDevices'
 import { endedConferenceLabel, formatSpanDuration } from '../../ui/duration'
-import ConferenceLiveCount from '../components/ConferenceLiveCount'
 import ConferenceRoom from '../components/ConferenceRoom'
 import type { ConferenceRoomInitialMedia } from '../components/ConferenceRoom'
 import MediaControls from '../components/MediaControls'
@@ -82,6 +86,18 @@ export interface ConferencePageProps {
 function entryModeFromSearch(search: string): ConferenceMode | null {
   const mode = new URLSearchParams(search).get('mode')
   return mode === 'video' || mode === 'audio' ? mode : null
+}
+
+/**
+ * Адрес возврата в чат конференции (FR-019, T095): мессенджер с
+ * открытым окном чата — deep-link `/chat?chat={chatId}` (chatId — из
+ * уже загруженного №45-вида ConferenceView.chatId, обе точки кнопок
+ * живут в ready-блоке — fallback не нужен; новые API не вводятся).
+ * Разбирает адрес MessengerPage (выбор по ростеру №12, молчаливое
+ * игнорирование недоступного чата — FR-003).
+ */
+function chatReturnUrl(chatId: string): string {
+  return `/chat?chat=${encodeURIComponent(chatId)}`
 }
 
 /**
@@ -112,12 +128,11 @@ function loadErrorMessage(code: ConferenceErrorCode | null): string {
     : 'Не удалось загрузить конференцию'
 }
 
-/** Блок подключенной вкладки (T026/T027/T028 + панель участников T041 + живой счётчик T080): медиа-комната + живое число подключённых + список участников + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
+/** Блок подключенной вкладки (T026/T027/T028 + панель участников T041): медиа-комната + список участников + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
 function JoinedPanel({
   conferenceId,
   ticket,
   mode,
-  maxParticipants,
   initialMedia,
   initialDevices,
   refreshTicket,
@@ -128,12 +143,6 @@ function JoinedPanel({
   readonly conferenceId: string
   readonly ticket: JoinTicket
   readonly mode: ConferenceMode
-  /**
-   * Потолок квоты №45-вида (T080): проброс в живой счётчик —
-   * ConferenceLiveCount в слоте children комнаты (внутри RoomContext —
-   * хуку нужна живая комната), новый запрос не вводится.
-   */
-  readonly maxParticipants: number
   /** Стартовое состояние pre-join (T034): оба выкл — «только слушаю» (FR-006). */
   readonly initialMedia?: ConferenceRoomInitialMedia
   /** Стартовый выбор устройств pre-join (T034) — применение в useDevices комнаты. */
@@ -151,7 +160,6 @@ function JoinedPanel({
 }) {
   return (
     <div className="conference-joined">
-      <output>Вы в конференции</output>
       <ConferenceRoom
         conferenceId={conferenceId}
         ticket={ticket}
@@ -160,7 +168,6 @@ function JoinedPanel({
         initialDevices={initialDevices}
         refreshTicket={refreshTicket}
       >
-        <ConferenceLiveCount maxParticipants={maxParticipants} />
         <ParticipantsPanel />
         <ModerationPanel conferenceId={conferenceId} />
         <MediaControls
@@ -214,13 +221,37 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
   )
 
   /**
+   * Возврат в чат конференции (FR-019, T095): «Отмена» из pre-join,
+   * «Покинуть» и кнопка терминального экрана ведут в мессенджер с
+   * открытым окном чата (deep-link разбирает MessengerPage); чат
+   * недоступен (исключён/удалён) — id молча игнорируется там по FR-003.
+   */
+  const returnToChat = useCallback((): void => {
+    if (conference !== null) {
+      window.location.assign(chatReturnUrl(conference.chatId))
+    }
+  }, [conference])
+
+  /**
    * «Отмена» — выход из pre-join без «Войти» (US2-6, FR-007): подключение
    * отменяется без последствий — №47 не вызывался, слот не занимался,
-   * превью-трек освобождён самим pre-join; возврат в мессенджер.
+   * превью-трек освобождён самим pre-join; возврат — в чат конференции
+   * (FR-019).
    */
-  const cancelPreJoin = useCallback((): void => {
-    window.location.assign('/')
-  }, [])
+  const cancelPreJoin = returnToChat
+
+  /**
+   * «Покинуть» (FR-019, T095): leave() рвёт слот/медиа (фоновое
+   * обновление №45+№46 остаётся best-effort и гаснет выгрузкой вкладки —
+   * безвредно), затем навигация в мессенджер с открытым чатом
+   * конференции; возврат на pre-join отменён (пересмотр клиентской
+   * части Q10=A — семантика слота не меняется, повторный вход —
+   * точками входа чата, FR-001).
+   */
+  const handleLeave = useCallback((): void => {
+    leave()
+    returnToChat()
+  }, [leave, returnToChat])
 
   return (
     <section aria-label="Конференция" data-conference-id={conferenceId}>
@@ -236,7 +267,12 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
       {status === 'ready' && conference !== null && (
         <>
           {ended ? (
-            <output>{endedConferenceLabel(formatSpanDuration(conference))}</output>
+            <div className="conference-ended">
+              <output>{endedConferenceLabel(formatSpanDuration(conference))}</output>
+              <button type="button" onClick={returnToChat}>
+                Вернуться в чат
+              </button>
+            </div>
           ) : (
             <div className="conference-join">
               {(joinStatus === 'idle' || joinStatus === 'joining') && (
@@ -254,7 +290,6 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
                     conferenceId={conferenceId}
                     ticket={ticket}
                     mode={conference.mode}
-                    maxParticipants={conference.maxParticipants}
                     initialMedia={
                       selection !== null
                         ? { microphone: selection.microphone, camera: selection.camera }
@@ -264,7 +299,7 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
                     refreshTicket={refreshTicket}
                     restrictions={me}
                     onRestrictionsSync={refreshMe}
-                    onLeave={leave}
+                    onLeave={handleLeave}
                   />
                 </ParticipantProfilesContext.Provider>
               )}

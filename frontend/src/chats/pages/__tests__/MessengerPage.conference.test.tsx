@@ -287,6 +287,10 @@ afterEach(() => {
   cleanup()
   vi.resetAllMocks()
   localStorage.clear()
+  // URL-гигиена deep-link-тестов (T095): jsdom держит адрес между
+  // тестами файла — возвращаем '/', чтобы '?chat=' не протек в соседние
+  // рендеры MessengerPage
+  window.history.pushState({}, '', '/')
 })
 
 describe('живая проекция завершения на карточке (009 T069, FR-013)', () => {
@@ -488,5 +492,45 @@ describe('длительность живой сессии на карточке
     expect(screen.getByText('Конференция завершена')).toBeTruthy()
     expect(screen.queryByText(/Конференция завершена ·/)).toBeNull()
     expect(screen.queryByRole('button', { name: 'Подключиться' })).toBeNull()
+  })
+})
+
+describe('deep-link возврата в чат из конференции (009 T095, FR-019)', () => {
+  it('?chat= выбирает чат из ростера после загрузки — окно открыто, параметр вычищен', async () => {
+    window.history.pushState({}, '', `/chat?chat=${ALICE_CHAT_ID}`)
+    await renderPage()
+
+    // окно чата alice открыто РОСТЕР-строкой (строка №12), а не
+    // №13-фолбэком выбора (select-фолбэк handleSelectChat не ходил —
+    // №13 от открытого окна ниже несёт useChatMessages, это другая
+    // механика: watermark-сейминг открытого чата, не выбор)
+    expect(await screen.findByRole('heading', { level: 2, name: 'alice' })).toBeTruthy()
+    expect(mockChats.listMessages).toHaveBeenCalledWith(ALICE_CHAT_ID)
+    // параметр вычищен history.replaceState на монтаж: адрес не держит
+    // выбор чата (deep-link одноразовый)
+    expect(window.location.pathname).toBe('/chat')
+    expect(window.location.search).toBe('')
+  })
+
+  it('отсутствующий id (исключён/чат удалён) — молча обычное состояние без выбора, существование не раскрывается (FR-003)', async () => {
+    window.history.pushState({}, '', '/chat?chat=chat-gone-1')
+    await renderPage()
+
+    await screen.findByRole('list', { name: 'Список чатов' })
+    expect(screen.queryByRole('heading', { level: 2, name: 'alice' })).toBeNull()
+    // без №13-проба по неизвестному id — существование чата не
+    // раскрывается ни запросом, ни ошибкой
+    expect(mockChats.getChat).not.toHaveBeenCalled()
+    // параметр вычищен и для отсутствующего id (вычистка безусловна)
+    expect(window.location.search).toBe('')
+  })
+
+  it('без ?chat= — поведение без изменений: чат не выбирается автоматически', async () => {
+    window.history.pushState({}, '', '/chat')
+    await renderPage()
+
+    await screen.findByRole('list', { name: 'Список чатов' })
+    expect(screen.queryByRole('heading', { level: 2, name: 'alice' })).toBeNull()
+    expect(mockChats.getChat).not.toHaveBeenCalled()
   })
 })

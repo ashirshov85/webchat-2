@@ -19,6 +19,11 @@ import { activeConferenceId, leaveActiveConference } from '../../hooks/useConfer
  * ConferenceRoom/MediaControls/ParticipantsPanel — заглушки с захватом
  * props (поведение — их собственные сьюты), API №54/№55 — моки:
  * предмет теста — фазовый автомат страницы и ветвление кодов Problem.
+ *
+ * T092: output-подпись «Вы в конференции как гость» joined-формы
+ * удалена (паритет ConferencePage) — joined-фазу маркирует заглушка
+ * комнаты (data-testid="conference-room"): ранний сигнал, рендерится
+ * сразу при join.
  */
 
 const conferences = vi.hoisted(() => ({
@@ -132,11 +137,11 @@ async function reachPreJoin(name = 'Виктор'): Promise<void> {
   await screen.findByRole('button', { name: 'Войти' })
 }
 
-/** «Войти» на pre-join → звонок (№55 успешен). */
+/** «Войти» на pre-join → звонок (№55 успешен): joined-маркер — заглушка комнаты (T092). */
 async function joinAsGuest(ticket: JoinTicket = guestTicket()): Promise<void> {
   conferences.joinConferenceByInvite.mockResolvedValue(ticket)
   fireEvent.click(screen.getByRole('button', { name: 'Войти' }))
-  await screen.findByText('Вы в конференции как гость')
+  await screen.findByTestId('conference-room')
 }
 
 describe('GuestJoinPage (009 US4 T049/T052)', () => {
@@ -175,9 +180,11 @@ describe('GuestJoinPage (009 US4 T049/T052)', () => {
 
     await joinAsGuest()
 
-    // звонок с пометкой «гость»; T087: identity-строка joined-формы
-    // (имя тикета №55) удалена — остаётся только output-подпись
-    expect(screen.getByText('Вы в конференции как гость')).toBeInTheDocument()
+    // звонок смонтирован; T087: identity-строка joined-формы (имя
+    // тикета №55) удалена; T092: output-подпись «Вы в конференции как
+    // гость» удалена — joined-фазу маркирует комната
+    expect(screen.getByTestId('conference-room')).toBeInTheDocument()
+    expect(screen.queryByText('Вы в конференции как гость')).not.toBeInTheDocument()
     expect(screen.queryByText('Виктор')).not.toBeInTheDocument()
     expect(conferences.joinConferenceByInvite).toHaveBeenCalledTimes(1)
     expect(conferences.joinConferenceByInvite).toHaveBeenCalledWith(INVITE_TOKEN, 'Виктор')
@@ -328,7 +335,7 @@ describe('GuestJoinPage (009 US4 T049/T052)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
 
-    expect(await screen.findByText('Вы в конференции как гость')).toBeInTheDocument()
+    expect(await screen.findByTestId('conference-room')).toBeInTheDocument()
     expect(conferences.joinConferenceByInvite).toHaveBeenCalledTimes(2)
   })
 
@@ -353,6 +360,8 @@ describe('GuestJoinPage (009 US4 T049/T052)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Покинуть' }))
 
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument()
+    // T092: комната размонтирована, подпись «как гость» не появляется
+    expect(screen.queryByTestId('conference-room')).not.toBeInTheDocument()
     expect(screen.queryByText('Вы в конференции как гость')).not.toBeInTheDocument()
     expect(activeConferenceId()).toBeNull()
 

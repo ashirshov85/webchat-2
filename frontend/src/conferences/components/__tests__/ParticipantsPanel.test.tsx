@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import ParticipantsPanel from '../ParticipantsPanel'
+import ParticipantsPanel, { restrictionMarks } from '../ParticipantsPanel'
 import { ParticipantProfilesContext } from '../../profiles'
 import { colorOf } from '../../../ui/avatar'
 
@@ -236,6 +236,69 @@ describe('ParticipantsPanel (009 US3 T041)', () => {
 
     expect(screen.getByText('модератор')).toBeInTheDocument()
     expect(screen.queryByText('участник')).not.toBeInTheDocument()
+  })
+})
+
+describe('restrictionMarks — проекция grants (009 US3 T094)', () => {
+  const NO_MARKS = {
+    micRestricted: false,
+    cameraRestricted: false,
+    screenRestricted: false,
+    speechRestricted: false,
+  }
+
+  beforeEach(() => {
+    lkc.useParticipants.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('canPublish=false → ВСЕ ЧЕТЫРЕ метки true: «право слова» и все-три-точечных grants неразличимы — эффективное состояние одинаково', () => {
+    expect(restrictionMarks({ canPublish: false, canPublishSources: [] })).toEqual({
+      micRestricted: true,
+      cameraRestricted: true,
+      screenRestricted: true,
+      speechRestricted: true,
+    })
+  })
+
+  it('canPublish=true + пустой набор источников → ограничений нет (защитная ветка: пустой canPublishSources в LiveKit означает «все разрешены»)', () => {
+    expect(restrictionMarks({ canPublish: true, canPublishSources: [] })).toEqual(NO_MARKS)
+  })
+
+  it('точечные кейсы без регресса: отсутствующие источники помечаются (Q22=A)', () => {
+    expect(restrictionMarks({ canPublish: true, canPublishSources: [CAMERA] })).toEqual({
+      micRestricted: true,
+      cameraRestricted: false,
+      screenRestricted: true,
+      speechRestricted: false,
+    })
+  })
+
+  it('permissions нет — ограничений нет (нейтральный дефолт)', () => {
+    expect(restrictionMarks(undefined)).toEqual(NO_MARKS)
+  })
+
+  it('строка панели при canPublish=false — единая пометка «право слова» (регресс-пин T094: all-four-true не плодит точечные пометки)', () => {
+    lkc.useParticipants.mockReturnValue([
+      participant({
+        identity: 'u:1:c1',
+        name: 'all-points',
+        metadata: memberMetadata('participant'),
+        // все три точечных → после фикса grants canPublish=false
+        permissions: { canPublish: false, canPublishSources: [] },
+      }),
+    ])
+
+    render(<ParticipantsPanel />)
+
+    expect(screen.getByText('право слова')).toBeInTheDocument()
+    expect(screen.queryByText('микрофон отключён')).not.toBeInTheDocument()
+    expect(screen.queryByText('камера отключена')).not.toBeInTheDocument()
+    expect(screen.queryByText('экран отключён')).not.toBeInTheDocument()
   })
 })
 

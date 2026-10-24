@@ -974,6 +974,34 @@ function groupChatIdOf(chat: ActiveChat | null): string | null {
   return chat?.kind === 'group' ? chat.chatId : null
 }
 
+/**
+ * Deep-link возврата из конференции (009 T095, FR-019): экран
+ * конференции приводит сюда по `/chat?chat={chatId}` («Покинуть»,
+ * «Отмена» из pre-join, кнопка терминального экрана). Query читается
+ * ОДИН раз на монтаж (образец entryModeFromSearch ConferencePage) и
+ * СРАЗУ вычищается history.replaceState — адрес не держит выбор чата,
+ * deep-link одноразовый (F5 не переоткрывает чат). Сам id применяется
+ * эффектом MessengerMachine после загрузки ростера №12: строка в
+ * ростере открывает окно чата; отсутствующий id (участник исключён,
+ * чат удалён) молча игнорируется — обычное состояние без выбора,
+ * существование чата не раскрывается ни №13-пробой, ни ошибкой
+ * (FR-003).
+ */
+function chatDeepLinkFromSearch(): string | null {
+  const search = new URLSearchParams(window.location.search)
+  const chatId = search.get('chat')
+  if (chatId !== null) {
+    search.delete('chat')
+    const rest = search.toString()
+    window.history.replaceState(
+      {},
+      '',
+      rest === '' ? window.location.pathname : `${window.location.pathname}?${rest}`,
+    )
+  }
+  return chatId
+}
+
 function groupMembersOf(
   group: GroupView | null,
   activeChatId: string | null,
@@ -1136,6 +1164,13 @@ function MessengerMachine() {
    */
   const [meDisplayName, setMeDisplayName] = useState<string | null>(null)
   const [activeChat, setActiveChat] = useState<ActiveChat | null>(null)
+  /**
+   * 009 T095 (FR-019): id чата из deep-link `/chat?chat=…` возврата из
+   * конференции — читается ОДИН раз на монтаж (query сразу вычищается
+   * replaceState), применяется эффектом ниже после загрузки ростера
+   * №12 (chatDeepLinkFromSearch).
+   */
+  const [deepLinkChatId] = useState(() => chatDeepLinkFromSearch())
   /** The pending «шестерёнка» confirmation + its in-flight guard (T054). */
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [actionPending, setActionPending] = useState(false)
@@ -1810,6 +1845,50 @@ function MessengerMachine() {
     },
     [chats, openChatView, setDrawerOpen, adoptChatViewSound],
   )
+
+  /**
+   * Применение deep-link возврата из конференции (009 T095, FR-019):
+   * после ПЕРВОЙ загрузки ростера №12 — окно чата по id из адреса
+   * (ростер-ветка handleSelectChat: группа — строка №12, direct —
+   * peer-строка, БЕЗ №13-фолбэка — адрес задал сам клиент, а не клик
+   * по vanished-строке). Одноразово (appliedRef): отсутствующий id —
+   * молча обычное состояние без выбора, существование не раскрывается
+   * (FR-003); позже ростер живёт своей жизнью — deep-link больше не
+   * вмешивается.
+   */
+  const deepLinkAppliedRef = useRef(false)
+  useEffect(() => {
+    if (deepLinkChatId === null || deepLinkAppliedRef.current) {
+      return
+    }
+    if (chatListStatus !== 'ready') {
+      return
+    }
+    deepLinkAppliedRef.current = true
+    const item = chats.find((entry) => entry.chatId === deepLinkChatId)
+    if (item === undefined) {
+      return
+    }
+    if (item.type === 'group') {
+      openChatView({
+        kind: 'group',
+        chatId: item.chatId,
+        title: item.title ?? '',
+        memberCount: item.memberCount ?? null,
+        myRole: item.myRole ?? null,
+      })
+      return
+    }
+    if (item.peer !== null) {
+      openChatView({
+        kind: 'direct',
+        chatId: item.chatId,
+        peer: item.peer,
+        peerAlias: item.peerAlias ?? null,
+        blockedByMe: item.blockedByMe ?? false,
+      })
+    }
+  }, [deepLinkChatId, chatListStatus, chats, openChatView])
 
   /** №14 DELETE /chats/{chatId} + outbox purge (FR-021, T060) — direct only. */
   const handleConfirmDeleteChat = useCallback(() => {

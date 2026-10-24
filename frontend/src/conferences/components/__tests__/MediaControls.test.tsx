@@ -268,6 +268,23 @@ describe('MediaControls: собственные ограничения (009 US3 
     expect(screen.queryByText('Микрофон отключён модератором')).toBeNull()
   })
 
+  it('регресс-пин T094: проекция all-four-true (все три точечных → grants canPublish=false) не меняет исход — единая блокировка', () => {
+    // после фикса кодирования T094 третье точечное даёт grants
+    // canPublish=false; live-проекция restrictionMarks возвращает все
+    // четыре true — MediaControls OR-ит их в speechBlocked, исход тот же
+    media.state.permissions = { canPublish: false, canPublishSources: [] }
+    renderControls()
+
+    expect(toggle('Микрофон')).toBeDisabled()
+    expect(toggle('Камера')).toBeDisabled()
+    expect(toggle('Экран')).toBeDisabled()
+    expect(screen.getByText('Публикация отключена модератором (право слова)')).toBeVisible()
+    // точечные пояснения поглощаются — точечные true их не плодят
+    expect(screen.queryByText('Микрофон отключён модератором')).toBeNull()
+    expect(screen.queryByText('Камера отключена модератором')).toBeNull()
+    expect(screen.queryByText('Демонстрация экрана отключена модератором')).toBeNull()
+  })
+
   it('снимок №46 (restrictions-props) блокирует тумблер и при полных live-grants (до рефетча)', () => {
     renderControls(vi.fn(), {
       micRestricted: false,

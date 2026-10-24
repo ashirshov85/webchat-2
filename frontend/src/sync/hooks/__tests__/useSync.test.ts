@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { deliveryAck, listMessagesAfter, markChatRead, sync } from '../../../api/chats'
 import type { Message, MessagePage, SyncChatDelta, SyncResponse } from '../../../api/chats'
 import type { PublicUser } from '../../../api/auth'
-import { getAckBatcher } from '../../ack'
+import { getAckBatcher, ACK_DEBOUNCE_MS, ACK_RETRY_MAX_MS } from '../../ack'
 import { advanceCursor, getCursor } from '../../cursors'
 import { getPendingRead, readPendingReads, recordPendingRead } from '../../pendingReads'
 import { useSync } from '../useSync'
@@ -19,18 +19,42 @@ const api = vi.hoisted(() => ({
 vi.mock('../../../api/chats', () => api)
 
 const realtime = vi.hoisted(() => {
-  const listeners = new Set<() => void>()
+  const openListeners = new Set<() => void>()
+  const connectedListeners = new Set<(connectionId: string) => void>()
+  let lastConnectionId: string | null = null
   return {
     onOpen(listener: () => void) {
-      listeners.add(listener)
+      openListeners.add(listener)
       return () => {
-        listeners.delete(listener)
+        openListeners.delete(listener)
       }
     },
     fireOpen() {
-      for (const listener of listeners) {
+      for (const listener of openListeners) {
         listener()
       }
+    },
+    // Mirrors RealtimeConnection.onConnected (useRealtime.ts): replays
+    // the CURRENT connectionId to a late subscriber (008 T076) — the
+    // replay semantics the T093 trigger relies on.
+    onConnected(listener: (connectionId: string) => void) {
+      if (lastConnectionId !== null) {
+        listener(lastConnectionId)
+      }
+      connectedListeners.add(listener)
+      return () => {
+        connectedListeners.delete(listener)
+      }
+    },
+    fireConnected(connectionId: string) {
+      lastConnectionId = connectionId
+      for (const listener of connectedListeners) {
+        listener(connectionId)
+      }
+    },
+    // release() of the real singleton clears lastConnectionId
+    reset() {
+      lastConnectionId = null
     },
   }
 })
@@ -171,11 +195,12 @@ afterEach(() => {
     rendered.unmount()
   }
   getAckBatcher(USER).dispose()
+  realtime.reset()
   vi.useRealTimers()
 })
 
-describe('useSync — catch-up trigger (SSE onOpen wiring)', () => {
-  it('runs the cycle on every (re)open with the persisted cursors and contract limits', async () => {
+describe('useSync — catch-up trigger (SSE connected frame, T093)', () => {
+  it('runs the cycle on every connected frame with the persisted cursors and contract limits', async () => {
     advanceCursor(USER, CHAT_A, 7)
     mockedSync.mockResolvedValue(syncResponse([]))
     mountSync()
@@ -183,7 +208,7 @@ describe('useSync — catch-up trigger (SSE onOpen wiring)', () => {
     expect(mockedSync).not.toHaveBeenCalled()
 
     act(() => {
-      realtime.fireOpen()
+      realtime.fireConnected('conn-1')
     })
     await settle()
 
@@ -191,11 +216,30 @@ describe('useSync — catch-up trigger (SSE onOpen wiring)', () => {
     expect(mockedSync).toHaveBeenCalledWith([{ chatId: CHAT_A, upToSeq: 7 }], 20, 50)
 
     act(() => {
-      realtime.fireOpen()
+      realtime.fireConnected('conn-2')
     })
     await settle()
 
     expect(mockedSync).toHaveBeenCalledTimes(2)
+  })
+
+  /**
+   * T093 race A: the shared №18 stream opens in PresenceKeeper
+   * (ProtectedRoute) BEFORE MessengerPage mounts and getCurrentUser()
+   * resolves — the `connected` frame is long gone by the time useSync
+   * subscribes. The raw onOpen is NOT replayed to late subscribers, so
+   * the old wiring never started the cycle; the connected frame IS
+   * replayed (lastConnectionId), so the late mount still catches up.
+   */
+  it('race A (T093): a connected frame delivered BEFORE the subscriber mount still starts the cycle (lastConnectionId replay)', async () => {
+    mockedSync.mockResolvedValue(syncResponse([]))
+    realtime.fireConnected('conn-early')
+    const result = mountSync()
+
+    await settle()
+
+    expect(mockedSync).toHaveBeenCalledTimes(1)
+    expect(result.current.syncing).toBe(false)
   })
 
   it('a null userId is a no-op', async () => {
@@ -834,5 +878,76 @@ describe('useSync — cursor-tail top-up (T052, вторичное окно)', (
     expect(mockedDeliveryAck).toHaveBeenCalledTimes(1)
     expect(mockedDeliveryAck).toHaveBeenCalledWith([{ chatId: CHAT_B, upToSeq: 9 }])
     expect(getCursor(USER, CHAT_A)).toBe(0)
+  })
+})
+
+/**
+ * T093 (009, unread badge of the offline recipient): a TRANSIENT №25
+ * failure of the end-of-cycle flush used to be swallowed — the cycle
+ * counted as a success, the page's falling-edge №12 re-anchor
+ * disarmed the unconfirmedTails merge protection and the pre-ack
+ * snapshot (0) erased the badge, while nobody re-asked №12 after the
+ * batcher's retry finally succeeded. The flush failure now FAILS the
+ * cycle: `error` surfaces, the page's re-anchor is skipped by its
+ * syncError guard and the batcher's onRecovered re-runs the cycle
+ * after the retry drain succeeds (the falling-edge re-anchor of THAT
+ * cycle closes the badge gap without a reconnect).
+ */
+describe('useSync — transient №25 flush failure fails the cycle (T093)', () => {
+  it('surfaces the error, keeps the applied deltas and the confirmed cursors in place', async () => {
+    mockedSync.mockResolvedValueOnce(
+      syncResponse([delta({ chatId: CHAT_A, messages: messages(CHAT_A, 1, 3), lastSeq: 3 })]),
+    )
+    mockedDeliveryAck.mockRejectedValueOnce(new Error('offline'))
+    const views = new DialogViews()
+    const result = mountSync()
+    subscribe(views, result)
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+
+    expect(result.current.error).toBeTruthy()
+    expect(result.current.syncing).toBe(false)
+    // pages applied before the flush keep their render + cursor (US1-4):
+    // the entries stay pending in the batcher, nothing is rolled back
+    expect(views.seqs(CHAT_A)).toEqual([1, 2, 3])
+    expect(getCursor(USER, CHAT_A)).toBe(3)
+  })
+})
+
+describe('useSync — batcher recovery re-runs the cycle (T093 onRecovered)', () => {
+  it('a successful retry after a transient №25 failure triggers exactly one more cycle; no loop afterwards', async () => {
+    mockedSync
+      .mockResolvedValueOnce(
+        syncResponse([delta({ chatId: CHAT_A, messages: messages(CHAT_A, 1, 2), lastSeq: 2 })]),
+      )
+      .mockResolvedValue(syncResponse([]))
+    mockedDeliveryAck.mockRejectedValueOnce(new Error('offline'))
+    const result = mountSync()
+
+    await act(async () => {
+      await result.current.syncNow()
+    })
+    expect(result.current.error).toBeTruthy()
+    expect(mockedSync).toHaveBeenCalledTimes(1)
+
+    // the T088 backoff retry (1 s) succeeds → the batcher notes the
+    // recovery → the cycle re-runs and completes AFTER the ack
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+    })
+    await settle()
+    expect(mockedSync).toHaveBeenCalledTimes(2)
+    expect(result.current.error).toBeNull()
+    expect(result.current.syncing).toBe(false)
+
+    // no further recoveries: a quiet drain raises no event and the
+    // cycle count stays put (no refetch ⇄ sync loop)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ACK_RETRY_MAX_MS)
+    })
+    await settle()
+    expect(mockedSync).toHaveBeenCalledTimes(2)
   })
 })

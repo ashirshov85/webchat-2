@@ -189,6 +189,21 @@ function installStream(): MockStream {
   return mock
 }
 
+/** connectionId of the mocked №18 `connected` frame (T093). */
+const CONNECTION_ID = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+
+/**
+ * (Re)open of the №18 stream as the app sees it: the raw onOpen
+ * (useChatList №12 refetch) AND the `connected` frame — the useSync
+ * cycle trigger since T093.
+ */
+function openStream(stream: MockStream): void {
+  act(() => {
+    stream.onOpen?.()
+    stream.emit('connected', JSON.stringify({ connectionId: CONNECTION_ID }))
+  })
+}
+
 function contacts(): ContactView[] {
   return []
 }
@@ -361,9 +376,7 @@ describe('№12-рефетч — легитимный источник сход�
     mockChats.listChats.mockResolvedValue([
       { ...chatRow(ALICE_CHAT_ID, ALICE, 'alice'), soundEnabled: false },
     ])
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockChats.listChats.mock.calls.length).toBeGreaterThanOrEqual(2)
     })
@@ -373,9 +386,7 @@ describe('№12-рефетч — легитимный источник сход�
     // Рефетч — реальный ответ сервера: значение чата меняется и сходится
     // (колокол-проекция это и доказывает — aria-pressed flips).
     mockChats.listChats.mockResolvedValue([chatRow(ALICE_CHAT_ID, ALICE, 'alice')])
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockChats.listChats.mock.calls.length).toBeGreaterThanOrEqual(3)
     })
@@ -411,9 +422,7 @@ describe('sync-батч — per-chat подсчёт не меняется (T065,
         }),
       ]),
     )
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockChats.sync).toHaveBeenCalledTimes(1)
     })
@@ -425,9 +434,7 @@ describe('sync-батч — per-chat подсчёт не меняется (T065,
         delta({ chatId: BOB_CHAT_ID, messages: [makeMessage(BOB_CHAT_ID, 1, BOB)] }),
       ]),
     )
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockChats.sync).toHaveBeenCalledTimes(2)
     })

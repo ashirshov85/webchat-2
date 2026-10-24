@@ -16,7 +16,8 @@ import {
  * ?mode= — дефолты по №45 mode=video: камера+микрофон); устойчивость к
  * деградации сети (FR-004): CDP network throttling на вкладке —
  * подключение сохраняется без обрыва, после снятия троттлинга звонок
- * продолжается.
+ * продолжается; корректный выход — «Покинуть» возвращает в мессенджер
+ * с открытым чатом конференции (T095/FR-019: deep-link /chat?chat=…).
  *
  * 009, US1, T075 — e2e каркаса конференц-страницы: на широком окне
  * конференция занимает всё окно браузера (computed max-width:none у
@@ -39,6 +40,10 @@ import {
  * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
  * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
  * (SET-семантика №49, live-обновление permission-событием + refetch №46).
+ * T094: тумблеры панели — постоянные подписи + aria-pressed; сценарий
+ * «три точечных подряд» — всё остаётся отключено и мастер «Все
+ * источники» нажат (фикс кодирования canPublish=false), отжатие
+ * мастера включает всё.
  *
  * 009, US4, T052 — e2e гостевого доступа (quickstart §3.4): приватное
  * окно БЕЗ аккаунта по инвайт-ссылке №52 (SC-003 — ≤ 3 действий от
@@ -243,15 +248,11 @@ async function openConferencePage(
   return page
 }
 
-/** Клик «Войти» на pre-join (T034) и ожидание полного медиа: свой статус + удалённый тайл. */
-async function connectAndAwaitMedia(
-  page: Page,
-  ownStatus: string,
-  remoteUsername: string,
-): Promise<number> {
+/** Клик «Войти» на pre-join (T034) и ожидание полного медиа: joined-сигнал (корневой .conference-room — ранний маркер joined-рендера, T092) + удалённый тайл. */
+async function connectAndAwaitMedia(page: Page, remoteUsername: string): Promise<number> {
   const startedAt = Date.now()
   await page.getByRole('button', { name: 'Войти' }).click()
-  await expect(page.getByText(ownStatus)).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
   // медиа обеих сторон: тайл собеседника (ParticipantName; имя может
   // встретиться в нескольких тайлах метаданных — достаточно первого) +
   // прикреплённый video
@@ -313,10 +314,10 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     await expect(bobPage.getByRole('button', { name: 'Войти' })).toBeVisible()
 
     // обе вкладки подключаются параллельно: каждая — от своего клика
-    // «Войти» на pre-join до медиа (свой статус + тайл собеседника) ≤ 5 c
+    // «Войти» на pre-join до медиа (joined-сигнал .conference-room + тайл собеседника) ≤ 5 c
     const [aliceElapsed, bobElapsed] = await Promise.all([
-      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
-      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
     ])
 
     expect(
@@ -327,10 +328,14 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       SC001_MS,
     )
 
-    // корректный выход (Q10=A): «Покинуть» возвращает на pre-join без следов
+    // корректный выход (Q10=A + FR-019, T095): «Покинуть» корректно рвёт
+    // подключение (слот освобождён, комната выгружается) и возвращает в
+    // мессенджер с открытым чатом конференции — deep-link
+    // /chat?chat={chatId}; возврат на pre-join отменён
     await bobPage.getByRole('button', { name: 'Покинуть' }).click()
-    await expect(bobPage.getByRole('button', { name: 'Войти' })).toBeVisible()
-    await expect(bobPage.getByText('Вы в конференции')).toHaveCount(0)
+    await expect(bobPage).toHaveURL(new RegExp(`/chat\\?chat=${chatId}$`))
+    await expect(bobPage.getByRole('heading', { level: 2, name: aliceNow.username })).toBeVisible()
+    await expect(bobPage.locator('.conference-room')).toHaveCount(0)
   })
 
   test('T075: на широком окне конференция занимает всё окно браузера (pre-join и звонок)', async ({
@@ -359,7 +364,7 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
 
     // joined — медиа-зона в той же растянутой геометрии
     await page.getByRole('button', { name: 'Войти' }).click()
-    await expect(page.getByText('Вы в конференции')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
     await expectConferenceFillsWindow(page)
   })
 
@@ -375,8 +380,8 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     ])
     openedPages.push(alicePage, bobPage)
     await Promise.all([
-      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
-      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
     ])
 
     // деградация сети на вкладке bob: CDP network throttling (quickstart §3.1
@@ -394,7 +399,7 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
 
     // подключение сохраняется без обрыва: статус подключения и тайлы живы,
     // терминальных/аварийных строк нет
-    await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
+    await expect(bobPage.locator('.conference-room')).toBeVisible()
     await expect(
       tilesSection(bobPage).getByText(aliceNow.username, { exact: true }).first(),
     ).toBeVisible()
@@ -415,11 +420,11 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     })
     await bobPage.waitForTimeout(2_000)
 
-    await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
+    await expect(bobPage.locator('.conference-room')).toBeVisible()
     await expect(
       tilesSection(bobPage).getByText(aliceNow.username, { exact: true }).first(),
     ).toBeVisible()
-    await expect(alicePage.getByText('Вы в конференции')).toBeVisible()
+    await expect(alicePage.locator('.conference-room')).toBeVisible()
     await expect(
       tilesSection(alicePage).getByText(bobNow.username, { exact: true }).first(),
     ).toBeVisible()
@@ -438,8 +443,8 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     ])
     openedPages.push(alicePage, bobPage)
     await Promise.all([
-      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
-      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
     ])
 
     // до демонстрации пин-раскладки нет ни у кого
@@ -451,7 +456,13 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     // конфиг): появление screen-трека при пустом пине разворачивает
     // СЛИТЫЙ тайл alice (T084: экран в тайле участника, имя + бейдж
     // «демонстрирует экран») на всю медиа-зону БЕЗ клика по «Развернуть»
-    await alicePage.getByRole('button', { name: 'Экран', exact: true }).click()
+    // (T094: скоуп группы controls — у модератора тот же «Экран»
+    // есть и в тумблерах строки панели модерации)
+    const aliceControls = (name: string) =>
+      alicePage
+        .getByRole('group', { name: 'Управление конференцией' })
+        .getByRole('button', { name, exact: true })
+    await aliceControls('Экран').click()
 
     // зритель bob: единственный развёрнутый тайл — слитый тайл alice
     const bobPinned = bobPage.locator('.conference-tile-pinned')
@@ -466,7 +477,7 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
 
     // завершение демонстрации — пин ОСТАЁТСЯ на слитом тайле alice
     // (T084): тайл жив с камерой/аватаром, бейдж ушёл
-    await alicePage.getByRole('button', { name: 'Экран', exact: true }).click()
+    await aliceControls('Экран').click()
     await expect(bobPinned).not.toContainText('демонстрирует экран', { timeout: 10_000 })
     await expect(bobPinned).toHaveCount(1)
     await expect(bobPinned).toContainText(aliceNow.username)
@@ -479,8 +490,8 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     await expect(bobPage.locator('.conference-tile-pinned')).toHaveCount(0)
     await alicePage.keyboard.press('Escape')
     await expect(alicePage.locator('.conference-tile-pinned')).toHaveCount(0)
-    await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
-    await expect(alicePage.getByText('Вы в конференции')).toBeVisible()
+    await expect(bobPage.locator('.conference-room')).toBeVisible()
+    await expect(alicePage.locator('.conference-room')).toBeVisible()
   })
 
   test('T079: пин — тайл на весь экран без скроллбаров, controls поверх тайла; сворачивание возвращает раскладку', async ({
@@ -496,8 +507,8 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     ])
     openedPages.push(alicePage, bobPage)
     await Promise.all([
-      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
-      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
     ])
 
     // обычная раскладка: маркера полноэкранного оверлея нет
@@ -531,9 +542,10 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       'controls не выходят за правый край',
     ).toBeLessThanOrEqual(viewport?.width ?? 0)
 
-    // служебные панели страницы скрыты («Вы в конференции»);
-    // шапка .conference-header удалена целиком (T087) — ассертов на неё нет
-    await expect(bobPage.getByText('Вы в конференции')).toBeHidden()
+    // служебные панели страницы скрыты (панель участников); шапка
+    // .conference-header (T087), output-подпись и живой счётчик (T092)
+    // удалены целиком — ассертов на них нет
+    await expect(bobPage.locator('.conference-participants')).toBeHidden()
 
     // свернул — обычная раскладка со всеми панелями вернулась
     await bobPage
@@ -541,7 +553,7 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       .getByRole('button', { name: 'Свернуть' })
       .click()
     await expect(bobPage.locator('.conference-room-pinned')).toHaveCount(0)
-    await expect(bobPage.getByText('Вы в конференции')).toBeVisible()
+    await expect(bobPage.locator('.conference-participants')).toBeVisible()
     // звонок продолжается обычной сеткой
     await expect(
       tilesSection(bobPage).getByText(aliceNow.username, { exact: true }).first(),
@@ -556,6 +568,15 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
   let chatId: string
   /** Страницы теста — закрываются в afterEach (контексты LiveKit-вкладок). */
   let openedPages: Page[]
+  /**
+   * Конференция текущего теста — завершается №48 в afterEach: №44
+   * идемпотентен («одна активная на чат»), без чистки следующий тест
+   * унаследовал бы активную комнату со «свисающими» подключениями
+   * закрытых вкладок предыдущего (строгий локатор строки цели
+   * разрешался бы в несколько элементов).
+   */
+  let activeConference: ConferenceView | null = null
+  let creatorToken: string | null = null
 
   test.beforeAll(async () => {
     api = await request.newContext({ baseURL: API_URL })
@@ -575,6 +596,14 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     for (const page of openedPages) {
       await page.context().close()
     }
+    if (activeConference !== null && creatorToken !== null) {
+      // 409 conference_ended (уже завершена) чисткой не считается
+      await apiCall(api, 'post', `/api/v1/conferences/${activeConference.id}/end`, {
+        token: creatorToken,
+      }).catch(() => {})
+    }
+    activeConference = null
+    creatorToken = null
   })
 
   test('SC-005: мьют микрофона модератором блокирует тумблер цели с пояснением ≤ 2 c и виден всем; снятие разблокирует', async ({
@@ -584,21 +613,24 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     // микрофон bob опубликован (дефолты mode=video)
     const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
     const conference = await createConference(api, aliceNow, chatId)
+    activeConference = conference
+    creatorToken = aliceNow.accessToken
     const [alicePage, bobPage] = await Promise.all([
       openConferencePage(browser, aliceNow, conference.id),
       openConferencePage(browser, bobNow, conference.id),
     ])
     openedPages.push(alicePage, bobPage)
     await Promise.all([
-      connectAndAwaitMedia(alicePage, 'Вы в конференции', bobNow.username),
-      connectAndAwaitMedia(bobPage, 'Вы в конференции', aliceNow.username),
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
     ])
 
-    // №49: alice глушит bob'у микрофон (строка панели модерации цели)
+    // №49: alice глушит bob'у микрофон (тумблер строки цели, T094 —
+    // постоянная подпись + aria-pressed по проекции)
     const startedAt = Date.now()
     await alicePage
       .getByRole('group', { name: bobNow.username })
-      .getByRole('button', { name: 'Отключить микрофон' })
+      .getByRole('button', { name: 'Микрофон', exact: true })
       .click()
 
     // у bob тумблер заблокирован с пояснением (T043) ≤ 2 c от клика
@@ -614,11 +646,17 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     await expect(alicePage.getByText('микрофон отключён', { exact: true }).first()).toBeVisible({
       timeout: SC005_MS,
     })
+    // тумблер строки цели нажат (проекция grants, SC-005)
+    await expect(
+      alicePage
+        .getByRole('group', { name: bobNow.username })
+        .getByRole('button', { name: 'Микрофон', exact: true }),
+    ).toHaveAttribute('aria-pressed', 'true', { timeout: SC005_MS })
 
     // снятие ограничения (SET false, Q22=A): блокировка у цели снята ≤ 2 c
     await alicePage
       .getByRole('group', { name: bobNow.username })
-      .getByRole('button', { name: 'Включить микрофон' })
+      .getByRole('button', { name: 'Микрофон', exact: true })
       .click()
     await expect(bobPage.getByText('Микрофон отключён модератором')).toHaveCount(0, {
       timeout: SC005_MS,
@@ -626,6 +664,67 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     await expect(bobPage.getByRole('button', { name: 'Микрофон' })).toBeEnabled({
       timeout: SC005_MS,
     })
+  })
+
+  test('SC-005/T094: три точечных подряд — всё остаётся отключено, мастер «Все источники» нажат; отжатие мастера включает всё', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+    activeConference = conference
+    creatorToken = aliceNow.accessToken
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
+    ])
+
+    // регресс бага T094: третья точечная не сбрасывает отключения —
+    // после mic+camera+screen grants цели canPublish=false, панель
+    // показывает все три нажатыми И мастер нажатым ≤ 2 c (SC-005)
+    const bobRow = alicePage.getByRole('group', { name: bobNow.username })
+    const startedAt = Date.now()
+    for (const label of ['Микрофон', 'Камера', 'Экран']) {
+      await bobRow.getByRole('button', { name: label, exact: true }).click()
+    }
+
+    for (const label of ['Микрофон', 'Камера', 'Экран', 'Все источники']) {
+      await expect(bobRow.getByRole('button', { name: label, exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+        { timeout: SC005_MS },
+      )
+    }
+    expect(
+      Date.now() - startedAt,
+      `SC-005: применение третьей точечной ${Date.now() - startedAt} мс`,
+    ).toBeLessThanOrEqual(SC005_MS)
+
+    // у цели фактическое «всё заблокировано»: все тумблеры MediaControls
+    // недоступны с единым пояснением (canPublish=false, Q4=A)
+    await expect(bobPage.getByText('Публикация отключена модератором (право слова)')).toBeVisible({
+      timeout: SC005_MS,
+    })
+    for (const label of ['Микрофон', 'Камера', 'Экран']) {
+      await expect(bobPage.getByRole('button', { name: label, exact: true })).toBeDisabled()
+    }
+
+    // отжатие мастера включает всё: точечные тумблеры цели доступны ≤ 2 c
+    await bobRow.getByRole('button', { name: 'Все источники', exact: true }).click()
+    await expect(bobPage.getByText('Публикация отключена модератором (право слова)')).toHaveCount(
+      0,
+      { timeout: SC005_MS },
+    )
+    await expect(bobPage.getByRole('button', { name: 'Микрофон', exact: true })).toBeEnabled({
+      timeout: SC005_MS,
+    })
+    await expect(
+      bobRow.getByRole('button', { name: 'Все источники', exact: true }),
+    ).toHaveAttribute('aria-pressed', 'false', { timeout: SC005_MS })
   })
 })
 
@@ -702,7 +801,7 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     const alicePage = await openConferencePage(browser, aliceNow, conference.id)
     openedContexts.push(alicePage.context())
     await alicePage.getByRole('button', { name: 'Войти' }).click()
-    await expect(alicePage.getByText('Вы в конференции')).toBeVisible({ timeout: 15_000 })
+    await expect(alicePage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
 
     // №52 через UI блока «Гостевая ссылка» панели модерации (T081):
     // «Пригласить гостя» → inviteUrl в readonly-поле (в чат не постится);
@@ -746,10 +845,9 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
 
     await guestPage.getByRole('button', { name: 'Войти' }).click()
 
-    // гость в конференции с пометкой «гость» (SC-003 завершён — 3 действия)
-    await expect(guestPage.getByText('Вы в конференции как гость')).toBeVisible({
-      timeout: 15_000,
-    })
+    // гость в конференции (SC-003 завершён — 3 действия): joined-маркер —
+    // комната (T092: output-подпись «как гость» удалена)
+    await expect(guestPage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
     await expect(guestPage.getByText(guestName, { exact: true }).first()).toBeVisible()
 
     // модератор видит имя и бейдж «гость» (metadata №55, T051)
@@ -858,7 +956,7 @@ test.describe.serial('индикатор «звонок идёт» US5 e2e (009 
     const alicePage = await openConferencePage(browser, aliceNow, conference.id)
     openedContexts.push(alicePage.context())
     await alicePage.getByRole('button', { name: 'Войти' }).click()
-    await expect(alicePage.getByText('Вы в конференции')).toBeVisible({ timeout: 15_000 })
+    await expect(alicePage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
 
     // №18 conference.started → бейдж «Звонок идёт» у строки чата carol
     await expect(carolPage.getByText('Звонок идёт').first()).toBeVisible({ timeout: 10_000 })

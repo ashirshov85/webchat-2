@@ -296,19 +296,19 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
  * T078) — комната вынимается из потока документа (position: fixed;
  * inset: 0), контента выше вьюпорта не остаётся; body overflow —
  * страховка остаточной высоты секции. Служебные поверхности
- * страницы (строка «Вы в конференции», панели участников/модерации,
- * компактная полоса) скрываются по body:has(…) — DOM жив:
+ * страницы (панели участников/модерации, компактная полоса)
+ * скрываются по body:has(…) — DOM жив:
  * MediaControls (T028) остаётся под RoomContext (хуки livekit,
  * переносить нельзя) и позиционируется absolute снизу по центру
  * поверх тайла; статус-строки и тост conference.warning —
  * absolute-оверлеи сверху (в потоке отожмут высоту тайла — «весь
  * экран» не получится). Кнопка «Покинуть» в оверлее скрыта (T089):
  * выход из звонка — двухшаговый, сначала свернуть тайл («Свернуть»/
- * Esc T082), тумблеры остаются доступны. Живой счётчик подключённых
- * (T080, ConferenceLiveCount в children) скрыт вместе со служебными
- * панелями — иначе строка висит поверх оверлея. Шапка страницы и
- * identity-строка удалены целиком (T087) — их селекторов здесь
- * больше нет. Скоуп — ТОЛЬКО маркер комнаты: обе точки входа (член
+ * Esc T082), тумблеры остаются доступны. Шапка страницы и
+ * identity-строка удалены целиком (T087), output-подпись joined-формы
+ * «Вы в конференции» и живой счётчик подключённых (T080) — тоже
+ * (T092): их селекторов здесь больше нет. Скоуп — ТОЛЬКО маркер
+ * комнаты: обе точки входа (член
  * ConferencePage и гость GuestJoinPage монтируют общий контур)
  * получают одинаковую геометрию; у гостя части панелей нет —
  * правило не матчится.
@@ -326,15 +326,13 @@ body:has(.conference-room-pinned) {
   overflow: hidden;
 }
 
-/* Скрытие служебного окружения страницы (T079): строка «Вы в
-   конференции» (output прямой ребёнок .conference-joined), панели
-   участников/модерации, живой счётчик подключённых (T080), компактная
-   полоса тайлов. Шапка страницы и identity-строка удалены из страниц
-   целиком (T087) — селекторов скрытия для них больше не нужно. */
+/* Скрытие служебного окружения страницы (T079): панели
+   участников/модерации, компактная полоса тайлов. Шапка страницы и
+   identity-строка удалены из страниц целиком (T087), output-подпись
+   joined-формы и живой счётчик подключённых (T080) — тоже (T092):
+   селекторов скрытия для них больше не нужно. */
 body:has(.conference-room-pinned) .conference-participants,
 body:has(.conference-room-pinned) .conference-moderation,
-body:has(.conference-room-pinned) .conference-live-count,
-body:has(.conference-room-pinned) .conference-joined > output,
 body:has(.conference-room-pinned) .conference-tiles-compact {
   display: none;
 }
@@ -385,17 +383,6 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   margin: 0;
   width: max-content;
   max-width: calc(100% - 24px);
-}
-
-/* Живой счётчик подключённых участников joined-состояния (T080):
-   ConferenceLiveCount в слоте children комнаты — над панелями
-   участников/модерации; после удаления шапки (T087) — единственная
-   строка «Участники: N / M» страницы. Скрыт полноэкранным пином
-   T079 — см. блок оверлея ниже. */
-.conference-live-count {
-  margin: 0;
-  font: 12.5px var(--font-body);
-  color: var(--muted);
 }
 
 /* Панель управления конференцией (T028): тумблеры микрофона/камеры/экрана
@@ -508,11 +495,14 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   color: var(--cream);
 }
 
+/* Заголовок pre-join: центрирован по панели (T091) — паритет центрированного
+ * плейсхолдера превью; типографика без изменений. */
 .conference-prejoin-title {
   margin: 0;
   font: 17px var(--font-heading);
   letter-spacing: 0.04em;
   color: var(--cream-bright);
+  text-align: center;
 }
 
 /* Превью: тёмная видеоповерхность 16:9 (как тайлы комнаты), плейсхолдер по центру. */
@@ -794,7 +784,14 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   cursor: pointer;
 }
 
-/* Действующее ограничение — приглушённая кнопка возврата (латунь). */
+/* Тумблеры источников №49 (T094): постоянные подписи «Микрофон»/
+   «Камера»/«Экран»/«Все источники», нажатое состояние — aria-pressed
+   (008: состояние дублируется визуалом) + класс -restricted ниже. */
+.conference-moderation-toggle[aria-pressed='true'] {
+  font-style: italic;
+}
+
+/* Действующее ограничение — нажатый тумблер (латунь). */
 .conference-moderation-button-restricted {
   border-color: var(--gold-dark);
   color: var(--gold-light);
@@ -973,6 +970,22 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   background: var(--panel-bg);
 }
 
+/* Терминальное состояние «Конференция завершена» (T071/T076 — подпись
+ * с длительностью; T095/FR-019 — кнопка «Вернуться в чат» под ней,
+ * без автоперехода): центрированная колонка, нейтральная панель. */
+.conference-ended {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-frame);
+  background: var(--panel-bg);
+}
+
 .conference-error p {
   margin: 0;
   font: 13px var(--font-body);
@@ -1004,11 +1017,14 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   color: var(--cream);
 }
 
+/* Заголовок шага имени: центрирован внутри формы (T091) — паритет заголовка
+ * pre-join, гостевой паритет Q1=C; типографика без изменений. */
 .guest-join-title {
   margin: 0;
   font: 17px var(--font-heading);
   letter-spacing: 0.04em;
   color: var(--cream-bright);
+  text-align: center;
 }
 
 /* live-подсказка №54: конференция уже идёт (<output> = role=status). */

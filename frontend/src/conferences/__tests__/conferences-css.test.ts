@@ -32,6 +32,12 @@ import { describe, expect, it } from 'vitest'
  * кнопка скрыта display: none по маркеру conference-room-pinned
  * (вне a11y-дерева и таб-порядка), базовое правило и тумблеры
  * (absolute-controls T079) не регрессируют.
+ *
+ * T092 — демонтаж живого счётчика T080 и output-подписи joined-форм:
+ * правило .conference-live-count и селекторы скрытия пин-оверлея для
+ * него и «.conference-joined > output» удалены из источника целиком;
+ * панельные селекторы оверлея (участники/модерация/компактная полоса)
+ * сохранены.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -144,11 +150,11 @@ describe('полноэкранный пин-оверлей (T079): статич�
   })
 
   it('служебные панели страницы скрыты по body:has; статус-строки и тост — absolute-оверлеи сверху', () => {
-    // скрытие остального: строка «Вы в конференции» (output прямой
-    // ребёнок .conference-joined), панели участников/модерации (у гостя
-    // её нет — правило не матчится), живой счётчик (T080), компактная
-    // полоса остальных тайлов; шапка и identity-строка удалены целиком
-    // (T087) — их селекторов в источнике больше нет
+    // скрытие остального: панели участников/модерации (у гостя её
+    // нет — правило не матчится), компактная полоса остальных тайлов;
+    // шапка и identity-строка удалены целиком (T087), output-подпись
+    // joined-формы и живой счётчик T080 — тоже (T092): их селекторов
+    // в источнике больше нет
     const hidden = conferencesCss.match(
       /body:has\(\.conference-room-pinned\) \.conference-participants[\s\S]{0,600}?\{([^}]*)\}/,
     )
@@ -157,8 +163,6 @@ describe('полноэкранный пин-оверлей (T079): статич�
     for (const selector of [
       'body:has(.conference-room-pinned) .conference-participants',
       'body:has(.conference-room-pinned) .conference-moderation',
-      'body:has(.conference-room-pinned) .conference-live-count',
-      'body:has(.conference-room-pinned) .conference-joined > output',
       'body:has(.conference-room-pinned) .conference-tiles-compact',
     ]) {
       expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
@@ -181,14 +185,15 @@ describe('полноэкранный пин-оверлей (T079): статич�
     expect(pinned?.[1]).toContain('height: clamp(260px, 62dvh, 1080px)')
   })
 
-  it('T080: живой счётчик подключённых — строка комнаты, скрытая полноэкранным пином вместе с панелями', () => {
-    // базовая строка живого счёта (children ConferenceRoom — над панелями)
-    const line = conferencesCss.match(/\.conference-live-count\s*\{([^}]*)\}/)
-    expect(line).not.toBeNull()
-    expect(line?.[1]).toContain('margin: 0')
-    // полноэкранный пин T079 накрывает счётчик CSS-скрытием — иначе
-    // строка висит поверх оверлея (добавлена к панелям body:has(…))
-    expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-live-count')
+  it('T092: живой счётчик T080 и output-подпись joined-формы удалены из источника целиком', () => {
+    // демонтаж ConferenceLiveCount: ни базового правила строки
+    // «Участники: N / M», ни её селектора в списке скрытия пин-оверлея;
+    // output-подпись «Вы в конференции» (прямой ребёнок
+    // .conference-joined) тоже не существует — селектора скрытия нет
+    expect(conferencesCss).not.toContain('.conference-live-count')
+    expect(conferencesCss).not.toContain(
+      'body:has(.conference-room-pinned) .conference-joined > output',
+    )
   })
 })
 
@@ -241,11 +246,41 @@ describe('санитаризация шапки/identity (T087): статиче�
     for (const selector of [
       'body:has(.conference-room-pinned) .conference-participants',
       'body:has(.conference-room-pinned) .conference-moderation',
-      'body:has(.conference-room-pinned) .conference-live-count',
-      'body:has(.conference-room-pinned) .conference-joined > output',
       'body:has(.conference-room-pinned) .conference-tiles-compact',
     ]) {
       expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
+    }
+  })
+})
+
+describe('центрирование заголовков pre-join и гостевого шага имени (T091): статический пин CSS', () => {
+  it('заголовок .conference-prejoin-title центрирован по панели', () => {
+    // h2 — первый ребёнок flex-колонки .conference-prejoin без text-align
+    // наследует left от панели, тогда как плейсхолдер превью центрирован;
+    // центрируется только текст заголовка — flex-геометрия панели не трогается
+    const title = conferencesCss.match(/^\.conference-prejoin-title\s*\{([^}]*)\}/m)
+    expect(title).not.toBeNull()
+    expect(title?.[1]).toContain('text-align: center')
+  })
+
+  it('заголовок .guest-join-title центрирован внутри формы .guest-join-name', () => {
+    // симметрия гостевой точки входа (паритет Q1=C): тот же первый ребёнок
+    // flex-колонки .guest-join-name — центрируется тем же правилом
+    const title = conferencesCss.match(/^\.guest-join-title\s*\{([^}]*)\}/m)
+    expect(title).not.toBeNull()
+    expect(title?.[1]).toContain('text-align: center')
+  })
+
+  it('регресс-пин: типографика обоих заголовков сохранена', () => {
+    for (const selector of ['.conference-prejoin-title', '.guest-join-title']) {
+      const rule = conferencesCss.match(
+        new RegExp(`^\\.${selector.slice(1)}\\s*\\{([^}]*)\\}`, 'm'),
+      )
+      expect(rule, `правило ${selector}`).not.toBeNull()
+      expect(rule?.[1], `правило ${selector}`).toContain('margin: 0')
+      expect(rule?.[1], `правило ${selector}`).toContain('font: 17px var(--font-heading)')
+      expect(rule?.[1], `правило ${selector}`).toContain('letter-spacing: 0.04em')
+      expect(rule?.[1], `правило ${selector}`).toContain('color: var(--cream-bright)')
     }
   })
 })

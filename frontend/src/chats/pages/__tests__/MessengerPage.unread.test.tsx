@@ -12,8 +12,9 @@ import { cursorsStorageKey } from '../../../sync/cursors'
  * входящие (direct и группы) сразу после завершения catch-up-цикла,
  * без ожидания новых сообщений и без reload.
  *
- * Гонка, которую тест фиксирует: SSE onOpen запускает ОДНОВРЕМЕННО
- * refetch №12 (useChatList) и catch-up-цикл (useSync); №12-снимок
+ * Гонка, которую тест фиксирует: (re)open №18 запускает ОДНОВРЕМЕННО
+ * refetch №12 (useChatList, onOpen) и catch-up-цикл (useSync — по
+ * connected-кадру с реплеем, T093); №12-снимок
  * delivery-ограничен (`seq ≤ delivered_up_to_seq` — считается только
  * №25-подтверждённый хвост), поэтому приходит с `unreadCount: 0`
  * РАНЬШЕ подтверждения ack'ов и затирал оптимистичный бейдж дельты.
@@ -210,11 +211,11 @@ function installStream(): MockStream {
 }
 
 /**
- * All defaults EXCEPT listChats — every test sequences the №12 answers
- * itself (initial → racing pre-ack → after-ack re-anchor).
+ * All defaults EXCEPT listChats and getCurrentUser — every test
+ * sequences the №12 answers itself (initial → racing pre-ack →
+ * after-ack re-anchor), and the T093 race-A case defers the user.
  */
-async function renderMessengerPage(): Promise<MockStream> {
-  mockGetCurrentUser.mockResolvedValue(peer(ME, 'me'))
+function applyMessengerDefaults(): void {
   mockChats.getChat.mockResolvedValue({
     chatId: ALICE_CHAT_ID,
     type: 'direct',
@@ -231,6 +232,11 @@ async function renderMessengerPage(): Promise<MockStream> {
   const contacts: ContactView[] = []
   mockChats.listContacts.mockResolvedValue(contacts)
   mockPresence.fetchPresenceSettings.mockResolvedValue({ incognito: false })
+}
+
+async function renderMessengerPage(): Promise<MockStream> {
+  mockGetCurrentUser.mockResolvedValue(peer(ME, 'me'))
+  applyMessengerDefaults()
   const stream = installStream()
   render(<MessengerPage />)
   await screen.findByRole('list', { name: 'Список чатов' })
@@ -241,6 +247,22 @@ async function renderMessengerPage(): Promise<MockStream> {
     expect(mockChats.listContacts).toHaveBeenCalledTimes(1)
   })
   return stream
+}
+
+/** connectionId of the mocked №18 `connected` frame (T093). */
+const CONNECTION_ID = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+
+/**
+ * (Re)open of the №18 stream as the app sees it: the raw onOpen
+ * (useChatList №12 refetch) AND the `connected` frame — the useSync
+ * cycle trigger since T093 (the frame arrives on every connection and
+ * is replayed to late subscribers).
+ */
+function openStream(stream: MockStream): void {
+  act(() => {
+    stream.onOpen?.()
+    stream.emit('connected', JSON.stringify({ connectionId: CONNECTION_ID }))
+  })
 }
 
 function badgeOf(name: string): string | null {
@@ -291,9 +313,7 @@ describe('счётчик непрочитанных при входе (T052, и�
     const stream = await renderMessengerPage()
     expect(badgeOf('alice')).toBeNull()
 
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
 
     // Дельта применилась — оптимистичный бейдж виден сразу.
     await waitFor(() => {
@@ -337,9 +357,7 @@ describe('счётчик непрочитанных при входе (T052, и�
     const stream = await renderMessengerPage()
     expect(badgeOf('Проект Альфа')).toBeNull()
 
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
 
     await waitFor(() => {
       expect(badgeOf('Проект Альфа')).toBe('1')
@@ -364,9 +382,7 @@ describe('счётчик непрочитанных при входе (T052, и�
     const stream = await renderMessengerPage()
     expect(badgeOf('alice')).toBeNull()
 
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
 
     // Стартовая докладка хвоста курсора ушла через общий батчер (№25).
     await waitFor(() => {
@@ -384,5 +400,130 @@ describe('счётчик непрочитанных при входе (T052, и�
     // доставки реанкорён и живой кадр считает от него.
     emitMessageCreated(stream, makeMessage(ALICE_CHAT_ID, 12, ALICE))
     expect(badgeOf('alice')).toBe('2')
+  })
+
+  /**
+   * T093, гонка A (репродукция бага «после логина нет счётчика»):
+   * PresenceKeeper открывает №18 на ProtectedRoute ДО резолва
+   * getCurrentUser — connected-кадр уходит, когда подписка useSync ещё
+   * не смонтирована (гейт userId). Реплей onConnected стартует цикл
+   * сразу после резолва: бейдж приходит после catch-up, а гоночный
+   * пред-ack №12 (0) его не стирает.
+   */
+  it('T093 гонка A: connected-кадр до резолва getCurrentUser — цикл стартует реплеем, пред-ack №12 бейдж не стирает', async () => {
+    let resolveUser!: (user: ReturnType<typeof peer>) => void
+    mockGetCurrentUser.mockReturnValue(
+      new Promise<ReturnType<typeof peer>>((resolve) => {
+        resolveUser = resolve
+      }),
+    )
+    applyMessengerDefaults()
+    mockChats.listChats
+      .mockResolvedValueOnce([directRow(0, makeMessage(ALICE_CHAT_ID, 10, ALICE))])
+      .mockResolvedValue([directRow(1, makeMessage(ALICE_CHAT_ID, 11, ALICE))])
+    mockChats.sync
+      .mockResolvedValueOnce(
+        syncResponse([
+          delta({
+            chatId: ALICE_CHAT_ID,
+            messages: [makeMessage(ALICE_CHAT_ID, 11, ALICE)],
+            unreadCount: 0,
+            lastSeq: 11,
+          }),
+        ]),
+      )
+      .mockResolvedValue(syncResponse([]))
+    const stream = installStream()
+    render(<MessengerPage />)
+
+    // Хендшейк завершился, пока getCurrentUser ещё висит: кадр уходит
+    // «в никуда» (подписчика useSync нет), но connectionId запомнен.
+    act(() => {
+      stream.emit('connected', JSON.stringify({ connectionId: CONNECTION_ID }))
+    })
+
+    await act(async () => {
+      resolveUser(peer(ME, 'me'))
+      await Promise.resolve()
+    })
+
+    // Реплей стартует catch-up сразу после резолва: дельта считает
+    // хвост, flush подтверждает №25, реанкор несёт после-ack 1 —
+    // бейдж на месте без новых сообщений и без реконнекта.
+    await waitFor(() => {
+      expect(mockChats.sync).toHaveBeenCalledTimes(1)
+    })
+    await waitFor(() => {
+      expect(badgeOf('alice')).toBe('1')
+    })
+    await waitFor(() => {
+      expect(mockChats.listChats).toHaveBeenCalledTimes(2)
+    })
+    expect(badgeOf('alice')).toBe('1')
+  })
+
+  /**
+   * T093, звенья B+C: курсор впереди (вкладка умерла до debounce-flush)
+   * без дельты — №26 отвечает «доставлено всё», unconfirmedTails нет,
+   * бейдж целиком зависит от реанкора; №25 сорвался транзиентно в
+   * конце цикла. Реанкор скипается по гварду syncError (защита не
+   * разоружена, преждевременного №12 нет), ретрай батчера (бэкофф 1 с)
+   * завершается успехом → onRecovered → повторный цикл → ШТАТНЫЙ
+   * реанкор восстанавливает бейдж без реконнекта SSE.
+   */
+  it('T093: cursor-ahead + транзиентный №25 — реанкор скипается, ретрай onRecovered восстанавливает бейдж', async () => {
+    window.localStorage.setItem(cursorsStorageKey(ME), JSON.stringify({ [ALICE_CHAT_ID]: 11 }))
+    // серверный счётчик переворачивается в 1 ровно тогда, когда №25
+    // хвоста реально подтверждён (до этого любой №12 отвечает 0)
+    let tailAcked = false
+    mockChats.listChats.mockImplementation(() =>
+      Promise.resolve([directRow(tailAcked ? 1 : 0, makeMessage(ALICE_CHAT_ID, 11, ALICE))]),
+    )
+    // «Сетевая» задержка №26 макротаском: моки резолвятся мгновенно и
+    // без границы true→false syncing слились бы в один рендер —
+    // falling-edge эффект не увидел бы фазу цикла.
+    mockChats.sync.mockImplementation(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 50)
+      })
+      return syncResponse([])
+    })
+    const stream = await renderMessengerPage()
+    // хвост-переворачивающая реализация №25 ставится ПОСЛЕ
+    // renderMessengerPage: его дефолты перезаписывают базовую
+    // реализацию deliveryAck (mockResolvedValue).
+    mockChats.deliveryAck
+      .mockImplementationOnce(() => Promise.reject(new Error('offline')))
+      .mockImplementation((items: { chatId: string; upToSeq: number }[]) => {
+        if (items.some((item) => item.chatId === ALICE_CHAT_ID && item.upToSeq >= 11)) {
+          tailAcked = true
+        }
+        return Promise.resolve(undefined)
+      })
+    expect(badgeOf('alice')).toBeNull()
+
+    openStream(stream)
+
+    // Цикл дошёл до flush, №25 сорвался транзиентно — цикл фейлит,
+    // реанкор НЕ пошёл (№12 выпущен только маунт- и onOpen-рефетчами).
+    await waitFor(() => {
+      expect(mockChats.deliveryAck).toHaveBeenCalledTimes(1)
+    })
+    await new Promise((resolve) => {
+      setTimeout(resolve, 20)
+    })
+    expect(mockChats.listChats).toHaveBeenCalledTimes(2)
+    expect(badgeOf('alice')).toBeNull()
+
+    // Ретрай батчера (бэкофф ~1 с) успешен → onRecovered → повторный
+    // цикл → его falling-edge реанкор несёт после-ack счётчик (опрос
+    // waitFor даёт React отрендерить фазы цикла между тиками).
+    await waitFor(
+      () => {
+        expect(mockChats.listChats).toHaveBeenCalledTimes(3)
+      },
+      { timeout: 3000 },
+    )
+    expect(badgeOf('alice')).toBe('1')
   })
 })

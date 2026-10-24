@@ -544,3 +544,87 @@ describe('T088: drop() also forgets the persisted cursor of the per-account batc
     }
   })
 })
+
+/**
+ * T093 (009, unread badge of the offline recipient): a transient №25
+ * failure fails the catch-up cycle that awaited the flush (useSync),
+ * so the №12 re-anchor is skipped until the delivery position is
+ * actually confirmed — the consumer needs a wake-up at that exact
+ * moment. `onRecovered` fires ONCE per drain that succeeds AFTER ≥1
+ * transient failure (the flag lives in the instance); quiet drains
+ * and terminal T088 drops never fire it, dispose() drops the
+ * listeners together with the transient flag.
+ */
+describe('T093: onRecovered — the drain-success-after-transient-failure event', () => {
+  it('does not fire on a drain without any failure', async () => {
+    const listener = vi.fn()
+    batcher.onRecovered(listener)
+    mockedDeliveryAck.mockResolvedValue(undefined)
+    batcher.ack(chatId(1), 5)
+
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+
+    expect(mockedDeliveryAck).toHaveBeenCalledTimes(1)
+    expect(batcher.pendingSize()).toBe(0)
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('fires exactly once when a retry succeeds after a transient failure', async () => {
+    const listener = vi.fn()
+    batcher.onRecovered(listener)
+    mockedDeliveryAck.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)
+    batcher.ack(chatId(1), 5)
+
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+    expect(listener).not.toHaveBeenCalled()
+
+    // the 1 s backoff retry succeeds → the recovery is noted once
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(batcher.pendingSize()).toBe(0)
+
+    // further clean drains never re-fire the event
+    batcher.ack(chatId(2), 9)
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+
+  it('a terminal T088 drop without a transient failure never fires the event', async () => {
+    const listener = vi.fn()
+    batcher.onRecovered(listener)
+    mockedDeliveryAck
+      .mockRejectedValueOnce(problem(404, 'chat_not_found'))
+      .mockResolvedValue(undefined)
+    batcher.ack(chatId(1), 5)
+
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+
+    expect(batcher.pendingSize()).toBe(0)
+    expect(listener).not.toHaveBeenCalled()
+
+    // a later clean success of a live chat is not a «recovery» either
+    batcher.ack(chatId(2), 7)
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+    expect(mockedDeliveryAck).toHaveBeenLastCalledWith(ackItems({ [chatId(2)]: 7 }))
+    expect(listener).not.toHaveBeenCalled()
+  })
+
+  it('dispose drops the listeners and resets the transient flag', async () => {
+    const listener = vi.fn()
+    batcher.onRecovered(listener)
+    mockedDeliveryAck.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined)
+    batcher.ack(chatId(1), 5)
+
+    // the transient failure arms the backoff…
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+    expect(listener).not.toHaveBeenCalled()
+
+    // …but teardown cancels it; a later clean drain on the same
+    // instance is not a recovery and has nobody left to notify
+    batcher.dispose()
+    batcher.ack(chatId(2), 9)
+    await vi.advanceTimersByTimeAsync(ACK_DEBOUNCE_MS)
+    expect(mockedDeliveryAck).toHaveBeenLastCalledWith(ackItems({ [chatId(2)]: 9 }))
+    expect(listener).not.toHaveBeenCalled()
+  })
+})
