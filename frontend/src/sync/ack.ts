@@ -66,6 +66,15 @@
  *   honoring `retryAfterSec` on 429/503) instead of the fixed 1 s
  *   hammer. 401 stays outside the classification — apiFetch runs its
  *   single-flight refresh cycle and a retried request passes normally.
+ *
+ * T093 (009, unread badge of the offline recipient): a transient №25
+ * failure inside the catch-up cycle's AWAITED flush now fails that
+ * cycle (useSync re-anchors №12 only after a completed cycle), so the
+ * consumer needs a wake-up when the retry finally succeeds — the
+ * batcher fires `onRecovered` exactly once per drain that succeeds
+ * AFTER ≥1 transient failure (the flag lives in the instance;
+ * terminal T088 drops and quiet drains never fire it, dispose()
+ * drops the listeners).
  */
 import { deliveryAck } from '../api/chats'
 import type { DeliveryAckItem } from '../api/chats'
@@ -160,6 +169,16 @@ export interface AckBatcher {
   flush(): Promise<void>
   /** Number of chats with an unconfirmed position (diagnostics/tests). */
   pendingSize(): number
+  /**
+   * T093: fires ONCE when a drain completes successfully AFTER at
+   * least one transient failure armed the T088 backoff — the delivery
+   * position has just caught up, so №12-dependent consumers (the
+   * unread-badge re-anchor of the failed catch-up cycle) may re-ask
+   * now instead of waiting for the next reconnect. Quiet drains (no
+   * preceding transient failure) and terminal T088 drops never fire
+   * it; dispose() drops the listeners.
+   */
+  onRecovered(listener: () => void): () => void
   /** Cancels the timer and drops pending entries (logout/teardown). */
   dispose(): void
 }
@@ -175,6 +194,14 @@ class DeliveryAckBatcher implements AckBatcher {
   private readonly userId: string | null
   /** Transient retries armed so far without an intervening success (T088 backoff). */
   private transientRetries = 0
+  /**
+   * A transient failure armed the backoff since the last success
+   * (T093): the drain that succeeds afterwards is a «recovery» and
+   * fires onRecovered exactly once.
+   */
+  private hadTransientFailure = false
+  /** T093 recovery listeners: drain success after ≥1 transient failure. */
+  private readonly recoveredListeners = new Set<() => void>()
   private timer: number | null = null
   private inFlight: Promise<void> | null = null
 
@@ -231,6 +258,13 @@ class DeliveryAckBatcher implements AckBatcher {
     return this.pending.size
   }
 
+  onRecovered(listener: () => void): () => void {
+    this.recoveredListeners.add(listener)
+    return () => {
+      this.recoveredListeners.delete(listener)
+    }
+  }
+
   dispose(): void {
     if (this.timer !== null) {
       window.clearTimeout(this.timer)
@@ -238,6 +272,8 @@ class DeliveryAckBatcher implements AckBatcher {
     }
     this.pending.clear()
     this.dropped.clear()
+    this.recoveredListeners.clear()
+    this.hadTransientFailure = false
   }
 
   /**
@@ -274,7 +310,24 @@ class DeliveryAckBatcher implements AckBatcher {
   }
 
   private armTransientRetry(failure: TransientAckFailure): void {
+    this.hadTransientFailure = true
     this.schedule(this.transientRetryDelayMs(failure))
+  }
+
+  /**
+   * Every successful №25 request lands here (the batch drain and the
+   * T088 isolation singles alike — the centralized success point):
+   * resets the backoff and — after a transient failure — fires the
+   * T093 recovery event exactly once.
+   */
+  private noteSuccess(): void {
+    this.transientRetries = 0
+    if (this.hadTransientFailure) {
+      this.hadTransientFailure = false
+      for (const listener of this.recoveredListeners) {
+        listener()
+      }
+    }
   }
 
   /**
@@ -304,7 +357,7 @@ class DeliveryAckBatcher implements AckBatcher {
       const single = new Map<string, number>([[chatId, seq]])
       try {
         await deliveryAck([{ chatId, upToSeq: seq }])
-        this.transientRetries = 0
+        this.noteSuccess()
         this.consumeConfirmed(single)
       } catch (cause) {
         if (!isTerminalAckProblem(cause)) {
@@ -331,7 +384,7 @@ class DeliveryAckBatcher implements AckBatcher {
       }))
       try {
         await deliveryAck(items)
-        this.transientRetries = 0
+        this.noteSuccess()
       } catch (cause) {
         if (!isTerminalAckProblem(cause)) {
           // transient (network/408/429/5xx): entries stay pending and
@@ -383,6 +436,7 @@ export function getAckBatcher(userId: string): AckBatcher {
     drop: (chatId) => instance.drop(chatId),
     flush: () => instance.flush(),
     pendingSize: () => instance.pendingSize(),
+    onRecovered: (listener) => instance.onRecovered(listener),
     dispose: () => {
       instance.dispose()
       if (sharedBatchers.get(userId) === batcher) {

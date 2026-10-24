@@ -46,6 +46,15 @@
  * resolves) makes every consumer-visible completion an after-ack
  * moment: the page shell re-anchors №12 once per completed cycle.
  *
+ * T093 (009, unread badge of the offline recipient): the cycle is
+ * triggered by the `connected` frame — REPLAYED to late subscribers
+ * (unlike the raw onOpen), so the PresenceKeeper-early stream open
+ * before MessengerPage mounts / the user resolves still starts the
+ * catch-up; a transient end-of-cycle №25 failure FAILS the cycle (the
+ * page's falling-edge №12 re-anchor is skipped by its syncError
+ * guard, the merge protection stays armed) and the batcher's
+ * `onRecovered` re-runs the cycle once its retry drain succeeds.
+ *
  * Integration: mount once in MessengerPage (T023) — `onChatUpdate`
  * feeds the chat list and the open dialog, `syncing` drives the
  * SyncIndicator (T020); the ack batcher is the per-user shared
@@ -210,9 +219,15 @@ async function flushPendingReads(userId: string, pending: Readonly<PendingReadMa
  * continuation, repeated while `moreChats`. Each applied page is
  * confirmed (ack + cursor) before the next request, so an abort at
  * ANY point leaves the resume position exactly at the last confirmed
- * page (US1-4). Ends with a best-effort batcher flush: №25 failures
- * stay pending in the batcher (its retry timer re-arms) and never
- * fail the cycle itself.
+ * page (US1-4). Ends with the AWAITED batcher flush (T052): a
+ * transient №25 failure fails the cycle itself (T093) — `error`
+ * surfaces, the page's falling-edge №12 re-anchor skips on its
+ * syncError guard and the unconfirmedTails merge protection stays
+ * armed; the entries keep pending in the batcher (its T088 backoff
+ * re-arms) and the batcher's `onRecovered` re-runs the cycle once the
+ * retry succeeds. TERMINAL №25 refusals (T088) never reject here: the
+ * drain isolates the culprit and resolves — such a cycle stays a
+ * success.
  */
 async function runCatchUp(
   userId: string,
@@ -274,11 +289,10 @@ async function runCatchUp(
       break
     }
   }
-  try {
-    await batcher.flush()
-  } catch {
-    // entries stay pending; the batcher retries with its next flush
-  }
+  // T093: awaited WITHOUT swallowing — a transient №25 failure fails
+  // the cycle (see the docblock); the batcher keeps the entries and
+  // its backoff re-arms, `onRecovered` re-runs the cycle later.
+  await batcher.flush()
 }
 
 export function useSync(userId: string | null): UseSyncResult {
@@ -337,10 +351,38 @@ export function useSync(userId: string | null): UseSyncResult {
     if (userId === null) {
       return
     }
-    return realtime.onOpen(() => {
+    // T093: the trigger is the REPLAY-capable `connected` frame, not
+    // the raw onOpen — the shared №18 stream opens in PresenceKeeper
+    // on ProtectedRoute BEFORE MessengerPage mounts and getCurrentUser()
+    // resolves, and onOpen is NOT replayed to late subscribers
+    // (useRealtime), so the old wiring could miss the ONLY open of
+    // the session and never run the catch-up (badge 0 until a
+    // reconnect). onConnected replays the current connectionId (008
+    // T076), so a late mount / a late user resolution still starts
+    // the cycle; every (re)open keeps triggering through the fresh
+    // frame. A duplicate trigger is safe — single-flight joins it,
+    // №26/№25 are idempotent. The heartbeat (T076/T086) subscribes to
+    // the same event independently.
+    return realtime.onConnected(() => {
       void syncNow()
     })
   }, [realtime, syncNow, userId])
+
+  useEffect(() => {
+    if (userId === null) {
+      return
+    }
+    // T093: a transient №25 failure fails the cycle with the delivery
+    // position still behind (the page's №12 re-anchor is skipped), so
+    // nobody would re-ask №12 after the batcher's T088 backoff retry
+    // succeeds — the badge would stay 0 until a reconnect. The
+    // batcher fires onRecovered exactly once per recovered drain; the
+    // re-run is an ordinary cycle whose falling-edge re-anchor closes
+    // the gap. No loop: quiet drains raise no event.
+    return getAckBatcher(userId).onRecovered(() => {
+      void syncNow()
+    })
+  }, [syncNow, userId])
 
   const onChatUpdate = useCallback((listener: SyncUpdateListener): Unsubscribe => {
     listenersRef.current.add(listener)

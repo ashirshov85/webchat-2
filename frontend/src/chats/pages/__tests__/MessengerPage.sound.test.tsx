@@ -158,7 +158,7 @@ interface MockStream {
   emit(eventType: string, data: string): void
 }
 
-/** Поток с ручной подачей кадров (паттерн useChatList.test): onOpen — триггер цикла catch-up. */
+/** Поток с ручной подачей кадров (паттерн useChatList.test): (re)open — триггер цикла catch-up. */
 function installStream(): MockStream {
   const listeners = new Map<string, (data: string) => void>()
   const mock: MockStream = {
@@ -182,6 +182,21 @@ function installStream(): MockStream {
     }
   })
   return mock
+}
+
+/** connectionId of the mocked №18 `connected` frame (T093). */
+const CONNECTION_ID = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+
+/**
+ * (Re)open of the №18 stream as the app sees it: the raw onOpen
+ * (useChatList №12 refetch) AND the `connected` frame — the useSync
+ * cycle trigger since T093.
+ */
+function openStream(stream: MockStream): void {
+  act(() => {
+    stream.onOpen?.()
+    stream.emit('connected', JSON.stringify({ connectionId: CONNECTION_ID }))
+  })
 }
 
 function contacts(): ContactView[] {
@@ -215,7 +230,7 @@ async function renderPage(chats: ChatListItemSchema[] = [chatRow(ALICE_CHAT_ID, 
   // книги (reloadContacts) идёт в ТОМ же коммите пользовательского
   // стейта и РАНЬШЕ звукового эффекта — его вызов доказывает, что вся
   // пасса эффектов коммита (включая onMessageCreated/null-подписку и
-  // onOpen-слушатель useSync) уже смонтирована. Без ожидания эммит
+  // connected-слушатель useSync) уже смонтирована. Без ожидания эммит
   // события гоняется с монтированием подписки (мок-поток теряет кадры
   // до подписки).
   await waitFor(() => {
@@ -325,9 +340,7 @@ describe('массовая доставка — один вызов chimeOnSyncB
       ]),
     )
 
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockSound.chimeOnSyncBatch).toHaveBeenCalledTimes(1)
     })
@@ -349,9 +362,7 @@ describe('массовая доставка — один вызов chimeOnSyncB
       messages: [makeMessage(ALICE_CHAT_ID, 3, ALICE)],
     })
 
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockSound.chimeOnSyncBatch).toHaveBeenCalledTimes(1)
     })
@@ -366,17 +377,13 @@ describe('массовая доставка — один вызов chimeOnSyncB
       ]),
     )
 
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockSound.chimeOnSyncBatch).toHaveBeenCalledTimes(1)
     })
 
     // Второй (re)open запускает новый цикл — сервер отвечает «доставлено всё».
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockSound.chimeOnSyncBatch).toHaveBeenCalledTimes(2)
     })
@@ -392,9 +399,7 @@ describe('массовая доставка — один вызов chimeOnSyncB
       ]),
     )
 
-    act(() => {
-      stream.onOpen?.()
-    })
+    openStream(stream)
     await waitFor(() => {
       expect(mockSound.chimeOnSyncBatch).toHaveBeenCalledTimes(1)
     })
