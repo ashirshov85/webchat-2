@@ -63,9 +63,10 @@
  *
  * Доступность — стандарты 008 (research §10): нативный <dialog> (
  * диалоговая семантика + aria-labelledby заголовка), aria-pressed
- * тумблеров со визуальным индикатором «вкл/выкл» (aria-hidden), label
- * + select устройств, focus-visible (conferences.css), статус-строка
- * <output> (неявный role=status).
+ * тумблеров со визуальным индикатором «вкл/выкл» (aria-hidden; классы
+ * .conference-prejoin-toggle/-state — текстовая геометрия T028 после
+ * переименования T098), label + select устройств, focus-visible
+ * (conferences.css), статус-строка <output> (неявный role=status).
  */
 import { createLocalVideoTrack } from 'livekit-client'
 import type { LocalVideoTrack } from 'livekit-client'
@@ -443,7 +444,7 @@ export default function PreJoinScreen({
       <fieldset className="conference-prejoin-toggles" aria-label="Стартовое состояние">
         <button
           type="button"
-          className="conference-controls-toggle"
+          className="conference-prejoin-toggle"
           aria-label="Микрофон"
           aria-pressed={micOn}
           disabled={micBlocked}
@@ -452,20 +453,20 @@ export default function PreJoinScreen({
           }}
         >
           <span aria-hidden="true">Микрофон</span>
-          <span className="conference-controls-state" aria-hidden="true">
+          <span className="conference-prejoin-state" aria-hidden="true">
             {micOn ? 'вкл' : 'выкл'}
           </span>
         </button>
         <button
           type="button"
-          className="conference-controls-toggle"
+          className="conference-prejoin-toggle"
           aria-label="Камера"
           aria-pressed={cameraOn}
           disabled={cameraPending || cameraBlocked}
           onClick={flipCamera}
         >
           <span aria-hidden="true">Камера</span>
-          <span className="conference-controls-state" aria-hidden="true">
+          <span className="conference-prejoin-state" aria-hidden="true">
             {cameraOn ? 'вкл' : 'выкл'}
           </span>
         </button>

@@ -3,14 +3,16 @@
  * каркас конференц-страницы T075 (растягивание обеих точек входа на
  * всё окно браузера), медиа-комната T027 (единая сетка слитых тайлов
  * T084 — экран/камера/аватар участника одним элементом 16:9,
- * статус-строка), панель управления T028 (тумблеры микрофона/камеры/
- * экрана, «Покинуть» — только в стандартном режиме: в пин-оверлее
- * скрыта T089), пин-раскладка T074 (закреплённый тайл большим
- * внутри комнаты + компактная полоса) и её полноэкранный оверлей T079
- * (маркер conference-room-pinned — комната position: fixed на весь
- * вьюпорт без скроллбаров, скрытие служебных панелей, controls
- * поверх тайла), далее pre-join (T030), панели модерации/
- * участников (US3) и гостевая страница (US4) дополняют этот же файл.
+ * статус-строка), панель управления T098 (стимпанк-прототип кнопок-
+ * иконок tmp/conference-controls.html: оболочка machine + 4 круглые
+ * кнопки «Микрофон»/«Камера»/«Экран»/«Покинуть» — паритет обоих
+ * режимов, скрытие T089 демонтировано), пин-раскладка T074
+ * (закреплённый тайл большим внутри комнаты + компактная полоса) и
+ * её полноэкранный оверлей T079 (маркер conference-room-pinned —
+ * комната position: fixed на весь вьюпорт без скроллбаров, скрытие
+ * служебных панелей, controls поверх тайла), далее pre-join (T030),
+ * панели модерации/участников (US3) и гостевая страница (US4)
+ * дополняют этот же файл.
  * Стили — на токенах дизайн-системы «Aethergram» (theme/tokens.css,
  * FR-002): панельные подложки --panel-bg/--input-bg, кремовый текст
  * --cream, латунные подписи --muted, радиусы --r-frame/--r-panel,
@@ -298,14 +300,16 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
  * страховка остаточной высоты секции. Служебные поверхности
  * страницы (панели участников/модерации, компактная полоса)
  * скрываются по body:has(…) — DOM жив:
- * MediaControls (T028) остаётся под RoomContext (хуки livekit,
+ * MediaControls (T028/T098) остаётся под RoomContext (хуки livekit,
  * переносить нельзя) и позиционируется absolute снизу по центру
  * поверх тайла; статус-строки и тост conference.warning —
  * absolute-оверлеи сверху (в потоке отожмут высоту тайла — «весь
- * экран» не получится). Кнопка «Покинуть» в оверлее скрыта (T089):
- * выход из звонка — двухшаговый, сначала свернуть тайл («Свернуть»/
- * Esc T082), тумблеры остаются доступны. Шапка страницы и
- * identity-строка удалены целиком (T087), output-подпись joined-формы
+ * экран» не получится). Панель управления в оверлее НЕ скрывается и
+ * НЕ урезается (T098 — пересмотр T089): «Покинуть» видна и кликабельна
+ * прямо из развёрнутого тайла — выход одношаговый, паритет составов
+ * кнопок/интервалов/размера оболочки со стандартным режимом (Esc/
+ * «Свернуть» T082 по-прежнему только сворачивают пин). Шапка страницы
+ * и identity-строка удалены целиком (T087), output-подпись joined-формы
  * «Вы в конференции» и живой счётчик подключённых (T080) — тоже
  * (T092): их селекторов здесь больше нет. Скоуп — ТОЛЬКО маркер
  * комнаты: обе точки входа (член
@@ -349,7 +353,10 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
 }
 
 /* MediaControls остаётся в DOM под RoomContext (хуки livekit) —
- * только позиционирование: снизу по центру поверх тайла. */
+ * только позиционирование: снизу по центру поверх тайла. Состав
+ * кнопок и вид панели — те же, что в стандартном режиме (T098:
+ * правило скрытия «Покинуть» T089 демонтировано — выход из
+ * развёрнутого тайла одношаговый). */
 .conference-room-pinned .conference-controls {
   position: absolute;
   bottom: 12px;
@@ -357,17 +364,6 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   transform: translateX(-50%);
   z-index: 2;
   max-width: calc(100% - 24px);
-}
-
-/* «Покинуть» — только в стандартном режиме (T089): в пин-оверлее
- * выход из звонка двухшаговый — «Свернуть»/Esc (T082), затем
- * «Покинуть». Кнопка остаётся в DOM (MediaControls под RoomContext),
- * display: none выводит её из a11y-дерева и таб-порядка (008);
- * сворачивание тайла тем же рендером снимает маркер комнаты —
- * кнопка возвращается без дополнительной синхронизации. Тумблеры
- * микрофона/камеры/экрана остаются доступны. */
-.conference-room-pinned .conference-controls-leave {
-  display: none;
 }
 
 /* Статус-строка реконнекта и тост conference.warning —
@@ -385,88 +381,428 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   max-width: calc(100% - 24px);
 }
 
-/* Панель управления конференцией (T028): тумблеры микрофона/камеры/экрана
-   («вкл/выкл» — визуальный индикатор внутри кнопки) и «Покинуть» —
-   в слоте children ConferenceRoom, под сеткой тайлов. «Покинуть»
-   видна только в стандартном режиме: в полноэкранном пин-оверлее
-   T079 скрыта (T089 — правило в блоке оверлея выше). Нативная
-   fieldset-группа (implicit role=group): сбрасываем браузерные дефолты
-   fieldset (margin/min-width) до лексики панели. */
+/* ============================================================
+ * Панель управления конференцией (T098, US1): перенос стимпанк-
+ * прототипа кнопок-иконок tmp/conference-controls.html (эталон —
+ * при расхождениях побеждает прототип, по образцу FR-001 008;
+ * FR-002: константы выражены токенами tokens.css). Оболочка machine
+ * навешивается на сам fieldset .conference-controls — глобальный
+ * класс .machine НЕ используется (занят корпусом мессенджера 008,
+ * theme/machine.css). Внутри кнопок нет текста «вкл/выкл» —
+ * состояние дублируется визуалом data-state: on = золотая рамка +
+ * свечение + горящая лампа (flick 4s) + on-части иконки (шестерня
+ * проектора крутится 6s), off = диагональный штрих --err + тёмная
+ * лампа, blocked («отключён модератором») = приглушение saturate +
+ * замок-бейдж. Латунный tooltip на :hover/:focus-visible всех
+ * кнопок (замена нативного title T097): имя либо уведомление об
+ * отключении (aria-describedby на id узла; disabled-кнопка фокуса
+ * не получает — tooltip дублирует состояние только для мыши).
+ * Паритет двух режимов (пересмотр T089): состав кнопок/интервалы/
+ * размер оболочки идентичны в стандартном режиме и пин-оверлее —
+ * в оверлее отличается только размещение (правило T079 выше).
+ * prefers-reduced-motion глушит анимации глобально machine.css
+ * (паттерн 008 FR-004).
+ * ============================================================ */
+
+/* Оболочка machine (прототип .machine): двойная латунная рамка
+ * (бордер --gold-dark + внутренняя рамка-вкладыш ::before),
+ * полупрозрачная тёмная пластина + backdrop-blur, теневое кольцо;
+ * подгоняется под контент и центрируется в обоих режимах
+ * (align-self: center flex-колонки комнаты; в оверлее T079 —
+ * absolute-центрирование правила выше). У самой оболочки overflow
+ * visible — tooltip'ы выезжают за верхнюю границу. Нативная
+ * fieldset-группа (implicit role=group): браузерные дефолты fieldset
+ * (margin/min-width) сброшены до лексики панели. */
 .conference-controls {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  gap: 22px;
   margin: 0;
   min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-frame);
-  background: var(--panel-bg);
+  width: fit-content;
+  max-width: 100%;
+  align-self: center;
+  padding: 18px 24px;
+  border: 1px solid var(--gold-dark);
+  border-radius: 18px;
+  background: rgba(20, 17, 12, 0.72);
+  backdrop-filter: blur(2px);
+  box-shadow:
+    0 0 0 4px rgba(138, 106, 44, 0.16),
+    0 24px 60px rgba(0, 0, 0, 0.6);
 }
 
-/* Тумблер: aria-pressed — золотая рамка активной публикации (008:
-   состояние дублируется визуалом, не только цветом — текст «вкл/выкл»). */
-.conference-controls-toggle {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 7px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-panel);
-  background: var(--input-bg);
-  font: 13px var(--font-body);
-  color: var(--cream);
-  cursor: pointer;
+/* Внутренняя рамка-вкладыш машины (прототип .machine::before). */
+.conference-controls::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px solid rgba(201, 162, 74, 0.35);
+  border-radius: 14px;
+  pointer-events: none;
 }
 
-.conference-controls-toggle[aria-pressed='true'] {
-  border-color: var(--gold);
-  color: var(--cream-bright);
+/* Декоративный слой шестерёнок (прототип .decor-layer): обрезка
+ * слоем (overflow hidden + радиус машины) — шестерёнки «выглядывают»
+ * из углов; кнопки подняты z-index'ом выше слоя. */
+.conference-controls-decor {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  pointer-events: none;
 }
 
-.conference-controls-state {
-  font: italic 11px var(--font-body);
-  color: var(--muted);
+.conference-controls-decor-tr,
+.conference-controls-decor-bl {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0.28;
+  animation: conference-controls-spin 90s linear infinite;
 }
 
-/* Выход из конференции — только в стандартном режиме (все тайлы
-   свёрнуты): в пин-оверлее T079 скрыта (T089), выход из развёрнутого
-   тайла двухшаговый — «Свернуть»/Esc (T082), затем «Покинуть». */
+.conference-controls-decor-tr {
+  top: -16px;
+  right: -16px;
+  width: 96px;
+  height: 96px;
+}
+
+.conference-controls-decor-bl {
+  bottom: -12px;
+  left: -12px;
+  width: 64px;
+  height: 64px;
+}
+
+/* Круглая кнопка-иконка 78px (прототип .ctl): тумблеры источников и
+ * «Покинуть»; состояние — data-state (правила ниже), интервал между
+ * кнопками — gap 22px оболочки. */
+.conference-controls-toggle,
 .conference-controls-leave {
-  margin-left: auto;
-  padding: 7px 14px;
-  border: 1px solid var(--err);
-  border-radius: var(--r-panel);
-  background: var(--input-bg);
-  font: 13px var(--font-body);
-  color: var(--err);
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 78px;
+  height: 78px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--gold-dark);
+  background: radial-gradient(
+    circle at 34% 26%,
+    rgba(232, 200, 119, 0.16),
+    rgba(25, 21, 16, 0.92) 58%,
+    #0c0a07 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(232, 200, 119, 0.28),
+    inset 0 -8px 14px rgba(0, 0, 0, 0.55),
+    0 3px 8px rgba(0, 0, 0, 0.55);
+  color: var(--muted-3);
   cursor: pointer;
+  transition:
+    border-color 0.25s,
+    box-shadow 0.25s,
+    color 0.25s,
+    transform 0.12s,
+    filter 0.25s;
+}
+
+.conference-controls-toggle:hover:not(:disabled),
+.conference-controls-leave:hover {
+  border-color: var(--gold);
+  transform: translateY(-1px);
+}
+
+.conference-controls-toggle:active:not(:disabled),
+.conference-controls-leave:active {
+  transform: translateY(1px);
 }
 
 /* Конвенция 008 FR-035: видимый фокус с клавиатуры. */
 .conference-controls button:focus-visible {
   outline: 2px solid var(--gold-light);
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
-.conference-controls button[disabled] {
+/* Вкл = золотая рамка + свечение (прототип [data-state='on']). */
+.conference-controls-toggle[data-state='on'] {
+  border-color: var(--gold);
+  color: var(--gold-light);
+  box-shadow:
+    inset 0 1px 0 rgba(232, 200, 119, 0.35),
+    inset 0 -8px 14px rgba(0, 0, 0, 0.5),
+    inset 0 0 12px rgba(232, 200, 119, 0.14),
+    0 0 16px rgba(232, 200, 119, 0.22);
+}
+
+/* «Отключён модератором» = приглушение (прототип [data-state='blocked']). */
+.conference-controls-toggle[data-state='blocked'] {
+  border-color: #55452c;
+  color: rgba(141, 127, 99, 0.5);
+  filter: saturate(0.55);
+  cursor: not-allowed;
+}
+
+/* Кнопки в полёте переключения/вне подключения (disabled без блокировки
+ * модератором) — прежнее приглушение T028. */
+.conference-controls button[disabled]:not([data-state='blocked']) {
   opacity: 0.45;
   cursor: default;
 }
 
-/* Нейтральная строка отказа переключения (детали не раскрываются). */
+/* Иконка-прибор 30px (прототип .ctl-icon). */
+.conference-controls-icon {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Лампа-индикатор: тёмная в выкл, горящая во вкл (прототип .lamp). */
+.conference-controls-lamp {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #4a3d26, #241c10 70%);
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.8);
+  transition:
+    background 0.25s,
+    box-shadow 0.25s;
+}
+
+.conference-controls-toggle[data-state='on'] .conference-controls-lamp {
+  background: radial-gradient(circle at 35% 30%, #fff6d8, var(--gold-light) 45%, var(--gold-dark));
+  box-shadow:
+    0 0 8px rgba(232, 200, 119, 0.8),
+    0 0 2px #fff;
+  animation: conference-controls-flick 4s ease-in-out infinite;
+}
+
+/* On-части иконки (волны/ирис/луч/картинка) проявляются во вкл. */
+.conference-controls-on-part {
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.conference-controls-toggle[data-state='on'] .conference-controls-on-part {
+  opacity: 1;
+}
+
+.conference-controls-toggle[data-state='on'] .conference-controls-wave {
+  animation: conference-controls-wave-pulse 4s ease-in-out infinite;
+}
+
+.conference-controls-toggle[data-state='on'] .conference-controls-beam {
+  animation: conference-controls-beam-flick 4s ease-in-out infinite;
+}
+
+/* Шестерня проектора крутится во вкл (прототип .gear, 6s). */
+.conference-controls-toggle[data-state='on'] .conference-controls-gear {
+  animation: conference-controls-spin 6s linear infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Выкл = диагональный штрих --err (прототип .off-slash). */
+.conference-controls-off-slash {
+  opacity: 0;
+  transition: opacity 0.3s;
+  stroke: var(--err);
+  stroke-width: 2;
+}
+
+.conference-controls-toggle[data-state='off'] .conference-controls-off-slash {
+  opacity: 0.95;
+}
+
+/* Замок-бейдж «отключён модератором» (прототип .lock): виден в blocked. */
+.conference-controls-lock {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--gold-dark);
+  background: radial-gradient(circle at 34% 26%, #2a2318, #171208 75%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.conference-controls-toggle[data-state='blocked'] .conference-controls-lock {
+  opacity: 1;
+}
+
+.conference-controls-lock svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Латунный tooltip (прототип .tooltip, замена нативного title T097):
+ * имя кнопки либо уведомление об отключении; выезжает над кнопкой
+ * при :hover/:focus-visible, живёт вне клиппинга оболочки (overflow
+ * visible) и не ловит указатель. */
+.conference-controls-tooltip {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  display: block;
+  padding: 6px 11px;
+  border: 1px solid var(--gold-dark);
+  border-radius: var(--r-field);
+  background: linear-gradient(180deg, #221c12, #14100a);
+  box-shadow:
+    0 0 0 1px rgba(201, 162, 74, 0.18),
+    0 6px 14px rgba(0, 0, 0, 0.55);
+  font: italic 12.5px var(--font-body);
+  letter-spacing: 0.02em;
+  color: var(--cream);
+  white-space: nowrap;
+  opacity: 0;
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.conference-controls-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: var(--gold-dark);
+}
+
+.conference-controls button:hover .conference-controls-tooltip,
+.conference-controls button:focus-visible .conference-controls-tooltip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* «Покинуть» — дверь со стрелкой в акценте --err (прототип .ctl-leave);
+ * видна в обоих режимах (T098 — пересмотр скрытия T089). */
+.conference-controls-leave {
+  color: var(--err);
+  border-color: rgba(255, 180, 163, 0.45);
+}
+
+.conference-controls-leave:hover {
+  border-color: var(--err);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 180, 163, 0.25),
+    inset 0 -8px 14px rgba(0, 0, 0, 0.5),
+    0 0 16px rgba(255, 180, 163, 0.18);
+}
+
+/* Клубки пара при переключении (прототип .puff; паттерн композера 008:
+ * узлы рождаются императивно, убираются animationend'ом). */
+.conference-controls-puff {
+  position: absolute;
+  top: -4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(238, 226, 200, 0.55), rgba(238, 226, 200, 0) 70%);
+  animation: conference-controls-puff 0.8s ease-out forwards;
+  pointer-events: none;
+}
+
+/* Нейтральная строка отказа переключения (детали не раскрываются) —
+ * под кнопками внутри оболочки. */
 .conference-controls-notice {
+  position: relative;
+  z-index: 1;
   flex-basis: 100%;
   margin: 0;
   font: italic 12px var(--font-body);
   color: var(--muted);
 }
 
+/* Анимации прототипа: мерцание лампы, вращение шестерён (декор 90s,
+ * проектор 6s), пульс волн/мерцание луча, полёт клубка пара. */
+@keyframes conference-controls-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes conference-controls-flick {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+  88% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes conference-controls-wave-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes conference-controls-beam-flick {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  45% {
+    opacity: 0.7;
+  }
+  70% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes conference-controls-puff {
+  from {
+    opacity: 0.9;
+    transform: translate(-50%, 0) scale(0.5);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -32px) scale(1.5);
+  }
+}
+
 /* ============================================================
  * Pre-join экран (T030, US2; FR-005–FR-007): превью камеры,
- * тумблеры стартового состояния (переиспользуют геометрию
- * .conference-controls-toggle выше), выбор устройств ввода/вывода,
+ * тумблеры стартового состояния (текстовая геометрия T028,
+ * переименованная T098 в .conference-prejoin-toggle/-state —
+ * после замены conference-controls на кнопки-иконки её единственный
+ * потребитель здесь), выбор устройств ввода/вывода,
  * «Войти»/«Отмена». Нативный <dialog> без модальной подложки —
  * диалоговая семантика внутри страницы конференции (008).
  * ============================================================ */
@@ -521,8 +857,9 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   color: var(--muted);
 }
 
-/* Тумблеры стартового состояния: та же пара
-   .conference-controls-toggle/-state (aria-pressed — золотая рамка). */
+/* Тумблеры стартового состояния: текстовая геометрия T028 после
+   переименования T098 (см. докблок секции) — aria-pressed золотит
+   рамку, видимый индикатор «вкл/выкл» остаётся текстом. */
 .conference-prejoin-toggles {
   display: flex;
   flex-wrap: wrap;
@@ -531,6 +868,29 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   min-width: 0;
   padding: 0;
   border: none;
+}
+
+.conference-prejoin-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  color: var(--cream);
+  cursor: pointer;
+}
+
+.conference-prejoin-toggle[aria-pressed='true'] {
+  border-color: var(--gold);
+  color: var(--cream-bright);
+}
+
+.conference-prejoin-state {
+  font: italic 11px var(--font-body);
+  color: var(--muted);
 }
 
 /* Выбор устройств: подпись латунью над селектом, сетка адаптивная. */

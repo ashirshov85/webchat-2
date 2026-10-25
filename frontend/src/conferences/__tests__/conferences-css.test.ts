@@ -28,12 +28,7 @@ import { describe, expect, it } from 'vitest'
  * contain; живая демонстрация маркируется текстовым бейджем
  * «демонстрирует экран» (лексика conference-tile-speaking, 008).
  *
- * T089 — «Покинуть» только в стандартном режиме: в пин-оверлее T079
- * кнопка скрыта display: none по маркеру conference-room-pinned
- * (вне a11y-дерева и таб-порядка), базовое правило и тумблеры
- * (absolute-controls T079) не регрессируют.
- *
- * T092 — демонтаж живого счётчика T080 и output-подписи joined-форм:
+ * T092 — демонтаж живого счётчика T080 и output-подписи joined-формы:
  * правило .conference-live-count и селекторы скрытия пин-оверлея для
  * него и «.conference-joined > output» удалены из источника целиком;
  * панельные селекторы оверлея (участники/модерация/компактная полоса)
@@ -53,6 +48,19 @@ import { describe, expect, it } from 'vitest'
  * (доменное speechRestricted, T094) в conference-controls не
  * выводится вовсе — правило удалено из источника целиком; нейтральная
  * строка отказа переключения .conference-controls-notice остаётся.
+ *
+ * T098 — полная замена conference-controls на стимпанк-прототип кнопок-
+ * иконок tmp/conference-controls.html: оболочка machine на fieldset
+ * .conference-controls (двойная латунная рамка + фон-пластина +
+ * backdrop-blur + decor-layer с двумя вращающимися шестерёнками),
+ * круглые кнопки-иконки 78px/gap 22px (состояние — data-state on/off/
+ * blocked: лампа + on-части иконки / диагональный штрих / замок-бейдж),
+ * кастомные латунные tooltip на :hover/:focus-visible. ПАРИТЕТ двух
+ * режимов (пересмотр T089): правило скрытия «Покинуть» в пин-оверлее
+ * демонтировано — панель одна для стандартного режима и оверлея.
+ * Геометрия текстовых тумблеров T028 переименована в prejoin-скоуп
+ * (.conference-prejoin-toggle/-state — её единственный потребитель
+ * PreJoinScreen), .conference-controls-state из источника удалён.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -212,39 +220,151 @@ describe('полноэкранный пин-оверлей (T079): статич�
   })
 })
 
-describe('кнопка «Покинуть» только в стандартном режиме (T089): статический пин CSS', () => {
-  it('пин-оверлей T079 скрывает .conference-controls-leave через display: none', () => {
-    // «Покинуть» доступна только когда все тайлы свёрнуты: выход из
-    // развёрнутого тайла двухшаговый — «Свернуть»/Esc (T082), затем
-    // «Покинуть». Кнопка остаётся в DOM (MediaControls под RoomContext),
-    // display: none выводит её из a11y-дерева и таб-порядка (008)
-    const hidden = conferencesCss.match(
-      /\.conference-room-pinned \.conference-controls-leave\s*\{([^}]*)\}/,
-    )
-    expect(hidden).not.toBeNull()
-    expect(hidden?.[1]).toContain('display: none')
-  })
-
-  it('базовое правило .conference-controls-leave сохранено — стандартный режим', () => {
-    // сворачивание тайла тем же рендером снимает маркер
-    // conference-room-pinned — кнопка возвращается без дополнительной
-    // синхронизации; геометрия базовой кнопки не регрессирует
-    // (^ и m — селектор с начала строки: не цеплять хвост правила
-    // пин-оверлея .conference-room-pinned .conference-controls-leave)
-    const leave = conferencesCss.match(/^\.conference-controls-leave\s*\{([^}]*)\}/m)
-    expect(leave).not.toBeNull()
-    expect(leave?.[1]).toContain('margin-left: auto')
-    expect(leave?.[1]).toContain('cursor: pointer')
-  })
-
-  it('тумблеры в пин-оверлее остаются доступны — правится только кнопка выхода', () => {
-    // регресс T079: controls — absolute снизу по центру поверх тайла;
-    // правило скрытия НЕ накрывает тумблеры (нет blanket-скрытия
-    // .conference-controls целиком и нет скрытия .conference-controls-toggle)
+describe('паритет панели управления в двух режимах — пересмотр T089 (T098): статический пин CSS', () => {
+  it('T098: правила скрытия «Покинуть» и тумблеров в пин-оверлее демонтированы — панель одна для обоих режимов', () => {
+    // реинверсия пинов T089: «Покинуть» видна и кликабельна прямо из
+    // развёрнутого тайла (выход одношаговый); blanket-скрытия controls
+    // и точечных кнопок в оверлее тоже нет — состав кнопок идентичен
+    expect(conferencesCss).not.toContain('.conference-room-pinned .conference-controls-leave')
     expect(conferencesCss).not.toMatch(
       /\.conference-room-pinned \.conference-controls\s*\{[^}]*display:\s*none/,
     )
     expect(conferencesCss).not.toContain('.conference-room-pinned .conference-controls-toggle')
+  })
+
+  it('позиционирование панели в оверлее остаётся T079: absolute снизу по центру — отличается размещение, не вид', () => {
+    const controls = conferencesCss.match(
+      /\.conference-room-pinned \.conference-controls\s*\{([^}]*)\}/,
+    )
+    expect(controls).not.toBeNull()
+    expect(controls?.[1]).toContain('position: absolute')
+    expect(controls?.[1]).toContain('bottom:')
+    expect(controls?.[1]).toContain('left: 50%')
+    expect(controls?.[1]).toContain('transform: translateX(-50%)')
+    expect(controls?.[1]).toContain('z-index')
+  })
+})
+
+describe('стимпанк-панель кнопок-иконок прототипа (T098): статический пин CSS', () => {
+  it('оболочка machine на fieldset .conference-controls: латунная рамка + внутренняя рамка-вкладыш + фон-пластина', () => {
+    // корпус машины из прототипа .machine: у самой оболочки overflow
+    // visible (tooltip'ы выезжают за верхнюю границу); радиус машины 18px
+    const shell = conferencesCss.match(/^\.conference-controls\s*\{([^}]*)\}/m)
+    expect(shell).not.toBeNull()
+    expect(shell?.[1]).toContain('border: 1px solid var(--gold-dark)')
+    expect(shell?.[1]).toContain('border-radius: 18px')
+    expect(shell?.[1]).toContain('background: rgba(20, 17, 12, 0.72)')
+    expect(shell?.[1]).toContain('backdrop-filter: blur(2px)')
+    expect(shell?.[1]).toContain('padding: 18px 24px')
+    // равные интервалы кнопок прототипа — gap 22px
+    expect(shell?.[1]).toContain('gap: 22px')
+    // двойная рамка: внутренняя рамка-вкладыш ::before inset 4px
+    const inner = conferencesCss.match(/\.conference-controls::before\s*\{([^}]*)\}/)
+    expect(inner).not.toBeNull()
+    expect(inner?.[1]).toContain('inset: 4px')
+    expect(inner?.[1]).toContain('rgba(201, 162, 74, 0.35)')
+  })
+
+  it('decor-layer с ДВУМЯ вращающимися шестерёнками, обрезка слоем — оболочка не клиппит tooltip', () => {
+    const layer = conferencesCss.match(/\.conference-controls-decor\s*\{([^}]*)\}/)
+    expect(layer).not.toBeNull()
+    expect(layer?.[1]).toContain('overflow: hidden')
+    expect(layer?.[1]).toContain('pointer-events: none')
+    // шестерёнки «выглядывают» из углов (tr/bl) и крутятся 90s linear infinite
+    const tr = conferencesCss.match(/\.conference-controls-decor-tr\s*\{([^}]*)\}/)
+    const bl = conferencesCss.match(/\.conference-controls-decor-bl\s*\{([^}]*)\}/)
+    expect(tr).not.toBeNull()
+    expect(bl).not.toBeNull()
+    const spin = conferencesCss.match(
+      /\.conference-controls-decor-tr,\s*\.conference-controls-decor-bl\s*\{([^}]*)\}/,
+    )
+    expect(spin?.[1]).toContain('animation: conference-controls-spin 90s linear infinite')
+  })
+
+  it('кнопки-иконки 78px: круглые, состояние — data-state (on/off/blocked) вместо текста «вкл/выкл»', () => {
+    const button = conferencesCss.match(
+      /^\.conference-controls-toggle,\s*\.conference-controls-leave\s*\{([^}]*)\}/m,
+    )
+    expect(button).not.toBeNull()
+    expect(button?.[1]).toContain('width: 78px')
+    expect(button?.[1]).toContain('height: 78px')
+    expect(button?.[1]).toContain('border-radius: 50%')
+    // on = золотая рамка + свечение
+    const on = conferencesCss.match(/\.conference-controls-toggle\[data-state='on'\]\s*\{([^}]*)\}/)
+    expect(on).not.toBeNull()
+    expect(on?.[1]).toContain('border-color: var(--gold)')
+    // лампа-индикатор горит в on (flick 4s)
+    const lamp = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='on'\] \.conference-controls-lamp\s*\{([^}]*)\}/,
+    )
+    expect(lamp).not.toBeNull()
+    expect(lamp?.[1]).toContain('animation: conference-controls-flick 4s ease-in-out infinite')
+    // off = диагональный штрих --err
+    const slashBase = conferencesCss.match(/\.conference-controls-off-slash\s*\{([^}]*)\}/)
+    expect(slashBase?.[1]).toContain('var(--err)')
+    const slash = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='off'\] \.conference-controls-off-slash\s*\{([^}]*)\}/,
+    )
+    expect(slash?.[1]).toContain('opacity: 0.95')
+    // blocked = приглушение + замок-бейдж
+    const blocked = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='blocked'\]\s*\{([^}]*)\}/,
+    )
+    expect(blocked?.[1]).toContain('saturate(0.55)')
+    const lock = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='blocked'\] \.conference-controls-lock\s*\{([^}]*)\}/,
+    )
+    expect(lock?.[1]).toContain('opacity: 1')
+    // on-части иконки (волны/ирис/луч) и шестерня проектора (6s)
+    const onPart = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='on'\] \.conference-controls-on-part\s*\{([^}]*)\}/,
+    )
+    expect(onPart?.[1]).toContain('opacity: 1')
+    const gear = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='on'\] \.conference-controls-gear\s*\{([^}]*)\}/,
+    )
+    expect(gear?.[1]).toContain('animation: conference-controls-spin 6s linear infinite')
+  })
+
+  it('латунный tooltip на кнопках: показ :hover/:focus-visible (замена нативного title T097)', () => {
+    const tip = conferencesCss.match(/\.conference-controls-tooltip\s*\{([^}]*)\}/)
+    expect(tip).not.toBeNull()
+    expect(tip?.[1]).toContain('bottom: calc(100% + 12px)')
+    expect(tip?.[1]).toContain('white-space: nowrap')
+    expect(tip?.[1]).toContain('color: var(--cream)')
+    const shown = conferencesCss.match(
+      /\.conference-controls button:hover \.conference-controls-tooltip,\s*\.conference-controls button:focus-visible \.conference-controls-tooltip\s*\{([^}]*)\}/,
+    )
+    expect(shown).not.toBeNull()
+    expect(shown?.[1]).toContain('opacity: 1')
+  })
+
+  it('«Покинуть» — круглая кнопка-иконка в акценте --err (геометрия прототипа)', () => {
+    // собственное правило акции (после базовой геометрии .ctl): дверь
+    // со стрелкой в err-латуни; hover-свечение — в err-спектре
+    const leaveRules = [...conferencesCss.matchAll(/^\.conference-controls-leave\s*\{([^}]*)\}/gm)]
+    expect(
+      leaveRules.some(([, body]) => body?.includes('color: var(--err)') === true),
+      'правило .conference-controls-leave с color: var(--err)',
+    ).toBe(true)
+  })
+
+  it('переименование геометрии текстовых тумблеров в prejoin-скоуп (единственный потребитель — PreJoinScreen)', () => {
+    // правила T028 НЕ удаляются бездумно: их геометрию переиспользует
+    // PreJoinScreen — переименованы в .conference-prejoin-toggle/-state
+    const toggleRule = conferencesCss.match(/^\.conference-prejoin-toggle\s*\{([^}]*)\}/m)
+    expect(toggleRule).not.toBeNull()
+    expect(toggleRule?.[1]).toContain('border: 1px solid var(--line)')
+    expect(toggleRule?.[1]).toContain('background: var(--input-bg)')
+    const pressed = conferencesCss.match(
+      /\.conference-prejoin-toggle\[aria-pressed='true'\]\s*\{([^}]*)\}/,
+    )
+    expect(pressed?.[1]).toContain('border-color: var(--gold)')
+    const state = conferencesCss.match(/^\.conference-prejoin-state\s*\{([^}]*)\}/m)
+    expect(state?.[1]).toContain('color: var(--muted)')
+    // старый текстовый индикатор controls удалён: в панели состояния
+    // дублируются визуалом data-state, текстовых узлов нет
+    expect(conferencesCss).not.toContain('.conference-controls-state')
   })
 })
 
