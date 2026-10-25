@@ -26,9 +26,10 @@
  *
  * Индикация ограничений (FR-008, Q22=A) — зеркало доменных
  * ParticipantRestrictions по фактическим grants (§3):
- * `canPublish=false` — «всё заблокировано» (Q4=A «право слова» и
- * все-три-точечных T094 — grants неразличимы, пометка строки
- * единая «право слова»); отсутствие источника в `canPublishSources`
+ * `canPublish=false` — «всё заблокировано» (Q4=A «Все источники»
+ * (доменное speechRestricted, T094) и все-три-точечных T094 — grants
+ * неразличимы, пометка строки единая «все источники отключены»);
+ * отсутствие источника в `canPublishSources`
  * — точечное ограничение; ПУСТОЙ набор источников семантически
  * «все разрешены» (LiveKit) — не помечается (защитная ветка).
  * Панель не хранит состояний — это чистая проекция прав: ограничения
@@ -57,7 +58,7 @@ export interface ParticipantMarks {
 /**
  * Индикация ограничений — зеркало ParticipantRestrictions (домен 009)
  * по фактическим grants подключения: точечные restricted-поля и
- * «право слова» (Q4=A).
+ * «Все источники» (доменное speechRestricted, T094; Q4=A).
  */
 export interface ParticipantRestrictionMarks {
   readonly micRestricted: boolean
@@ -148,9 +149,10 @@ export function parseParticipantMarks(metadata: string | undefined): Participant
 /**
  * Индикация ограничений по фактическим grants (§3 — зеркало
  * ParticipantRestrictions.grants): `canPublish=false` — ВСЕ ЧЕТЫРЕ
- * метки true («всё заблокировано»: покрывает и «право слова» Q4=A, и
- * все-три-точечных T094 — grants эти доменные состояния неразличимы,
- * эффективное состояние одинаково; осознанная неразличимость);
+ * метки true («всё заблокировано»: покрывает и «Все источники»
+ * (доменное speechRestricted, T094; Q4=A), и все-три-точечных T094 —
+ * grants эти доменные состояния неразличимы, эффективное состояние
+ * одинаково; осознанная неразличимость);
  * иначе точечно — источника нет в canPublishSources ⟺ срезан
  * модератором. Пустой набор источников при canPublish=true =
  * «все разрешены» (семантика LiveKit) — защитная ветка без пометок
@@ -185,10 +187,10 @@ export function restrictionMarks(
   }
 }
 
-/** Тексты индикаций ограничений строки («право слова» поглощает точечные — Q4=A). */
+/** Тексты индикаций ограничений строки («Все источники» поглощает точечные — Q4=A). */
 function restrictionNotes(marks: ParticipantRestrictionMarks): string[] {
   if (marks.speechRestricted) {
-    return ['право слова']
+    return ['все источники отключены']
   }
   const notes: string[] = []
   if (marks.micRestricted) {

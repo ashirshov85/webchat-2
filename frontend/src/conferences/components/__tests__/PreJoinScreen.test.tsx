@@ -307,7 +307,7 @@ describe('PreJoinScreen — блокировка тумблеров по №46 M
     expect(selection.microphone).toBe(true)
   })
 
-  it('speechRestricted («право слова», Q4=A): заблокированы ВСЕ тумблеры, одно объединяющее пояснение', () => {
+  it('speechRestricted («Все источники», доменное speechRestricted — T094; Q4=A): заблокированы ВСЕ тумблеры, одно объединяющее пояснение', () => {
     camera.createLocalVideoTrack.mockResolvedValue(fakeVideoTrack())
     const { onJoin } = renderScreen({
       mode: 'video',
@@ -319,7 +319,7 @@ describe('PreJoinScreen — блокировка тумблеров по №46 M
     expect(micToggle()).toHaveAttribute('aria-pressed', 'false')
     expect(camera.createLocalVideoTrack).not.toHaveBeenCalled()
     expect(
-      screen.getByText('Публикация отключена модератором (право слова) — вы войдёте как слушатель'),
+      screen.getByText('Все источники отключены модератором — вы войдёте как слушатель'),
     ).toBeVisible()
     // отдельные per-source пояснения не дублируются
     expect(screen.queryByText('Микрофон отключён модератором')).toBeNull()

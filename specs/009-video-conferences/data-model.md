@@ -86,7 +86,7 @@ Mapping путей завершения на `end_reason` (детерминиз�
 | `mic_restricted` | boolean NOT NULL DEFAULT false | модерационное ограничение источника microphone |
 | `camera_restricted` | boolean NOT NULL DEFAULT false | источника camera |
 | `screen_restricted` | boolean NOT NULL DEFAULT false | источника screen_share (+ screen_share_audio) — персистентное точечное ограничение (Q22=A) |
-| `speech_restricted` | boolean NOT NULL DEFAULT false | «право слова»: блокирует все публикации (Q4=A) — при минте даёт `canPublish=false` |
+| `speech_restricted` | boolean NOT NULL DEFAULT false | «Все источники» (доменное speechRestricted; Q4=A): блокирует все публикации — при минте даёт `canPublish=false` |
 | `first_seen_at` | timestamptz NOT NULL DEFAULT now() | |
 | `last_joined_at` | timestamptz NULL | вебхук `participant_joined` по совпадению identity-префикса |
 | `last_left_at` | timestamptz NULL | вебхук `participant_left` |

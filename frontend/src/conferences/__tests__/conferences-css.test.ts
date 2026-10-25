@@ -26,18 +26,62 @@ import { describe, expect, it } from 'vitest'
  * (.conference-screens) и 21:9-тайл экрана (.conference-tile-screen)
  * удалены — единая сетка тайлов 16:9, экран вписывается object-fit
  * contain; живая демонстрация маркируется текстовым бейджем
- * «демонстрирует экран» (лексика conference-tile-speaking, 008).
+ * «демонстрирует экран» (латунная курсивная лексика, 008).
  *
- * T089 — «Покинуть» только в стандартном режиме: в пин-оверлее T079
- * кнопка скрыта display: none по маркеру conference-room-pinned
- * (вне a11y-дерева и таб-порядка), базовое правило и тумблеры
- * (absolute-controls T079) не регрессируют.
- *
- * T092 — демонтаж живого счётчика T080 и output-подписи joined-форм:
+ * T092 — демонтаж живого счётчика T080 и output-подписи joined-формы:
  * правило .conference-live-count и селекторы скрытия пин-оверлея для
  * него и «.conference-joined > output» удалены из источника целиком;
  * панельные селекторы оверлея (участники/модерация/компактная полоса)
  * сохранены.
+ *
+ * T096 — вертикальное центрирование pre-join-панели члена
+ * (.conference-prejoin) и гостевых форм (.guest-join-name,
+ * .guest-join-prejoin): auto-маржины flex-элемента поглощают свободное
+ * место по ОБЕИМ осям (margin: 0 auto → margin: auto) — формы встают
+ * в центр фазовой колонки по горизонтали И вертикали, симметрично для
+ * обеих точек входа (PreJoinScreen переиспользуется, паритет Q1=C);
+ * прочие фазы (joined/error/терминал) не центрируются.
+ *
+ * T097 — демонтаж стека пояснений .conference-controls-restrictions
+ * (T043): уведомления о точечных ограничениях всплывают нативным
+ * title тумблера, состояние «все источники отключены модератором»
+ * (доменное speechRestricted, T094) в conference-controls не
+ * выводится вовсе — правило удалено из источника целиком; нейтральная
+ * строка отказа переключения .conference-controls-notice остаётся.
+ *
+ * T098 — полная замена conference-controls на стимпанк-прототип кнопок-
+ * иконок tmp/conference-controls.html: оболочка machine на fieldset
+ * .conference-controls (двойная латунная рамка + фон-пластина +
+ * backdrop-blur + decor-layer с двумя вращающимися шестерёнками),
+ * круглые кнопки-иконки 78px/gap 22px (состояние — data-state on/off/
+ * blocked: лампа + on-части иконки / диагональный штрих / замок-бейдж),
+ * кастомные латунные tooltip на :hover/:focus-visible. ПАРИТЕТ двух
+ * режимов (пересмотр T089): правило скрытия «Покинуть» в пин-оверлее
+ * демонтировано — панель одна для стандартного режима и оверлея.
+ * Геометрия текстовых тумблеров T028 переименована в prejoin-скоуп
+ * (.conference-prejoin-toggle/-state — её единственный потребитель
+ * PreJoinScreen), .conference-controls-state из источника удалён.
+ *
+ * T099 — задний фон сетки тайлов: та же отделка корпуса machine, что у
+ * conference-controls T098, но БЕЗ decor-слоя шестерёнок. Константы
+ * корпуса (пластина/окантовка/вкладыш/теневое кольцо) с T098 не
+ * дублируются захардкоженными значениями (FR-002): заданы ОДИН раз
+ * CSS-переменными на корневых секциях обеих точек входа и наследуются
+ * поверхностям — панель управления (T098) и сетка тайлов (T099)
+ * потребляют общий --conference-machine-*-лексикон. Машиной красится
+ * только стандартная сетка: компактная полоса пина
+ * (.conference-tiles-compact) живёт своей геометрией (:not-гвард),
+ * grid-механика T084/T075 не меняется (auto-fit/minmax/gap).
+ *
+ * T101 — задний фон форм: pre-join (.conference-prejoin, обе точки
+ * входа — член и гость) и шаг имени гостя (.guest-join-name) получают
+ * ту же отделку корпуса machine, что панель управления T098 и сетка
+ * тайлов T099, но БЕЗ decor-слоя шестерёнок: константы корпуса
+ * потребляются из общего --conference-machine-*-лексикона (без дублей,
+ * FR-002); центрирование T096 (margin: auto), заголовки T091 и
+ * геометрия prejoin-тумблеров T098 не регрессируют; обвязка
+ * .guest-join-prejoin сама не красится — двойной рамки у pre-join
+ * гостя не возникает.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -197,39 +241,323 @@ describe('полноэкранный пин-оверлей (T079): статич�
   })
 })
 
-describe('кнопка «Покинуть» только в стандартном режиме (T089): статический пин CSS', () => {
-  it('пин-оверлей T079 скрывает .conference-controls-leave через display: none', () => {
-    // «Покинуть» доступна только когда все тайлы свёрнуты: выход из
-    // развёрнутого тайла двухшаговый — «Свернуть»/Esc (T082), затем
-    // «Покинуть». Кнопка остаётся в DOM (MediaControls под RoomContext),
-    // display: none выводит её из a11y-дерева и таб-порядка (008)
-    const hidden = conferencesCss.match(
-      /\.conference-room-pinned \.conference-controls-leave\s*\{([^}]*)\}/,
-    )
-    expect(hidden).not.toBeNull()
-    expect(hidden?.[1]).toContain('display: none')
-  })
-
-  it('базовое правило .conference-controls-leave сохранено — стандартный режим', () => {
-    // сворачивание тайла тем же рендером снимает маркер
-    // conference-room-pinned — кнопка возвращается без дополнительной
-    // синхронизации; геометрия базовой кнопки не регрессирует
-    // (^ и m — селектор с начала строки: не цеплять хвост правила
-    // пин-оверлея .conference-room-pinned .conference-controls-leave)
-    const leave = conferencesCss.match(/^\.conference-controls-leave\s*\{([^}]*)\}/m)
-    expect(leave).not.toBeNull()
-    expect(leave?.[1]).toContain('margin-left: auto')
-    expect(leave?.[1]).toContain('cursor: pointer')
-  })
-
-  it('тумблеры в пин-оверлее остаются доступны — правится только кнопка выхода', () => {
-    // регресс T079: controls — absolute снизу по центру поверх тайла;
-    // правило скрытия НЕ накрывает тумблеры (нет blanket-скрытия
-    // .conference-controls целиком и нет скрытия .conference-controls-toggle)
+describe('паритет панели управления в двух режимах — пересмотр T089 (T098): статический пин CSS', () => {
+  it('T098: правила скрытия «Покинуть» и тумблеров в пин-оверлее демонтированы — панель одна для обоих режимов', () => {
+    // реинверсия пинов T089: «Покинуть» видна и кликабельна прямо из
+    // развёрнутого тайла (выход одношаговый); blanket-скрытия controls
+    // и точечных кнопок в оверлее тоже нет — состав кнопок идентичен
+    expect(conferencesCss).not.toContain('.conference-room-pinned .conference-controls-leave')
     expect(conferencesCss).not.toMatch(
       /\.conference-room-pinned \.conference-controls\s*\{[^}]*display:\s*none/,
     )
     expect(conferencesCss).not.toContain('.conference-room-pinned .conference-controls-toggle')
+  })
+
+  it('позиционирование панели в оверлее остаётся T079: absolute снизу по центру — отличается размещение, не вид', () => {
+    const controls = conferencesCss.match(
+      /\.conference-room-pinned \.conference-controls\s*\{([^}]*)\}/,
+    )
+    expect(controls).not.toBeNull()
+    expect(controls?.[1]).toContain('position: absolute')
+    expect(controls?.[1]).toContain('bottom:')
+    expect(controls?.[1]).toContain('left: 50%')
+    expect(controls?.[1]).toContain('transform: translateX(-50%)')
+    expect(controls?.[1]).toContain('z-index')
+  })
+})
+
+describe('стимпанк-панель кнопок-иконок прототипа (T098): статический пин CSS', () => {
+  it('оболочка machine на fieldset .conference-controls: латунная рамка + внутренняя рамка-вкладыш + фон-пластина', () => {
+    // корпус машины из прототипа .machine: у самой оболочки overflow
+    // visible (tooltip'ы выезжают за верхнюю границу); константы корпуса
+    // выражены общим --conference-machine-*-лексиконом (единственный
+    // источник — корневые секции конференции, пин в блоке T099 ниже)
+    const shell = conferencesCss.match(/^\.conference-controls\s*\{([^}]*)\}/m)
+    expect(shell).not.toBeNull()
+    expect(shell?.[1]).toContain('border: var(--conference-machine-border)')
+    expect(shell?.[1]).toContain('border-radius: var(--conference-machine-radius)')
+    expect(shell?.[1]).toContain('background: var(--conference-machine-bg)')
+    expect(shell?.[1]).toContain('backdrop-filter: var(--conference-machine-blur)')
+    expect(shell?.[1]).toContain('padding: 18px 24px')
+    // равные интервалы кнопок прототипа — gap 22px
+    expect(shell?.[1]).toContain('gap: 22px')
+    // двойная рамка: внутренняя рамка-вкладыш ::before inset 4px —
+    // правило общее с сеткой тайлов (T099), пин в блоке T099 ниже
+  })
+
+  it('decor-layer с ДВУМЯ вращающимися шестерёнками, обрезка слоем — оболочка не клиппит tooltip', () => {
+    const layer = conferencesCss.match(/\.conference-controls-decor\s*\{([^}]*)\}/)
+    expect(layer).not.toBeNull()
+    expect(layer?.[1]).toContain('overflow: hidden')
+    expect(layer?.[1]).toContain('pointer-events: none')
+    // шестерёнки «выглядывают» из углов (tr/bl) и крутятся 90s linear infinite
+    const tr = conferencesCss.match(/\.conference-controls-decor-tr\s*\{([^}]*)\}/)
+    const bl = conferencesCss.match(/\.conference-controls-decor-bl\s*\{([^}]*)\}/)
+    expect(tr).not.toBeNull()
+    expect(bl).not.toBeNull()
+    const spin = conferencesCss.match(
+      /\.conference-controls-decor-tr,\s*\.conference-controls-decor-bl\s*\{([^}]*)\}/,
+    )
+    expect(spin?.[1]).toContain('animation: conference-controls-spin 90s linear infinite')
+  })
+
+  it('кнопки-иконки 78px: круглые, состояние — data-state (on/off/blocked) вместо текста «вкл/выкл»', () => {
+    const button = conferencesCss.match(
+      /^\.conference-controls-toggle,\s*\.conference-controls-leave\s*\{([^}]*)\}/m,
+    )
+    expect(button).not.toBeNull()
+    expect(button?.[1]).toContain('width: 78px')
+    expect(button?.[1]).toContain('height: 78px')
+    expect(button?.[1]).toContain('border-radius: 50%')
+    // on = золотая рамка + свечение
+    const on = conferencesCss.match(/\.conference-controls-toggle\[data-state='on'\]\s*\{([^}]*)\}/)
+    expect(on).not.toBeNull()
+    expect(on?.[1]).toContain('border-color: var(--gold)')
+    // лампа-индикатор горит в on (flick 4s)
+    const lamp = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='on'\] \.conference-controls-lamp\s*\{([^}]*)\}/,
+    )
+    expect(lamp).not.toBeNull()
+    expect(lamp?.[1]).toContain('animation: conference-controls-flick 4s ease-in-out infinite')
+    // off = диагональный штрих --err
+    const slashBase = conferencesCss.match(/\.conference-controls-off-slash\s*\{([^}]*)\}/)
+    expect(slashBase?.[1]).toContain('var(--err)')
+    const slash = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='off'\] \.conference-controls-off-slash\s*\{([^}]*)\}/,
+    )
+    expect(slash?.[1]).toContain('opacity: 0.95')
+    // blocked = приглушение + замок-бейдж
+    const blocked = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='blocked'\]\s*\{([^}]*)\}/,
+    )
+    expect(blocked?.[1]).toContain('saturate(0.55)')
+    const lock = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='blocked'\] \.conference-controls-lock\s*\{([^}]*)\}/,
+    )
+    expect(lock?.[1]).toContain('opacity: 1')
+    // on-части иконки (волны/ирис/луч) и шестерня проектора (6s)
+    const onPart = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='on'\] \.conference-controls-on-part\s*\{([^}]*)\}/,
+    )
+    expect(onPart?.[1]).toContain('opacity: 1')
+    const gear = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='on'\] \.conference-controls-gear\s*\{([^}]*)\}/,
+    )
+    expect(gear?.[1]).toContain('animation: conference-controls-spin 6s linear infinite')
+  })
+
+  it('латунный tooltip на кнопках: показ :hover/:focus-visible (замена нативного title T097)', () => {
+    const tip = conferencesCss.match(/\.conference-controls-tooltip\s*\{([^}]*)\}/)
+    expect(tip).not.toBeNull()
+    expect(tip?.[1]).toContain('bottom: calc(100% + 12px)')
+    expect(tip?.[1]).toContain('white-space: nowrap')
+    expect(tip?.[1]).toContain('color: var(--cream)')
+    const shown = conferencesCss.match(
+      /\.conference-controls button:hover \.conference-controls-tooltip,\s*\.conference-controls button:focus-visible \.conference-controls-tooltip\s*\{([^}]*)\}/,
+    )
+    expect(shown).not.toBeNull()
+    expect(shown?.[1]).toContain('opacity: 1')
+  })
+
+  it('«Покинуть» — круглая кнопка-иконка в акценте --err (геометрия прототипа)', () => {
+    // собственное правило акции (после базовой геометрии .ctl): дверь
+    // со стрелкой в err-латуни; hover-свечение — в err-спектре
+    const leaveRules = [...conferencesCss.matchAll(/^\.conference-controls-leave\s*\{([^}]*)\}/gm)]
+    expect(
+      leaveRules.some(([, body]) => body?.includes('color: var(--err)') === true),
+      'правило .conference-controls-leave с color: var(--err)',
+    ).toBe(true)
+  })
+
+  it('переименование геометрии текстовых тумблеров в prejoin-скоуп (единственный потребитель — PreJoinScreen)', () => {
+    // правила T028 НЕ удаляются бездумно: их геометрию переиспользует
+    // PreJoinScreen — переименованы в .conference-prejoin-toggle/-state
+    const toggleRule = conferencesCss.match(/^\.conference-prejoin-toggle\s*\{([^}]*)\}/m)
+    expect(toggleRule).not.toBeNull()
+    expect(toggleRule?.[1]).toContain('border: 1px solid var(--line)')
+    expect(toggleRule?.[1]).toContain('background: var(--input-bg)')
+    const pressed = conferencesCss.match(
+      /\.conference-prejoin-toggle\[aria-pressed='true'\]\s*\{([^}]*)\}/,
+    )
+    expect(pressed?.[1]).toContain('border-color: var(--gold)')
+    const state = conferencesCss.match(/^\.conference-prejoin-state\s*\{([^}]*)\}/m)
+    expect(state?.[1]).toContain('color: var(--muted)')
+    // старый текстовый индикатор controls удалён: в панели состояния
+    // дублируются визуалом data-state, текстовых узлов нет
+    expect(conferencesCss).not.toContain('.conference-controls-state')
+  })
+})
+
+describe('задний фон сетки тайлов — корпус machine без шестерёнок (T099): статический пин CSS', () => {
+  it('константы корпуса заданы ОДИН раз на корневых секциях обеих точек входа (общая лексика T098/T099)', () => {
+    // FR-002: пластина/окантовка/вкладыш/теневое кольцо не дублируются
+    // захардкоженными значениями в правилах-потребителях — единственный
+    // источник: CSS-переменные на корневых секциях конференции (member
+    // section[data-conference-id] и гость section[data-guest-join]);
+    // значения — норматы прототипа .machine (tmp/conference-controls.html)
+    const tokens = conferencesCss.match(
+      /^section\[data-conference-id\],\nsection\[data-guest-join\]\s*\{([^}]*)\}/m,
+    )
+    expect(tokens).not.toBeNull()
+    expect(tokens?.[1]).toContain('--conference-machine-bg: rgba(20, 17, 12, 0.72)')
+    expect(tokens?.[1]).toContain('--conference-machine-blur: blur(2px)')
+    expect(tokens?.[1]).toContain('--conference-machine-border: 1px solid var(--gold-dark)')
+    expect(tokens?.[1]).toContain('--conference-machine-radius: 18px')
+    expect(tokens?.[1]).toContain('--conference-machine-inner: rgba(201, 162, 74, 0.35)')
+    expect(tokens?.[1]).toContain('--conference-machine-inner-radius: 14px')
+    // теневое кольцо прототипа: 0 0 0 4px rgba(138,106,44,.16) + глубокая тень
+    expect(tokens?.[1]).toContain('rgba(138, 106, 44, 0.16)')
+    expect(tokens?.[1]).toContain('0 24px 60px rgba(0, 0, 0, 0.6)')
+  })
+
+  it('сетка .conference-tiles несёт пластину машины: заливка + backdrop-blur + латунная окантовка + радиус машины', () => {
+    // фон навешивается на существующий элемент сетки (DOM/TSX не меняются);
+    // :not-гвард — машиной красится только стандартная сетка, компактная
+    // полоса пина живёт своей геометрией (пин ниже); position: relative —
+    // опора ::before-вкладыша
+    const grid = conferencesCss.match(
+      /^\.conference-tiles:not\(\.conference-tiles-compact\)\s*\{([^}]*)\}/m,
+    )
+    expect(grid).not.toBeNull()
+    expect(grid?.[1]).toContain('position: relative')
+    expect(grid?.[1]).toContain('background: var(--conference-machine-bg)')
+    expect(grid?.[1]).toContain('backdrop-filter: var(--conference-machine-blur)')
+    expect(grid?.[1]).toContain('border: var(--conference-machine-border)')
+    expect(grid?.[1]).toContain('border-radius: var(--conference-machine-radius)')
+    expect(grid?.[1]).toContain('box-shadow: var(--conference-machine-shadow)')
+    // внутренние отступы сетки — тайлы не подпирают рамку-вкладыш
+    expect(grid?.[1]).toContain('padding:')
+  })
+
+  it('рамка-вкладыш ::before — общая с controls, не перехватывает события', () => {
+    // прототип .machine::before: inset 4px, латунь 0.35, радиус 14px;
+    // правило сгруппировано с панелью управления (константа общая)
+    const inner = conferencesCss.match(
+      /\.conference-controls::before,\s*\.conference-tiles:not\(\.conference-tiles-compact\)::before\s*\{([^}]*)\}/,
+    )
+    expect(inner).not.toBeNull()
+    expect(inner?.[1]).toContain("content: ''")
+    expect(inner?.[1]).toContain('position: absolute')
+    expect(inner?.[1]).toContain('inset: 4px')
+    expect(inner?.[1]).toContain('border: 1px solid var(--conference-machine-inner)')
+    expect(inner?.[1]).toContain('border-radius: var(--conference-machine-inner-radius)')
+    // вкладыш не перехватывает события тайлов (гвард задачи)
+    expect(inner?.[1]).toContain('pointer-events: none')
+  })
+
+  it('«без svg шестерёнок»: в скоупе сетки нет decor-слоя и svg-правил — шестерни только у controls (T098)', () => {
+    expect(conferencesCss).not.toMatch(/\.conference-tiles[^{}]*decor/)
+    expect(conferencesCss).not.toMatch(/\.conference-tiles[^{}]*svg/)
+  })
+
+  it('регресс grid-механики T084/T075: auto-fit/minmax/gap не меняются, компактная полоса — своя геометрия', () => {
+    const grid = conferencesCss.match(
+      /^\.conference-tiles:not\(\.conference-tiles-compact\)\s*\{([^}]*)\}/m,
+    )
+    expect(grid?.[1]).toContain('display: grid')
+    expect(grid?.[1]).toContain('grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))')
+    expect(grid?.[1]).toContain('gap: 8px')
+    // компактная полоса пина T074 — горизонтальный flex-скролл без машины
+    const compact = conferencesCss.match(/^\.conference-tiles-compact\s*\{([^}]*)\}/m)
+    expect(compact).not.toBeNull()
+    expect(compact?.[1]).toContain('display: flex')
+    expect(compact?.[1]).toContain('overflow-x: auto')
+  })
+
+  it('докблок блока сетки truthfully описывает корпус machine без шестерёнок', () => {
+    const at = conferencesCss.indexOf('.conference-tiles:not(.conference-tiles-compact)')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 900), at)
+    expect(doc).toContain('machine')
+    expect(doc).toContain('шестерёнок')
+  })
+})
+
+describe('задний фон форм pre-join и шага имени — корпус machine без шестерёнок (T101): статический пин CSS', () => {
+  const panelRule = (selector: string) =>
+    conferencesCss.match(new RegExp(`^\\.${selector}\\s*\\{([^}]*)\\}`, 'm'))
+
+  it('обе панели несут пластину машины: заливка + backdrop-blur + латунная окантовка + радиус машины + теневое кольцо', () => {
+    // фон навешивается на существующие панели (DOM/TSX не меняются);
+    // константы корпуса — из общего --conference-machine-*-лексикона
+    // (единственный источник — корневые секции конференции, T099)
+    for (const selector of ['conference-prejoin', 'guest-join-name']) {
+      const rule = panelRule(selector)
+      expect(rule, `правило .${selector}`).not.toBeNull()
+      // position: relative — опора ::before-вкладыша
+      expect(rule?.[1], `.${selector}`).toContain('position: relative')
+      expect(rule?.[1], `.${selector}`).toContain('background: var(--conference-machine-bg)')
+      expect(rule?.[1], `.${selector}`).toContain('backdrop-filter: var(--conference-machine-blur)')
+      expect(rule?.[1], `.${selector}`).toContain('border: var(--conference-machine-border)')
+      expect(rule?.[1], `.${selector}`).toContain('border-radius: var(--conference-machine-radius)')
+      expect(rule?.[1], `.${selector}`).toContain('box-shadow: var(--conference-machine-shadow)')
+      // отступы — вкладыш inset 4px не подрезает контент (промер)
+      expect(rule?.[1], `.${selector}`).toContain('padding:')
+    }
+  })
+
+  it('рамка-вкладыш ::before у обеих панелей — правило общее с controls/сеткой, не перехватывает события', () => {
+    const inner = conferencesCss.match(
+      /\.conference-prejoin::before,\s*\.guest-join-name::before,\s*\.conference-controls::before,\s*\.conference-tiles:not\(\.conference-tiles-compact\)::before\s*\{([^}]*)\}/,
+    )
+    expect(inner).not.toBeNull()
+    expect(inner?.[1]).toContain("content: ''")
+    expect(inner?.[1]).toContain('position: absolute')
+    expect(inner?.[1]).toContain('inset: 4px')
+    expect(inner?.[1]).toContain('border: 1px solid var(--conference-machine-inner)')
+    expect(inner?.[1]).toContain('border-radius: var(--conference-machine-inner-radius)')
+    // вкладыш не участвует в таб-порядоке/кликах (гвард задачи:
+    // dialog-семантика pre-join и фокус-порядок не трогаются)
+    expect(inner?.[1]).toContain('pointer-events: none')
+  })
+
+  it('«без svg шестерёнок»: в скоупе форм нет decor-слоя и svg-правил — шестерни только у controls (T098)', () => {
+    // пин по правилам: докблоки цитируют запрос «без svg шестерёнок»,
+    // поэтому comments вырезаются — матчится только живой селектор
+    const rulesOnly = conferencesCss.replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const selector of ['conference-prejoin', 'guest-join-name']) {
+      expect(rulesOnly, `decor в скоупе .${selector}`).not.toMatch(
+        new RegExp(`\\.${selector}[^{}]*decor`),
+      )
+      expect(rulesOnly, `svg в скоупе .${selector}`).not.toMatch(
+        new RegExp(`\\.${selector}[^{}]*svg`),
+      )
+    }
+  })
+
+  it('регресс-пины T096/T098: margin: auto и ширина сохранены, prejoin-тумблеры на месте', () => {
+    for (const selector of ['conference-prejoin', 'guest-join-name']) {
+      const rule = panelRule(selector)
+      expect(rule?.[1], `.${selector}: центрирование T096`).toContain('margin: auto')
+      expect(rule?.[1], `.${selector}: ширина`).toContain('width: min(560px, 100%)')
+    }
+    const toggle = conferencesCss.match(/^\.conference-prejoin-toggle\s*\{([^}]*)\}/m)
+    expect(toggle?.[1]).toContain('border: 1px solid var(--line)')
+    expect(toggle?.[1]).toContain('background: var(--input-bg)')
+  })
+
+  it('лексика узкой панели 008 у форм ушла: старый бордер --line / радиус --r-frame / --panel-bg отсутствуют', () => {
+    for (const selector of ['conference-prejoin', 'guest-join-name']) {
+      const rule = panelRule(selector)
+      expect(rule?.[1], `.${selector}`).not.toContain('var(--line)')
+      expect(rule?.[1], `.${selector}`).not.toContain('var(--r-frame)')
+      expect(rule?.[1], `.${selector}`).not.toContain('var(--panel-bg)')
+    }
+    // симметрия точек входа: обвязка .guest-join-prejoin НЕ красится
+    // (гость получает pre-join той же пластиной, двойной рамки нет)
+    const wrap = panelRule('guest-join-prejoin')
+    expect(wrap?.[1]).not.toContain('border')
+    expect(wrap?.[1]).not.toContain('--conference-machine')
+  })
+
+  it('докблоки блоков обеих панелей truthfully описывают корпус machine без шестерёнок', () => {
+    for (const selector of ['.conference-prejoin {', '.guest-join-name {']) {
+      const at = conferencesCss.indexOf(selector)
+      expect(at, `селектор ${selector}`).toBeGreaterThan(0)
+      const doc = conferencesCss.slice(Math.max(0, at - 900), at)
+      expect(doc, `докблок ${selector}`).toContain('machine')
+      expect(doc, `докблок ${selector}`).toContain('шестерёнок')
+    }
   })
 })
 
@@ -285,6 +613,67 @@ describe('центрирование заголовков pre-join и госте
   })
 })
 
+describe('центрирование pre-join-форм по обеим осям (T096): статический пин CSS', () => {
+  it('панель .conference-prejoin — margin: auto: центр фазовой колонки по горизонтали и вертикали', () => {
+    // член чата: <dialog> — ребёнок flex-колонки .conference-join (растянута
+    // на окно); auto-маржины flex-элемента поглощают свободное место по
+    // обеим осям одной декларацией — «Настройка перед входом» в центре окна
+    // вместо прижатости к верху длинной колонки
+    const rule = conferencesCss.match(/^\.conference-prejoin\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: auto')
+  })
+
+  it('форма шага имени .guest-join-name — margin: auto (тот же приём у гостя)', () => {
+    // гость /join/:inviteToken: форма — прямой ребёнок корневой секции
+    // (flex-колонка на 100dvh); центрирование симметрично pre-join члена
+    const rule = conferencesCss.match(/^\.guest-join-name\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: auto')
+  })
+
+  it('обвязка .guest-join-prejoin — margin: auto (переиспользуемый PreJoinScreen центрирован у обеих точек входа)', () => {
+    // иначе один и тот же pre-join-экран центрирован у члена и прижат
+    // к верху у гостя (паритет Q1=C); обвязка центрируется вместе со
+    // своей ошибкой №55 как единый блок
+    const rule = conferencesCss.match(/^\.guest-join-prejoin\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: auto')
+  })
+
+  it('регресс-пин: ширина всех трёх правил сохранена — min(560px, 100%)', () => {
+    // центрирование не меняет геометрию панелей: ширина, рамки и
+    // типографика остаются как до правки
+    for (const selector of ['.conference-prejoin', '.guest-join-name', '.guest-join-prejoin']) {
+      const rule = conferencesCss.match(
+        new RegExp(`^\\.${selector.slice(1)}\\s*\\{([^}]*)\\}`, 'm'),
+      )
+      expect(rule, `правило ${selector}`).not.toBeNull()
+      expect(rule?.[1], `правило ${selector}`).toContain('width: min(560px, 100%)')
+    }
+  })
+})
+
+describe('демонтаж стека пояснений conference-controls (T097): статический пин CSS', () => {
+  it('правило .conference-controls-restrictions удалено из источника целиком', () => {
+    // T043 рендерил стек <output>-строк под тумблерами; T097: точечные
+    // ограничения поясняются нативным title тумблера, «Все источники»
+    // не поясняются вовсе — мёртвое правило не остаётся в CSS
+    expect(conferencesCss).not.toContain('.conference-controls-restrictions')
+  })
+
+  it('нейтральная строка отказа .conference-controls-notice сохранена (регресс)', () => {
+    // «Не удалось включить/выключить …» — единственный потребитель
+    // класса после T097; геометрия не регрессирует (^ и m — не цеплять
+    // хвосты составных селекторов)
+    const rule = conferencesCss.match(/^\.conference-controls-notice\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('flex-basis: 100%')
+    expect(rule?.[1]).toContain('font: italic 12px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
+  })
+})
+
 describe('слитый тайл участника (T084): статический пин CSS', () => {
   it('широкая секция демонстраций и 21:9-тайл экрана удалены — единая сетка тайлов 16:9', () => {
     expect(conferencesCss).not.toContain('.conference-screens')
@@ -295,11 +684,97 @@ describe('слитый тайл участника (T084): статически�
     expect(tile?.[1]).toContain('aspect-ratio: 16 / 9')
   })
 
-  it('бейдж «демонстрирует экран» — правило в лексике conference-tile-speaking', () => {
+  it('бейдж «демонстрирует экран» — латунная курсивная лексика (margin-left 6px, gold-light)', () => {
     const badge = conferencesCss.match(/\.conference-tile-sharing\s*\{([^}]*)\}/)
     expect(badge).not.toBeNull()
     expect(badge?.[1]).toContain('margin-left: 6px')
     expect(badge?.[1]).toContain('font-style: italic')
     expect(badge?.[1]).toContain('color: var(--gold-light)')
+  })
+})
+
+describe('индикатор микрофона и пометки ролей тайла (T100): статический пин CSS', () => {
+  it('бейдж .conference-tile-mic — позиция правый нижний угол (right/bottom 8px), круг 30px, латунная рамка, не перехватывает клики', () => {
+    // прототип tmp/conference-tile-mic.html: бейдж — ИНДИКАТОР, не
+    // кнопка → pointer-events: none (двойной клик тайла T074 жив)
+    const badge = conferencesCss.match(/^\.conference-tile-mic\s*\{([^}]*)\}/m)
+    expect(badge).not.toBeNull()
+    expect(badge?.[1]).toContain('position: absolute')
+    expect(badge?.[1]).toContain('right: 8px')
+    expect(badge?.[1]).toContain('bottom: 8px')
+    expect(badge?.[1]).toContain('width: 30px')
+    expect(badge?.[1]).toContain('height: 30px')
+    expect(badge?.[1]).toContain('border-radius: 50%')
+    expect(badge?.[1]).toContain('pointer-events: none')
+  })
+
+  it('РОВНО ДВА состояния: вкл — золото по умолчанию; выкл — приглушение --muted + диагональный штрих --err', () => {
+    // выкл (второе и ПОСЛЕДНЕЕ состояние): тёмная латунь + muted-иконка
+    const off = conferencesCss.match(/\.conference-tile-mic\[data-mic='off'\]\s*\{([^}]*)\}/)
+    expect(off).not.toBeNull()
+    expect(off?.[1]).toContain('color: var(--muted)')
+    const slash = conferencesCss.match(/^\.conference-tile-mic-slash\s*\{([^}]*)\}/m)
+    expect(slash).not.toBeNull()
+    expect(slash?.[1]).toContain('var(--err)')
+    const slashShown = conferencesCss.match(
+      /\.conference-tile-mic\[data-mic='off'\] \.conference-tile-mic-slash\s*\{([^}]*)\}/,
+    )
+    expect(slashShown?.[1]).toContain('opacity: 0.95')
+    // третьего состояния (замок/«отключён модератором») и tooltip нет
+    expect(conferencesCss).not.toMatch(/\.conference-tile-mic[^{}]*(blocked|lock|tooltip)/)
+  })
+
+  it('пульс при речи — ТОЛЬКО у бейджа: mic-speak 1.6s infinite, кадры золотого свечения', () => {
+    // speaking + mic on (класс вешает TSX) — пульсирует бейдж, не рамка
+    const pulse = conferencesCss.match(
+      /\.conference-tile-mic\[data-mic='on'\]\.conference-tile-mic-pulse\s*\{([^}]*)\}/,
+    )
+    expect(pulse).not.toBeNull()
+    expect(pulse?.[1]).toContain('animation: conference-tile-mic-speak 1.6s ease-in-out infinite')
+    expect(pulse?.[1]).toContain('border-color: var(--gold-light)')
+    const frames = conferencesCss.match(/@keyframes conference-tile-mic-speak\s*\{([\s\S]*?)\n\}/)
+    expect(frames).not.toBeNull()
+    expect(frames?.[1]).toContain('rgba(232, 200, 119, 0.35)')
+    expect(frames?.[1]).toContain('rgba(232, 200, 119, 0.8)')
+  })
+
+  it('демонтаж текстового индикатора речи: селектора .conference-tile-speaking в источнике больше нет (реинверсия)', () => {
+    expect(conferencesCss).not.toContain('.conference-tile-speaking')
+  })
+
+  it('пометки ролей в строке имени — приглушённый курсив --muted, без пластин/бейджей', () => {
+    // «гость»/«модератор» рядом с именем (формат прототипа «Имя · гость»)
+    const mark = conferencesCss.match(/^\.conference-tile-mark\s*\{([^}]*)\}/m)
+    expect(mark).not.toBeNull()
+    expect(mark?.[1]).toContain('font-style: italic')
+    expect(mark?.[1]).toContain('color: var(--muted)')
+    expect(mark?.[1]).not.toContain('border')
+    expect(mark?.[1]).not.toContain('background')
+  })
+
+  it('idle-имя — plain-текст прототипа (cream 12.5px); бейдж масштабируется в развёрнутом тайле', () => {
+    // имя под аватаром без дополнительной стилизации: размер прототипа
+    const idleName = conferencesCss.match(
+      /\.conference-tile-idle \.conference-tile-name\s*\{([^}]*)\}/,
+    )
+    expect(idleName?.[1]).toContain('font-size: 12.5px')
+    // пин-оверлей T079: бейдж виден и в fullscreen-тайле (промер)
+    const pinnedBadge = conferencesCss.match(
+      /\.conference-tile-pinned \.conference-tile-mic\s*\{([^}]*)\}/,
+    )
+    expect(pinnedBadge).not.toBeNull()
+    expect(pinnedBadge?.[1]).toContain('width: 40px')
+    // регресс-пины соседней механики: бейдж демонстрации T084 на месте
+    const sharing = conferencesCss.match(/\.conference-tile-sharing\s*\{([^}]*)\}/)
+    expect(sharing?.[1]).toContain('color: var(--gold-light)')
+  })
+
+  it('докблок блока бейджа truthfully описывает индикатор (два состояния, пульс, прототип)', () => {
+    const at = conferencesCss.indexOf('.conference-tile-mic {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1400), at)
+    expect(doc).toContain('T100')
+    expect(doc).toContain('прототип')
+    expect(doc).toContain('РОВНО ДВА состояния')
   })
 })

@@ -39,8 +39,9 @@
  * (успех убирает предупреждение), микрофон — выбор на звонок.
  * Блокировка тумблеров по ограничениям прав №46 MeView (T033,
  * FR-007): micRestricted/cameraRestricted блокируют соответствующий
- * тумблер с пояснением, speechRestricted («право слова», Q4=A)
- * блокирует ВСЕ тумблеры публикации — микрофон и камера принудительно
+ * тумблер с пояснением, speechRestricted («Все источники» — доменное
+ * speechRestricted, T094; Q4=A) блокирует ВСЕ тумблеры публикации —
+ * микрофон и камера принудительно
  * «выкл», превью не запрашивается вовсе, выборка «Войти» уезжает без
  * запрещённых источников (сервер всё равно срезал бы grants в токене
  * №47 — UI честен до входа). screenRestricted поясняется строкой:
@@ -62,9 +63,10 @@
  *
  * Доступность — стандарты 008 (research §10): нативный <dialog> (
  * диалоговая семантика + aria-labelledby заголовка), aria-pressed
- * тумблеров со визуальным индикатором «вкл/выкл» (aria-hidden), label
- * + select устройств, focus-visible (conferences.css), статус-строка
- * <output> (неявный role=status).
+ * тумблеров со визуальным индикатором «вкл/выкл» (aria-hidden; классы
+ * .conference-prejoin-toggle/-state — текстовая геометрия T028 после
+ * переименования T098), label + select устройств, focus-visible
+ * (conferences.css), статус-строка <output> (неявный role=status).
  */
 import { createLocalVideoTrack } from 'livekit-client'
 import type { LocalVideoTrack } from 'livekit-client'
@@ -144,17 +146,18 @@ function initialCamera(mode: ConferenceMode): boolean {
 
 /**
  * Пояснения блокировки источников по №46 MeView (T033, FR-007):
- * «право слова» (Q4=A) блокирует ВСЕ публикации — одно объединяющее
- * пояснение покрывает микрофон/камеру/экран; отдельные restricted-поля
- * поясняются по отдельности (экран — только строкой: тумблера экрана
- * на pre-join нет, демонстрация начинается в звонке — T028).
+ * «Все источники» (доменное speechRestricted, T094; Q4=A) отключает
+ * ВСЕ публикации — одно объединяющее пояснение покрывает
+ * микрофон/камеру/экран; отдельные restricted-поля поясняются по
+ * отдельности (экран — только строкой: тумблера экрана на pre-join
+ * нет, демонстрация начинается в звонке — T028).
  */
 function restrictionNotices(restrictions: PreJoinRestrictions | null | undefined): string[] {
   if (restrictions === null || restrictions === undefined) {
     return []
   }
   if (restrictions.speechRestricted) {
-    return ['Публикация отключена модератором (право слова) — вы войдёте как слушатель']
+    return ['Все источники отключены модератором — вы войдёте как слушатель']
   }
   const notices: string[] = []
   if (restrictions.micRestricted) {
@@ -198,9 +201,10 @@ export default function PreJoinScreen({
   const speakerSelectId = useId()
 
   /**
-   * Блокировки источников №46 MeView (T033, FR-007): «право слова»
-   * (Q4=A) глушит ВСЕ публикации — прибавляется к каждому источнику;
-   * отдельные restricted-поля — точечно.
+   * Блокировки источников №46 MeView (T033, FR-007): «Все источники»
+   * (доменное speechRestricted, T094; Q4=A) глушит ВСЕ публикации —
+   * прибавляется к каждому источнику; отдельные restricted-поля —
+   * точечно.
    */
   const speechRestricted = restrictions?.speechRestricted === true
   const micBlocked = speechRestricted || restrictions?.micRestricted === true
@@ -378,7 +382,8 @@ export default function PreJoinScreen({
    * не занимался): стартовое состояние + выбранные устройства уходят
    * родителю (T034/T049 → join №47/№55 и ConferenceRoom), превью-трек
    * освобождается сразу — устройства под публикацию звонка.
-   * Запрещённые источники (T033: «право слова» — все, Q4=A) в выборку
+   * Запрещённые источники (T033: «Все источники» — все, доменное
+   * speechRestricted, T094; Q4=A) в выборку
    * не попадают — защита вдогонку принудительным «выкл» тумблеров.
    */
   function handleJoin(): void {
@@ -439,7 +444,7 @@ export default function PreJoinScreen({
       <fieldset className="conference-prejoin-toggles" aria-label="Стартовое состояние">
         <button
           type="button"
-          className="conference-controls-toggle"
+          className="conference-prejoin-toggle"
           aria-label="Микрофон"
           aria-pressed={micOn}
           disabled={micBlocked}
@@ -448,20 +453,20 @@ export default function PreJoinScreen({
           }}
         >
           <span aria-hidden="true">Микрофон</span>
-          <span className="conference-controls-state" aria-hidden="true">
+          <span className="conference-prejoin-state" aria-hidden="true">
             {micOn ? 'вкл' : 'выкл'}
           </span>
         </button>
         <button
           type="button"
-          className="conference-controls-toggle"
+          className="conference-prejoin-toggle"
           aria-label="Камера"
           aria-pressed={cameraOn}
           disabled={cameraPending || cameraBlocked}
           onClick={flipCamera}
         >
           <span aria-hidden="true">Камера</span>
-          <span className="conference-controls-state" aria-hidden="true">
+          <span className="conference-prejoin-state" aria-hidden="true">
             {cameraOn ? 'вкл' : 'выкл'}
           </span>
         </button>
