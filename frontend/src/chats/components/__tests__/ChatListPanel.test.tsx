@@ -242,6 +242,52 @@ describe('ChatListPanel rows and the open dialog', () => {
   })
 })
 
+/**
+ * 009 (US1, T104): полоса «Синхронизация сообщений…» (SyncIndicator,
+ * 005 T020) живёт ВНУТРИ панели — сразу ПОД строкой поиска, перед
+ * списком/результатами: статус глобального catch-up-цикла useSync, а
+ * не контент списка, поэтому виден в ОБОИХ режимах панели (обычный
+ * список и псевдо-поиск T068). Без пропса полосы нет — все прежние
+ * потребители панели зелёные без правок.
+ */
+describe('ChatListPanel catch-up stripe (009, T104)', () => {
+  it('renders the SyncIndicator under the search row while `syncing` runs', () => {
+    const { container } = render(panelElement([chatItem()], { syncing: true }))
+    const panel = container.querySelector('.chat-panel')
+    const searchRow = container.querySelector('.search-row')
+    const indicator = container.querySelector('.sync-indicator')
+
+    expect(indicator).not.toBeNull()
+    expect(panel?.contains(indicator as Node)).toBe(true)
+    // T104: DOM-порядок панели — .search-row, затем полоса, затем список.
+    expect(
+      (searchRow as Node).compareDocumentPosition(indicator as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(indicator).toHaveTextContent('Синхронизация сообщений…')
+  })
+
+  it('renders no stripe without the prop (default false)', () => {
+    const { container } = render(panelElement([chatItem()]))
+
+    expect(container.querySelector('.sync-indicator')).toBeNull()
+  })
+
+  it('keeps the stripe under the search row in the pseudo-search mode', () => {
+    const { container } = render(panelElement([chatItem()], { searchMode: true, syncing: true }))
+    const searchRow = container.querySelector('.search-row')
+    const indicator = container.querySelector('.sync-indicator')
+
+    // Режим псевдо-поиска не прячет глобальный статус дозагрузки.
+    expect(indicator).not.toBeNull()
+    expect(
+      (searchRow as Node).compareDocumentPosition(indicator as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByRole('list', { name: 'Результаты поиска' })).toBeVisible()
+  })
+})
+
 describe('ChatListPanel after chat deletion (FR-021)', () => {
   it('drops only the deleted chat row and shows the empty state when the last dialog is gone', () => {
     const { container, rerender } = render(

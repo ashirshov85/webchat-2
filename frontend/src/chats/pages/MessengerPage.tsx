@@ -69,7 +69,8 @@
  * batcher as the pages (sync-protocol.md §2): every applied
  * `message.created` frame acks its `seq` and advances the local
  * cursor — realtime and catch-up move the delivery position alike.
- * The SyncIndicator (T020) lights up in the panel while a cycle runs.
+ * The SyncIndicator (T020) lights up UNDER the panel's search row
+ * (inside ChatListPanel, 009 T104) while a cycle runs.
  *
  * US2 queue overflow (feature 005, T028, FR-005): the panel-level
  * QueueOverflowBanner listens to the outbox eviction events of T026 —
@@ -303,7 +304,6 @@ import { MessageList } from '../components/MessageList'
 import { PasswordChangeModal } from '../components/PasswordChangeModal'
 import { ProfileModal } from '../components/ProfileModal'
 import { QueueOverflowBanner } from '../components/QueueOverflowBanner'
-import { SyncIndicator } from '../components/SyncIndicator'
 import type { TypingParticipant } from '../components/TypingRow'
 import { useChatList } from '../hooks/useChatList'
 import { useChatMessages } from '../hooks/useChatMessages'
@@ -1352,7 +1352,8 @@ function MessengerMachine() {
   } = useChatMessages(activeChatId, currentUserId, activeGroupMembers)
 
   // The §3.1 catch-up loop (feature 005): runs on every SSE (re)open,
-  // its `syncing` drives the SyncIndicator below.
+  // its `syncing` drives the SyncIndicator rendered by ChatListPanel
+  // under the search row (009 T104).
   const { syncing, error: syncError, onChatUpdate } = useSync(currentUserId)
   const realtime = useRealtime()
 
@@ -2651,7 +2652,6 @@ function MessengerMachine() {
             inert={narrowViewport && !drawerOpen}
           >
             <QueueOverflowBanner userId={currentUserId} />
-            <SyncIndicator syncing={syncing} />
             <ChatListPanel
               chats={chats}
               status={chatListStatus}
@@ -2660,6 +2660,7 @@ function MessengerMachine() {
               activeChatId={activeChatId}
               onSelectChat={handleSelectChat}
               currentUserId={currentUserId}
+              syncing={syncing}
               searchMode={searchMode}
               searchQuery={searchQuery}
               searchChatName={searchChatName}

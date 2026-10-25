@@ -59,6 +59,13 @@
  * 009 US5 (T059): сквозной провод `liveConferences` — строки
  * получают бейдж «Звонок идёт» (срез useConferenceRealtime
  * страницы); панель остаётся render-only.
+ *
+ * 009 (US1, T104): полоса «Синхронизация сообщений…» (SyncIndicator,
+ * 005 T020) рендерится ВНУТРИ панели — сразу под `.search-row`, перед
+ * списком/результатами: это глобальный статус catch-up-цикла useSync,
+ * а не контент списка, поэтому полоса видна в ОБОИХ режимах панели.
+ * Состояние остаётся у страницы (проп `syncing`, дефолт false — без
+ * пропса полосы нет).
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
@@ -68,6 +75,7 @@ import { Avatar } from '../../ui/Avatar'
 import { ErrorBanner } from './ErrorBanner'
 import { ChatListItem } from './ChatListItem'
 import { MainMenuButton } from './MainMenuButton'
+import { SyncIndicator } from './SyncIndicator'
 import './chat-list-panel.css'
 import './states.css'
 
@@ -158,6 +166,12 @@ export interface ChatListPanelProps {
    * «Звонок идёт» в строки; отсутствует — строка без бейджа.
    */
   readonly liveConferences?: ReadonlyMap<string, { readonly mode: ConferenceMode }>
+  /**
+   * 009 (T104): идёт ли catch-up-цикл §3.1 useSync — полоса
+   * «Синхронизация сообщений…» (SyncIndicator) под строкой поиска;
+   * дефолт false — без пропса полосы нет.
+   */
+  readonly syncing?: boolean
 }
 
 export function ChatListPanel({
@@ -179,6 +193,7 @@ export function ChatListPanel({
   onSearchQueryChange,
   onJumpToMessage,
   liveConferences,
+  syncing = false,
 }: ChatListPanelProps) {
   const [query, setQuery] = useState('')
   const normalizedQuery = query.trim().toLowerCase()
@@ -229,6 +244,9 @@ export function ChatListPanel({
           />
         </div>
       </div>
+      {/* T104: глобальный статус дозагрузки — под строкой поиска, в
+          обоих режимах панели (SyncIndicator рендерит null при false). */}
+      <SyncIndicator syncing={syncing} />
       {searchMode ? (
         <ul className="chat-list" aria-label="Результаты поиска">
           <li className="sr-head">
