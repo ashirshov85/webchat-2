@@ -38,6 +38,14 @@ import { describe, expect, it } from 'vitest'
  * него и «.conference-joined > output» удалены из источника целиком;
  * панельные селекторы оверлея (участники/модерация/компактная полоса)
  * сохранены.
+ *
+ * T096 — вертикальное центрирование pre-join-панели члена
+ * (.conference-prejoin) и гостевых форм (.guest-join-name,
+ * .guest-join-prejoin): auto-маржины flex-элемента поглощают свободное
+ * место по ОБОИМ осям (margin: 0 auto → margin: auto) — формы встают
+ * в центр фазовой колонки по горизонтали И вертикали, симметрично для
+ * обеих точек входа (PreJoinScreen переиспользуется, паритет Q1=C);
+ * прочие фазы (joined/error/терминал) не центрируются.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -281,6 +289,47 @@ describe('центрирование заголовков pre-join и госте
       expect(rule?.[1], `правило ${selector}`).toContain('font: 17px var(--font-heading)')
       expect(rule?.[1], `правило ${selector}`).toContain('letter-spacing: 0.04em')
       expect(rule?.[1], `правило ${selector}`).toContain('color: var(--cream-bright)')
+    }
+  })
+})
+
+describe('центрирование pre-join-форм по обеим осям (T096): статический пин CSS', () => {
+  it('панель .conference-prejoin — margin: auto: центр фазовой колонки по горизонтали и вертикали', () => {
+    // член чата: <dialog> — ребёнок flex-колонки .conference-join (растянута
+    // на окно); auto-маржины flex-элемента поглощают свободное место по
+    // обеим осям одной декларацией — «Настройка перед входом» в центре окна
+    // вместо прижатости к верху длинной колонки
+    const rule = conferencesCss.match(/^\.conference-prejoin\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: auto')
+  })
+
+  it('форма шага имени .guest-join-name — margin: auto (тот же приём у гостя)', () => {
+    // гость /join/:inviteToken: форма — прямой ребёнок корневой секции
+    // (flex-колонка на 100dvh); центрирование симметрично pre-join члена
+    const rule = conferencesCss.match(/^\.guest-join-name\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: auto')
+  })
+
+  it('обвязка .guest-join-prejoin — margin: auto (переиспользуемый PreJoinScreen центрирован у обеих точек входа)', () => {
+    // иначе один и тот же pre-join-экран центрирован у члена и прижат
+    // к верху у гостя (паритет Q1=C); обвязка центрируется вместе со
+    // своей ошибкой №55 как единый блок
+    const rule = conferencesCss.match(/^\.guest-join-prejoin\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: auto')
+  })
+
+  it('регресс-пин: ширина всех трёх правил сохранена — min(560px, 100%)', () => {
+    // центрирование не меняет геометрию панелей: ширина, рамки и
+    // типографика остаются как до правки
+    for (const selector of ['.conference-prejoin', '.guest-join-name', '.guest-join-prejoin']) {
+      const rule = conferencesCss.match(
+        new RegExp(`^\\.${selector.slice(1)}\\s*\\{([^}]*)\\}`, 'm'),
+      )
+      expect(rule, `правило ${selector}`).not.toBeNull()
+      expect(rule?.[1], `правило ${selector}`).toContain('width: min(560px, 100%)')
     }
   })
 })

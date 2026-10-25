@@ -481,13 +481,15 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
  * диалоговая семантика внутри страницы конференции (008).
  * ============================================================ */
 
-/* Панель pre-join: гасим браузерные дефолты dialog до лексики модуля. */
+/* Панель pre-join: гасим браузерные дефолты dialog до лексики модуля.
+ * T096: auto-маржины flex-элемента центрируют панель по ОБЕИМ осям
+ * фазовой колонки .conference-join (горизонталь + вертикаль). */
 .conference-prejoin {
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: min(560px, 100%);
-  margin: 0 auto;
+  margin: auto;
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: var(--r-frame);
@@ -1003,13 +1005,15 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   cursor: pointer;
 }
 
-/* Шаг имени: узкая форма по центру, как pre-join. */
+/* Шаг имени: узкая форма по центру, как pre-join.
+ * T096: margin: auto центрирует форму по обеим осям корневой
+ * flex-колонки — симметрично pre-join члена (паритет Q1=C). */
 .guest-join-name {
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: min(560px, 100%);
-  margin: 0 auto;
+  margin: auto;
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: var(--r-frame);
@@ -1079,13 +1083,16 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   cursor: pointer;
 }
 
-/* Обвязка pre-join: повторяемая ошибка №55 над переиспользуемым экраном. */
+/* Обвязка pre-join: повторяемая ошибка №55 над переиспользуемым экраном.
+ * T096: margin: auto центрирует обвязку (с ошибкой — единым блоком)
+ * по обеим осям — переиспользуемый PreJoinScreen центрирован у обеих
+ * точек входа. */
 .guest-join-prejoin {
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: min(560px, 100%);
-  margin: 0 auto;
+  margin: auto;
 }
 
 /* Конвенция 008 FR-035: видимый фокус с клавиатуры (форма имени). */
