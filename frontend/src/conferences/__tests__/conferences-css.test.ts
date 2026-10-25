@@ -72,6 +72,16 @@ import { describe, expect, it } from 'vitest'
  * только стандартная сетка: компактная полоса пина
  * (.conference-tiles-compact) живёт своей геометрией (:not-гвард),
  * grid-механика T084/T075 не меняется (auto-fit/minmax/gap).
+ *
+ * T101 — задний фон форм: pre-join (.conference-prejoin, обе точки
+ * входа — член и гость) и шаг имени гостя (.guest-join-name) получают
+ * ту же отделку корпуса machine, что панель управления T098 и сетка
+ * тайлов T099, но БЕЗ decor-слоя шестерёнок: константы корпуса
+ * потребляются из общего --conference-machine-*-лексикона (без дублей,
+ * FR-002); центрирование T096 (margin: auto), заголовки T091 и
+ * геометрия prejoin-тумблеров T098 не регрессируют; обвязка
+ * .guest-join-prejoin сама не красится — двойной рамки у pre-join
+ * гостя не возникает.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -460,6 +470,94 @@ describe('задний фон сетки тайлов — корпус machine �
     const doc = conferencesCss.slice(Math.max(0, at - 900), at)
     expect(doc).toContain('machine')
     expect(doc).toContain('шестерёнок')
+  })
+})
+
+describe('задний фон форм pre-join и шага имени — корпус machine без шестерёнок (T101): статический пин CSS', () => {
+  const panelRule = (selector: string) =>
+    conferencesCss.match(new RegExp(`^\\.${selector}\\s*\\{([^}]*)\\}`, 'm'))
+
+  it('обе панели несут пластину машины: заливка + backdrop-blur + латунная окантовка + радиус машины + теневое кольцо', () => {
+    // фон навешивается на существующие панели (DOM/TSX не меняются);
+    // константы корпуса — из общего --conference-machine-*-лексикона
+    // (единственный источник — корневые секции конференции, T099)
+    for (const selector of ['conference-prejoin', 'guest-join-name']) {
+      const rule = panelRule(selector)
+      expect(rule, `правило .${selector}`).not.toBeNull()
+      // position: relative — опора ::before-вкладыша
+      expect(rule?.[1], `.${selector}`).toContain('position: relative')
+      expect(rule?.[1], `.${selector}`).toContain('background: var(--conference-machine-bg)')
+      expect(rule?.[1], `.${selector}`).toContain('backdrop-filter: var(--conference-machine-blur)')
+      expect(rule?.[1], `.${selector}`).toContain('border: var(--conference-machine-border)')
+      expect(rule?.[1], `.${selector}`).toContain('border-radius: var(--conference-machine-radius)')
+      expect(rule?.[1], `.${selector}`).toContain('box-shadow: var(--conference-machine-shadow)')
+      // отступы — вкладыш inset 4px не подрезает контент (промер)
+      expect(rule?.[1], `.${selector}`).toContain('padding:')
+    }
+  })
+
+  it('рамка-вкладыш ::before у обеих панелей — правило общее с controls/сеткой, не перехватывает события', () => {
+    const inner = conferencesCss.match(
+      /\.conference-prejoin::before,\s*\.guest-join-name::before,\s*\.conference-controls::before,\s*\.conference-tiles:not\(\.conference-tiles-compact\)::before\s*\{([^}]*)\}/,
+    )
+    expect(inner).not.toBeNull()
+    expect(inner?.[1]).toContain("content: ''")
+    expect(inner?.[1]).toContain('position: absolute')
+    expect(inner?.[1]).toContain('inset: 4px')
+    expect(inner?.[1]).toContain('border: 1px solid var(--conference-machine-inner)')
+    expect(inner?.[1]).toContain('border-radius: var(--conference-machine-inner-radius)')
+    // вкладыш не участвует в таб-порядоке/кликах (гвард задачи:
+    // dialog-семантика pre-join и фокус-порядок не трогаются)
+    expect(inner?.[1]).toContain('pointer-events: none')
+  })
+
+  it('«без svg шестерёнок»: в скоупе форм нет decor-слоя и svg-правил — шестерни только у controls (T098)', () => {
+    // пин по правилам: докблоки цитируют запрос «без svg шестерёнок»,
+    // поэтому comments вырезаются — матчится только живой селектор
+    const rulesOnly = conferencesCss.replace(/\/\*[\s\S]*?\*\//g, '')
+    for (const selector of ['conference-prejoin', 'guest-join-name']) {
+      expect(rulesOnly, `decor в скоупе .${selector}`).not.toMatch(
+        new RegExp(`\\.${selector}[^{}]*decor`),
+      )
+      expect(rulesOnly, `svg в скоупе .${selector}`).not.toMatch(
+        new RegExp(`\\.${selector}[^{}]*svg`),
+      )
+    }
+  })
+
+  it('регресс-пины T096/T098: margin: auto и ширина сохранены, prejoin-тумблеры на месте', () => {
+    for (const selector of ['conference-prejoin', 'guest-join-name']) {
+      const rule = panelRule(selector)
+      expect(rule?.[1], `.${selector}: центрирование T096`).toContain('margin: auto')
+      expect(rule?.[1], `.${selector}: ширина`).toContain('width: min(560px, 100%)')
+    }
+    const toggle = conferencesCss.match(/^\.conference-prejoin-toggle\s*\{([^}]*)\}/m)
+    expect(toggle?.[1]).toContain('border: 1px solid var(--line)')
+    expect(toggle?.[1]).toContain('background: var(--input-bg)')
+  })
+
+  it('лексика узкой панели 008 у форм ушла: старый бордер --line / радиус --r-frame / --panel-bg отсутствуют', () => {
+    for (const selector of ['conference-prejoin', 'guest-join-name']) {
+      const rule = panelRule(selector)
+      expect(rule?.[1], `.${selector}`).not.toContain('var(--line)')
+      expect(rule?.[1], `.${selector}`).not.toContain('var(--r-frame)')
+      expect(rule?.[1], `.${selector}`).not.toContain('var(--panel-bg)')
+    }
+    // симметрия точек входа: обвязка .guest-join-prejoin НЕ красится
+    // (гость получает pre-join той же пластиной, двойной рамки нет)
+    const wrap = panelRule('guest-join-prejoin')
+    expect(wrap?.[1]).not.toContain('border')
+    expect(wrap?.[1]).not.toContain('--conference-machine')
+  })
+
+  it('докблоки блоков обеих панелей truthfully описывают корпус machine без шестерёнок', () => {
+    for (const selector of ['.conference-prejoin {', '.guest-join-name {']) {
+      const at = conferencesCss.indexOf(selector)
+      expect(at, `селектор ${selector}`).toBeGreaterThan(0)
+      const doc = conferencesCss.slice(Math.max(0, at - 900), at)
+      expect(doc, `докблок ${selector}`).toContain('machine')
+      expect(doc, `докблок ${selector}`).toContain('шестерёнок')
+    }
   })
 })
 

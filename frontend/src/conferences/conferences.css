@@ -4,7 +4,9 @@
  * всё окно браузера), медиа-комната T027 (единая сетка слитых тайлов
  * T084 — экран/камера/аватар участника одним элементом 16:9,
  * статус-строка; сетка стоит на пластине корпуса machine T099 —
- * той же, что панель управления, но без декоративных шестерёнок),
+ * той же, что панель управления, но без декоративных шестерёнок;
+ * той же пластиной T101 красятся формы конференции — pre-join и
+ * шаг имени гостя, тоже без шестерёнок),
  * панель управления T098 (стимпанк-прототип кнопок-
  * иконок tmp/conference-controls.html: оболочка machine + 4 круглые
  * кнопки «Микрофон»/«Камера»/«Экран»/«Покинуть» — паритет обоих
@@ -555,13 +557,14 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
  * (паттерн 008 FR-004).
  * ============================================================ */
 
-/* Корпус machine — общие константы конференции (FR-002; T098 → T099):
+/* Корпус machine — общие константы конференции (FR-002; T098 → T099 → T101):
  * пластина, латунная окантовка, рамка-вкладыш и теневое кольцо
  * прототипа .machine (tmp/conference-controls.html) задаются ОДИН раз
  * CSS-переменными на корневых секциях обеих точек входа (член
  * section[data-conference-id], гость section[data-guest-join]) и
- * наследуются приборным поверхностям — панели управления (T098) и
- * сетке тайлов (T099; сетка — без decor-слоя шестерёнок). Дублей
+ * наследуются приборным поверхностям — панели управления (T098),
+ * сетке тайлов и формам pre-join/шага имени гостя (T099/T101;
+ * сетка и формы — без decor-слоя шестерёнок). Дублей
  * захардкоженными значениями нет: значения живут только здесь.
  * ГВАРД: глобальный класс .machine НЕ используется (занят корпусом
  * мессенджера 008, theme/machine.css). */
@@ -607,8 +610,11 @@ section[data-guest-join] {
 }
 
 /* Внутренняя рамка-вкладыш машины (прототип .machine::before): общая
- * для панели управления (T098) и сетки тайлов (T099) — константа
- * вкладыша задана один раз на корневых секциях конференции. */
+ * для панели управления (T098), сетки тайлов (T099) и форм pre-join/
+ * шага имени гостя (T101) — константа вкладыша задана один раз на
+ * корневых секциях конференции. */
+.conference-prejoin::before,
+.guest-join-name::before,
 .conference-controls::before,
 .conference-tiles:not(.conference-tiles-compact)::before {
   content: '';
@@ -982,18 +988,30 @@ section[data-guest-join] {
  * ============================================================ */
 
 /* Панель pre-join: гасим браузерные дефолты dialog до лексики модуля.
- * T096: auto-маржины flex-элемента центрируют панель по ОБЕИМ осям
- * фазовой колонки .conference-join (горизонталь + вертикаль). */
+ * T101: панель стоит на пластине корпуса machine — та же отделка, что
+ * у панели управления T098 и сетки тайлов T099 (фон-заливка +
+ * backdrop-blur + латунная окантовка + рамка-вкладыш из общих
+ * констант конференции), при ЕДИНСТВЕННОМ отличии: декоративный слой
+ * шестерёнок НЕ выводится («без svg шестерёнок»). DOM/диалоговая
+ * семантика не меняются: отделка навешивается на существующий
+ * <dialog>, вкладыш ::before (pointer-events: none) не участвует в
+ * фокусе/таб-порядоке. T096: auto-маржины flex-элемента центрируют
+ * панель по ОБЕИМ осям фазовой колонки .conference-join (горизонталь
+ * + вертикаль). Отступы — по промеру: вкладыш inset 4px не подрезает
+ * контент (зазор до рамки-вкладыша). */
 .conference-prejoin {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: min(560px, 100%);
   margin: auto;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-frame);
-  background: var(--panel-bg);
+  padding: 20px;
+  border: var(--conference-machine-border);
+  border-radius: var(--conference-machine-radius);
+  background: var(--conference-machine-bg);
+  backdrop-filter: var(--conference-machine-blur);
+  box-shadow: var(--conference-machine-shadow);
   color: var(--cream);
 }
 
@@ -1530,19 +1548,29 @@ section[data-guest-join] {
   cursor: pointer;
 }
 
-/* Шаг имени: узкая форма по центру, как pre-join.
+/* Шаг имени: форма по центру, как pre-join.
  * T096: margin: auto центрирует форму по обеим осям корневой
- * flex-колонки — симметрично pre-join члена (паритет Q1=C). */
+ * flex-колонки — симметрично pre-join члена (паритет Q1=C).
+ * T101: той же пластиной корпуса machine, что pre-join, панель
+ * управления T098 и сетка тайлов T099 — фон-заливка + backdrop-blur +
+ * латунная окантовка + рамка-вкладыш из общих констант конференции;
+ * декоративный слой шестерёнок НЕ выводится («без svg шестерёнок»).
+ * Прочие поверхности гостевой страницы (статус-блоки №54, ошибки
+ * №55, live-подсказка) живут прежней лексикой; отступы — по промеру:
+ * вкладыш inset 4px не подрезает контент. */
 .guest-join-name {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 12px;
   width: min(560px, 100%);
   margin: auto;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-frame);
-  background: var(--panel-bg);
+  padding: 20px;
+  border: var(--conference-machine-border);
+  border-radius: var(--conference-machine-radius);
+  background: var(--conference-machine-bg);
+  backdrop-filter: var(--conference-machine-blur);
+  box-shadow: var(--conference-machine-shadow);
   color: var(--cream);
 }
 
