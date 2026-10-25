@@ -61,6 +61,17 @@ import { describe, expect, it } from 'vitest'
  * Геометрия текстовых тумблеров T028 переименована в prejoin-скоуп
  * (.conference-prejoin-toggle/-state — её единственный потребитель
  * PreJoinScreen), .conference-controls-state из источника удалён.
+ *
+ * T099 — задний фон сетки тайлов: та же отделка корпуса machine, что у
+ * conference-controls T098, но БЕЗ decor-слоя шестерёнок. Константы
+ * корпуса (пластина/окантовка/вкладыш/теневое кольцо) с T098 не
+ * дублируются захардкоженными значениями (FR-002): заданы ОДИН раз
+ * CSS-переменными на корневых секциях обеих точек входа и наследуются
+ * поверхностям — панель управления (T098) и сетка тайлов (T099)
+ * потребляют общий --conference-machine-*-лексикон. Машиной красится
+ * только стандартная сетка: компактная полоса пина
+ * (.conference-tiles-compact) живёт своей геометрией (:not-гвард),
+ * grid-механика T084/T075 не меняется (auto-fit/minmax/gap).
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -248,21 +259,20 @@ describe('паритет панели управления в двух режи�
 describe('стимпанк-панель кнопок-иконок прототипа (T098): статический пин CSS', () => {
   it('оболочка machine на fieldset .conference-controls: латунная рамка + внутренняя рамка-вкладыш + фон-пластина', () => {
     // корпус машины из прототипа .machine: у самой оболочки overflow
-    // visible (tooltip'ы выезжают за верхнюю границу); радиус машины 18px
+    // visible (tooltip'ы выезжают за верхнюю границу); константы корпуса
+    // выражены общим --conference-machine-*-лексиконом (единственный
+    // источник — корневые секции конференции, пин в блоке T099 ниже)
     const shell = conferencesCss.match(/^\.conference-controls\s*\{([^}]*)\}/m)
     expect(shell).not.toBeNull()
-    expect(shell?.[1]).toContain('border: 1px solid var(--gold-dark)')
-    expect(shell?.[1]).toContain('border-radius: 18px')
-    expect(shell?.[1]).toContain('background: rgba(20, 17, 12, 0.72)')
-    expect(shell?.[1]).toContain('backdrop-filter: blur(2px)')
+    expect(shell?.[1]).toContain('border: var(--conference-machine-border)')
+    expect(shell?.[1]).toContain('border-radius: var(--conference-machine-radius)')
+    expect(shell?.[1]).toContain('background: var(--conference-machine-bg)')
+    expect(shell?.[1]).toContain('backdrop-filter: var(--conference-machine-blur)')
     expect(shell?.[1]).toContain('padding: 18px 24px')
     // равные интервалы кнопок прототипа — gap 22px
     expect(shell?.[1]).toContain('gap: 22px')
-    // двойная рамка: внутренняя рамка-вкладыш ::before inset 4px
-    const inner = conferencesCss.match(/\.conference-controls::before\s*\{([^}]*)\}/)
-    expect(inner).not.toBeNull()
-    expect(inner?.[1]).toContain('inset: 4px')
-    expect(inner?.[1]).toContain('rgba(201, 162, 74, 0.35)')
+    // двойная рамка: внутренняя рамка-вкладыш ::before inset 4px —
+    // правило общее с сеткой тайлов (T099), пин в блоке T099 ниже
   })
 
   it('decor-layer с ДВУМЯ вращающимися шестерёнками, обрезка слоем — оболочка не клиппит tooltip', () => {
@@ -365,6 +375,91 @@ describe('стимпанк-панель кнопок-иконок прототи
     // старый текстовый индикатор controls удалён: в панели состояния
     // дублируются визуалом data-state, текстовых узлов нет
     expect(conferencesCss).not.toContain('.conference-controls-state')
+  })
+})
+
+describe('задний фон сетки тайлов — корпус machine без шестерёнок (T099): статический пин CSS', () => {
+  it('константы корпуса заданы ОДИН раз на корневых секциях обеих точек входа (общая лексика T098/T099)', () => {
+    // FR-002: пластина/окантовка/вкладыш/теневое кольцо не дублируются
+    // захардкоженными значениями в правилах-потребителях — единственный
+    // источник: CSS-переменные на корневых секциях конференции (member
+    // section[data-conference-id] и гость section[data-guest-join]);
+    // значения — норматы прототипа .machine (tmp/conference-controls.html)
+    const tokens = conferencesCss.match(
+      /^section\[data-conference-id\],\nsection\[data-guest-join\]\s*\{([^}]*)\}/m,
+    )
+    expect(tokens).not.toBeNull()
+    expect(tokens?.[1]).toContain('--conference-machine-bg: rgba(20, 17, 12, 0.72)')
+    expect(tokens?.[1]).toContain('--conference-machine-blur: blur(2px)')
+    expect(tokens?.[1]).toContain('--conference-machine-border: 1px solid var(--gold-dark)')
+    expect(tokens?.[1]).toContain('--conference-machine-radius: 18px')
+    expect(tokens?.[1]).toContain('--conference-machine-inner: rgba(201, 162, 74, 0.35)')
+    expect(tokens?.[1]).toContain('--conference-machine-inner-radius: 14px')
+    // теневое кольцо прототипа: 0 0 0 4px rgba(138,106,44,.16) + глубокая тень
+    expect(tokens?.[1]).toContain('rgba(138, 106, 44, 0.16)')
+    expect(tokens?.[1]).toContain('0 24px 60px rgba(0, 0, 0, 0.6)')
+  })
+
+  it('сетка .conference-tiles несёт пластину машины: заливка + backdrop-blur + латунная окантовка + радиус машины', () => {
+    // фон навешивается на существующий элемент сетки (DOM/TSX не меняются);
+    // :not-гвард — машиной красится только стандартная сетка, компактная
+    // полоса пина живёт своей геометрией (пин ниже); position: relative —
+    // опора ::before-вкладыша
+    const grid = conferencesCss.match(
+      /^\.conference-tiles:not\(\.conference-tiles-compact\)\s*\{([^}]*)\}/m,
+    )
+    expect(grid).not.toBeNull()
+    expect(grid?.[1]).toContain('position: relative')
+    expect(grid?.[1]).toContain('background: var(--conference-machine-bg)')
+    expect(grid?.[1]).toContain('backdrop-filter: var(--conference-machine-blur)')
+    expect(grid?.[1]).toContain('border: var(--conference-machine-border)')
+    expect(grid?.[1]).toContain('border-radius: var(--conference-machine-radius)')
+    expect(grid?.[1]).toContain('box-shadow: var(--conference-machine-shadow)')
+    // внутренние отступы сетки — тайлы не подпирают рамку-вкладыш
+    expect(grid?.[1]).toContain('padding:')
+  })
+
+  it('рамка-вкладыш ::before — общая с controls, не перехватывает события', () => {
+    // прототип .machine::before: inset 4px, латунь 0.35, радиус 14px;
+    // правило сгруппировано с панелью управления (константа общая)
+    const inner = conferencesCss.match(
+      /\.conference-controls::before,\s*\.conference-tiles:not\(\.conference-tiles-compact\)::before\s*\{([^}]*)\}/,
+    )
+    expect(inner).not.toBeNull()
+    expect(inner?.[1]).toContain("content: ''")
+    expect(inner?.[1]).toContain('position: absolute')
+    expect(inner?.[1]).toContain('inset: 4px')
+    expect(inner?.[1]).toContain('border: 1px solid var(--conference-machine-inner)')
+    expect(inner?.[1]).toContain('border-radius: var(--conference-machine-inner-radius)')
+    // вкладыш не перехватывает события тайлов (гвард задачи)
+    expect(inner?.[1]).toContain('pointer-events: none')
+  })
+
+  it('«без svg шестерёнок»: в скоупе сетки нет decor-слоя и svg-правил — шестерни только у controls (T098)', () => {
+    expect(conferencesCss).not.toMatch(/\.conference-tiles[^{}]*decor/)
+    expect(conferencesCss).not.toMatch(/\.conference-tiles[^{}]*svg/)
+  })
+
+  it('регресс grid-механики T084/T075: auto-fit/minmax/gap не меняются, компактная полоса — своя геометрия', () => {
+    const grid = conferencesCss.match(
+      /^\.conference-tiles:not\(\.conference-tiles-compact\)\s*\{([^}]*)\}/m,
+    )
+    expect(grid?.[1]).toContain('display: grid')
+    expect(grid?.[1]).toContain('grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))')
+    expect(grid?.[1]).toContain('gap: 8px')
+    // компактная полоса пина T074 — горизонтальный flex-скролл без машины
+    const compact = conferencesCss.match(/^\.conference-tiles-compact\s*\{([^}]*)\}/m)
+    expect(compact).not.toBeNull()
+    expect(compact?.[1]).toContain('display: flex')
+    expect(compact?.[1]).toContain('overflow-x: auto')
+  })
+
+  it('докблок блока сетки truthfully описывает корпус machine без шестерёнок', () => {
+    const at = conferencesCss.indexOf('.conference-tiles:not(.conference-tiles-compact)')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 900), at)
+    expect(doc).toContain('machine')
+    expect(doc).toContain('шестерёнок')
   })
 })
 

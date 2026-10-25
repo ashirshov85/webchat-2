@@ -3,7 +3,9 @@
  * каркас конференц-страницы T075 (растягивание обеих точек входа на
  * всё окно браузера), медиа-комната T027 (единая сетка слитых тайлов
  * T084 — экран/камера/аватар участника одним элементом 16:9,
- * статус-строка), панель управления T098 (стимпанк-прототип кнопок-
+ * статус-строка; сетка стоит на пластине корпуса machine T099 —
+ * той же, что панель управления, но без декоративных шестерёнок),
+ * панель управления T098 (стимпанк-прототип кнопок-
  * иконок tmp/conference-controls.html: оболочка machine + 4 круглые
  * кнопки «Микрофон»/«Камера»/«Экран»/«Покинуть» — паритет обоих
  * режимов, скрытие T089 демонтировано), пин-раскладка T074
@@ -136,11 +138,31 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
 }
 
 /* Единая сетка слитых тайлов участников (T084): экран/камера/аватар
-   участника — один тайл; адаптивные колонки от ширины, тайл 16:9. */
-.conference-tiles {
+ * участника — один тайл; адаптивные колонки от ширины, тайл 16:9.
+ * T099: сетка стоит на пластине корпуса machine — та же отделка, что
+ * у панели управления T098 (фон-заливка + backdrop-blur + латунная
+ * окантовка + рамка-вкладыш из общих констант конференции), при
+ * ЕДИНСТВЕННОМ отличии: декоративный слой шестерёнок у сетки НЕ
+ * выводится («без svg шестерёнок»). Grid-механика T084/T075 не
+ * меняется (auto-fit/minmax/gap, intrinsic-гварды тайлов ниже);
+ * вкладыш ::before не перехватывает события (pointer-events: none)
+ * и рисуется за тайлами (позиционированные тайлы позже в tree
+ * order). blur(2px) поверх живого видео лёгок — промер проблем
+ * производительности не показал. Машиной красится только
+ * стандартная сетка: компактная полоса пина T074
+ * (.conference-tiles-compact) и fullscreen-тайл T079 живут своей
+ * геометрией — :not-гвард ниже исключает полосу из отделки. */
+.conference-tiles:not(.conference-tiles-compact) {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 8px;
+  padding: 12px;
+  border: var(--conference-machine-border);
+  border-radius: var(--conference-machine-radius);
+  background: var(--conference-machine-bg);
+  backdrop-filter: var(--conference-machine-blur);
+  box-shadow: var(--conference-machine-shadow);
 }
 
 /* Слитый тайл участника (T084): тёмная видеоповерхность, имя
@@ -385,15 +407,19 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
  * Панель управления конференцией (T098, US1): перенос стимпанк-
  * прототипа кнопок-иконок tmp/conference-controls.html (эталон —
  * при расхождениях побеждает прототип, по образцу FR-001 008;
- * FR-002: константы выражены токенами tokens.css). Оболочка machine
+ * FR-002: константы корпуса — общие CSS-переменные на корневых
+ * секциях конференции, см. правило выше; прочие константы выражены
+ * токенами tokens.css). Оболочка machine
  * навешивается на сам fieldset .conference-controls — глобальный
  * класс .machine НЕ используется (занят корпусом мессенджера 008,
- * theme/machine.css). Внутри кнопок нет текста «вкл/выкл» —
- * состояние дублируется визуалом data-state: on = золотая рамка +
- * свечение + горящая лампа (flick 4s) + on-части иконки (шестерня
- * проектора крутится 6s), off = диагональный штрих --err + тёмная
- * лампа, blocked («отключён модератором») = приглушение saturate +
- * замок-бейдж. Латунный tooltip на :hover/:focus-visible всех
+ * theme/machine.css). Той же пластиной красится и сетка тайлов
+ * (T099) — без decor-слоя шестерёнок. Внутри кнопок нет текста
+ * «вкл/выкл» — состояние дублируется визуалом data-state: on =
+ * золотая рамка + свечение + горящая лампа (flick 4s) + on-части
+ * иконки (шестерня проектора крутится 6s), off = диагональный штрих
+ * --err + тёмная лампа, blocked («отключён модератором») =
+ * приглушение saturate + замок-бейдж. Латунный tooltip на
+ * :hover/:focus-visible всех
  * кнопок (замена нативного title T097): имя либо уведомление об
  * отключении (aria-describedby на id узла; disabled-кнопка фокуса
  * не получает — tooltip дублирует состояние только для мыши).
@@ -404,9 +430,31 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
  * (паттерн 008 FR-004).
  * ============================================================ */
 
+/* Корпус machine — общие константы конференции (FR-002; T098 → T099):
+ * пластина, латунная окантовка, рамка-вкладыш и теневое кольцо
+ * прототипа .machine (tmp/conference-controls.html) задаются ОДИН раз
+ * CSS-переменными на корневых секциях обеих точек входа (член
+ * section[data-conference-id], гость section[data-guest-join]) и
+ * наследуются приборным поверхностям — панели управления (T098) и
+ * сетке тайлов (T099; сетка — без decor-слоя шестерёнок). Дублей
+ * захардкоженными значениями нет: значения живут только здесь.
+ * ГВАРД: глобальный класс .machine НЕ используется (занят корпусом
+ * мессенджера 008, theme/machine.css). */
+section[data-conference-id],
+section[data-guest-join] {
+  --conference-machine-bg: rgba(20, 17, 12, 0.72);
+  --conference-machine-blur: blur(2px);
+  --conference-machine-border: 1px solid var(--gold-dark);
+  --conference-machine-radius: 18px;
+  --conference-machine-inner: rgba(201, 162, 74, 0.35);
+  --conference-machine-inner-radius: 14px;
+  --conference-machine-shadow: 0 0 0 4px rgba(138, 106, 44, 0.16), 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
 /* Оболочка machine (прототип .machine): двойная латунная рамка
  * (бордер --gold-dark + внутренняя рамка-вкладыш ::before),
- * полупрозрачная тёмная пластина + backdrop-blur, теневое кольцо;
+ * полупрозрачная тёмная пластина + backdrop-blur, теневое кольцо —
+ * константы корпуса потребляются из общего лексикона выше;
  * подгоняется под контент и центрируется в обоих режимах
  * (align-self: center flex-колонки комнаты; в оверлее T079 —
  * absolute-центрирование правила выше). У самой оболочки overflow
@@ -426,22 +474,23 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   max-width: 100%;
   align-self: center;
   padding: 18px 24px;
-  border: 1px solid var(--gold-dark);
-  border-radius: 18px;
-  background: rgba(20, 17, 12, 0.72);
-  backdrop-filter: blur(2px);
-  box-shadow:
-    0 0 0 4px rgba(138, 106, 44, 0.16),
-    0 24px 60px rgba(0, 0, 0, 0.6);
+  border: var(--conference-machine-border);
+  border-radius: var(--conference-machine-radius);
+  background: var(--conference-machine-bg);
+  backdrop-filter: var(--conference-machine-blur);
+  box-shadow: var(--conference-machine-shadow);
 }
 
-/* Внутренняя рамка-вкладыш машины (прототип .machine::before). */
-.conference-controls::before {
+/* Внутренняя рамка-вкладыш машины (прототип .machine::before): общая
+ * для панели управления (T098) и сетки тайлов (T099) — константа
+ * вкладыша задана один раз на корневых секциях конференции. */
+.conference-controls::before,
+.conference-tiles:not(.conference-tiles-compact)::before {
   content: '';
   position: absolute;
   inset: 4px;
-  border: 1px solid rgba(201, 162, 74, 0.35);
-  border-radius: 14px;
+  border: 1px solid var(--conference-machine-inner);
+  border-radius: var(--conference-machine-inner-radius);
   pointer-events: none;
 }
 
