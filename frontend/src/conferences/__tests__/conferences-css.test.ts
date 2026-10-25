@@ -46,8 +46,13 @@ import { describe, expect, it } from 'vitest'
  * (T043): уведомления о точечных ограничениях всплывают нативным
  * title тумблера, состояние «все источники отключены модератором»
  * (доменное speechRestricted, T094) в conference-controls не
- * выводится вовсе — правило удалено из источника целиком; нейтральная
- * строка отказа переключения .conference-controls-notice остаётся.
+ * выводится вовсе — правило удалено из источника целиком.
+ *
+ * T105 — полный демонтаж строки отказа .conference-controls-notice:
+ * все уведомления панели живут в tooltip'ах кнопок (отказ переключения
+ * «Не удалось включить/выключить …» — в tooltip СВОЕЙ кнопки, приоритет
+ * pending > failure > точечное ограничение > имя) — правило удалено
+ * из источника целиком (реинверсия сохранения из T097).
  *
  * T098 — полная замена conference-controls на стимпанк-прототип кнопок-
  * иконок tmp/conference-controls.html: оболочка machine на fieldset
@@ -662,15 +667,12 @@ describe('демонтаж стека пояснений conference-controls (T0
     expect(conferencesCss).not.toContain('.conference-controls-restrictions')
   })
 
-  it('нейтральная строка отказа .conference-controls-notice сохранена (регресс)', () => {
-    // «Не удалось включить/выключить …» — единственный потребитель
-    // класса после T097; геометрия не регрессирует (^ и m — не цеплять
-    // хвосты составных селекторов)
-    const rule = conferencesCss.match(/^\.conference-controls-notice\s*\{([^}]*)\}/m)
-    expect(rule).not.toBeNull()
-    expect(rule?.[1]).toContain('flex-basis: 100%')
-    expect(rule?.[1]).toContain('font: italic 12px var(--font-body)')
-    expect(rule?.[1]).toContain('color: var(--muted)')
+  it('правило .conference-controls-notice удалено из источника (демонтаж строки отказа T105)', () => {
+    // все уведомления панели живут в tooltip'ах кнопок: отказ
+    // переключения «Не удалось включить/выключить …» — в tooltip СВОЕЙ
+    // кнопки, <output>-строки под кнопками больше нет — мёртвое
+    // правило не остаётся в CSS (реинверсия по образцу T097)
+    expect(conferencesCss).not.toContain('.conference-controls-notice')
   })
 })
 

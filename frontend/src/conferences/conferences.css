@@ -972,17 +972,6 @@ section[data-guest-join] {
   pointer-events: none;
 }
 
-/* Нейтральная строка отказа переключения (детали не раскрываются) —
- * под кнопками внутри оболочки. */
-.conference-controls-notice {
-  position: relative;
-  z-index: 1;
-  flex-basis: 100%;
-  margin: 0;
-  font: italic 12px var(--font-body);
-  color: var(--muted);
-}
-
 /* Анимации прототипа: мерцание лампы, вращение шестерён (декор 90s,
  * проектор 6s), пульс волн/мерцание луча, полёт клубка пара; полёт
  * тумблера T103 — перелив кольца (ring-crawl) и пульс лампы

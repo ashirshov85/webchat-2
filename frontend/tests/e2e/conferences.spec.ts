@@ -68,6 +68,12 @@ import {
  * (T051), чат-поверхность гостю недоступна (FR-010: `/` → /login),
  * подделанный nonce — единообразный отказ без раскрытия причин (edge).
  *
+ * 009, US1, T105 — гостевая нога SC-005: гость «только микрофон» без
+ * снимка №46 — кнопки НЕопубликованных источников (экран/камера)
+ * блокируются permission-событием сами (bump-эпоха прав в
+ * MediaControls): mic→экран→камера подряд → все три кнопки-иконки
+ * disabled ≤ 2 c, «Камера» некликабельна (регресс бага залипания).
+ *
  * 009, US5, T061 — e2e индикатора «звонок идёт» (quickstart §3.5,
  * T059): carol — член группового чата, НЕ входя в звонок, видит бейдж
  * по №18 conference.started (фактический вход первого участника —
@@ -1014,6 +1020,84 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     // перенаправляет на /login (ProtectedRoute), мессенджер не рендерится
     await guestPage.goto('/')
     await expect(guestPage).toHaveURL(/\/login/)
+  })
+
+  test('T105: гостевая нога SC-005 — mic→экран→камера гостю «только микрофон»: кнопки блокируются ≤ 2 c, «Камера» некликабельна', async ({
+    browser,
+  }) => {
+    const aliceNow = await login(api, alice.username)
+    const conference = await createConference(api, aliceNow, chatId)
+
+    // alice (создатель = модератор) в звонке — будет срезать гостю
+    // источники по одному (№49, SC-005)
+    const alicePage = await openConferencePage(browser, aliceNow, conference.id)
+    openedContexts.push(alicePage.context())
+    await alicePage.getByRole('button', { name: 'Войти' }).click()
+    await expect(alicePage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
+
+    // инвайт-ссылка через UI панели модерации (как в SC-003)
+    await alicePage.getByRole('button', { name: 'Пригласить гостя' }).click()
+    const inviteField = alicePage.getByRole('textbox', { name: 'Ссылка-приглашение' })
+    await expect(inviteField).toBeVisible({ timeout: 10_000 })
+    const inviteUrl = await inviteField.inputValue()
+
+    // гость входит «только микрофон» (Q1=C/Q3=A): камера/экран
+    // НЕ опубликованы — у их кнопок нет трек-событий, единственная
+    // нога перерисовки панели — permission-событие (bump-эпоха T105)
+    const guestName = `Гость105${RUN_ID}`
+    const guestContext = await newGuestContext(browser)
+    const guestPage = await guestContext.newPage()
+    await guestPage.goto(new URL(inviteUrl).pathname)
+    await guestPage.getByLabel('Ваше имя').fill(guestName)
+    await guestPage.getByRole('button', { name: 'Продолжить' }).click()
+    await guestPage.getByRole('button', { name: 'Войти' }).click()
+    await expect(guestPage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
+    await expect(guestPage.getByRole('button', { name: 'Микрофон', exact: true })).toBeEnabled()
+
+    // строка цели в панели участников модератора (T094)
+    const guestRow = alicePage.getByRole('group', { name: guestName })
+
+    // (1) mic: живой трек — сервер снимает публикацию, блокировка
+    // приезжает трек-событием ≤ 2 c
+    await guestRow.getByRole('button', { name: 'Микрофон', exact: true }).click()
+    await expect(guestPage.getByRole('button', { name: 'Микрофон', exact: true })).toBeDisabled({
+      timeout: SC005_MS,
+    })
+
+    // (2) экран: источник НЕ опубликован — трек-события нет; регресс
+    // бага T105 (гость без №46): bump-эпоха перерисовывает панель по
+    // permission-событию, кнопка «Экран» блокируется ≤ 2 c
+    const screenStartedAt = Date.now()
+    await guestRow.getByRole('button', { name: 'Экран', exact: true }).click()
+    await expect(guestPage.getByRole('button', { name: 'Экран', exact: true })).toBeDisabled({
+      timeout: SC005_MS,
+    })
+    expect(
+      Date.now() - screenStartedAt,
+      `SC-005: блокировка экрана гостя ${Date.now() - screenStartedAt} мс`,
+    ).toBeLessThanOrEqual(SC005_MS)
+
+    // (3) камера: третий точечный → grants canPublish=false (T094) —
+    // ВСЕ три кнопки-иконки disabled ≤ 2 c, «Камера» некликабельна
+    // (регресс бага репорта: кнопка оставалась доступной, клик давал
+    // «Не удалось включить камеру»)
+    const cameraStartedAt = Date.now()
+    await guestRow.getByRole('button', { name: 'Камера', exact: true }).click()
+    const guestCamera = guestPage.getByRole('button', { name: 'Камера', exact: true })
+    await expect(guestCamera).toBeDisabled({ timeout: SC005_MS })
+    expect(
+      Date.now() - cameraStartedAt,
+      `SC-005: блокировка камеры гостя ${Date.now() - cameraStartedAt} мс`,
+    ).toBeLessThanOrEqual(SC005_MS)
+    for (const label of ['Микрофон', 'Камера', 'Экран']) {
+      await expect(guestPage.getByRole('button', { name: label, exact: true })).toBeDisabled()
+    }
+
+    // комнату завершаю сам (создатель): активная комната не достанется
+    // следующему сюиту с ghost-подключениями закрытых вкладок
+    await apiCall(api, 'post', `/api/v1/conferences/${conference.id}/end`, {
+      token: aliceNow.accessToken,
+    }).catch(() => {})
   })
 
   test('подделанный nonce — единообразный отказ «Ссылка недействительна» без ввода имени (edge, минимум раскрытия)', async ({

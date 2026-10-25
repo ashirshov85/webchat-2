@@ -13,7 +13,11 @@
  * единственный источник истины медиа-плоскость LiveKit, поэтому UI не
  * расходится с комнатой (стартовая публикация — publishInitialTracks
  * T027; серверные мьюты модератора отражаются сами — MutePublishedTrack
- * гасит публикацию).
+ * гасит публикацию). grants при этом читаются СБОКУ рендера: хук НЕ
+ * перерисовывается на permission-only изменении (livekit-client
+ * мутирует participant.permissions на месте, useState'ы хука получают
+ * Object.is-идентичные значения → bail out), поэтому панель держит
+ * собственную bump-эпоху прав — см. блок ограничений ниже.
  *
  * Внутри кнопок нет текста «вкл/выкл» — состояние дублируется
  * визуалом (конвенция 008): data-state on = золотая рамка + свечение +
@@ -41,8 +45,8 @@
  * prefers-reduced-motion глушит контур/пульс глобальным кил-свитчем
  * (theme/machine.css, без локальных правил).
  *
- * Собственные ограничения (T043/T097/T098, FR-007/FR-008, SC-005):
- * заблокированные тумблеры; пояснение — ТОЛЬКО латунный tooltip
+ * Собственные ограничения (T043/T097/T098/T105, FR-007/FR-008,
+ * SC-005): заблокированные тумблеры; пояснение — ТОЛЬКО латунный tooltip
  * точечного среза (кастомный .conference-controls-tooltip на
  * :hover/:focus-visible — замена нативного title T097, тексты-константы
  * сохранены). Два источника сходятся в один блокирующий сигнал (OR —
@@ -50,14 +54,21 @@
  *  - LIVE-проекция grants подключения (restrictionMarks T041:
  *    canPublish=false — «Все источники» (доменное speechRestricted,
  *    T094, Q4=A), срезанный источник — точечное ограничение):
- *    сервер применяет ограничения №49 немедленно UpdateParticipant'ом,
- *    RoomEvent.ParticipantPermissionsChanged переподнимает рендер
- *    (SC-005 ≤ 2 c) — tooltip приезжает/уезжает живьём вместе с grants;
+ *    сервер применяет ограничения №49 немедленно UpdateParticipant'ом.
+ *    livekit-client мутирует permissions НА МЕСТЕ и ТОЛЬКО трек-событие
+ *    перерисовывает useLocalParticipant; для НЕопубликованных
+ *    источников (гость «только микрофон», Q1=C/Q3=A) трек-события нет —
+ *    панель инкрементит bump-эпоху прав прямо в обработчике
+ *    RoomEvent.ParticipantPermissionsChanged (T105) и перечитывает
+ *    restrictionMarks с мутированного объекта: блокировка приезжает/
+ *    уезжает живьём вместе с grants (SC-005 ≤ 2 c) БЕЗ зависимости от
+ *    ре-рендеров хука — гость (без снимка №46) блокируется сам;
  *  - снимок №46 MeView (restrictions-props из useConference.me):
  *    ограничения персистентны (Q5/Q22=A) и вшиты в grants минта,
  *    снимок догоняется повторным №46 (onRestrictionsSync —
  *    useConference.refreshMe) по тому же permission-событию:
- *    после выхода на pre-join блокировки актуальны (T033).
+ *    после выхода на pre-join блокировки актуальны (T033). Член
+ *    сохраняет ОБЕ ноги (bump + №46-рефетч), гость — только live-гранты.
  * Точечное ограничение поясняется tooltip'ом кнопки («Микрофон
  * отключён модератором» и т.п. — те же формулировки, что на pre-join
  * T033); состояние «все источники отключены модератором» в панели
@@ -70,8 +81,8 @@
  * FR-006 «только слушаю»: все три тумблера выключены — легальное
  * состояние; включение публикации прямо в звонке — теми же кнопками
  * (в рамках прав: grants срезаны сервером в токене №47, FR-007 —
- * запрещённый источник просто не публикуется, отказ виден нейтральной
- * строкой .conference-controls-notice без раскрытия деталей).
+ * запрещённый источник просто не публикуется, отказ поясняется
+ * нейтральным текстом в tooltip СВОЕЙ кнопки без раскрытия деталей).
  * Повторный запрос доступа к устройствам после запрета браузера —
  * попытка включения кнопкой (Q6=A; отдельный UX отказа — T032).
  * Отмена собственного выбора экрана (браузерный пикер закрыт) — не
@@ -95,7 +106,7 @@
  */
 import { useConnectionState, useLocalParticipant, useRoomContext } from '@livekit/components-react'
 import { ConnectionState, RoomEvent } from 'livekit-client'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useReducer, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { restrictionMarks } from './ParticipantsPanel'
 import type { ParticipantRestrictionMarks } from './ParticipantsPanel'
@@ -113,7 +124,9 @@ export interface MediaControlsProps {
   readonly restrictions?: ParticipantRestrictionMarks | null
   /**
    * Повторный №46 по permission-событию LiveKit (T043: live-обновление
-   * снимка me — useConference.refreshMe); не задан — событие игнорируется.
+   * снимка me — useConference.refreshMe); не задан — рефетча нет, но
+   * bump-эпоха прав (T105) всё равно перерисовывает панель по
+   * live-грантам (гость монтирует панель без снимка №46).
    */
   readonly onRestrictionsSync?: () => void
   /** Выход из конференции: useConference.leave — корректный разрыв слота вкладки (Q10=A). */
@@ -349,8 +362,25 @@ export default function MediaControls({
    * 'pending' (T103 — pending-кольцо, см. докблок шапки).
    */
   const [pending, setPending] = useState<MediaSlot | null>(null)
-  /** Нейтральная строка последнего отказа (сбрасывается следующей попыткой). */
-  const [notice, setNotice] = useState<string | null>(null)
+  /**
+   * Последний отказ переключения (T105): живёт в tooltip СВОЕЙ кнопки —
+   * строки под панелью (.conference-controls-notice) больше нет;
+   * сбрасывается началом любой новой попытки, новый отказ заменяет
+   * прежний (жизненный цикл как у строки T028).
+   */
+  const [failure, setFailure] = useState<{
+    readonly slot: MediaSlot
+    readonly text: string
+  } | null>(null)
+  /**
+   * Bump-эпоха прав (T105): useLocalParticipant НЕ перерисовывается на
+   * permission-only изменении (Object.is-bail out), а панель читает
+   * restrictionMarks(localParticipant.permissions) на рендере — инкремент
+   * в обработчике ParticipantPermissionsChanged переподнимает рендер и
+   * перечитывает мутированные grants. Значение эпохи не используется —
+   * важен сам факт перерисовки.
+   */
+  const [, bumpPermissions] = useReducer((epoch: number) => epoch + 1, 0)
   /** Зеркало колбэка: эффект подписки живёт на комнату, без пересозданий. */
   const syncRef = useRef(onRestrictionsSync)
   syncRef.current = onRestrictionsSync
@@ -368,16 +398,21 @@ export default function MediaControls({
   // Сервер применил/снял ограничения живому подключению (№49 →
   // UpdateParticipant, SC-005): RoomEvent.ParticipantPermissionsChanged
   // приходит парой (prevPermissions, participant) — локальный случай
-  // запускает повторный №46 (снимок me догоняет БД: pre-join после
-  // выхода показывает актуальные блокировки, T033/T043); сама
-  // блокировка кнопок уже пересчитана live-проекцией grants
-  // (useLocalParticipant переподнимает рендер тем же событием).
+  // делает ДВЕ вещи: (1) bump-эпоху прав — панель перечитывает
+  // restrictionMarks с мутированного localParticipant.permissions сама
+  // (хук на permission-only изменении НЕ перерисовывается; без bump'а
+  // кнопки НЕопубликованных источников держат СТАРЫЙ рендер — гостевой
+  // баг T105, гость без №46); (2) повторный №46 для члена (снимок me
+  // догоняет БД: pre-join после выхода показывает актуальные
+  // блокировки, T033/T043; onRestrictionsSync может отсутствовать —
+  // гость монтирует панель без него, bump блокирует и так).
   useEffect(() => {
     const handlePermissionsChanged = (
       _prevPermissions: unknown,
       participant: { readonly isLocal: boolean },
     ): void => {
       if (participant.isLocal) {
+        bumpPermissions()
         syncRef.current?.()
       }
     }
@@ -487,16 +522,17 @@ export default function MediaControls({
 
   async function flip(toggle: SlotToggle, button: HTMLElement): Promise<void> {
     const enable = !toggle.enabled
-    setNotice(null)
+    setFailure(null)
     setPending(toggle.slot)
     spawnPuff(button)
     try {
       await toggle.toggle(enable)
     } catch (cause) {
       // Состояние не откатывается вручную — источник истины комната;
-      // отказ (запрет устройств/грантов/медиа) — только нейтральная строка.
+      // отказ (запрет устройств/грантов/медиа) — только нейтральный
+      // текст в tooltip СВОЕЙ кнопки (T105).
       if (!isUserCancelledScreenPick(cause)) {
-        setNotice(toggleFailureText(toggle.slot, enable))
+        setFailure({ slot: toggle.slot, text: toggleFailureText(toggle.slot, enable) })
       }
     } finally {
       setPending(null)
@@ -540,9 +576,13 @@ export default function MediaControls({
           {SLOT_ICONS[toggle.slot]}
           {LOCK_BADGE}
           <span className="conference-controls-tooltip" id={tipIds[toggle.slot]}>
+            {/* Цепочка приоритета tooltip'а (T103/T105): pending-текст
+             * полёта > отказ своей кнопки > точечное ограничение > имя */}
             {pending === toggle.slot
               ? pendingText(toggle.slot, !toggle.enabled)
-              : (toggle.restrictionNotice ?? toggle.label)}
+              : failure?.slot === toggle.slot
+                ? failure.text
+                : (toggle.restrictionNotice ?? toggle.label)}
           </span>
         </button>
       ))}
@@ -561,7 +601,6 @@ export default function MediaControls({
           Покинуть
         </span>
       </button>
-      {notice !== null && <output className="conference-controls-notice">{notice}</output>}
     </fieldset>
   )
 }
