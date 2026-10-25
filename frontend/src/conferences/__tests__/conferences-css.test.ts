@@ -778,3 +778,80 @@ describe('индикатор микрофона и пометки ролей т�
     expect(doc).toContain('РОВНО ДВА состояния')
   })
 })
+
+describe('тематическая live-плашка шага имени гостя (T102): статический пин CSS', () => {
+  it('плашка закрывает ВСЕ box-свойства глобального output-стиля: margin 0, ширина поля имени, тёмная пластина, латунная рамка, паддинг input', () => {
+    // глобальное element-правило `output, [role='status']` (index.css)
+    // навешивает каждому <output> светлую зелёную плашку auth-лексики
+    // (margin 0 0 14px / padding 10px 12px / background
+    // var(--success-bg)); класс (0,1,0) обязан закрыть каждое из них
+    const rule = conferencesCss.match(/^\.guest-join-live\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: 0')
+    // во всю ширину поля имени: оба — flex-дети колонки .guest-join-name
+    expect(rule?.[1]).toContain('width: 100%')
+    // явная тёмная пластина прототипа — зелёная лексика исключена
+    expect(rule?.[1]).toContain(
+      'linear-gradient(180deg, rgba(34, 28, 18, 0.9), rgba(20, 16, 10, 0.92))',
+    )
+    expect(rule?.[1]).toContain('border: 1px solid var(--gold-dark)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+    expect(rule?.[1]).not.toContain('var(--success)')
+    // паддинг равен .guest-join-name-input — пластина геометрически
+    // совпадает с полем имени (7px 10px)
+    const input = conferencesCss.match(/^\.guest-join-name-input\s*\{([^}]*)\}/m)
+    expect(input?.[1]).toContain('padding: 7px 10px')
+    expect(rule?.[1]).toContain('padding: 7px 10px')
+    expect(rule?.[1]).toContain('overflow-wrap: break-word')
+  })
+
+  it('контент по центру + лампа-точка ::before с пульсом live-flick (паритет лампы тумблеров T098)', () => {
+    const rule = conferencesCss.match(/^\.guest-join-live\s*\{([^}]*)\}/m)
+    expect(rule?.[1]).toContain('display: flex')
+    expect(rule?.[1]).toContain('align-items: center')
+    expect(rule?.[1]).toContain('justify-content: center')
+    expect(rule?.[1]).toContain('column-gap: 7px')
+    expect(rule?.[1]).toContain('text-align: center')
+    // лампа-точка 6px: radial-градиент прототипа + свечение + флик
+    const lamp = conferencesCss.match(/^\.guest-join-live::before\s*\{([^}]*)\}/m)
+    expect(lamp).not.toBeNull()
+    expect(lamp?.[1]).toContain("content: ''")
+    expect(lamp?.[1]).toContain('flex: none')
+    expect(lamp?.[1]).toContain('width: 6px')
+    expect(lamp?.[1]).toContain('height: 6px')
+    expect(lamp?.[1]).toContain(
+      'radial-gradient(circle at 35% 30%, #fff6d8, var(--gold-light) 45%, var(--gold-dark))',
+    )
+    expect(lamp?.[1]).toContain('box-shadow: 0 0 6px rgba(232, 200, 119, 0.8)')
+    expect(lamp?.[1]).toContain('animation: live-flick 4s ease-in-out infinite')
+    // кадры мерцания прототипа tmp/guest-join-title.html
+    const frames = conferencesCss.match(/@keyframes live-flick\s*\{([\s\S]*?)\n\}/)
+    expect(frames).not.toBeNull()
+    expect(frames?.[1]).toContain('opacity: 0.6')
+  })
+
+  it('регресс-пины формы (T091/T096/T101) не меняются; глобальный output-стиль в index.css не правится', () => {
+    // корпус machine, центрирование по обеим осям и ширина формы — на месте
+    const form = conferencesCss.match(/^\.guest-join-name\s*\{([^}]*)\}/m)
+    expect(form?.[1]).toContain('margin: auto')
+    expect(form?.[1]).toContain('width: min(560px, 100%)')
+    expect(form?.[1]).toContain('background: var(--conference-machine-bg)')
+    const title = conferencesCss.match(/^\.guest-join-title\s*\{([^}]*)\}/m)
+    expect(title?.[1]).toContain('text-align: center')
+    // глобальное правило живёт без изменений — им пользуются
+    // auth/настройки/статус-баннеры (status-banners.css перекрывает
+    // его своими классами — тот же паттерн переопределения)
+    const output = indexCss.match(/output,\s*\[role='status'\]\s*\{([^}]*)\}/)
+    expect(output).not.toBeNull()
+    expect(output?.[1]).toContain('var(--success-bg)')
+  })
+
+  it('докблок правила truthfully описывает перекрытие глобального output-стиля', () => {
+    const at = conferencesCss.indexOf('.guest-join-live {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1400), at)
+    expect(doc).toContain('output')
+    expect(doc).toContain('глобальн')
+    expect(doc).toContain('T102')
+  })
+})
