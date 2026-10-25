@@ -42,10 +42,17 @@ import { describe, expect, it } from 'vitest'
  * T096 — вертикальное центрирование pre-join-панели члена
  * (.conference-prejoin) и гостевых форм (.guest-join-name,
  * .guest-join-prejoin): auto-маржины flex-элемента поглощают свободное
- * место по ОБОИМ осям (margin: 0 auto → margin: auto) — формы встают
+ * место по ОБЕИМ осям (margin: 0 auto → margin: auto) — формы встают
  * в центр фазовой колонки по горизонтали И вертикали, симметрично для
  * обеих точек входа (PreJoinScreen переиспользуется, паритет Q1=C);
  * прочие фазы (joined/error/терминал) не центрируются.
+ *
+ * T097 — демонтаж стека пояснений .conference-controls-restrictions
+ * (T043): уведомления о точечных ограничениях всплывают нативным
+ * title тумблера, состояние «все источники отключены модератором»
+ * (доменное speechRestricted, T094) в conference-controls не
+ * выводится вовсе — правило удалено из источника целиком; нейтральная
+ * строка отказа переключения .conference-controls-notice остаётся.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -331,6 +338,26 @@ describe('центрирование pre-join-форм по обеим осям 
       expect(rule, `правило ${selector}`).not.toBeNull()
       expect(rule?.[1], `правило ${selector}`).toContain('width: min(560px, 100%)')
     }
+  })
+})
+
+describe('демонтаж стека пояснений conference-controls (T097): статический пин CSS', () => {
+  it('правило .conference-controls-restrictions удалено из источника целиком', () => {
+    // T043 рендерил стек <output>-строк под тумблерами; T097: точечные
+    // ограничения поясняются нативным title тумблера, «Все источники»
+    // не поясняются вовсе — мёртвое правило не остаётся в CSS
+    expect(conferencesCss).not.toContain('.conference-controls-restrictions')
+  })
+
+  it('нейтральная строка отказа .conference-controls-notice сохранена (регресс)', () => {
+    // «Не удалось включить/выключить …» — единственный потребитель
+    // класса после T097; геометрия не регрессирует (^ и m — не цеплять
+    // хвосты составных селекторов)
+    const rule = conferencesCss.match(/^\.conference-controls-notice\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('flex-basis: 100%')
+    expect(rule?.[1]).toContain('font: italic 12px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
   })
 })
 

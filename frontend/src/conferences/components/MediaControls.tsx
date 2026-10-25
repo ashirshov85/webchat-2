@@ -9,19 +9,28 @@
  * публикация — publishInitialTracks T027; серверные мьюты модератора
  * отражаются сами — MutePublishedTrack гасит публикацию).
  *
- * Собственные ограничения (T043, FR-007/FR-008, SC-005): заблокированные
- * тумблеры с пояснением. Два источника сходятся в один блокирующий
- * сигнал (OR — консервативно, сходится к серверному состоянию):
+ * Собственные ограничения (T043/T097, FR-007/FR-008, SC-005):
+ * заблокированные тумблеры; пояснение — ТОЛЬКО tooltip точечного
+ * среза (нативный title, T097 — паттерн ModerationPanel). Два
+ * источника сходятся в один блокирующий сигнал (OR — консервативно,
+ * сходится к серверному состоянию):
  *  - LIVE-проекция grants подключения (restrictionMarks T041:
- *    canPublish=false — «право слова» Q4=A, срезанный источник —
- *    точечное ограничение): сервер применяет ограничения №49
- *    немедленно UpdateParticipant'ом, RoomEvent.ParticipantPermissions-
- *    Changed переподнимает рендер (SC-005 ≤ 2 c);
+ *    canPublish=false — «Все источники» (доменное speechRestricted,
+ *    T094, Q4=A), срезанный источник — точечное ограничение):
+ *    сервер применяет ограничения №49 немедленно UpdateParticipant'ом,
+ *    RoomEvent.ParticipantPermissionsChanged переподнимает рендер
+ *    (SC-005 ≤ 2 c) — title приезжает/уезжает живьём вместе с grants;
  *  - снимок №46 MeView (restrictions-props из useConference.me):
  *    ограничения персистентны (Q5/Q22=A) и вшиты в grants минта,
  *    снимок догоняется повторным №46 (onRestrictionsSync —
  *    useConference.refreshMe) по тому же permission-событию:
  *    после выхода на pre-join блокировки актуальны (T033).
+ * Точечное ограничение поясняется title тумблера («Микрофон отключён
+ * модератором» и т.п. — те же формулировки, что на pre-join T033);
+ * состояние «все источники отключены модератором» в панели управления
+ * НЕ выводится вовсе (T097): кнопки просто недоступны (silent).
+ * disabled-кнопка не получает фокус — title дублирует состояние только
+ * для мыши, клавиатурный путь не меняется (интеракции на disabled нет).
  *
  * FR-006 «только слушаю»: все три тумблера выключены — легальное
  * состояние; включение публикации прямо в звонке — теми же тумблерами
@@ -84,29 +93,13 @@ interface SlotToggle {
   readonly label: string
   readonly enabled: boolean
   readonly blocked: boolean
+  /**
+   * Tooltip точечного ограничения (T097): null — атрибут title не
+   * выводится; строка — только при ТОЧЕЧНОМ срезе источника (без
+   * поглощения мастером «Все источники»).
+   */
+  readonly restrictionTitle: string | null
   readonly toggle: (enabled: boolean) => Promise<void>
-}
-
-/**
- * Пояснения блокировки собственных источников (T043, FR-008):
- * «право слова» (Q4=A) блокирует ВСЕ публикации — одно объединяющее
- * пояснение; точечные — по отдельности (тексты — как на pre-join T033).
- */
-function restrictionNotices(effective: ParticipantRestrictionMarks): string[] {
-  if (effective.speechRestricted) {
-    return ['Публикация отключена модератором (право слова)']
-  }
-  const notices: string[] = []
-  if (effective.micRestricted) {
-    notices.push('Микрофон отключён модератором')
-  }
-  if (effective.cameraRestricted) {
-    notices.push('Камера отключена модератором')
-  }
-  if (effective.screenRestricted) {
-    notices.push('Демонстрация экрана отключена модератором')
-  }
-  return notices
 }
 
 /** Нейтральное сообщение об отказе переключения (детали причин не раскрываются). */
@@ -182,18 +175,15 @@ export default function MediaControls({
   // рефетчем, сходится к серверному SET-состоянию (идемпотентность №49).
   const live = restrictionMarks(localParticipant.permissions)
   const speechBlocked = live.speechRestricted || restrictions?.speechRestricted === true
-  const micBlocked = speechBlocked || live.micRestricted || restrictions?.micRestricted === true
-  const cameraBlocked =
-    speechBlocked || live.cameraRestricted || restrictions?.cameraRestricted === true
-  const screenBlocked =
-    speechBlocked || live.screenRestricted || restrictions?.screenRestricted === true
-  /** Пояснения показываются по объединённому состоянию (поглощение «правом слова» — Q4=A). */
-  const restrictionNoticeList = restrictionNotices({
-    micRestricted: micBlocked,
-    cameraRestricted: cameraBlocked,
-    screenRestricted: screenBlocked,
-    speechRestricted: speechBlocked,
-  })
+  // Точечные срезы — БЕЗ поглощения мастером: только из них выводится
+  // title (T097); blocked ниже сохраняет поглощение Q4=A (canPublish=
+  // false → все три disabled — регресс поведения T043/T094 не допускается).
+  const micRestricted = live.micRestricted || restrictions?.micRestricted === true
+  const cameraRestricted = live.cameraRestricted || restrictions?.cameraRestricted === true
+  const screenRestricted = live.screenRestricted || restrictions?.screenRestricted === true
+  const micBlocked = speechBlocked || micRestricted
+  const cameraBlocked = speechBlocked || cameraRestricted
+  const screenBlocked = speechBlocked || screenRestricted
 
   const toggles: readonly SlotToggle[] = [
     {
@@ -201,6 +191,7 @@ export default function MediaControls({
       label: 'Микрофон',
       enabled: isMicrophoneEnabled,
       blocked: micBlocked,
+      restrictionTitle: !speechBlocked && micRestricted ? 'Микрофон отключён модератором' : null,
       toggle: async (enabled) => {
         await localParticipant.setMicrophoneEnabled(enabled)
       },
@@ -210,6 +201,7 @@ export default function MediaControls({
       label: 'Камера',
       enabled: isCameraEnabled,
       blocked: cameraBlocked,
+      restrictionTitle: !speechBlocked && cameraRestricted ? 'Камера отключена модератором' : null,
       toggle: async (enabled) => {
         await localParticipant.setCameraEnabled(enabled)
         // T085: при УСПЕШНОМ включении камеры живая демонстрация экрана
@@ -227,6 +219,8 @@ export default function MediaControls({
       label: 'Экран',
       enabled: isScreenShareEnabled,
       blocked: screenBlocked,
+      restrictionTitle:
+        !speechBlocked && screenRestricted ? 'Демонстрация экрана отключена модератором' : null,
       toggle: async (enabled) => {
         await localParticipant.setScreenShareEnabled(enabled)
         // T077: при УСПЕШНОМ старте демонстрации собственная камера
@@ -269,6 +263,7 @@ export default function MediaControls({
           aria-label={toggle.label}
           aria-pressed={toggle.enabled}
           disabled={!connected || pending !== null || toggle.blocked}
+          title={toggle.restrictionTitle ?? undefined}
           onClick={() => {
             void flip(toggle)
           }}
@@ -282,15 +277,6 @@ export default function MediaControls({
       <button type="button" className="conference-controls-leave" onClick={onLeave}>
         Покинуть
       </button>
-      {restrictionNoticeList.length > 0 && (
-        <div className="conference-controls-restrictions">
-          {restrictionNoticeList.map((text) => (
-            <output key={text} className="conference-controls-notice">
-              {text}
-            </output>
-          ))}
-        </div>
-      )}
       {notice !== null && <output className="conference-controls-notice">{notice}</output>}
     </fieldset>
   )

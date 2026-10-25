@@ -151,7 +151,7 @@ describe('ParticipantsPanel (009 US3 T041)', () => {
     expect(screen.getByText('g:conn-guest-2')).toBeInTheDocument()
   })
 
-  it('«право слова» (canPublish=false) — единая индикация без публикаций, точечные источники не помечаются (Q4=A)', () => {
+  it('«Все источники» (canPublish=false) — единая индикация без публикаций, точечные источники не помечаются (Q4=A)', () => {
     lkc.useParticipants.mockReturnValue([
       participant({
         identity: 'u:1:c1',
@@ -163,7 +163,7 @@ describe('ParticipantsPanel (009 US3 T041)', () => {
 
     render(<ParticipantsPanel />)
 
-    expect(screen.getByText('право слова')).toBeInTheDocument()
+    expect(screen.getByText('все источники отключены')).toBeInTheDocument()
     expect(screen.queryByText('микрофон отключён')).not.toBeInTheDocument()
     expect(screen.queryByText('камера отключена')).not.toBeInTheDocument()
     expect(screen.queryByText('экран отключён')).not.toBeInTheDocument()
@@ -185,7 +185,7 @@ describe('ParticipantsPanel (009 US3 T041)', () => {
     expect(screen.getByText('микрофон отключён')).toBeInTheDocument()
     expect(screen.getByText('экран отключён')).toBeInTheDocument()
     expect(screen.queryByText('камера отключена')).not.toBeInTheDocument()
-    expect(screen.queryByText('право слова')).not.toBeInTheDocument()
+    expect(screen.queryByText('все источники отключены')).not.toBeInTheDocument()
   })
 
   it('без ограничений индикаций нет: полный набор источников, пустой набор (все разрешены) и отсутствие permissions', () => {
@@ -205,7 +205,7 @@ describe('ParticipantsPanel (009 US3 T041)', () => {
 
     render(<ParticipantsPanel />)
 
-    expect(screen.queryByText('право слова')).not.toBeInTheDocument()
+    expect(screen.queryByText('все источники отключены')).not.toBeInTheDocument()
     expect(screen.queryByText('микрофон отключён')).not.toBeInTheDocument()
     expect(screen.queryByText('камера отключена')).not.toBeInTheDocument()
     expect(screen.queryByText('экран отключён')).not.toBeInTheDocument()
@@ -282,7 +282,7 @@ describe('restrictionMarks — проекция grants (009 US3 T094)', () => {
     expect(restrictionMarks(undefined)).toEqual(NO_MARKS)
   })
 
-  it('строка панели при canPublish=false — единая пометка «право слова» (регресс-пин T094: all-four-true не плодит точечные пометки)', () => {
+  it('строка панели при canPublish=false — единая пометка «все источники отключены» (регресс-пин T094: all-four-true не плодит точечные пометки)', () => {
     lkc.useParticipants.mockReturnValue([
       participant({
         identity: 'u:1:c1',
@@ -295,7 +295,7 @@ describe('restrictionMarks — проекция grants (009 US3 T094)', () => {
 
     render(<ParticipantsPanel />)
 
-    expect(screen.getByText('право слова')).toBeInTheDocument()
+    expect(screen.getByText('все источники отключены')).toBeInTheDocument()
     expect(screen.queryByText('микрофон отключён')).not.toBeInTheDocument()
     expect(screen.queryByText('камера отключена')).not.toBeInTheDocument()
     expect(screen.queryByText('экран отключён')).not.toBeInTheDocument()

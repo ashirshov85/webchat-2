@@ -606,7 +606,7 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     creatorToken = null
   })
 
-  test('SC-005: мьют микрофона модератором блокирует тумблер цели с пояснением ≤ 2 c и виден всем; снятие разблокирует', async ({
+  test('SC-005: мьют микрофона модератором блокирует тумблер цели с title-подсказкой ≤ 2 c и виден всем; снятие разблокирует', async ({
     browser,
   }) => {
     // alice — создатель = модератор (T017); обе стороны в звонке,
@@ -633,15 +633,17 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
       .getByRole('button', { name: 'Микрофон', exact: true })
       .click()
 
-    // у bob тумблер заблокирован с пояснением (T043) ≤ 2 c от клика
-    await expect(bobPage.getByText('Микрофон отключён модератором')).toBeVisible({
+    // у bob тумблер заблокирован, точечное ограничение поясняется
+    // tooltip'ом при наведении (нативный title, T097) ≤ 2 c от клика
+    const bobMicToggle = bobPage.getByRole('button', { name: 'Микрофон', exact: true })
+    await expect(bobMicToggle).toHaveAttribute('title', 'Микрофон отключён модератором', {
       timeout: SC005_MS,
     })
     expect(
       Date.now() - startedAt,
       `SC-005: применение мьюта ${Date.now() - startedAt} мс`,
     ).toBeLessThanOrEqual(SC005_MS)
-    await expect(bobPage.getByRole('button', { name: 'Микрофон' })).toBeDisabled()
+    await expect(bobMicToggle).toBeDisabled()
     // состояние видно всем: строка bob в панели участников alice
     await expect(alicePage.getByText('микрофон отключён', { exact: true }).first()).toBeVisible({
       timeout: SC005_MS,
@@ -653,15 +655,16 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
         .getByRole('button', { name: 'Микрофон', exact: true }),
     ).toHaveAttribute('aria-pressed', 'true', { timeout: SC005_MS })
 
-    // снятие ограничения (SET false, Q22=A): блокировка у цели снята ≤ 2 c
+    // снятие ограничения (SET false, Q22=A): блокировка и title-подсказка
+    // у цели сняты ≤ 2 c
     await alicePage
       .getByRole('group', { name: bobNow.username })
       .getByRole('button', { name: 'Микрофон', exact: true })
       .click()
-    await expect(bobPage.getByText('Микрофон отключён модератором')).toHaveCount(0, {
+    await expect(bobMicToggle).not.toHaveAttribute('title', 'Микрофон отключён модератором', {
       timeout: SC005_MS,
     })
-    await expect(bobPage.getByRole('button', { name: 'Микрофон' })).toBeEnabled({
+    await expect(bobMicToggle).toBeEnabled({
       timeout: SC005_MS,
     })
   })
@@ -704,21 +707,20 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
       `SC-005: применение третьей точечной ${Date.now() - startedAt} мс`,
     ).toBeLessThanOrEqual(SC005_MS)
 
-    // у цели фактическое «всё заблокировано»: все тумблеры MediaControls
-    // недоступны с единым пояснением (canPublish=false, Q4=A)
-    await expect(bobPage.getByText('Публикация отключена модератором (право слова)')).toBeVisible({
-      timeout: SC005_MS,
-    })
+    // у цели фактическое «всё заблокировано» (canPublish=false, Q4=A):
+    // сигналом становятся три недоступных тумблера БЕЗ title и без
+    // текстовых пояснений в DOM (T097 — состояние «все источники
+    // отключены модератором» в conference-controls не выводится вовсе)
     for (const label of ['Микрофон', 'Камера', 'Экран']) {
-      await expect(bobPage.getByRole('button', { name: label, exact: true })).toBeDisabled()
+      const toggle = bobPage.getByRole('button', { name: label, exact: true })
+      await expect(toggle).toBeDisabled({ timeout: SC005_MS })
+      await expect(toggle).not.toHaveAttribute('title')
     }
+    await expect(bobPage.getByText('Публикация отключена модератором (право слова)')).toHaveCount(0)
+    await expect(bobPage.getByText(/отключё[нн]а? модератором/)).toHaveCount(0)
 
     // отжатие мастера включает всё: точечные тумблеры цели доступны ≤ 2 c
     await bobRow.getByRole('button', { name: 'Все источники', exact: true }).click()
-    await expect(bobPage.getByText('Публикация отключена модератором (право слова)')).toHaveCount(
-      0,
-      { timeout: SC005_MS },
-    )
     await expect(bobPage.getByRole('button', { name: 'Микрофон', exact: true })).toBeEnabled({
       timeout: SC005_MS,
     })

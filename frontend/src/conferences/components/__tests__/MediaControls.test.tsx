@@ -9,13 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * переключения — нейтральная строка без деталей, отмена браузерного
  * пикера экрана (AbortError) — не ошибка.
  *
- * 009, US3, T043 — собственные ограничения (FR-007/FR-008, SC-005):
- * тумблер заблокирован с пояснением по live-grants подключения
- * (№49 → UpdateParticipant) И/ИЛИ снимку №46 MeView (OR-слияние),
+ * 009, US3, T043/T097 — собственные ограничения (FR-007/FR-008, SC-005):
+ * тумблер заблокирован по live-grants подключения (№49 →
+ * UpdateParticipant) И/ИЛИ снимку №46 MeView (OR-слияние),
  * RoomEvent.ParticipantPermissionsChanged локального участника
  * запускает повторный №46 (onRestrictionsSync — useConference.refreshMe);
- * «право слова» (canPublish=false, Q4=A) блокирует ВСЕ тумблеры одним
- * объединяющим пояснением.
+ * точечный срез источника поясняется ТОЛЬКО tooltip'ом тумблера
+ * (нативный title, T097 — стек пояснений T043 демонтирован), а
+ * «Все источники» (canPublish=false, Q4=A; доменное speechRestricted,
+ * T094) блокирует ВСЕ тумблеры БЕЗ пояснений вовсе (silent).
  */
 
 /** Wire-константы TrackSource (@livekit/protocol) — как в ParticipantsPanel. */
@@ -222,7 +224,7 @@ describe('MediaControls (009 US1 T028/T029)', () => {
   })
 })
 
-describe('MediaControls: собственные ограничения (009 US3 T043)', () => {
+describe('MediaControls: собственные ограничения — tooltip точечных, silent-мастер (009 US3 T043/T097)', () => {
   beforeEach(() => {
     media.state = {
       mic: false,
@@ -243,7 +245,7 @@ describe('MediaControls: собственные ограничения (009 US3 
     vi.clearAllMocks()
   })
 
-  it('live-grants срезали микрофон (№49 UpdateParticipant): тумблер заблокирован с пояснением, соседние доступны', () => {
+  it('live-grants срезали микрофон (№49 UpdateParticipant): тумблер заблокирован, title-подсказка только на нём', () => {
     media.state.permissions = {
       canPublish: true,
       canPublishSources: [CAMERA, SCREEN_SHARE, SCREEN_SHARE_AUDIO],
@@ -251,21 +253,62 @@ describe('MediaControls: собственные ограничения (009 US3 
     renderControls()
 
     expect(toggle('Микрофон')).toBeDisabled()
+    expect(toggle('Микрофон')).toHaveAttribute('title', 'Микрофон отключён модератором')
+    // чужие title отсутствуют — каждая подсказка только на своей кнопке
     expect(toggle('Камера')).toBeEnabled()
+    expect(toggle('Камера')).not.toHaveAttribute('title')
     expect(toggle('Экран')).toBeEnabled()
-    expect(screen.getByText('Микрофон отключён модератором')).toBeVisible()
+    expect(toggle('Экран')).not.toHaveAttribute('title')
   })
 
-  it('«право слова» (canPublish=false, Q4=A): ВСЕ тумблеры заблокированы, единое пояснение', () => {
+  it('точечные подсказки камера/экран: текст только на своей кнопке (тексты — как на pre-join T033)', () => {
+    media.state.permissions = {
+      canPublish: true,
+      canPublishSources: [MICROPHONE, SCREEN_SHARE_AUDIO],
+    }
+    renderControls()
+
+    expect(toggle('Камера')).toBeDisabled()
+    expect(toggle('Камера')).toHaveAttribute('title', 'Камера отключена модератором')
+    expect(toggle('Экран')).toBeDisabled()
+    expect(toggle('Экран')).toHaveAttribute('title', 'Демонстрация экрана отключена модератором')
+    expect(toggle('Микрофон')).not.toHaveAttribute('title')
+  })
+
+  it('«Все источники» (canPublish=false, Q4=A): ВСЕ тумблеры заблокированы БЕЗ title и без строк пояснений (T097 — silent)', () => {
     media.state.permissions = { canPublish: false, canPublishSources: [] }
     renderControls()
 
     expect(toggle('Микрофон')).toBeDisabled()
     expect(toggle('Камера')).toBeDisabled()
     expect(toggle('Экран')).toBeDisabled()
-    expect(screen.getByText('Публикация отключена модератором (право слова)')).toBeVisible()
-    // точечные пояснения не дублируются — поглощаются «правом слова»
+    // состояние «все источники отключены модератором» не выводится вовсе:
+    // ни title, ни текстовых пояснений в DOM
+    for (const name of ['Микрофон', 'Камера', 'Экран']) {
+      expect(toggle(name)).not.toHaveAttribute('title')
+    }
+    expect(screen.queryByText('Публикация отключена модератором (право слова)')).toBeNull()
     expect(screen.queryByText('Микрофон отключён модератором')).toBeNull()
+    expect(screen.queryByText('Камера отключена модератором')).toBeNull()
+    expect(screen.queryByText('Демонстрация экрана отключена модератором')).toBeNull()
+    expect(document.querySelector('.conference-controls-restrictions')).toBeNull()
+  })
+
+  it('снимок №46 speechRestricted: та же единая блокировка без title (OR-слияние до рефетча)', () => {
+    renderControls(vi.fn(), {
+      micRestricted: false,
+      cameraRestricted: false,
+      screenRestricted: false,
+      speechRestricted: true,
+    })
+
+    expect(toggle('Микрофон')).toBeDisabled()
+    expect(toggle('Камера')).toBeDisabled()
+    expect(toggle('Экран')).toBeDisabled()
+    for (const name of ['Микрофон', 'Камера', 'Экран']) {
+      expect(toggle(name)).not.toHaveAttribute('title')
+    }
+    expect(screen.queryByText('Публикация отключена модератором (право слова)')).toBeNull()
   })
 
   it('регресс-пин T094: проекция all-four-true (все три точечных → grants canPublish=false) не меняет исход — единая блокировка', () => {
@@ -278,11 +321,10 @@ describe('MediaControls: собственные ограничения (009 US3 
     expect(toggle('Микрофон')).toBeDisabled()
     expect(toggle('Камера')).toBeDisabled()
     expect(toggle('Экран')).toBeDisabled()
-    expect(screen.getByText('Публикация отключена модератором (право слова)')).toBeVisible()
-    // точечные пояснения поглощаются — точечные true их не плодят
-    expect(screen.queryByText('Микрофон отключён модератором')).toBeNull()
-    expect(screen.queryByText('Камера отключена модератором')).toBeNull()
-    expect(screen.queryByText('Демонстрация экрана отключена модератором')).toBeNull()
+    // точечные подсказки не плодятся — поглощаются мастером
+    expect(toggle('Микрофон')).not.toHaveAttribute('title')
+    expect(toggle('Камера')).not.toHaveAttribute('title')
+    expect(toggle('Экран')).not.toHaveAttribute('title')
   })
 
   it('снимок №46 (restrictions-props) блокирует тумблер и при полных live-grants (до рефетча)', () => {
@@ -294,12 +336,12 @@ describe('MediaControls: собственные ограничения (009 US3 
     })
 
     expect(toggle('Камера')).toBeDisabled()
+    expect(toggle('Камера')).toHaveAttribute('title', 'Камера отключена модератором')
     expect(toggle('Микрофон')).toBeEnabled()
     expect(toggle('Экран')).toBeEnabled()
-    expect(screen.getByText('Камера отключена модератором')).toBeVisible()
   })
 
-  it('OR-слияние: live-грант и снимок №46 вместе блокируют оба слота с двумя пояснениями', () => {
+  it('OR-слияние: live-грант и снимок №46 вместе блокируют оба слота — title на каждом своём', () => {
     media.state.permissions = {
       canPublish: true,
       canPublishSources: [CAMERA, MICROPHONE, SCREEN_SHARE_AUDIO],
@@ -312,10 +354,11 @@ describe('MediaControls: собственные ограничения (009 US3 
     })
 
     expect(toggle('Микрофон')).toBeDisabled()
+    expect(toggle('Микрофон')).toHaveAttribute('title', 'Микрофон отключён модератором')
     expect(toggle('Экран')).toBeDisabled()
+    expect(toggle('Экран')).toHaveAttribute('title', 'Демонстрация экрана отключена модератором')
     expect(toggle('Камера')).toBeEnabled()
-    expect(screen.getByText('Микрофон отключён модератором')).toBeVisible()
-    expect(screen.getByText('Демонстрация экрана отключена модератором')).toBeVisible()
+    expect(toggle('Камера')).not.toHaveAttribute('title')
   })
 
   it('permission-событие ЛОКАЛЬНОГО участника запускает повторный №46 (onRestrictionsSync)', () => {
@@ -328,9 +371,10 @@ describe('MediaControls: собственные ограничения (009 US3 
     expect(sync).toHaveBeenCalledTimes(1)
   })
 
-  it('live-обновление (SC-005): смена grants переподнимает рендер — блокировка появляется', () => {
+  it('live-обновление (SC-005): смена grants переподнимает рендер — блокировка и title появляются', () => {
     const { rerender } = renderControls()
     expect(toggle('Экран')).toBeEnabled()
+    expect(toggle('Экран')).not.toHaveAttribute('title')
 
     // сервер применил screen_restricted → LiveKit обновил grants
     media.state.permissions = {
@@ -340,7 +384,35 @@ describe('MediaControls: собственные ограничения (009 US3 
     rerender(<MediaControls restrictions={null} onRestrictionsSync={vi.fn()} onLeave={vi.fn()} />)
 
     expect(toggle('Экран')).toBeDisabled()
-    expect(screen.getByText('Демонстрация экрана отключена модератором')).toBeVisible()
+    expect(toggle('Экран')).toHaveAttribute('title', 'Демонстрация экрана отключена модератором')
+  })
+
+  it('live-снятие точечного ограничения снимает title вместе с disabled (SC-005, grants приезжают живьём)', () => {
+    media.state.permissions = {
+      canPublish: true,
+      canPublishSources: [CAMERA, MICROPHONE, SCREEN_SHARE_AUDIO],
+    }
+    const { rerender } = renderControls()
+    expect(toggle('Экран')).toBeDisabled()
+    expect(toggle('Экран')).toHaveAttribute('title', 'Демонстрация экрана отключена модератором')
+
+    // модератор снял ограничение → grants вернули источник
+    media.state.permissions = { canPublish: true, canPublishSources: [...ALL_SOURCES] }
+    rerender(<MediaControls restrictions={null} onRestrictionsSync={vi.fn()} onLeave={vi.fn()} />)
+
+    expect(toggle('Экран')).toBeEnabled()
+    expect(toggle('Экран')).not.toHaveAttribute('title')
+  })
+
+  it('регресс failure-notice: нейтральная строка отказа «Не удалось …» остаётся (.conference-controls-notice)', async () => {
+    media.setMicrophoneEnabled.mockRejectedValue(new Error('NotAllowedError'))
+    renderControls()
+
+    fireEvent.click(toggle('Микрофон'))
+
+    const notice = await screen.findByRole('status')
+    expect(notice).toHaveClass('conference-controls-notice')
+    expect(notice).toHaveTextContent('Не удалось включить микрофон')
   })
 
   it('размонтирование снимает подписку permission-события', () => {
