@@ -26,7 +26,7 @@ import { describe, expect, it } from 'vitest'
  * (.conference-screens) и 21:9-тайл экрана (.conference-tile-screen)
  * удалены — единая сетка тайлов 16:9, экран вписывается object-fit
  * contain; живая демонстрация маркируется текстовым бейджем
- * «демонстрирует экран» (лексика conference-tile-speaking, 008).
+ * «демонстрирует экран» (латунная курсивная лексика, 008).
  *
  * T092 — демонтаж живого счётчика T080 и output-подписи joined-формы:
  * правило .conference-live-count и селекторы скрытия пин-оверлея для
@@ -586,11 +586,97 @@ describe('слитый тайл участника (T084): статически�
     expect(tile?.[1]).toContain('aspect-ratio: 16 / 9')
   })
 
-  it('бейдж «демонстрирует экран» — правило в лексике conference-tile-speaking', () => {
+  it('бейдж «демонстрирует экран» — латунная курсивная лексика (margin-left 6px, gold-light)', () => {
     const badge = conferencesCss.match(/\.conference-tile-sharing\s*\{([^}]*)\}/)
     expect(badge).not.toBeNull()
     expect(badge?.[1]).toContain('margin-left: 6px')
     expect(badge?.[1]).toContain('font-style: italic')
     expect(badge?.[1]).toContain('color: var(--gold-light)')
+  })
+})
+
+describe('индикатор микрофона и пометки ролей тайла (T100): статический пин CSS', () => {
+  it('бейдж .conference-tile-mic — позиция правый нижний угол (right/bottom 8px), круг 30px, латунная рамка, не перехватывает клики', () => {
+    // прототип tmp/conference-tile-mic.html: бейдж — ИНДИКАТОР, не
+    // кнопка → pointer-events: none (двойной клик тайла T074 жив)
+    const badge = conferencesCss.match(/^\.conference-tile-mic\s*\{([^}]*)\}/m)
+    expect(badge).not.toBeNull()
+    expect(badge?.[1]).toContain('position: absolute')
+    expect(badge?.[1]).toContain('right: 8px')
+    expect(badge?.[1]).toContain('bottom: 8px')
+    expect(badge?.[1]).toContain('width: 30px')
+    expect(badge?.[1]).toContain('height: 30px')
+    expect(badge?.[1]).toContain('border-radius: 50%')
+    expect(badge?.[1]).toContain('pointer-events: none')
+  })
+
+  it('РОВНО ДВА состояния: вкл — золото по умолчанию; выкл — приглушение --muted + диагональный штрих --err', () => {
+    // выкл (второе и ПОСЛЕДНЕЕ состояние): тёмная латунь + muted-иконка
+    const off = conferencesCss.match(/\.conference-tile-mic\[data-mic='off'\]\s*\{([^}]*)\}/)
+    expect(off).not.toBeNull()
+    expect(off?.[1]).toContain('color: var(--muted)')
+    const slash = conferencesCss.match(/^\.conference-tile-mic-slash\s*\{([^}]*)\}/m)
+    expect(slash).not.toBeNull()
+    expect(slash?.[1]).toContain('var(--err)')
+    const slashShown = conferencesCss.match(
+      /\.conference-tile-mic\[data-mic='off'\] \.conference-tile-mic-slash\s*\{([^}]*)\}/,
+    )
+    expect(slashShown?.[1]).toContain('opacity: 0.95')
+    // третьего состояния (замок/«отключён модератором») и tooltip нет
+    expect(conferencesCss).not.toMatch(/\.conference-tile-mic[^{}]*(blocked|lock|tooltip)/)
+  })
+
+  it('пульс при речи — ТОЛЬКО у бейджа: mic-speak 1.6s infinite, кадры золотого свечения', () => {
+    // speaking + mic on (класс вешает TSX) — пульсирует бейдж, не рамка
+    const pulse = conferencesCss.match(
+      /\.conference-tile-mic\[data-mic='on'\]\.conference-tile-mic-pulse\s*\{([^}]*)\}/,
+    )
+    expect(pulse).not.toBeNull()
+    expect(pulse?.[1]).toContain('animation: conference-tile-mic-speak 1.6s ease-in-out infinite')
+    expect(pulse?.[1]).toContain('border-color: var(--gold-light)')
+    const frames = conferencesCss.match(/@keyframes conference-tile-mic-speak\s*\{([\s\S]*?)\n\}/)
+    expect(frames).not.toBeNull()
+    expect(frames?.[1]).toContain('rgba(232, 200, 119, 0.35)')
+    expect(frames?.[1]).toContain('rgba(232, 200, 119, 0.8)')
+  })
+
+  it('демонтаж текстового индикатора речи: селектора .conference-tile-speaking в источнике больше нет (реинверсия)', () => {
+    expect(conferencesCss).not.toContain('.conference-tile-speaking')
+  })
+
+  it('пометки ролей в строке имени — приглушённый курсив --muted, без пластин/бейджей', () => {
+    // «гость»/«модератор» рядом с именем (формат прототипа «Имя · гость»)
+    const mark = conferencesCss.match(/^\.conference-tile-mark\s*\{([^}]*)\}/m)
+    expect(mark).not.toBeNull()
+    expect(mark?.[1]).toContain('font-style: italic')
+    expect(mark?.[1]).toContain('color: var(--muted)')
+    expect(mark?.[1]).not.toContain('border')
+    expect(mark?.[1]).not.toContain('background')
+  })
+
+  it('idle-имя — plain-текст прототипа (cream 12.5px); бейдж масштабируется в развёрнутом тайле', () => {
+    // имя под аватаром без дополнительной стилизации: размер прототипа
+    const idleName = conferencesCss.match(
+      /\.conference-tile-idle \.conference-tile-name\s*\{([^}]*)\}/,
+    )
+    expect(idleName?.[1]).toContain('font-size: 12.5px')
+    // пин-оверлей T079: бейдж виден и в fullscreen-тайле (промер)
+    const pinnedBadge = conferencesCss.match(
+      /\.conference-tile-pinned \.conference-tile-mic\s*\{([^}]*)\}/,
+    )
+    expect(pinnedBadge).not.toBeNull()
+    expect(pinnedBadge?.[1]).toContain('width: 40px')
+    // регресс-пины соседней механики: бейдж демонстрации T084 на месте
+    const sharing = conferencesCss.match(/\.conference-tile-sharing\s*\{([^}]*)\}/)
+    expect(sharing?.[1]).toContain('color: var(--gold-light)')
+  })
+
+  it('докблок блока бейджа truthfully описывает индикатор (два состояния, пульс, прототип)', () => {
+    const at = conferencesCss.indexOf('.conference-tile-mic {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1400), at)
+    expect(doc).toContain('T100')
+    expect(doc).toContain('прототип')
+    expect(doc).toContain('РОВНО ДВА состояния')
   })
 })

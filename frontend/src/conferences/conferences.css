@@ -200,8 +200,12 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
   object-fit: contain;
 }
 
-/* Подпись слитого тайла (figcaption): имя участника + бейдж
-   демонстрации экрана / индикатор речи (см. правила ниже). */
+/* Подпись слитого тайла (figcaption): имя участника (собственный
+   спан .conference-tile-username — точные текст-селекторы e2e при
+   пометках ролей T100 в той же строке) + бейдж демонстрации экрана;
+   видео-вариант сохраняет нижнюю градиентную подпись (T100 не
+   оговорен — не трогается), idle — строка под аватаром (правило
+   ниже), имя — plain-текст по прототипу. */
 .conference-tile-name {
   position: absolute;
   left: 0;
@@ -216,7 +220,9 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
 
 /* Тайл без камеры (T073): аватар «как в контактах» (ParticipantAvatar,
     цепочка инициалов профиля / фолбэк из name) + имя; подпись — не
-    видео-оверлей, а строка под аватаром. */
+    видео-оверлей, а строка под аватаром. T100: имя — plain-текст
+    прототипа tmp/conference-tile-mic.html (cream 12.5px, без
+    пластины/uppercase), пометки ролей — правилом ниже. */
 .conference-tile-idle {
   display: flex;
   flex-direction: column;
@@ -230,23 +236,142 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
   background: none;
   padding: 0 8px;
   text-align: center;
+  font-size: 12.5px;
 }
 
-/* Индикатор речи тайла — текстом «говорит» (008: не только цветом). */
-.conference-tile-speaking {
-  margin-left: 6px;
+/* Пометки ролей в строке имени (T100): «гость» (metadata.guest,
+   T051) и «модератор» (role, T017/№50) рядом с именем в формате
+   прототипа «Имя · гость» — приглушённый курсив --muted, БЕЗ
+   пластин/бейджей; обычный участник — без пометок. Живость —
+   UpdateParticipant метаданных (№50) тем же participants-стримом. */
+.conference-tile-mark {
   font-style: italic;
-  color: var(--gold-light);
+  color: var(--muted);
+  letter-spacing: 0.02em;
 }
 
 /* Бейдж живой демонстрации экрана слитого тайла (T084): латунная
-    лексика индикатора речи — состояние видно текстом «демонстрирует
-    экран» рядом с именем (008: дублируется текстом, не только
-    видео-картинкой). */
+    курсивная лексика — состояние видно текстом «демонстрирует экран»
+    рядом с именем (008: дублируется текстом, не только
+    видео-картинкой; T100 — не трогается). */
 .conference-tile-sharing {
   margin-left: 6px;
   font-style: italic;
   color: var(--gold-light);
+}
+
+/* ============================================================
+ * Индикатор микрофона тайла (T100, US1; прототип
+ * tmp/conference-tile-mic.html — при расхождениях побеждает
+ * прототип): латунный бейдж-микрофон 30px в правом нижнем углу
+ * (отступ 8px) КАЖДОГО тайла — и поверх видео, и в idle-заглушке,
+ * и в развёрнутом пин-тайле (масштаб ниже). РОВНО ДВА состояния
+ * по data-mic: on — золотая рамка + волны звука (on-части
+ * иконки), off — приглушение + диагональный штрих --err; никакого
+ * третьего состояния («отключён модератором») и tooltip —
+ * оговорено задачей. Бейдж — ИНДИКАТОР, не кнопка:
+ * pointer-events: none (управление своим микрофоном — MediaControls
+ * T028/T098, клики тайла/двойной клик пина T074 не перехватываются),
+ * состояние дублируется visually-hidden строкой в TSX (008).
+ * Пульс при речи — ТОЛЬКО у бейджа (класс вешает TSX по
+ * speaking + mic on): mic-speak 1.6s — пульс золотого свечения
+ * бейджа; свечение рамки тайла/аватара НЕ вводится, текстовый
+ * индикатор «говорит» демонтирован (T100); prefers-reduced-motion
+ * глушит пульс глобальным правилом theme/machine.css (паттерн 008).
+ * ============================================================ */
+.conference-tile-mic {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1.5px solid var(--gold);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 34% 26%,
+    rgba(232, 200, 119, 0.16),
+    rgba(10, 8, 6, 0.92) 60%
+  );
+  color: var(--gold-light);
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(232, 200, 119, 0.25);
+  pointer-events: none;
+  transition:
+    border-color 0.25s,
+    color 0.25s,
+    box-shadow 0.25s;
+}
+
+/* Инлайн-SVG винтажного микрофона из прототипа: капсюль/стойка/
+   волны одним currentColor, штрих — --err (правило ниже). */
+.conference-tile-mic svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Выкл (второе и последнее состояние): тёмная латунь + muted-иконка. */
+.conference-tile-mic[data-mic='off'] {
+  border-color: #55452c;
+  color: var(--muted);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+/* Диагональный штрих выключенного микрофона (латунь → --err). */
+.conference-tile-mic-slash {
+  opacity: 0;
+  transition: opacity 0.25s;
+  stroke: var(--err);
+  stroke-width: 2;
+}
+
+.conference-tile-mic[data-mic='off'] .conference-tile-mic-slash {
+  opacity: 0.95;
+}
+
+/* Пульс при речи — ТОЛЬКО у бейджа: рамка светлеет, золотой ореол
+   дышит (кадры ниже); у выкл-бейджа пульса не бывает (гвард
+   data-mic='on' в селекторе). */
+.conference-tile-mic[data-mic='on'].conference-tile-mic-pulse {
+  border-color: var(--gold-light);
+  animation: conference-tile-mic-speak 1.6s ease-in-out infinite;
+}
+
+@keyframes conference-tile-mic-speak {
+  0%,
+  100% {
+    box-shadow:
+      0 0 6px rgba(232, 200, 119, 0.35),
+      inset 0 1px 0 rgba(232, 200, 119, 0.3);
+  }
+  50% {
+    box-shadow:
+      0 0 16px rgba(232, 200, 119, 0.8),
+      inset 0 1px 0 rgba(232, 200, 119, 0.3);
+  }
+}
+
+/* Развёрнутый тайл (пин T074/оверлей T079): бейдж виден и в
+   fullscreen-тайле — масштаб по визуальному промеру прототипа. */
+.conference-tile-pinned .conference-tile-mic {
+  right: 12px;
+  bottom: 12px;
+  width: 40px;
+  height: 40px;
+}
+
+.conference-tile-pinned .conference-tile-mic svg {
+  width: 20px;
+  height: 20px;
 }
 
 /* ============================================================

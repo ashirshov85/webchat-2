@@ -54,7 +54,7 @@ import type { JoinTicket } from '../../api/conferences'
  *
  * 009, US1, T090 — инвариант «камера выкл + без демонстрации экрана =
  * аватар»: выключение камеры — это mute трека, НЕ unpublish (с
- * публикации LiveKit снимает только демонстрацию экрана), поэтому
+ * публикации LiveKit снимает только демонстрация экрана), поэтому
  * published-but-muted camera-реф — НЕ видеоисточник: тайл рендерит
  * аватар-заглушку (репродукция «тёмный фон вместо аватара после
  * вкл/выкл камеры»); published+unmuted — VideoTrack; живая
@@ -62,6 +62,19 @@ import type { JoinTicket } from '../../api/conferences'
  * (приоритет T084 сохраняется); переход muted→unmuted — бесшовный
  * возврат видео в том же DOM-узле тайла; placeholder-реф (камера
  * никогда не публиковалась) и симметрия local/remote — аватар у всех.
+ *
+ * 009, US1, T100 — индикатор микрофона и пометки ролей тайла по
+ * прототипу tmp/conference-tile-mic.html: латунный бейдж-микрофон в
+ * правом нижнем углу КАЖДОГО тайла (видео и idle-заглушка) ровно с
+ * ДВУМЯ состояниями вкл/выкл (никакого замка и tooltip), состояние —
+ * проекция микрофонной публикации (local — isMicrophoneEnabled
+ * useLocalParticipant, remote — microphone-реф publication.isMuted,
+ * зеркало T090 для камеры; серверный мьют №49 отражается сам);
+ * пульс при речи — ТОЛЬКО у бейджа (speaking + mic on), текстовый
+ * индикатор «говорит» демонтирован; имя — в собственном спане
+ * (Playwright getByText exact), пометки «гость»/«модератор» из
+ * participant.metadata (§3, парсер ParticipantsPanel T041) рядом с
+ * именем приглушённым курсивом, живо следуют UpdateParticipant №50.
  */
 
 const lk = vi.hoisted(() => {
@@ -193,13 +206,20 @@ vi.mock('livekit-client', () => ({
 /** Состояние треков/спикеров useTracks/useSpeakingParticipants (управляется тестом). */
 const lkc = vi.hoisted(() => ({
   // publication.isMuted — зеркало TrackPublication.isMuted livekit-client
-  // (T090: published-but-muted camera-трек от настоящего рефа неотличим)
+  // (T090: published-but-muted camera-трек от настоящего рефа неотличим);
+  // participant.metadata — пометки ролей тайла T100 (тот же JSON §3)
   trackRefs: [] as ReadonlyArray<{
-    participant: { identity: string; name?: string }
+    participant: { identity: string; name?: string; metadata?: string }
     source: string
     publication?: { trackSid: string; isMuted?: boolean }
   }>,
   speakers: [] as ReadonlyArray<{ identity: string }>,
+  // useLocalParticipant (T100): identity тикета + собственный микрофон
+  // (isMicrophoneEnabled — канонический источник local-состояния бейджа)
+  local: {
+    localParticipant: { identity: 'u:11111111-1111-1111-1111-111111111111:conn-1' },
+    isMicrophoneEnabled: true,
+  },
 }))
 
 vi.mock('@livekit/components-react', () => ({
@@ -216,6 +236,8 @@ vi.mock('@livekit/components-react', () => ({
     return lkc.trackRefs.filter((ref) => wanted.has(ref.source))
   },
   useSpeakingParticipants: () => lkc.speakers,
+  // T100: local-участник + состояние собственного микрофона
+  useLocalParticipant: () => lkc.local,
   // зеркало реального гварда ядра: placeholder-рефы не несут publication
   isTrackReference: (ref: { publication?: unknown }) => ref.publication !== undefined,
   RoomAudioRenderer: () => <div data-testid="lk-audio-renderer" />,
@@ -770,17 +792,32 @@ describe('ConferenceRoom — аватары тайлов (009 US1 T073, «как
     })
   })
 
-  it('индикатор речи на тайле без камеры — текстом «говорит» (008: не только цветом)', async () => {
-    lkc.trackRefs = [{ participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' }]
+  it('индикатор речи тайла без камеры — пульс бейджа микрофона, текста «говорит» больше нет (T100)', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+      // микрофон bob опубликован и незамучен — пульс у бейджа (T100)
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-b' },
+      },
+    ]
     lkc.speakers = [{ identity: 'u:2:b' }]
     renderRoom()
 
     const bobTile = await waitFor(() => {
       const tile = tileByLabel('bob')
-      expect(tile).toHaveTextContent('говорит')
+      expect(tile).toHaveClass('conference-tile-idle')
       return tile
     })
     expect(bobTile.querySelector('.avatar')).not.toBeNull()
+    // пульс — ТОЛЬКО у бейджа микрофона (говорит + mic on, T100);
+    // текстовый индикатор «говорит» демонтирован
+    const badge = bobTile.querySelector<HTMLElement>('.conference-tile-mic')
+    expect(badge).not.toBeNull()
+    expect(badge).toHaveAttribute('data-mic', 'on')
+    expect(badge).toHaveClass('conference-tile-mic-pulse')
+    expect(bobTile).not.toHaveTextContent('говорит')
   })
 
   it('без аватара в профиле участника — инициалы из name (фолбэк догрузки), тире-подпись не меняется', async () => {
@@ -2020,18 +2057,25 @@ describe('ConferenceRoom — слитый тайл участника (009 US1 T
     })
 
     // демонстрация завершена, камера не включалась — тот же узел с
-    // аватаром, именем и индикатором речи
+    // аватаром и именем; индикатор речи — пульс бейджа микрофона
+    // (T100: текстовый «говорит» демонтирован), микрофон bob жив
     lkc.speakers = [{ identity: 'u:2:b' }]
     lkc.trackRefs = [
       { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
       { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-b' },
+      },
     ]
     rerenderRoom(view)
 
     expect(tileByLabel('bob')).toBe(bobTile)
     expect(bobTile.querySelector('.avatar')).not.toBeNull()
     expect(bobTile.querySelector('video')).toBeNull()
-    expect(bobTile).toHaveTextContent('говорит')
+    expect(bobTile.querySelector('.conference-tile-mic')).toHaveClass('conference-tile-mic-pulse')
+    expect(bobTile).not.toHaveTextContent('говорит')
     expect(bobTile).not.toHaveTextContent('демонстрирует экран')
   })
 
@@ -2278,7 +2322,7 @@ describe('ConferenceRoom — аватар при выключенной каме
     vi.clearAllMocks()
   })
 
-  it('(а) камера published+muted, экрана нет — аватар-заглушка с именем и индикатором речи, VideoTrack не монтируется (репродукция бага)', async () => {
+  it('(а) камера published+muted, экрана нет — аватар-заглушка с именем, VideoTrack не монтируется; речь — пульс бейджа (репродукция бага)', async () => {
     lkc.speakers = [{ identity: 'u:2:b' }]
     lkc.trackRefs = [
       {
@@ -2290,6 +2334,12 @@ describe('ConferenceRoom — аватар при выключенной каме
         participant: { identity: 'u:2:b', name: 'bob' },
         source: 'camera',
         publication: { trackSid: 'cam-b', isMuted: true },
+      },
+      // микрофон bob жив — «говорит» отражается пульсом бейджа (T100)
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-b' },
       },
     ]
     renderRoom()
@@ -2305,7 +2355,8 @@ describe('ConferenceRoom — аватар при выключенной каме
     expect(bobTile.querySelector('.avatar')).not.toBeNull()
     expect(bobTile.querySelector('video')).toBeNull()
     expect(bobTile).toHaveTextContent('bob')
-    expect(bobTile).toHaveTextContent('говорит')
+    expect(bobTile.querySelector('.conference-tile-mic')).toHaveClass('conference-tile-mic-pulse')
+    expect(bobTile).not.toHaveTextContent('говорит')
   })
 
   it('(б) камера published+unmuted — VideoTrack (регресс базового видео)', async () => {
@@ -2423,5 +2474,325 @@ describe('ConferenceRoom — аватар при выключенной каме
     const bobTile = tileByLabel('bob')
     expect(bobTile.querySelector('.avatar')).not.toBeNull()
     expect(bobTile.querySelector('video')).toBeNull()
+  })
+})
+
+describe('ConferenceRoom — индикатор микрофона и пометки ролей тайла (009 US1 T100)', () => {
+  /** Собственный identity тикета — local-источник isMicrophoneEnabled. */
+  const OWN_IDENTITY = 'u:11111111-1111-1111-1111-111111111111:conn-1'
+
+  /** Дефолт local-состояния (восстанавливается вокруг каждого теста). */
+  const OWN_MIC_ON = { localParticipant: { identity: OWN_IDENTITY }, isMicrophoneEnabled: true }
+
+  /** Тайл по подписи-имени участника (спан имени в figcaption). */
+  function tileByLabel(name: string): HTMLElement {
+    const label = screen.getByText(name, { exact: false })
+    const tile = label.closest('figure')
+    if (tile === null) {
+      throw new Error(`тайл участника «${name}» не найден`)
+    }
+    return tile
+  }
+
+  /** Бейдж микрофона тайла (T100: ровно один на КАЖДОМ тайле). */
+  function micBadge(tile: HTMLElement): HTMLElement {
+    const badge = tile.querySelector<HTMLElement>('.conference-tile-mic')
+    if (badge === null) {
+      throw new Error('бейдж микрофона тайла не найден')
+    }
+    return badge
+  }
+
+  /** metadata-JSON участника (§3: {"role":…,"guest":…} токена/№50). */
+  function memberMetadata(role: 'moderator' | 'participant', guest: boolean): string {
+    return JSON.stringify({ role, guest })
+  }
+
+  function renderRoom(): ReturnType<typeof render> {
+    return render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Живое обновление track-рефов/спикеров/local-микрофона (rerender). */
+  function rerenderRoom(view: ReturnType<typeof render>): void {
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = []
+    lkc.speakers = []
+    lkc.local = OWN_MIC_ON
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+    lkc.local = OWN_MIC_ON
+  })
+
+  it('(а) ровно ДВА состояния в обоих вариантах тайла: публикация незамучена — бейдж-вкл; isMuted/нет публикации — бейдж-выкл', async () => {
+    // alice — видео-вариант (камера published), bob — idle-заглушка;
+    // микрофонные публикации незамучены → бейдж-вкл у обоих
+    lkc.trackRefs = [
+      {
+        participant: { identity: 'u:1:a', name: 'alice' },
+        source: 'camera',
+        publication: { trackSid: 'cam-a' },
+      },
+      {
+        participant: { identity: 'u:1:a', name: 'alice' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-a' },
+      },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-b' },
+      },
+    ]
+    const view = renderRoom()
+
+    const aliceTile = await waitFor(() => {
+      const tile = tileByLabel('alice')
+      expect(tile.querySelector('video')).not.toBeNull()
+      return tile
+    })
+    const bobTile = tileByLabel('bob')
+    expect(bobTile).toHaveClass('conference-tile-idle')
+    for (const tile of [aliceTile, bobTile]) {
+      expect(micBadge(tile)).toHaveAttribute('data-mic', 'on')
+      expect(within(tile).getByText('микрофон включён')).toBeTruthy()
+    }
+
+    // мьют удалённого микрофона (тумблер цели / серверный №49 — один
+    // путь isMuted) и снятие публикации (мьют своим тумблером) —
+    // бейдж гаснет в ОБОИХ вариантах тайла
+    lkc.trackRefs = [
+      {
+        participant: { identity: 'u:1:a', name: 'alice' },
+        source: 'camera',
+        publication: { trackSid: 'cam-a' },
+      },
+      {
+        participant: { identity: 'u:1:a', name: 'alice' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-a', isMuted: true },
+      },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    rerenderRoom(view)
+
+    expect(micBadge(aliceTile)).toHaveAttribute('data-mic', 'off')
+    expect(within(aliceTile).getByText('микрофон выключен')).toBeTruthy()
+    expect(micBadge(bobTile)).toHaveAttribute('data-mic', 'off')
+  })
+
+  it('(б) собственный тайл — isMicrophoneEnabled useLocalParticipant (local-источник),remote — микрофонная публикация', async () => {
+    // у собственного тайла микрофонная публикация незамучена, НО
+    // isMicrophoneEnabled=false (тумблер MediaControls T028) —
+    // local-состояние берётся из useLocalParticipant
+    lkc.local = { localParticipant: { identity: OWN_IDENTITY }, isMicrophoneEnabled: false }
+    lkc.trackRefs = [
+      { participant: { identity: OWN_IDENTITY, name: 'alice' }, source: 'camera' },
+      {
+        participant: { identity: OWN_IDENTITY, name: 'alice' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-own' },
+      },
+    ]
+    const view = renderRoom()
+
+    const ownTile = await waitFor(() => tileByLabel('alice'))
+    expect(micBadge(ownTile)).toHaveAttribute('data-mic', 'off')
+    expect(within(ownTile).getByText('микрофон выключен')).toBeTruthy()
+
+    // повторное включение (тумблер) — бейдж зажигается живым рендером
+    lkc.local = { localParticipant: { identity: OWN_IDENTITY }, isMicrophoneEnabled: true }
+    rerenderRoom(view)
+
+    expect(micBadge(tileByLabel('alice'))).toHaveAttribute('data-mic', 'on')
+  })
+
+  it('(в) пульс при речи — ТОЛЬКО у бейджа (speaking + mic on); «говорит» в DOM нет; свечение рамки не вводится', async () => {
+    // bob говорит с включённым микрофоном — пульс у бейджа
+    lkc.trackRefs = [
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-b' },
+      },
+    ]
+    lkc.speakers = [{ identity: 'u:2:b' }]
+    const view = renderRoom()
+
+    const bobTile = await waitFor(() => {
+      const tile = tileByLabel('bob')
+      expect(micBadge(tile)).toHaveClass('conference-tile-mic-pulse')
+      return tile
+    })
+    // текстовый индикатор «говорит» демонтирован целиком (DOM-level)
+    expect(screen.queryByText('говорит')).toBeNull()
+    expect(bobTile).not.toHaveTextContent('говорит')
+
+    // speaking + микрофон ВЫКЛ — бейдж не пульсирует (два состояния,
+    // речи без включённого микрофона визуально нет)
+    lkc.trackRefs = [
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-b', isMuted: true },
+      },
+    ]
+    rerenderRoom(view)
+
+    const badge = micBadge(tileByLabel('bob'))
+    expect(badge).toHaveAttribute('data-mic', 'off')
+    expect(badge).not.toHaveClass('conference-tile-mic-pulse')
+    expect(screen.queryByText('говорит')).toBeNull()
+  })
+
+  it('(г) пометки ролей в строке имени из metadata: «гость», «модератор», обе, обычный участник — без пометок; смена роли живая (№50)', async () => {
+    // guest:true → «гость»; role:moderator → «модератор»; карол без
+    // metadata — без пометок; alice-видео-вариант несёт пометку тоже
+    lkc.trackRefs = [
+      {
+        participant: {
+          identity: 'u:1:a',
+          name: 'alice',
+          metadata: memberMetadata('moderator', false),
+        },
+        source: 'camera',
+        publication: { trackSid: 'cam-a' },
+      },
+      {
+        participant: {
+          identity: 'g:2:b',
+          name: 'bob',
+          metadata: memberMetadata('participant', true),
+        },
+        source: 'camera',
+      },
+      { participant: { identity: 'u:3:c', name: 'carol' }, source: 'camera' },
+    ]
+    const view = renderRoom()
+
+    const aliceTile = await waitFor(() => {
+      const tile = tileByLabel('alice')
+      expect(tile.querySelector('video')).not.toBeNull()
+      return tile
+    })
+    // формат прототипа «Имя · модератор» — и в видео-варианте тайла
+    expect(aliceTile).toHaveTextContent('alice · модератор')
+    const bobTile = tileByLabel('bob')
+    expect(bobTile).toHaveTextContent('bob · гость')
+    expect(bobTile).not.toHaveTextContent('модератор')
+    // обычный участник без metadata — никаких пометок в строке имени
+    const carolTile = tileByLabel('carol')
+    expect(carolTile.textContent).not.toContain('·')
+    expect(within(carolTile).queryByText('гость')).toBeNull()
+    expect(within(carolTile).queryByText('модератор')).toBeNull()
+
+    // гость-модератор — обе пометки рядом с именем
+    lkc.trackRefs = [
+      {
+        participant: {
+          identity: 'g:2:b',
+          name: 'bob',
+          metadata: memberMetadata('moderator', true),
+        },
+        source: 'camera',
+      },
+      { participant: { identity: 'u:3:c', name: 'carol' }, source: 'camera' },
+    ]
+    rerenderRoom(view)
+
+    expect(tileByLabel('bob')).toHaveTextContent('bob · гость · модератор')
+
+    // смена роли приезжает UpdateParticipant'ом метаданных (№50) —
+    // тайл перерисовывается тем же participants/tracks-стримом
+    lkc.trackRefs = [
+      {
+        participant: {
+          identity: 'g:2:b',
+          name: 'bob',
+          metadata: memberMetadata('participant', true),
+        },
+        source: 'camera',
+      },
+      { participant: { identity: 'u:3:c', name: 'carol' }, source: 'camera' },
+    ]
+    rerenderRoom(view)
+
+    const bobAfter = tileByLabel('bob')
+    expect(bobAfter).toHaveTextContent('bob · гость')
+    expect(bobAfter).not.toHaveTextContent('модератор')
+  })
+
+  it('(д) регресс слитой механики: бейдж не трогает «демонстрирует экран», пин и аватары T073/T090', async () => {
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      // bob: замученная камера + живая демонстрация (T090/T084) + микрофон
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'camera',
+        publication: { trackSid: 'cam-b', isMuted: true },
+      },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+      {
+        participant: { identity: 'u:2:b', name: 'bob' },
+        source: 'microphone',
+        publication: { trackSid: 'mic-b' },
+      },
+    ]
+    renderRoom()
+
+    // автопин T078 разворачивает слитый тайл bob: экран-видео,
+    // бейдж «демонстрирует экран» и бейдж микрофона — вместе
+    const pinned = await waitFor(() => {
+      const tile = document.querySelector<HTMLElement>('.conference-tile-pinned')
+      expect(tile).not.toBeNull()
+      return tile as HTMLElement
+    })
+    expect(pinned).toHaveTextContent('демонстрирует экран')
+    expect(pinned.querySelector('video')).not.toBeNull()
+    expect(micBadge(pinned)).toHaveAttribute('data-mic', 'on')
+
+    // alice — idle-заглушка с аватаром T073 и бейджем (микрофона нет — выкл)
+    const aliceTile = tileByLabel('alice')
+    expect(aliceTile.querySelector('.avatar')).not.toBeNull()
+    expect(micBadge(aliceTile)).toHaveAttribute('data-mic', 'off')
+
+    // пин-механика T074 не перехватывается бейджем (pointer-events):
+    // «Свернуть» развёрнутого тайла возвращает обычную сетку
+    fireEvent.click(within(pinned).getByRole('button', { name: 'Свернуть' }))
+    await waitFor(() => {
+      expect(document.querySelector('.conference-tile-pinned')).toBeNull()
+    })
+    // двойной клик по чужому тайлу — пин работает (T074)
+    fireEvent.dblClick(aliceTile)
+    await waitFor(() => {
+      expect(tileByLabel('alice')).toHaveClass('conference-tile-pinned')
+    })
   })
 })

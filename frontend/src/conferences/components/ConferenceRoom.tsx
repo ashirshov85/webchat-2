@@ -106,11 +106,33 @@
  * 008 — состояние дублируется текстом); геометрия единая 16:9 —
  * object-fit contain вписывает экран, сетка/компактная полоса не
  * перестраиваются при переключениях.
+ *
+ * Индикатор микрофона и пометки ролей (T100, US1; прототип
+ * tmp/conference-tile-mic.html, при расхождениях побеждает прототип):
+ * КАЖДЫЙ тайл несёт латунный бейдж-микрофон в правом нижнем углу
+ * ровно с ДВУМЯ состояниями — вкл (золотая рамка + волны) / выкл
+ * (приглушение + диагональный штрих), без третьего состояния и
+ * tooltip; состояние — проекция микрофонной публикации LiveKit
+ * (local — isMicrophoneEnabled useLocalParticipant; remote —
+ * microphone-реф publication.isMuted, зеркало T090-механики для
+ * камеры; серверный мьют №49 отражается сам). Бейдж — ИНДИКАТОР, не
+ * кнопка: управление своим микрофоном остаётся в MediaControls
+ * (T028/T098), pointer-events: none не перехватывает клики тайла.
+ * Пульс при речи — ТОЛЬКО у бейджа (speaking + mic on, свечение
+ * mic-speak); текстовый индикатор «говорит» демонтирован, свечение
+ * рамки/аватара не вводится; состояние бейджа дублируется
+ * visually-hidden строкой (008). Пометки ролей в строке имени — из
+ * participant.metadata (§3: guest → «гость», moderator →
+ * «модератор», парсер ParticipantsPanel T041/T051), формат прототипа
+ * «Имя · гость»; смена роли №50 (UpdateParticipant метаданных)
+ * перерисовывает пометку тем же participants/tracks-стримом,
+ * собственный тайл показывает свою роль тоже.
  */
 import {
   isTrackReference,
   RoomAudioRenderer,
   RoomContext,
+  useLocalParticipant,
   useSpeakingParticipants,
   useTracks,
   VideoTrack,
@@ -118,13 +140,15 @@ import {
 import type { TrackReference, TrackReferenceOrPlaceholder } from '@livekit/components-react'
 import { DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
 import type { DataPacket_Kind, RemoteParticipant } from 'livekit-client'
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConferenceMode, JoinTicket } from '../api/conferences'
 import { bindConferenceDisconnect } from '../hooks/useConference'
 import { useDevices } from '../hooks/useDevices'
 import type { ConferenceDeviceSelection } from '../hooks/useDevices'
 import { ParticipantAvatar } from './ParticipantAvatar'
+import { parseParticipantMarks } from './ParticipantsPanel'
+import type { ParticipantMarks } from './ParticipantsPanel'
 import '../conferences.css'
 
 /** Фаза медиа-подключения комнаты — статус-строка и видимость тайлов. */
@@ -331,6 +355,88 @@ function TilePinButton({
 }
 
 /**
+ * Индикатор микрофона тайла (T100, прототип tmp/conference-tile-mic.html):
+ * латунный бейдж-микрофон в правом нижнем углу с РОВНО ДВУМЯ
+ * состояниями — вкл (золотая рамка + волны звука on-частей иконки) /
+ * выкл (приглушение + диагональный штрих --err); третьего состояния
+ * («отключён модератором») и tooltip нет — оговорено задачей.
+ * Состояние — проекция микрофонной публикации: local —
+ * isMicrophoneEnabled useLocalParticipant, remote — microphone-реф
+ * publication.isMuted (зеркало T090-механики для камеры; серверный
+ * мьют MutePublishedTrack №49 отражается сам — isMuted). Бейдж —
+ * ИНДИКАТОР, не кнопка: управление своим микрофоном остаётся в
+ * MediaControls (T028/T098, без дублирования), aria-hidden +
+ * pointer-events: none (conferences.css) не перехватывает клики —
+ * двойной клик тайла (пин T074) жив. Пульс при речи (speaking +
+ * mic on) — класс conference-tile-mic-pulse, анимируется ТОЛЬКО
+ * бейдж (свечение рамки тайла/аватара не вводится); состояние
+ * дублируется текстом visually-hidden строкой (конвенция 008).
+ */
+function TileMicBadge({
+  micOn,
+  speaking,
+}: {
+  readonly micOn: boolean
+  readonly speaking: boolean
+}) {
+  const pulse = speaking && micOn
+  return (
+    <>
+      <span
+        className={pulse ? 'conference-tile-mic conference-tile-mic-pulse' : 'conference-tile-mic'}
+        data-mic={micOn ? 'on' : 'off'}
+        aria-hidden="true"
+      >
+        {/* инлайн-SVG винтажного микрофона из прототипа: капсюль,
+            стойка, волны звука (on-части) и диагональный штрих (off) */}
+        <svg viewBox="0 0 32 32" focusable="false">
+          <rect x="12" y="4.5" width="8" height="11" rx="4" />
+          <path d="M9 11.5v.8a7 7 0 0 0 14 0v-.8" />
+          <path d="M16 19.3v3M12.6 23.2h6.8" />
+          <path className="conference-tile-mic-wave" d="M5.4 13.2a4.2 4.2 0 0 0 0 5.6" />
+          <path className="conference-tile-mic-wave" d="M26.6 13.2a4.2 4.2 0 0 1 0 5.6" />
+          <line className="conference-tile-mic-slash" x1="6" y1="26" x2="26" y2="6" />
+        </svg>
+      </span>
+      {/* 008: состояние не только цветом — бейдж скрыт от дерева
+          доступности, текст несёт соседняя строка */}
+      <span className="visually-hidden">{micOn ? 'микрофон включён' : 'микрофон выключен'}</span>
+    </>
+  )
+}
+
+/**
+ * Пометки ролей в строке имени тайла (T100): guest → «гость»,
+ * moderator → «модератор» (metadata §3, парсер ParticipantsPanel
+ * T041/T051) — приглушённый курсив рядом с именем, формат прототипа
+ * «Имя · гость»; обе пометки рядом (гость-модератор), обычный
+ * участник — без пометок. Живость: смена роли №50 (UpdateParticipant
+ * метаданных) приезжает тем же participants/tracks-стримом.
+ */
+function TileNameMarks({ marks }: { readonly marks: ParticipantMarks }) {
+  const notes: string[] = []
+  if (marks.guest) {
+    notes.push('гость')
+  }
+  if (marks.role === 'moderator') {
+    notes.push('модератор')
+  }
+  if (notes.length === 0) {
+    return null
+  }
+  return (
+    <>
+      {notes.map((note) => (
+        <Fragment key={note}>
+          {' · '}
+          <span className="conference-tile-mark">{note}</span>
+        </Fragment>
+      ))}
+    </>
+  )
+}
+
+/**
  * Слитный тайл участника (T084): экран, камера и аватар-заглушка
  * одного участника — ОДИН элемент с React-ключом identity. Содержимое
  * — производное состояния модели (приоритет screen >
@@ -341,10 +447,19 @@ function TilePinButton({
  * перестройки сетки), замученная (выключенная) камера и placeholder
  * (камера никогда не публиковалась/недоступна — собственный тайл тоже)
  * — своя заглушка вместо дефолтной ParticipantTile: ui/Avatar
- * (ParticipantAvatar, «как в контактах» T073) + имя + индикатор речи.
+ * (ParticipantAvatar, «как в контактах» T073) + имя.
  * Живая демонстрация маркируется текстовым бейджем «демонстрирует
  * экран» рядом с именем (доступность 008 — состояние дублируется
  * текстом; формат «Экран — имя» упразднён).
+ *
+ * Индикатор микрофона (T100): КАЖДЫЙ тайл (и видео-вариант, и
+ * idle-заглушка) несёт бейдж TileMicBadge в правом нижнем углу —
+ * имя участника вынесено в собственный спан (точные текст-селекторы
+ * e2e при пометках ролей в той же строке), «Экран»-тайла как
+ * отдельного источника нет — источник бейджа участник с микрофоном,
+ * слитый тайл решает сам (T084: у одного участника один тайл);
+ * текстовый индикатор речи «говорит» демонтирован — речь отражает
+ * пульс бейджа.
  *
  * Пин-раскладка (T074, ключ identity — T084): pinned — тайл
  * развёрнут большим на всю медиа-зону (conference-tile-pinned;
@@ -363,6 +478,7 @@ function ConferenceTile({
   readonly onTogglePin: () => void
 }) {
   const label = participantLabel(model.participant.name, model.participant.identity)
+  const marks = parseParticipantMarks(model.participant.metadata)
   // Muted-камера = нет видео (T090): выключение камеры (тумблер
   // MediaControls / модерация MutePublishedTrack) — это mute трека,
   // НЕ unpublish (с публикации LiveKit снимает только демонстрация
@@ -385,11 +501,13 @@ function ConferenceTile({
         <VideoTrack trackRef={videoRef} />
         <TilePinButton pinned={pinned} onToggle={onTogglePin} />
         <figcaption className="conference-tile-name">
-          {label}
+          <span className="conference-tile-username">{label}</span>
+          <TileNameMarks marks={marks} />
           {model.screenRef !== undefined && (
             <span className="conference-tile-sharing">демонстрирует экран</span>
           )}
         </figcaption>
+        <TileMicBadge micOn={model.micOn} speaking={speaking} />
       </figure>
     )
   }
@@ -407,9 +525,10 @@ function ConferenceTile({
       />
       <TilePinButton pinned={pinned} onToggle={onTogglePin} />
       <figcaption className="conference-tile-name">
-        {label}
-        {speaking && <span className="conference-tile-speaking">говорит</span>}
+        <span className="conference-tile-username">{label}</span>
+        <TileNameMarks marks={marks} />
       </figcaption>
+      <TileMicBadge micOn={model.micOn} speaking={speaking} />
     </figure>
   )
 }
@@ -434,6 +553,13 @@ interface ParticipantTileModel {
   readonly screenRef: TrackReference | undefined
   /** Camera-реф участника (published или placeholder) или undefined. */
   readonly cameraRef: TrackReferenceOrPlaceholder | undefined
+  /**
+   * Микрофон включён (T100): local — isMicrophoneEnabled
+   * useLocalParticipant, remote — microphone-реф незамучен
+   * (publication.isMuted; нет публикации = выкл). Индикатор, не
+   * управление — бейдж тайла.
+   */
+  readonly micOn: boolean
 }
 
 /**
@@ -506,6 +632,18 @@ function ConferenceRoomLive({
     onlySubscribed: false,
   })
   const screenTiles = useTracks([Track.Source.ScreenShare], { onlySubscribed: false })
+  // Микрофонные публикации (T100): состояние бейджа remote-тайлов —
+  // publication.isMuted (зеркало T090 для камеры: мьют тумблером цели
+  // снимает публикацию, серверный мьют №49 оставляет её замученной —
+  // оба пути дают «выкл»; нет публикации = выкл). Local-состояние —
+  // isMicrophoneEnabled ниже (канонический источник собственного
+  // микрофона).
+  const micTiles = useTracks([Track.Source.Microphone], { onlySubscribed: false })
+  const micOnByIdentity = new Map<string, boolean>()
+  for (const ref of micTiles) {
+    micOnByIdentity.set(ref.participant.identity, ref.publication.isMuted !== true)
+  }
+  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant()
   const speakers = useSpeakingParticipants()
   const speakerIdentities = new Set(speakers.map((participant) => participant.identity))
   const [pinnedTileKey, setPinnedTileKey] = useState<string | null>(null)
@@ -524,6 +662,13 @@ function ConferenceRoomLive({
   for (const ref of screenTiles) {
     screenByIdentity.set(ref.participant.identity, ref)
   }
+  // Микрофон тайла (T100): local — isMicrophoneEnabled (свой тумблер
+  // T028/серверный мьют отражаются сам), remote — микрофонная
+  // публикация (нет/замучена → выкл).
+  const micOn = (identity: string): boolean =>
+    identity === localParticipant.identity
+      ? isMicrophoneEnabled
+      : (micOnByIdentity.get(identity) ?? false)
   const tiles: ParticipantTileModel[] = cameraTiles.map((ref) => {
     const identity = ref.participant.identity
     return {
@@ -531,6 +676,7 @@ function ConferenceRoomLive({
       participant: ref.participant,
       cameraRef: ref,
       screenRef: screenByIdentity.get(identity),
+      micOn: micOn(identity),
     }
   })
   for (const [identity, screenRef] of screenByIdentity) {
@@ -540,6 +686,7 @@ function ConferenceRoomLive({
         participant: screenRef.participant,
         cameraRef: undefined,
         screenRef,
+        micOn: micOn(identity),
       })
     }
   }

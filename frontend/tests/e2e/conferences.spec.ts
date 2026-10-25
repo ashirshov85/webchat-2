@@ -44,6 +44,14 @@ import {
  * модератора поясняются латунным tooltip'ом при наведении (замена
  * нативного title T097).
  *
+ * 009, US1, T100 — e2e индикатора микрофона тайла (прототип
+ * tmp/conference-tile-mic.html): КАЖДЫЙ тайл несёт латунный бейдж
+ * ровно с двумя состояниями; мьют модератором (№49) гасит бейдж цели
+ * у всех вкладок ≤ 2 c (SC-005, серверный мьют отражается isMuted
+ * сам); пульс при речи — только у бейджа (fake-audio тон микрофона
+ * зажигает ActiveSpeakersChanged, visual assert по классу); пометка
+ * «модератор» стоит рядом с именем создателя (metadata §3, T017).
+ *
  * 009, US3, T043 — e2e модерации (quickstart §3.3): мьют микрофона
  * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
  * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
@@ -615,6 +623,86 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     await expect(bobPage).toHaveURL(new RegExp(`/chat\\?chat=${chatId}$`))
     await expect(bobPage.getByRole('heading', { level: 2, name: aliceNow.username })).toBeVisible()
     await expect(bobPage.locator('.conference-room')).toHaveCount(0)
+  })
+
+  test('T100: бейдж микрофона на КАЖДОМ тайле — мьют модератором гасит бейдж цели ≤ 2 c; пульс у говорящего; «модератор» у создателя', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    // ghost-подключения предыдущих тестов сьюта живут в активной
+    // комнате чата (№44 «одна активная») и дали бы дубли тайлов —
+    // завершаю её (создатель = alice) и звоню в свежей комнате
+    const stale = await createConference(api, aliceNow, chatId)
+    await apiCall(api, 'post', `/api/v1/conferences/${stale.id}/end`, {
+      token: aliceNow.accessToken,
+    }).catch(() => {})
+    const conference = await createConference(api, aliceNow, chatId)
+
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
+    ])
+
+    // КАЖДЫЙ тайл несёт индикатор микрофона (T100): бейджи зажжены —
+    // дефолты mode=video публикуют микрофоны обеих сторон
+    const bobTileAtAlice = tilesSection(alicePage)
+      .locator('figure')
+      .filter({ hasText: bobNow.username })
+    const bobTileAtBob = tilesSection(bobPage)
+      .locator('figure')
+      .filter({ hasText: bobNow.username })
+    await expect(bobTileAtAlice.locator('.conference-tile-mic')).toHaveAttribute('data-mic', 'on')
+    await expect(bobTileAtBob.locator('.conference-tile-mic')).toHaveAttribute('data-mic', 'on')
+
+    // пометка роли в строке имени (metadata §3): создатель конференции
+    // — модератор (T017); собственный тайл члена — без пометок
+    await expect(
+      tilesSection(bobPage).locator('figure').filter({ hasText: aliceNow.username }),
+    ).toContainText('· модератор')
+    await expect(bobTileAtBob).not.toContainText('· ')
+
+    // пульс при речи — ТОЛЬКО у бейджа (visual assert по классу):
+    // непрерывный тон fake-микрофона (WAV в playwright.config) держит
+    // speaking включённого микрофона — бейдж говорящего bob
+    // пульсирует у зрителя; ничего больше не анимируется (рамка
+    // тайла/аватар без свечения — классов пульса у них нет)
+    await expect(bobTileAtAlice.locator('.conference-tile-mic')).toHaveClass(
+      /conference-tile-mic-pulse/,
+      { timeout: 15_000 },
+    )
+
+    // №49 (SC-005): alice глушит bob'у микрофон — бейдж цели гаснет
+    // у ОБЕИХ вкладок ≤ 2 c (серверный мьют отражается isMuted сам)
+    const startedAt = Date.now()
+    await alicePage
+      .getByRole('group', { name: bobNow.username })
+      .getByRole('button', { name: 'Микрофон', exact: true })
+      .click()
+    await expect(bobTileAtAlice.locator('.conference-tile-mic')).toHaveAttribute(
+      'data-mic',
+      'off',
+      {
+        timeout: SC005_MS,
+      },
+    )
+    await expect(bobTileAtBob.locator('.conference-tile-mic')).toHaveAttribute('data-mic', 'off', {
+      timeout: SC005_MS,
+    })
+    expect(
+      Date.now() - startedAt,
+      `SC-005: гашение бейджа микрофона ${Date.now() - startedAt} мс`,
+    ).toBeLessThanOrEqual(SC005_MS)
+
+    // комнату завершаю сам (создатель): активная комната не достанется
+    // следующему сюиту с ghost-подключениями закрытых вкладок
+    await apiCall(api, 'post', `/api/v1/conferences/${conference.id}/end`, {
+      token: aliceNow.accessToken,
+    }).catch(() => {})
   })
 })
 
