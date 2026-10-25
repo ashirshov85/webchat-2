@@ -44,7 +44,10 @@
  * `rate_limited`; транспорт) — сообщение + «Повторить» на pre-join.
  * Панель модератора гостю не рендерится (прав нет, №48–№53
  * аутентифицированы и гейтнуты ролью); участники и пометка «гость» —
- * ParticipantsPanel (бейдж — T051); собственные ограничения — только
+ * ParticipantsPanel (бейдж — T051) в слоте sidebar той же правой
+ * колонки T106, что у члена (гостевой паритет контура, кнопка
+ * сворачивания та же; без инструментов модерации); собственные
+ * ограничения — только
  * live-права MediaControls (T043): снимок №46 у гостя отсутствует,
  * гость блокируется live-грантами сам (bump-эпоха прав T105 —
  * MediaControls перерисовывается по permission-событию без рефетча).
@@ -454,8 +457,8 @@ export default function GuestJoinPage({ inviteToken }: GuestJoinPageProps) {
             }
             initialDevices={selection?.devices}
             refreshTicket={refreshTicket}
+            sidebar={<ParticipantsPanel />}
           >
-            <ParticipantsPanel />
             <MediaControls onLeave={leave} />
           </ConferenceRoom>
         </div>

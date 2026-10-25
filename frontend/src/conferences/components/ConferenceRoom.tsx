@@ -127,6 +127,27 @@
  * «Имя · гость»; смена роли №50 (UpdateParticipant метаданных)
  * перерисовывает пометку тем же participants/tracks-стримом,
  * собственный тайл показывает свою роль тоже.
+ *
+ * Каркас экрана — сайдбар участников справа (T106, прототипы
+ * tmp/conference-page-{moderator,participant}-{expanded,collapsed}.html,
+ * при расхождениях побеждает прототип): рабочая область
+ * .conference-main (flex-row) — сетка тайлов слева (растягивается,
+ * внутренняя прокрутка) + правая колонка .conference-side со слотом
+ * sidebar (панели участников/модерации; T107 объединит их в один
+ * список); колонка сворачивается/разворачивается иконкой-кнопкой
+ * conference-panel-toggle в полосе .conference-toggle-row над
+ * рабочей областью (aria-expanded/aria-controls/динамический
+ * aria-label, только svg 17px без текста и рамки; свёрнутое
+ * состояние — нативный [hidden], тайлы занимают всю ширину);
+ * состояние — локальный стейт комнаты без localStorage (паритет пина
+ * T074), в пин-оверлее T079 полоса и колонка скрываются CSS
+ * body:has(.conference-room-pinned); controls (слот children) —
+ * ребёнок колонки комнаты ПОД .conference-main, всегда внизу по
+ * центру экрана (align-self:center; в оверлее — absolute T079).
+ * Скроллбаров страницы нет: переполнение гасится внутри (сетка
+ * тайлов, после T107 — список участников). Гостевой паритет:
+ * GuestJoinPage монтирует тот же контур (панель без инструментов
+ * модерации).
  */
 import {
   isTrackReference,
@@ -140,7 +161,7 @@ import {
 import type { TrackReference, TrackReferenceOrPlaceholder } from '@livekit/components-react'
 import { DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
 import type { DataPacket_Kind, RemoteParticipant } from 'livekit-client'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConferenceMode, JoinTicket } from '../api/conferences'
 import { bindConferenceDisconnect } from '../hooks/useConference'
@@ -214,7 +235,14 @@ export interface ConferenceRoomProps {
   readonly reconnectWindowMs?: number
   /** Интервал ретраев минта внутри окна (T060); переопределяется тестами. */
   readonly reconnectRetryDelayMs?: number
-  /** Слот для MediaControls (T028) и панелей US3/US4 — внутри RoomContext. */
+  /**
+   * Слот сайдбара участников (T106): правая колонка .conference-side
+   * рабочей области — ParticipantsPanel (T041) + ModerationPanel (T042);
+   * сворачивается/разворачивается кнопкой conference-panel-toggle
+   * (стейт комнаты). Гостевая точка входа монтирует тот же контур.
+   */
+  readonly sidebar?: ReactNode
+  /** Слот для MediaControls (T028) — всегда внизу по центру под .conference-main (T106). */
   readonly children?: ReactNode
 }
 
@@ -617,6 +645,7 @@ function ConferenceRoomLive({
   mediaNotice,
   warningVisible,
   onWarningDismiss,
+  sidebar,
   children,
 }: {
   readonly conferenceId: string
@@ -626,6 +655,8 @@ function ConferenceRoomLive({
   /** Тост conference.warning показан (T060 ← T056). */
   readonly warningVisible: boolean
   readonly onWarningDismiss: () => void
+  /** Слот сайдбара участников (T106) — правая колонка рабочей области. */
+  readonly sidebar?: ReactNode
   readonly children?: ReactNode
 }) {
   const cameraTiles = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], {
@@ -648,6 +679,12 @@ function ConferenceRoomLive({
   const speakerIdentities = new Set(speakers.map((participant) => participant.identity))
   const [pinnedTileKey, setPinnedTileKey] = useState<string | null>(null)
   const [seenScreenKeys, setSeenScreenKeys] = useState<ReadonlySet<string>>(() => new Set<string>())
+  // Сайдбар участников (T106): развёрнут по умолчанию, сворачивается
+  // кнопкой; локальный стейт комнаты без localStorage (паритет пина
+  // T074) — на размонтировании звонка исчезает. id колонки — цель
+  // aria-controls кнопки.
+  const [participantsOpen, setParticipantsOpen] = useState(true)
+  const participantsPanelId = useId()
   // Медиа-тайлы рендерятся только в живых фазах (как монтаж медиа-слоя
   // до T079): маркер оверлея и автопин следуют тому же окну.
   const mediaVisible = phase === 'connected' || phase === 'reconnecting'
@@ -774,31 +811,80 @@ function ConferenceRoomLive({
       {mediaVisible && (
         <>
           <RoomAudioRenderer />
-          {pinnedTile !== undefined && (
-            <ConferenceTile
-              model={pinnedTile}
-              pinned
-              speaking={speakerIdentities.has(pinnedTile.identity)}
-              onTogglePin={() => togglePin(pinnedTile.identity)}
-            />
+          {sidebar !== undefined && (
+            // Полоса места над рабочей областью (T106): иконка-кнопка
+            // справа, прижата к рабочей области (компенсация gap — CSS);
+            // доступность 008 — aria-expanded/aria-controls/динамический
+            // aria-label; в пин-оверлее T079 полоса скрывается CSS
+            // body:has(.conference-room-pinned)
+            <div className="conference-toggle-row">
+              <button
+                type="button"
+                className="conference-panel-toggle"
+                aria-expanded={participantsOpen}
+                aria-controls={participantsPanelId}
+                aria-label={
+                  participantsOpen ? 'Свернуть панель участников' : 'Развернуть панель участников'
+                }
+                onClick={() => {
+                  setParticipantsOpen((open) => !open)
+                }}
+              >
+                {/* только svg-иконка сайдбара с шевроном 17px — без
+                    текста, рамки, фона и теней (прототип T106); шеврон
+                    ‹ развёрнута / › свёрнута — поворот CSS-правилом */}
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <rect x="3.5" y="5" width="17" height="14" rx="2" />
+                  <path d="M14.5 5v14" />
+                  <path className="conference-panel-chevron" d="M10.5 9.5 8 12l2.5 2.5" />
+                </svg>
+              </button>
+            </div>
           )}
-          <section
-            className={
-              pinnedTile === undefined
-                ? 'conference-tiles'
-                : 'conference-tiles conference-tiles-compact'
-            }
-            aria-label="Участники конференции"
-          >
-            {restTiles.map((tile) => (
+          {/* Рабочая область на всё окно (T106): тайлы слева (растягиваются,
+              внутренняя прокрутка) + правая колонка сайдбара; пин-тайл
+              T074/T079 — первый ребёнок области (в оверлее остальное
+              скрыто CSS); controls (children) — ПОД областью в колонке
+              комнаты, всегда внизу по центру экрана */}
+          <div className="conference-main">
+            {pinnedTile !== undefined && (
               <ConferenceTile
-                key={tile.identity}
-                model={tile}
-                speaking={speakerIdentities.has(tile.identity)}
-                onTogglePin={() => togglePin(tile.identity)}
+                model={pinnedTile}
+                pinned
+                speaking={speakerIdentities.has(pinnedTile.identity)}
+                onTogglePin={() => togglePin(pinnedTile.identity)}
               />
-            ))}
-          </section>
+            )}
+            <section
+              className={
+                pinnedTile === undefined
+                  ? 'conference-tiles'
+                  : 'conference-tiles conference-tiles-compact'
+              }
+              aria-label="Участники конференции"
+            >
+              {restTiles.map((tile) => (
+                <ConferenceTile
+                  key={tile.identity}
+                  model={tile}
+                  speaking={speakerIdentities.has(tile.identity)}
+                  onTogglePin={() => togglePin(tile.identity)}
+                />
+              ))}
+            </section>
+            {sidebar !== undefined && (
+              // Правая колонка сайдбара (T106): свёрнутое состояние —
+              // нативный [hidden] (CSS-гвард гасит display:flex), тайлы
+              // занимают всю ширину; DOM слота остаётся смонтированным
+              <aside
+                className="conference-side"
+                id={participantsPanelId}
+                hidden={!participantsOpen}
+              >
+                {sidebar}
+              </aside>
+            )}
+          </div>
         </>
       )}
       {children}
@@ -815,6 +901,7 @@ export default function ConferenceRoom({
   refreshTicket,
   reconnectWindowMs = DEFAULT_RECONNECT_WINDOW_MS,
   reconnectRetryDelayMs = DEFAULT_RECONNECT_RETRY_DELAY_MS,
+  sidebar,
   children,
 }: ConferenceRoomProps) {
   /** Комната текущего жизненного цикла тикета (создаётся эффектом, T027). */
@@ -1106,6 +1193,7 @@ export default function ConferenceRoom({
         onWarningDismiss={() => {
           setWarningVisible(false)
         }}
+        sidebar={sidebar}
       >
         {children}
       </ConferenceRoomLive>

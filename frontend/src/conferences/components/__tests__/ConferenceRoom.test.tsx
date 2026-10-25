@@ -2796,3 +2796,162 @@ describe('ConferenceRoom — индикатор микрофона и помет
     })
   })
 })
+
+describe('ConferenceRoom — каркас экрана: сайдбар участников справа (009 US1 T106)', () => {
+  /** Тайл по подписи-имени участника (figcaption). */
+  function tileByLabel(name: string): HTMLElement {
+    const label = screen.getByText(name, { exact: false })
+    const tile = label.closest('figure')
+    if (tile === null) {
+      throw new Error(`тайл участника «${name}» не найден`)
+    }
+    return tile
+  }
+
+  /** Сетка/полоса участников (region «Участники конференции»). */
+  function tilesSection(): HTMLElement {
+    return screen.getByRole('region', { name: 'Участники конференции' })
+  }
+
+  /** Кнопка сворачивания/разворачивания панели участников. */
+  function panelToggle(): HTMLElement {
+    return screen.getByRole('button', { name: /панель участников/ })
+  }
+
+  /** Рабочая область (flex-row: тайлы слева + сайдбар справа). */
+  function mainArea(): HTMLElement {
+    const main = document.querySelector<HTMLElement>('.conference-main')
+    if (main === null) {
+      throw new Error('.conference-main не смонтирована')
+    }
+    return main
+  }
+
+  /** Правая колонка сайдбара (контейнер слота). */
+  function sideColumn(): HTMLElement {
+    const side = document.querySelector<HTMLElement>('.conference-side')
+    if (side === null) {
+      throw new Error('.conference-side не смонтирована')
+    }
+    return side
+  }
+
+  function renderRoom(sidebar?: React.ReactNode): ReturnType<typeof render> {
+    return render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+        sidebar={sidebar}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = [{ participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' }]
+    lkc.speakers = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('(а) каркас: рабочая область .conference-main несёт сетку тайлов и колонку сайдбара; кнопка — aria-expanded/aria-controls/динамический aria-label', async () => {
+    renderRoom(<div data-testid="side-slot" />)
+
+    await waitFor(() => {
+      expect(tileByLabel('alice')).not.toBeNull()
+    })
+    // сетка и сайдбар — дети ОДНОЙ рабочей области, сайдбар правее
+    // (после сетки в DOM-порядке flex-row); controls — вне её, ниже
+    // колонки комнаты (всегда внизу по центру, align-self:center)
+    const main = mainArea()
+    expect(main).toContainElement(tilesSection())
+    expect(main).toContainElement(sideColumn())
+    expect(main).toContainElement(screen.getByTestId('side-slot'))
+    expect(tilesSection().compareDocumentPosition(sideColumn())).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    )
+    expect(main).not.toContainElement(screen.getByTestId('controls-slot'))
+
+    // полоса над рабочей областью: иконка-кнопка сшила состояния панелью
+    const toggle = panelToggle()
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle.getAttribute('aria-controls')).toBe(sideColumn().id)
+    expect(toggle).toHaveAttribute('aria-label', 'Свернуть панель участников')
+    // панель по умолчанию развёрнута — hidden-гварда нет
+    expect(sideColumn()).not.toHaveAttribute('hidden')
+  })
+
+  it('(б) кнопка сворачивает панель ([hidden] — тайлы занимают всю ширину) и разворачивает обратно; состояние живёт в комнате', async () => {
+    renderRoom(<div data-testid="side-slot" />)
+    await waitFor(() => {
+      expect(tileByLabel('alice')).not.toBeNull()
+    })
+
+    fireEvent.click(panelToggle())
+
+    const collapsed = panelToggle()
+    expect(collapsed).toHaveAttribute('aria-expanded', 'false')
+    expect(collapsed).toHaveAttribute('aria-label', 'Развернуть панель участников')
+    expect(collapsed.getAttribute('aria-controls')).toBe(sideColumn().id)
+    // свёрнутое состояние — колонка скрыта нативным [hidden] (гвард CSS
+    // гасит flex-переопределение), сетка растягивается на всю ширину;
+    // содержимое слота остаётся смонтированным (DOM жив)
+    expect(sideColumn()).toHaveAttribute('hidden')
+    expect(screen.getByTestId('side-slot')).toBeInTheDocument()
+
+    // повторный клик — разворачивает обратно
+    fireEvent.click(panelToggle())
+    expect(panelToggle()).toHaveAttribute('aria-expanded', 'true')
+    expect(panelToggle()).toHaveAttribute('aria-label', 'Свернуть панель участников')
+    expect(sideColumn()).not.toHaveAttribute('hidden')
+  })
+
+  it('(в) свёрнутое состояние переживает живые изменения тайлов (стейт комнаты, не сетки)', async () => {
+    const view = renderRoom(<div data-testid="side-slot" />)
+    await waitFor(() => {
+      expect(tileByLabel('alice')).not.toBeNull()
+    })
+    fireEvent.click(panelToggle())
+    expect(sideColumn()).toHaveAttribute('hidden')
+
+    // приход/уход участников не разворачивает панель обратно
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'camera' },
+    ]
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn()}
+        sidebar={<div data-testid="side-slot" />}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+    await waitFor(() => {
+      expect(tileByLabel('bob')).not.toBeNull()
+    })
+    expect(sideColumn()).toHaveAttribute('hidden')
+    expect(panelToggle()).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('(г) без слота сайдбара каркас деградирует: полосы и колонки нет, сетка одна в рабочей области', async () => {
+    renderRoom()
+    await waitFor(() => {
+      expect(tileByLabel('alice')).not.toBeNull()
+    })
+    expect(document.querySelector('.conference-side')).toBeNull()
+    expect(document.querySelector('.conference-toggle-row')).toBeNull()
+    expect(screen.queryByRole('button', { name: /панель участников/ })).toBeNull()
+    expect(mainArea()).toContainElement(tilesSection())
+  })
+})

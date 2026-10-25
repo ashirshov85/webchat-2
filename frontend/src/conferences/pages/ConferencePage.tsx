@@ -34,12 +34,15 @@
  * остаются видимыми (Q20=A, уточнения T071/T076).
  * Блок joined монтирует медиа-комнату ConferenceRoom (T027):
  * подключение по JoinTicket, тайлы участников и адаптацию качества
- * (FR-004); в слоте children — ParticipantsPanel (T041): список
- * участников из LiveKit (identity/name, роль, online, ограничения),
- * ModerationPanel (T042): панель действий модератора №48–№51
- * (рендерится только роли модератора — сама скрывается broadcast'ом
- * снятия роли), и MediaControls (T028): тумблеры микрофона/камеры/
- * экрана и «Покинуть» — выход (leave слота вкладки, Q10=A) возвращает
+ * (FR-004); T106: в слоте sidebar — ПРАВАЯ КОЛОНКА рабочей области
+ * (сворачивается/разворачивается кнопкой conference-panel-toggle): ParticipantsPanel
+ * (T041): список участников из LiveKit (identity/name, роль, online,
+ * ограничения), ModerationPanel (T042): панель действий модератора
+ * №48–№51 (рендерится только роли модератора — сама скрывается
+ * broadcast'ом снятия роли; T107 объединит их в один список), а в
+ * слоте children — MediaControls (T028): тумблеры микрофона/камеры/
+ * экрана и «Покинуть» — всегда внизу по центру экрана; выход (leave
+ * слота вкладки, Q10=A) возвращает
  * в мессенджер с открытым чатом конференции (FR-019, T095: возврат на
  * pre-join отменён; путь модератора после №48 — комната 'closed' →
  * «Покинуть» → чат — сходится этой же кнопкой).
@@ -167,9 +170,13 @@ function JoinedPanel({
         initialMedia={initialMedia}
         initialDevices={initialDevices}
         refreshTicket={refreshTicket}
+        sidebar={
+          <>
+            <ParticipantsPanel />
+            <ModerationPanel conferenceId={conferenceId} />
+          </>
+        }
       >
-        <ParticipantsPanel />
-        <ModerationPanel conferenceId={conferenceId} />
         <MediaControls
           restrictions={restrictions}
           onRestrictionsSync={onRestrictionsSync}

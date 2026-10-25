@@ -1,7 +1,10 @@
 /*
  * ЕДИНЫЙ ФАЙЛ СТИЛЕЙ МОДУЛЯ CONFERENCES (009, plan.md Structure):
  * каркас конференц-страницы T075 (растягивание обеих точек входа на
- * всё окно браузера), медиа-комната T027 (единая сетка слитых тайлов
+ * всё окно браузера), каркас экрана T106 — сайдбар участников справа
+ * от сетки тайлов (рабочая область .conference-main, сворачивание
+ * кнопкой-иконкой, controls всегда внизу по центру), медиа-комната
+ * T027 (единая сетка слитых тайлов
  * T084 — экран/камера/аватар участника одним элементом 16:9,
  * статус-строка; сетка стоит на пластине корпуса machine T099 —
  * той же, что панель управления, но без декоративных шестерёнок;
@@ -78,7 +81,9 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
   min-height: 0;
 }
 
-/* Каркас комнаты: статус-строка + тайлы + слот MediaControls (T028);
+/* Каркас комнаты (T075 + T106): статус-строки + полоса кнопки панели
+   (T106) + рабочая область .conference-main (тайлы + сайдбар) + слот
+   MediaControls (T028) всегда внизу по центру;
    T075 — растёт внутри .conference-joined на оставшуюся высоту окна.
    min-height:0 обязателен: без него flex-automatic-minimum (контент)
    выталкивает комнату за высоту окна (T075). */
@@ -480,12 +485,13 @@ body:has(.conference-room-pinned) {
 }
 
 /* Скрытие служебного окружения страницы (T079): панели
-   участников/модерации, компактная полоса тайлов. Шапка страницы и
-   identity-строка удалены из страниц целиком (T087), output-подпись
-   joined-формы и живой счётчик подключённых (T080) — тоже (T092):
-   селекторов скрытия для них больше не нужно. */
+   участников/модерации, колонка сайдбара T106 и компактная полоса
+   тайлов. Шапка страницы и identity-строка удалены из страниц целиком
+   (T087), output-подпись joined-формы и живой счётчик (T080) — тоже
+   (T092): селекторов скрытия для них больше не нужно. */
 body:has(.conference-room-pinned) .conference-participants,
 body:has(.conference-room-pinned) .conference-moderation,
+body:has(.conference-room-pinned) .conference-side,
 body:has(.conference-room-pinned) .conference-tiles-compact {
   display: none;
 }
@@ -528,6 +534,153 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   margin: 0;
   width: max-content;
   max-width: calc(100% - 24px);
+}
+
+/* ============================================================
+ * КАРКАС ЭКРАНА — САЙДБАР УЧАСТНИКОВ СПРАВА (T106, US1; прототипы
+ * tmp/conference-page-{moderator,participant}-{expanded,collapsed}.html,
+ * при расхождениях побеждает прототип): рабочая область
+ * .conference-main — flex-ROW «сетка тайлов слева + панель
+ * участников справа», растягивается на всё окно браузера; скроллбаров
+ * страницы нет — переполнение гасится ВНУТРИ (сетка тайлов
+ * overflow-y:auto, когда тайлы не помещаются при минимальном 220px;
+ * список участников панели — правилом панели ниже). Панель — правая
+ * колонка фиксированной ширины 340px (на узких окнах сужается
+ * media-запросом ниже); промежуточный каркас T106 держит в колонке
+ * обе панели (участников T041 + модерации T042) — T107 объединит их
+ * в один список, сама колонка .conference-side останется контейнером
+ * слота и целью aria-controls кнопки. Сворачивание/разворачивание —
+ * иконка-кнопка conference-panel-toggle (только svg 17px сайдбара с
+ * шевроном: ‹ развёрнута / › свёрнута; без текста, рамки, фона и
+ * теней — уточнение пользователя) в полосе .conference-toggle-row
+ * над рабочей областью справа, прижата к ней (компенсация gap колонки
+ * до ~2px); свёрнутое состояние — нативный [hidden] (гвард ниже
+ * обязателен: авторский display:flex сильнее UA-стиля атрибута),
+ * тайлы занимают всю ширину; состояние — локальный стейт комнаты
+ * без localStorage (паритет пина T074). В полноэкранном пине T079
+ * полоса и колонка скрываются существующим механизмом
+ * body:has(.conference-room-pinned). Панель управления — всегда
+ * внизу по центру ЭКРАНА: ребёнок колонки комнаты ПОД .conference-main
+ * (align-self:center базового правила T098; в пин-оверлее — absolute
+ * T079). Гостевой паритет: GuestJoinPage монтирует тот же контур.
+ * ============================================================ */
+
+/* Полоса места над окном конференции: кнопка-иконка справа, прижата
+   к рабочей области (компенсирует gap колонки комнаты до 2px). */
+.conference-toggle-row {
+  display: flex;
+  justify-content: flex-end;
+  flex: none;
+  margin-bottom: calc(2px - var(--gap-frame));
+}
+
+/* Кнопка панели участников: минимум — только svg-иконка 17px (без
+   фона, рамки, круга и теней — уточнение пользователя «убрать текст
+   и границы кнопки»); шеврон различает состояния (‹ — развёрнута,
+   › — свёрнута); hover золотом, focus-visible (008 FR-035). */
+.conference-panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.conference-panel-toggle:hover {
+  color: var(--gold-light);
+}
+
+.conference-panel-toggle:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+.conference-panel-toggle svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.conference-panel-toggle .conference-panel-chevron {
+  transition: transform 0.2s;
+}
+
+.conference-panel-toggle[aria-expanded='false'] .conference-panel-chevron {
+  transform: rotate(180deg);
+}
+
+/* Полноэкранный пин тайла (T079): полоса с кнопкой панели не нужна. */
+body:has(.conference-room-pinned) .conference-toggle-row {
+  display: none;
+}
+
+/* Рабочая область на всё окно браузера: тайлы слева, панель справа;
+   высота — за вычетом полосы кнопки и панели управления; скроллбаров
+   страницы нет — внутренняя прокрутка появляется у сетки тайлов
+   (когда тайлы не помещаются при минимальном размере 220px) и у
+   списка участников панели. */
+.conference-main {
+  display: flex;
+  flex-direction: row;
+  gap: var(--gap-frame);
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+
+/* Сетка тайлов — левое плечо рабочей области: растягивается на
+   свободную ширину, строки не растягиваются по свободной высоте
+   (align-content:start), тонкий латунный скроллбар появляется, только
+   когда тайлы не помещаются; компактная полоса пина T074 живёт своей
+   геометрией (:not-гвард, паритет машины T099). */
+.conference-main .conference-tiles:not(.conference-tiles-compact) {
+  flex: 1;
+  min-width: 0;
+  align-content: start;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #55452c transparent;
+}
+
+/* Правая колонка сайдбара (T106): контейнер слота — панель участников
+   T041 и (до объединения T107) панель модерации T042; фиксированная
+   ширина синхронна панели, сама колонка прокручивается, пока панелей
+   две (после T107 скроллится только список панели). */
+.conference-side {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 340px;
+  flex: none;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #55452c transparent;
+}
+
+/* Свёрнутое состояние — нативный [hidden]: гвард обязателен и для
+   колонки (display:flex), и для самой панели (прототип; прямое
+   использование панели вне колонки) — UA-стиль атрибута слабее
+   авторского display. */
+.conference-side[hidden],
+.conference-participants[hidden] {
+  display: none;
+}
+
+/* На узких окнах колонка сужается (прототип T106). */
+@media (max-width: 960px) {
+  .conference-side,
+  .conference-participants {
+    width: min(300px, 46vw);
+  }
 }
 
 /* ============================================================
@@ -1243,6 +1396,10 @@ section[data-guest-join] {
  * LiveKit — имя (fallback identity)/«вы», identity (ключ действий
  * модерации №49–№51), «гость» (US4/T051), роль, online, индикация
  * ограничений. Индикаторы — текстом, не только цветом (008).
+ * T106: панель — правая колонка рабочей области .conference-main
+ * (фиксированная ширина 340px, на узких окнах сужается); скроллбар
+ * страницы не заводится — прокрутка ВНУТРИ списка участников
+ * (заголовок остаётся сверху).
  * ============================================================ */
 
 .conference-participants {
@@ -1253,6 +1410,9 @@ section[data-guest-join] {
   border: 1px solid var(--line);
   border-radius: var(--r-frame);
   background: var(--panel-bg);
+  width: 340px;
+  flex: none;
+  min-height: 0;
 }
 
 .conference-participants-title {
@@ -1262,6 +1422,9 @@ section[data-guest-join] {
   color: var(--cream-bright);
 }
 
+/* Список участников — внутренняя прокрутка (T106: «скроллбар может
+   быть у списка участников»): тонкий латунный скроллбар, заголовок
+   панели остаётся видимым сверху. */
 .conference-participants-list {
   display: flex;
   flex-direction: column;
@@ -1269,6 +1432,11 @@ section[data-guest-join] {
   margin: 0;
   padding: 0;
   list-style: none;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #55452c transparent;
 }
 
 /* Строка: аватар (T073, 34px design-tokens §4) + baseline-цепочка

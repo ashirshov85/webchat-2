@@ -36,6 +36,12 @@ import {
  * поверх тайла снизу по центру, служебные панели скрыты; сворачивание
  * возвращает обычную раскладку со всеми панелями.
  *
+ * 009, US1, T106 — e2e каркаса экрана конференции: панель участников —
+ * правая колонка .conference-side рядом с сеткой тайлов (bounding box),
+ * сворачивается/разворачивается иконкой-кнопкой conference-panel-toggle
+ * (тайлы занимают освободившуюся ширину), controls — всегда внизу по
+ * центру экрана в обоих состояниях панели, скроллбаров страницы нет.
+ *
  * 009, US1, T098 — e2e паритета панели управления (пересмотр скрытия
  * T089): в пин-оверлее T079 панель одинакова со стандартным режимом —
  * все 4 кнопки-иконки (селекторы по aria-label — текста внутри кнопок
@@ -587,6 +593,98 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
     await expect(
       tilesSection(bobPage).getByText(aliceNow.username, { exact: true }).first(),
     ).toBeVisible()
+  })
+
+  test('T106: панель участников — правая колонка от сетки тайлов; сворачивание/разворачивание иконкой-кнопкой; controls всегда внизу по центру', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    // ghost-подключения предыдущих тестов сьюта живут в активной комнате
+    // чата (№44 «одна активная») — завершаю её (создатель = alice) и
+    // звоню в свежей комнате (паритет T100)
+    const stale = await createConference(api, aliceNow, chatId)
+    await apiCall(api, 'post', `/api/v1/conferences/${stale.id}/end`, {
+      token: aliceNow.accessToken,
+    }).catch(() => {})
+    const conference = await createConference(api, aliceNow, chatId)
+
+    // широкое окно (паритет T075/T079): геометрия сайдбара видна
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id, { width: 1600, height: 900 }),
+      openConferencePage(browser, bobNow, conference.id, { width: 1600, height: 900 }),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
+    ])
+
+    // bob — обычный участник: чистый сайдбар (панель участников, без
+    // инструментов модерации). Панель — ПРАВЕЕ сетки тайлов (bounding box:
+    // колонка начинается после правой кромки тайлов, в пределах окна)
+    const side = bobPage.locator('.conference-side')
+    await expect(side).toBeVisible()
+    await expect(side.locator('.conference-participants')).toBeVisible()
+    const tilesBox = await tilesSection(bobPage).boundingBox()
+    const sideBox = await side.boundingBox()
+    const viewport = bobPage.viewportSize()
+    expect(tilesBox).not.toBeNull()
+    expect(sideBox).not.toBeNull()
+    expect(sideBox!.x, 'сайдбар правее сетки тайлов').toBeGreaterThan(tilesBox!.x)
+    expect(
+      sideBox!.x,
+      'сайдбар начинается у правой кромки тайлов (gap 12px)',
+    ).toBeGreaterThanOrEqual(tilesBox!.x + tilesBox!.width - 1)
+    expect(sideBox!.x + sideBox!.width, 'сайдбар в пределах окна').toBeLessThanOrEqual(
+      viewport?.width ?? 0,
+    )
+    // скроллбаров страницы нет: переполнение гасится внутри (сетка/список)
+    const fitsViewport = await bobPage.evaluate(
+      () =>
+        document.documentElement.scrollHeight <= window.innerHeight &&
+        document.documentElement.scrollWidth <= window.innerWidth,
+    )
+    expect(fitsViewport, 'каркас T106: контент не выше/шире вьюпорта').toBe(true)
+
+    // controls — всегда внизу по центру ЭКРАНА (в обоих состояниях панели)
+    const controls = bobPage.getByRole('group', { name: 'Управление конференцией' })
+    await expect(controls).toBeVisible()
+    const controlsCentered = async (): Promise<void> => {
+      const box = await controls.boundingBox()
+      expect(box).not.toBeNull()
+      const centerX = box!.x + box!.width / 2
+      expect(
+        Math.abs(centerX - (viewport?.width ?? 0) / 2),
+        `controls по центру: ${centerX} ≈ ${(viewport?.width ?? 0) / 2}`,
+      ).toBeLessThanOrEqual(24)
+      expect(box!.y, 'controls — в нижней половине окна').toBeGreaterThan(
+        (viewport?.height ?? 0) / 2,
+      )
+    }
+    await controlsCentered()
+
+    // сворачивание иконкой-кнопкой (без текста/рамки — селектор по
+    // aria-label): панель скрыта, тайлы занимают освободившуюся ширину
+    await bobPage.getByRole('button', { name: 'Свернуть панель участников' }).click()
+    await expect(side).toBeHidden()
+    const collapsedBox = await tilesSection(bobPage).boundingBox()
+    expect(collapsedBox!.width, 'тайлы заняли ширину сайдбара').toBeGreaterThan(
+      tilesBox!.width + 300,
+    )
+    await controlsCentered()
+
+    // разворачивание обратно
+    await bobPage.getByRole('button', { name: 'Развернуть панель участников' }).click()
+    await expect(side).toBeVisible()
+    const reopenedBox = await tilesSection(bobPage).boundingBox()
+    expect(reopenedBox!.width).toBeLessThan(collapsedBox!.width - 300)
+    await controlsCentered()
+
+    // комнату завершаю сам (создатель): активная комната не достанется
+    // следующему сюиту с ghost-подключениями закрытых вкладок
+    await apiCall(api, 'post', `/api/v1/conferences/${conference.id}/end`, {
+      token: aliceNow.accessToken,
+    }).catch(() => {})
   })
 
   test('T098: пин-оверлей — «Покинуть» видна и кликабельна прямо из развёрнутого тайла; выход возвращает в чат', async ({

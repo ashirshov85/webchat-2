@@ -936,3 +936,148 @@ describe('состояние «в полёте» тумблеров — пере
     expect(rule?.[1]).toContain('opacity: 0.45')
   })
 })
+
+describe('каркас экрана — сайдбар участников справа (T106): статический пин CSS', () => {
+  it('.conference-main — flex-ROW: тайлы слева растягиваются, высота гасится внутри (flex:1 + min-height:0)', () => {
+    // прототип tmp/conference-page-{moderator,participant}-{expanded,collapsed}.html:
+    // рабочая область — строка «сетка тайлов + панель участников», flex:1
+    // колонки комнаты, переполнение гасится ВНУТРИ (скроллбаров страницы нет)
+    const rule = conferencesCss.match(/^\.conference-main\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: flex')
+    expect(rule?.[1]).toContain('flex-direction: row')
+    expect(rule?.[1]).toContain('flex: 1')
+    expect(rule?.[1]).toContain('min-height: 0')
+    expect(rule?.[1]).toContain('gap: var(--gap-frame)')
+  })
+
+  it('сетка тайлов внутри .conference-main — flex:1/min-width:0 + ВНУТРЕННЯЯ прокрутка с тонким латунным скроллбаром', () => {
+    // скроллбар появляется, только когда тайлы не помещаются при
+    // минимальном 220px (auto-fit); align-content:start — строки не
+    // растягиваются по свободной высоте; компактная полоса пина T074
+    // живёт своей геометрией (:not-гвард, паритет машины T099)
+    const rule = conferencesCss.match(
+      /^\.conference-main \.conference-tiles:not\(\.conference-tiles-compact\)\s*\{([^}]*)\}/m,
+    )
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('flex: 1')
+    expect(rule?.[1]).toContain('min-width: 0')
+    expect(rule?.[1]).toContain('align-content: start')
+    expect(rule?.[1]).toContain('overflow-y: auto')
+    expect(rule?.[1]).toContain('scrollbar-width: thin')
+    expect(rule?.[1]).toContain('scrollbar-color: #55452c transparent')
+  })
+
+  it('панель участников — фиксированная ширина 340px (flex:none) + [hidden]-гвард свёрнутого состояния', () => {
+    // правая колонка фиксированной ширины; свёрнутое состояние — панель
+    // скрыта нативным [hidden], тайлы занимают всю ширину (гвард обязателен:
+    // авторский display:flex сильнее UA-стиля [hidden])
+    const rule = conferencesCss.match(/^\.conference-participants\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('width: 340px')
+    expect(rule?.[1]).toContain('flex: none')
+    expect(rule?.[1]).toContain('min-height: 0')
+    const guard = conferencesCss.match(
+      /^\.conference-side\[hidden\],\s*\.conference-participants\[hidden\]\s*\{([^}]*)\}/m,
+    )
+    expect(guard).not.toBeNull()
+    expect(guard?.[1]).toContain('display: none')
+  })
+
+  it('правая колонка .conference-side — контейнер слота сайдбара (width 340, flex-колонка), на узких окнах сужается media-запросом', () => {
+    // T106 (промежуточный каркас до объединения T107): колонка держит
+    // панель участников + панель модерации; ширина синхронна панели
+    const rule = conferencesCss.match(/^\.conference-side\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: flex')
+    expect(rule?.[1]).toContain('flex-direction: column')
+    expect(rule?.[1]).toContain('width: 340px')
+    expect(rule?.[1]).toContain('flex: none')
+    expect(rule?.[1]).toContain('min-height: 0')
+    // media-запрос прототипа: на узких окнах панель сужается
+    const media = conferencesCss.match(
+      /@media \(max-width: ?960px\)\s*\{[^@]*?\.conference-side,\s*\.conference-participants\s*\{([^}]*)\}/,
+    )
+    expect(media).not.toBeNull()
+    expect(media?.[1]).toContain('width: min(300px, 46vw)')
+  })
+
+  it('список участников — ВНУТРЕННЯЯ прокрутка (flex:1/min-height:0), тонкий латунный скроллбар', () => {
+    // скроллбар может быть у списка участников (уточнение пользователя):
+    // сама панель не скроллится — заголовок сверху остаётся видимым
+    const rule = conferencesCss.match(/^\.conference-participants-list\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('flex: 1')
+    expect(rule?.[1]).toContain('min-height: 0')
+    expect(rule?.[1]).toContain('overflow-y: auto')
+    expect(rule?.[1]).toContain('scrollbar-width: thin')
+    expect(rule?.[1]).toContain('scrollbar-color: #55452c transparent')
+  })
+
+  it('полоса .conference-toggle-row над рабочей областью: кнопка справа, прижата к ней компенсацией gap', () => {
+    const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: flex')
+    expect(rule?.[1]).toContain('justify-content: flex-end')
+    expect(rule?.[1]).toContain('flex: none')
+    expect(rule?.[1]).toContain('margin-bottom: calc(2px - var(--gap-frame))')
+  })
+
+  it('кнопка .conference-panel-toggle — ТОЛЬКО svg-иконка 17px: без текста, рамки, фона и теней; шеврон различает состояния', () => {
+    // уточнения пользователя: «убрать текст и границы кнопки» — прототип:
+    // border:none, background:transparent, теней нет; hover золотом,
+    // focus-visible (008), шеврон ‹ развёрнута / › свёрнута (rotate 180)
+    const rule = conferencesCss.match(/^\.conference-panel-toggle\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('border: none')
+    expect(rule?.[1]).toContain('background: transparent')
+    expect(rule?.[1]).not.toContain('box-shadow')
+    const svg = conferencesCss.match(/^\.conference-panel-toggle svg\s*\{([^}]*)\}/m)
+    expect(svg).not.toBeNull()
+    expect(svg?.[1]).toContain('width: 17px')
+    expect(svg?.[1]).toContain('height: 17px')
+    const hover = conferencesCss.match(/^\.conference-panel-toggle:hover\s*\{([^}]*)\}/m)
+    expect(hover?.[1]).toContain('color: var(--gold-light)')
+    const focus = conferencesCss.match(/^\.conference-panel-toggle:focus-visible\s*\{([^}]*)\}/m)
+    expect(focus?.[1]).toContain('outline: 2px solid var(--gold-light)')
+    const chevron = conferencesCss.match(
+      /^\.conference-panel-toggle\[aria-expanded='false'\] \.conference-panel-chevron\s*\{([^}]*)\}/m,
+    )
+    expect(chevron).not.toBeNull()
+    expect(chevron?.[1]).toContain('transform: rotate(180deg)')
+  })
+
+  it('полноэкранный пин T079: полоса с кнопкой и колонка сайдбара скрыты существующим механизмом body:has', () => {
+    // в пин-оверлее полоса не нужна; колонка сайдбара скрывается вместе с
+    // панелями участников/модерации (панели остаются скрытыми и внутри
+    // колонки — прежние селекторы сохранены)
+    expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-toggle-row')
+    const toggleHidden = conferencesCss.match(
+      /body:has\(\.conference-room-pinned\) \.conference-toggle-row\s*\{([^}]*)\}/,
+    )
+    expect(toggleHidden?.[1]).toContain('display: none')
+    expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-side')
+    for (const selector of [
+      'body:has(.conference-room-pinned) .conference-participants',
+      'body:has(.conference-room-pinned) .conference-moderation',
+      'body:has(.conference-room-pinned) .conference-tiles-compact',
+    ]) {
+      expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
+    }
+  })
+
+  it('controls всегда внизу по центру: align-self:center колонки комнаты (регресс базового правила)', () => {
+    // «ребёнок колонки комнаты ПОД .conference-main» — базовое правило
+    // оболочки уже центрирует (T098); в пин-оверлее — absolute T079
+    const shell = conferencesCss.match(/^\.conference-controls\s*\{([^}]*)\}/m)
+    expect(shell?.[1]).toContain('align-self: center')
+  })
+
+  it('докблок блока truthfully описывает каркас сайдбара (T106, прототип)', () => {
+    const at = conferencesCss.indexOf('.conference-toggle-row {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1800), at)
+    expect(doc).toContain('T106')
+    expect(doc).toContain('сайдбар')
+  })
+})
