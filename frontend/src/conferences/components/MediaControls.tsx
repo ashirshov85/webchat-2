@@ -146,6 +146,14 @@ function isUserCancelledScreenPick(cause: unknown): boolean {
   )
 }
 
+/** data-state кнопки: blocked поглощает on/off (замок-бейдж + приглушение). */
+function toggleState(toggle: SlotToggle): 'blocked' | 'on' | 'off' {
+  if (toggle.blocked) {
+    return 'blocked'
+  }
+  return toggle.enabled ? 'on' : 'off'
+}
+
 /* ---------------------------------------------------------------
  * Иконки прототипа tmp/conference-controls.html (винтажный микрофон
  * с волнами, коробочная камера с ирисом, проекционный аппарат с лучом
@@ -474,7 +482,7 @@ export default function MediaControls({
           aria-label={toggle.label}
           aria-pressed={toggle.enabled}
           aria-describedby={tipIds[toggle.slot]}
-          data-state={toggle.blocked ? 'blocked' : toggle.enabled ? 'on' : 'off'}
+          data-state={toggleState(toggle)}
           disabled={!connected || pending !== null || toggle.blocked}
           onClick={(event) => {
             void flip(toggle, event.currentTarget)
