@@ -659,8 +659,9 @@ section[data-guest-join] {
 }
 
 /* Круглая кнопка-иконка 78px (прототип .ctl): тумблеры источников и
- * «Покинуть»; состояние — data-state (правила ниже), интервал между
- * кнопками — gap 22px оболочки. */
+ * «Покинуть»; состояние — data-state (правила ниже: on/off/blocked +
+ * pending — полёт переключения, T103), интервал между кнопками —
+ * gap 22px оболочки. */
 .conference-controls-toggle,
 .conference-controls-leave {
   position: relative;
@@ -731,9 +732,46 @@ section[data-guest-join] {
   cursor: not-allowed;
 }
 
+/* В полёте переключения = pending-кольцо (T103, прототип
+ * [data-state='pending']): кнопка читается «нажатой, источник
+ * прогревается» — золотой бордер, диагональный штрих выкл скрыт
+ * (переход opacity .3s уже есть), on-части иконки приглушены до 0.45
+ * (правила потомков — рядом с их базовыми определениями ниже). */
+.conference-controls-toggle[data-state='pending'] {
+  border-color: var(--gold);
+  color: var(--muted);
+}
+
+/* Переливающийся контур (прототип [data-state='pending']::after):
+ * кольцо inset −5px из вращающегося conic-gradient золотых тонов,
+ * замаскированного radial-маской в тонкое ~1px кольцо поверх бордера;
+ * чисто декоративное — pointer-events: none. */
+.conference-controls-toggle[data-state='pending']::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(232, 200, 119, 0.18) 40deg,
+    var(--gold-light) 120deg,
+    #fff6d8 150deg,
+    var(--gold) 200deg,
+    rgba(201, 162, 74, 0.25) 260deg,
+    transparent 340deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+  animation: conference-controls-ring-crawl 1.4s linear infinite;
+  pointer-events: none;
+}
+
 /* Кнопки в полёте переключения/вне подключения (disabled без блокировки
- * модератором) — прежнее приглушение T028. */
-.conference-controls button[disabled]:not([data-state='blocked']) {
+ * модератором) — прежнее приглушение T028; летящая кнопка НЕ гаснет —
+ * карве-аут :not([data-state='pending']) (T103, прототип
+ * .ctl:disabled:not([data-state='pending'])). */
+.conference-controls button[disabled]:not([data-state='blocked']):not([data-state='pending']) {
   opacity: 0.45;
   cursor: default;
 }
@@ -769,6 +807,17 @@ section[data-guest-join] {
   animation: conference-controls-flick 4s ease-in-out infinite;
 }
 
+/* Лампа «дышит» в полёте (T103): горящий градиент вкл с пульсом
+ * 0.35↔1 (прототип lamp-breathe; prefers-reduced-motion глушит
+ * глобальным кил-свитчем theme/machine.css). */
+.conference-controls-toggle[data-state='pending'] .conference-controls-lamp {
+  background: radial-gradient(circle at 35% 30%, #fff6d8, var(--gold-light) 45%, var(--gold-dark));
+  box-shadow:
+    0 0 8px rgba(232, 200, 119, 0.8),
+    0 0 2px #fff;
+  animation: conference-controls-lamp-breathe 1.4s ease-in-out infinite;
+}
+
 /* On-части иконки (волны/ирис/луч/картинка) проявляются во вкл. */
 .conference-controls-on-part {
   opacity: 0;
@@ -794,6 +843,12 @@ section[data-guest-join] {
   transform-origin: center;
 }
 
+/* On-части иконки в полёте (T103): приглушены до 0.45 — полного
+ * «вкл» нет, источник только прогревается. */
+.conference-controls-toggle[data-state='pending'] .conference-controls-on-part {
+  opacity: 0.45;
+}
+
 /* Выкл = диагональный штрих --err (прототип .off-slash). */
 .conference-controls-off-slash {
   opacity: 0;
@@ -804,6 +859,12 @@ section[data-guest-join] {
 
 .conference-controls-toggle[data-state='off'] .conference-controls-off-slash {
   opacity: 0.95;
+}
+
+/* Штрих выкл скрыт в полёте (T103): «не сработала» не читается —
+ * переход opacity .3s базового правила делает это плавным. */
+.conference-controls-toggle[data-state='pending'] .conference-controls-off-slash {
+  opacity: 0;
 }
 
 /* Замок-бейдж «отключён модератором» (прототип .lock): виден в blocked. */
@@ -923,10 +984,28 @@ section[data-guest-join] {
 }
 
 /* Анимации прототипа: мерцание лампы, вращение шестерён (декор 90s,
- * проектор 6s), пульс волн/мерцание луча, полёт клубка пара. */
+ * проектор 6s), пульс волн/мерцание луча, полёт клубка пара; полёт
+ * тумблера T103 — перелив кольца (ring-crawl) и пульс лампы
+ * (lamp-breathe, 0.35↔1). */
 @keyframes conference-controls-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes conference-controls-ring-crawl {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes conference-controls-lamp-breathe {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
   }
 }
 

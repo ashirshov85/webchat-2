@@ -855,3 +855,82 @@ describe('тематическая live-плашка шага имени гос�
     expect(doc).toContain('T102')
   })
 })
+
+describe('состояние «в полёте» тумблеров — переливающийся контур (T103): статический пин CSS', () => {
+  it("селектор [data-state='pending']: золотой бордер, штрих скрыт, on-части приглушены до 0.45", () => {
+    // кнопка читается «нажатой, источник прогревается»: тёмная лампа/штрих
+    // выкл уходит, но полного «вкл» нет — on-части иконки на 0.45
+    const pending = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\]\s*\{([^}]*)\}/,
+    )
+    expect(pending).not.toBeNull()
+    expect(pending?.[1]).toContain('border-color: var(--gold)')
+    const slash = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\] \.conference-controls-off-slash\s*\{([^}]*)\}/,
+    )
+    expect(slash).not.toBeNull()
+    expect(slash?.[1]).toContain('opacity: 0')
+    const onPart = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\] \.conference-controls-on-part\s*\{([^}]*)\}/,
+    )
+    expect(onPart).not.toBeNull()
+    expect(onPart?.[1]).toContain('opacity: 0.45')
+  })
+
+  it('кольцо ::after — вращающийся conic-gradient золотых тонов, замаскированный в тонкое кольцо поверх бордера', () => {
+    const ring = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\]::after\s*\{([^}]*)\}/,
+    )
+    expect(ring).not.toBeNull()
+    expect(ring?.[1]).toContain('position: absolute')
+    expect(ring?.[1]).toContain('inset: -5px')
+    expect(ring?.[1]).toContain('border-radius: 50%')
+    // перелив: конус от прозрачного через золотые тона прототипа
+    expect(ring?.[1]).toContain('conic-gradient')
+    expect(ring?.[1]).toContain('var(--gold-light)')
+    expect(ring?.[1]).toContain('#fff6d8')
+    expect(ring?.[1]).toContain('var(--gold)')
+    // маска оставляет тонкое кольцо ~1px (farthest-side, calc-ступени)
+    expect(ring?.[1]).toContain('farthest-side')
+    expect(ring?.[1]).toContain('calc(100% - 4px)')
+    expect(ring?.[1]).toContain('calc(100% - 3px)')
+    expect(ring?.[1]).toContain('mask:')
+    expect(ring?.[1]).toContain('animation: conference-controls-ring-crawl 1.4s linear infinite')
+    expect(ring?.[1]).toContain('pointer-events: none')
+  })
+
+  it('лампа «дышит» в полёте: горящий градиент + lamp-breathe 1.4s (пульс 0.35↔1)', () => {
+    const lamp = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\] \.conference-controls-lamp\s*\{([^}]*)\}/,
+    )
+    expect(lamp).not.toBeNull()
+    expect(lamp?.[1]).toContain(
+      'radial-gradient(circle at 35% 30%, #fff6d8, var(--gold-light) 45%, var(--gold-dark))',
+    )
+    expect(lamp?.[1]).toContain(
+      'animation: conference-controls-lamp-breathe 1.4s ease-in-out infinite',
+    )
+    // кадры прототипа: горящая лампа пульсирует 0.35↔1
+    const breathe = conferencesCss.match(
+      /@keyframes conference-controls-lamp-breathe\s*\{([\s\S]*?)\n\}/,
+    )
+    expect(breathe).not.toBeNull()
+    expect(breathe?.[1]).toContain('opacity: 0.35')
+    expect(breathe?.[1]).toContain('opacity: 1')
+    const crawl = conferencesCss.match(
+      /@keyframes conference-controls-ring-crawl\s*\{([\s\S]*?)\n\}/,
+    )
+    expect(crawl).not.toBeNull()
+    expect(crawl?.[1]).toContain('rotate(360deg)')
+  })
+
+  it('disabled-затемнение несёт карве-аут :not([data-state=pending]) — кнопка в полёте НЕ гаснет', () => {
+    // прототип .ctl:disabled:not([data-state='pending']): две соседние
+    // кнопки в полёте затемняются как раньше, летящая остаётся полной
+    const rule = conferencesCss.match(
+      /\.conference-controls button\[disabled\]:not\(\[data-state='blocked'\]\):not\(\[data-state='pending'\]\)\s*\{([^}]*)\}/,
+    )
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('opacity: 0.45')
+  })
+})

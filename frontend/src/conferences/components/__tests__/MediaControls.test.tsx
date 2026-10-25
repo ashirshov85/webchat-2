@@ -28,6 +28,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * title T097; тексты-константы T097 сохранены), а «Все источники»
  * (canPublish=false, Q4=A; доменное speechRestricted, T094) блокирует
  * ВСЕ тумблеры БЕЗ уведомлений (silent — tooltip'ы только с именами).
+ *
+ * 009, US1, T103 — состояние «в полёте»: клик тумблера держит кнопку в
+ * data-state='pending' (переливающийся золотой контур + дышащая лампа —
+ * CSS-пин в conferences-css.test.ts) до резолва/реджекта промиса сеттера;
+ * aria-pressed — проекция ПОДТВЕРЖДЁННОГО состояния, tooltip полёта —
+ * «Включение …/Выключение …» над restrictionNotice/именем; повторные
+ * нажатия невозможны (disabled на весь полёт).
  */
 
 /** Wire-константы TrackSource (@livekit/protocol) — как в ParticipantsPanel. */
@@ -506,6 +513,232 @@ describe('MediaControls: собственные ограничения — ла�
     unmount()
 
     expect(media.room.off).toHaveBeenCalledWith('participantPermissionsChanged', handler)
+  })
+})
+
+describe('MediaControls: состояние «в полёте» — pending-кольцо тумблера (009 US1 T103)', () => {
+  /**
+   * Клик тумблера держит кнопку в data-state='pending' до резолва/реджекта
+   * промиса сеттера LiveKit: переливающийся золотой контур + дышащая лампа
+   * (прототип tmp/conference-controls.html, CSS-пин — conferences-css.test.ts).
+   * aria-pressed остаётся проекцией ПОДТВЕРЖДЁННОГО состояния (не-оптимистично),
+   * все тумблеры disabled (повторные нажатия невозможны), tooltip полёта —
+   * тексты-константы «Включение …/Выключение …» над restrictionNotice/именем.
+   */
+
+  /** Отложенный промис сеттера: полёт держится до явного резолва/реджекта. */
+  function deferred(): {
+    readonly promise: Promise<void>
+    readonly resolve: () => void
+    readonly reject: (cause?: unknown) => void
+  } {
+    let resolve!: () => void
+    let reject!: (cause?: unknown) => void
+    const promise = new Promise<void>((done, fail) => {
+      resolve = done
+      reject = fail
+    })
+    return { promise, resolve, reject }
+  }
+
+  beforeEach(() => {
+    media.state = {
+      mic: false,
+      camera: false,
+      screen: false,
+      connection: 2,
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+    }
+    media.setMicrophoneEnabled.mockReset()
+    media.setCameraEnabled.mockReset()
+    media.setScreenShareEnabled.mockReset()
+    media.room.on.mockReset()
+    media.room.off.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('полёт включения камеры: pending + disabled + aria-pressed=false + tooltip «Включение камеры…»; публикация → on', async () => {
+    const flight = deferred()
+    media.setCameraEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+
+    const camera = toggle('Камера')
+    await waitFor(() => {
+      expect(camera).toHaveAttribute('data-state', 'pending')
+    })
+    expect(camera).toBeDisabled()
+    // не-оптимистично: aria-pressed — ПОДТВЕРЖДЁННОЕ состояние, не цель клика
+    expect(camera).toHaveAttribute('aria-pressed', 'false')
+    expect(tooltipOf('Камера').textContent).toBe('Включение камеры…')
+    // чужие tooltip'ы не в полёте: имя как обычно
+    expect(tooltipOf('Микрофон').textContent).toBe('Микрофон')
+
+    // резолв сеттера = фактическая публикация: pending снят, комната
+    // переподнимает рендер уже с включённой камерой — состояние on
+    media.state.camera = true
+    flight.resolve()
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'on')
+    })
+    expect(toggle('Камера')).toBeEnabled()
+    expect(toggle('Камера')).toHaveAttribute('aria-pressed', 'true')
+    expect(tooltipOf('Камера').textContent).toBe('Камера')
+  })
+
+  it('повторные клики в полёте невозможны: второй вызов сеттера нет, чужие тумблеры игнорируются', async () => {
+    const flight = deferred()
+    media.setCameraEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'pending')
+    })
+
+    // повторный клик по той же кнопке и клики по двум другим — disabled-гвард
+    fireEvent.click(toggle('Камера'))
+    fireEvent.click(toggle('Микрофон'))
+    fireEvent.click(toggle('Экран'))
+
+    expect(media.setCameraEnabled).toHaveBeenCalledTimes(1)
+    expect(media.setMicrophoneEnabled).not.toHaveBeenCalled()
+    expect(media.setScreenShareEnabled).not.toHaveBeenCalled()
+
+    flight.resolve()
+    await waitFor(() => {
+      expect(toggle('Камера')).not.toBeDisabled()
+    })
+  })
+
+  it('полёт выключения камеры: tooltip «Выключение камеры…», aria-pressed=true — подтверждённое состояние', async () => {
+    media.state.camera = true
+    const flight = deferred()
+    media.setCameraEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'pending')
+    })
+    // камера ещё опубликована до подтверждения выключения
+    expect(toggle('Камера')).toHaveAttribute('aria-pressed', 'true')
+    expect(tooltipOf('Камера').textContent).toBe('Выключение камеры…')
+
+    media.state.camera = false
+    flight.resolve()
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'off')
+    })
+    expect(tooltipOf('Камера').textContent).toBe('Камера')
+  })
+
+  it('симметрия микрофона: полный pending-цикл «Включение микрофона…» → on → «Выключение микрофона…» → off', async () => {
+    renderControls()
+
+    const enable = deferred()
+    media.setMicrophoneEnabled.mockReturnValue(enable.promise)
+    fireEvent.click(toggle('Микрофон'))
+    await waitFor(() => {
+      expect(toggle('Микрофон')).toHaveAttribute('data-state', 'pending')
+    })
+    expect(tooltipOf('Микрофон').textContent).toBe('Включение микрофона…')
+    media.state.mic = true
+    enable.resolve()
+    await waitFor(() => {
+      expect(toggle('Микрофон')).toHaveAttribute('data-state', 'on')
+    })
+
+    const disable = deferred()
+    media.setMicrophoneEnabled.mockReturnValue(disable.promise)
+    fireEvent.click(toggle('Микрофон'))
+    await waitFor(() => {
+      expect(toggle('Микрофон')).toHaveAttribute('data-state', 'pending')
+    })
+    expect(tooltipOf('Микрофон').textContent).toBe('Выключение микрофона…')
+    media.state.mic = false
+    disable.resolve()
+    await waitFor(() => {
+      expect(toggle('Микрофон')).toHaveAttribute('data-state', 'off')
+    })
+  })
+
+  it('симметрия экрана: полный pending-цикл «Включение демонстрации…» → on → «Выключение демонстрации…» → off', async () => {
+    renderControls()
+
+    const enable = deferred()
+    media.setScreenShareEnabled.mockReturnValue(enable.promise)
+    fireEvent.click(toggle('Экран'))
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'pending')
+    })
+    expect(tooltipOf('Экран').textContent).toBe('Включение демонстрации…')
+    media.state.screen = true
+    enable.resolve()
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'on')
+    })
+
+    const disable = deferred()
+    media.setScreenShareEnabled.mockReturnValue(disable.promise)
+    fireEvent.click(toggle('Экран'))
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'pending')
+    })
+    expect(tooltipOf('Экран').textContent).toBe('Выключение демонстрации…')
+    media.state.screen = false
+    disable.resolve()
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'off')
+    })
+  })
+
+  it('реджект промиса: pending снят, data-state — подтверждённый off, notice «Не удалось включить …»', async () => {
+    const flight = deferred()
+    media.setCameraEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'pending')
+    })
+
+    flight.reject(new Error('NotAllowedError'))
+
+    const notice = await screen.findByRole('status')
+    expect(notice).toHaveTextContent('Не удалось включить камеру')
+    // состояние не откатывается вручную — источник истины комната
+    expect(toggle('Камера')).toHaveAttribute('data-state', 'off')
+    expect(toggle('Камера')).toBeEnabled()
+  })
+
+  it('отмена пикера экрана (AbortError): pending снят, БЕЗ строки отказа', async () => {
+    const flight = deferred()
+    media.setScreenShareEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Экран'))
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'pending')
+    })
+
+    const abort = Object.assign(new Error('Cancelled'), { name: 'AbortError' })
+    flight.reject(abort)
+
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'off')
+    })
+    expect(toggle('Экран')).toBeEnabled()
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10)
+    })
+    expect(screen.queryByRole('status')).toBeNull()
   })
 })
 

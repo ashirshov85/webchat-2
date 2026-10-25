@@ -25,6 +25,22 @@
  * Доступность — стабильный aria-label + aria-pressed, видимый фокус,
  * fieldset-семантика группы (implicit role=group).
  *
+ * Полётное состояние (T103): на время захвата/публикации источника
+ * (клик → промис сеттера LiveKit → finally flip) кнопка в полёте несёт
+ * data-state='pending' — переливающийся золотой контур кольца
+ * (ring-crawl) + дышащая лампа (lamp-breathe) + tooltip «Включение …/
+ * Выключение …» (прототип tmp/conference-controls.html): кнопка
+ * читается «нажатой, источник прогревается» вместо «не сработала».
+ * НЕ-оптимистично: pending — чисто визуальная надстройка, aria-pressed
+ * и data-state on/off остаются проекцией ПОДТВЕРЖДЁННЫХ публикаций
+ * (в полёте включения aria-pressed=false — паритет источника истины);
+ * все тумблеры disabled на весь полёт (повторные нажатия невозможны),
+ * disabled-затемнение НЕ гасит летящую кнопку (CSS-карве-аут
+ * :not([data-state='pending'])); отказ/отмена пикера просто
+ * останавливают анимацию — состояние не откатывается вручную;
+ * prefers-reduced-motion глушит контур/пульс глобальным кил-свитчем
+ * (theme/machine.css, без локальных правил).
+ *
  * Собственные ограничения (T043/T097/T098, FR-007/FR-008, SC-005):
  * заблокированные тумблеры; пояснение — ТОЛЬКО латунный tooltip
  * точечного среза (кастомный .conference-controls-tooltip на
@@ -137,6 +153,23 @@ function slotNoun(slot: MediaSlot): string {
   }
 }
 
+/**
+ * Полётный tooltip (T103, тексты-константы прототипа): имя действия на
+ * время захвата/публикации источника — кнопка читается «нажатой,
+ * источник прогревается» вместо «не сработала».
+ */
+function pendingText(slot: MediaSlot, enable: boolean): string {
+  const action = enable ? 'Включение' : 'Выключение'
+  switch (slot) {
+    case 'microphone':
+      return `${action} микрофона…`
+    case 'camera':
+      return `${action} камеры…`
+    default:
+      return `${action} демонстрации…`
+  }
+}
+
 /** Отмена браузерного пикера экрана самим пользователем (AbortError) — не ошибка. */
 function isUserCancelledScreenPick(cause: unknown): boolean {
   return (
@@ -146,10 +179,21 @@ function isUserCancelledScreenPick(cause: unknown): boolean {
   )
 }
 
-/** data-state кнопки: blocked поглощает on/off (замок-бейдж + приглушение). */
-function toggleState(toggle: SlotToggle): 'blocked' | 'on' | 'off' {
+/**
+ * data-state кнопки: blocked поглощает on/off (замок-бейдж +
+ * приглушение; заблокированная кнопка не переключается — pending на
+ * ней недостижим), pending — полёт переключения слота (T103), далее
+ * подтверждённая проекция публикаций on/off.
+ */
+function toggleState(
+  toggle: SlotToggle,
+  pending: MediaSlot | null,
+): 'blocked' | 'pending' | 'on' | 'off' {
   if (toggle.blocked) {
     return 'blocked'
+  }
+  if (pending === toggle.slot) {
+    return 'pending'
   }
   return toggle.enabled ? 'on' : 'off'
 }
@@ -299,7 +343,11 @@ export default function MediaControls({
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } =
     useLocalParticipant()
   const connectionState = useConnectionState()
-  /** Кнопка в полёте: все кнопки недоступны до завершения (без гонок переключений). */
+  /**
+   * Кнопка в полёте: все кнопки недоступны до завершения (без гонок
+   * переключений); летящая дополнительно проектируется в data-state=
+   * 'pending' (T103 — pending-кольцо, см. докблок шапки).
+   */
   const [pending, setPending] = useState<MediaSlot | null>(null)
   /** Нейтральная строка последнего отказа (сбрасывается следующей попыткой). */
   const [notice, setNotice] = useState<string | null>(null)
@@ -482,7 +530,7 @@ export default function MediaControls({
           aria-label={toggle.label}
           aria-pressed={toggle.enabled}
           aria-describedby={tipIds[toggle.slot]}
-          data-state={toggleState(toggle)}
+          data-state={toggleState(toggle, pending)}
           disabled={!connected || pending !== null || toggle.blocked}
           onClick={(event) => {
             void flip(toggle, event.currentTarget)
@@ -492,7 +540,9 @@ export default function MediaControls({
           {SLOT_ICONS[toggle.slot]}
           {LOCK_BADGE}
           <span className="conference-controls-tooltip" id={tipIds[toggle.slot]}>
-            {toggle.restrictionNotice ?? toggle.label}
+            {pending === toggle.slot
+              ? pendingText(toggle.slot, !toggle.enabled)
+              : (toggle.restrictionNotice ?? toggle.label)}
           </span>
         </button>
       ))}
