@@ -211,6 +211,24 @@ function toggleState(
   return toggle.enabled ? 'on' : 'off'
 }
 
+/**
+ * Tooltip-текст кнопки (цепочка приоритета T103/T105): pending-текст
+ * полёта > отказ своей кнопки > точечное ограничение > имя.
+ */
+function toggleTooltip(
+  toggle: SlotToggle,
+  pending: MediaSlot | null,
+  failure: { readonly slot: MediaSlot; readonly text: string } | null,
+): string {
+  if (pending === toggle.slot) {
+    return pendingText(toggle.slot, !toggle.enabled)
+  }
+  if (failure?.slot === toggle.slot) {
+    return failure.text
+  }
+  return toggle.restrictionNotice ?? toggle.label
+}
+
 /* ---------------------------------------------------------------
  * Иконки прототипа tmp/conference-controls.html (винтажный микрофон
  * с волнами, коробочная камера с ирисом, проекционный аппарат с лучом
@@ -576,13 +594,7 @@ export default function MediaControls({
           {SLOT_ICONS[toggle.slot]}
           {LOCK_BADGE}
           <span className="conference-controls-tooltip" id={tipIds[toggle.slot]}>
-            {/* Цепочка приоритета tooltip'а (T103/T105): pending-текст
-             * полёта > отказ своей кнопки > точечное ограничение > имя */}
-            {pending === toggle.slot
-              ? pendingText(toggle.slot, !toggle.enabled)
-              : failure?.slot === toggle.slot
-                ? failure.text
-                : (toggle.restrictionNotice ?? toggle.label)}
+            {toggleTooltip(toggle, pending, failure)}
           </span>
         </button>
       ))}
