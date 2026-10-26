@@ -62,10 +62,13 @@
  * «Завершить конференцию» (№48, T038). Отказ — нейтральная строка
  * role=status по коду Problem (moderator_required/
  * participant_not_found/conference_ended), без раскрытия деталей.
- * Деструктивные №51/№53/№48 — явное подтверждение (инлайн-блок
- * role=alertdialog, переезд в модаль ConfirmDialog — T109). «В
- * полёте» кебаби и кнопки футера недоступны (без гонок повторных
- * вызовов).
+ * Деструктивные №51/№53/№48 — явное подтверждение в МОДАЛИ (T109):
+ * единая оболочка ui/ModalShell (затемнение поверх комнаты, Esc,
+ * фокус-ловушка, возврат фокуса на инициатора) + ui/ConfirmDialog
+ * (кнопки «Отмена»/действие, danger-акцент) с текстами T042/T081 —
+ * инлайн-блок в узком сайдбаре демонтирован (распирал список и
+ * конфликтовал с прижатым футером). «В полёте» кебаби и кнопки
+ * футера недоступны (без гонок повторных вызовов).
  *
  * Видимость инструментов — роль ЛОКАЛЬНОГО подключения из его
  * metadata (не №46-снимок pre-join): снятие/назначение №50 приходит
@@ -88,6 +91,8 @@ import type { LocalParticipant, RemoteParticipant } from 'livekit-client'
 import { Fragment, useId, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
+import { ConfirmDialog } from '../../ui/ConfirmDialog'
+import { ModalShell } from '../../ui/ModalShell'
 import {
   createGuestInvite,
   endConference,
@@ -370,7 +375,7 @@ type ModerationAction =
   | { readonly kind: 'revoke_invite' }
   | { readonly kind: 'end' }
 
-/** Ожидаемое подтверждение деструктивного действия (до переноса в модаль T109). */
+/** Ожидаемое подтверждение деструктивного действия (модаль T109). */
 type ModerationConfirmation =
   | { readonly kind: 'kick'; readonly identity: string; readonly label: string }
   | { readonly kind: 'revoke_invite' }
@@ -392,15 +397,35 @@ function moderationNotice(code: ModerationErrorCode | GuestInviteErrorCode | nul
   }
 }
 
-/** Подпись подтверждения деструктивного действия. */
-function confirmationText(confirmation: ModerationConfirmation): string {
+/**
+ * Параметры модального подтверждения деструктивного действия (T109):
+ * заголовок оболочки, текст T042/T081 без изменений и подпись кнопки
+ * действия (danger-акцент ConfirmDialog).
+ */
+function confirmationUi(confirmation: ModerationConfirmation): {
+  readonly title: string
+  readonly text: string
+  readonly confirmLabel: string
+} {
   if (confirmation.kind === 'end') {
-    return 'Завершить конференцию для всех? Все участники отключатся немедленно.'
+    return {
+      title: 'Завершить конференцию',
+      text: 'Завершить конференцию для всех? Все участники отключатся немедленно.',
+      confirmLabel: 'Завершить',
+    }
   }
   if (confirmation.kind === 'revoke_invite') {
-    return 'Отозвать гостевую ссылку? Все вошедшие по ней гости отключатся немедленно, новые входы блокируются.'
+    return {
+      title: 'Отозвать гостевую ссылку',
+      text: 'Отозвать гостевую ссылку? Все вошедшие по ней гости отключатся немедленно, новые входы блокируются.',
+      confirmLabel: 'Отозвать',
+    }
   }
-  return `Исключить ${confirmation.label} из конференции? Участник отключится немедленно и сможет вернуться по действующей ссылке.`
+  return {
+    title: 'Исключить участника',
+    text: `Исключить ${confirmation.label} из конференции? Участник отключится немедленно и сможет вернуться по действующей ссылке.`,
+    confirmLabel: 'Исключить',
+  }
 }
 
 interface ParticipantRowProps {
@@ -514,7 +539,6 @@ function ParticipantRow({
  */
 export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelProps) {
   const titleId = useId()
-  const dialogTitleId = useId()
   const { localParticipant, isMicrophoneEnabled, isCameraEnabled, isScreenShareEnabled } =
     useLocalParticipant()
   const participants = useParticipants()
@@ -541,7 +565,12 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
   const localMarks = parseParticipantMarks(localParticipant.metadata)
   const moderator = localMarks.role === 'moderator'
   const ordered = [...participants].sort(orderParticipants)
-  const busy = pending !== null || confirmation !== null
+  // Гейт «в полёте» — ТОЛЬКО pending: открытая модаль T109 сама
+  // блокирует панель (затемнение + фокус-ловушка ModalShell), а
+  // дизейблинг инициатора в момент открытия рвал бы возврат фокуса
+  // (ModalShell захватывает активный элемент — дизейбл в том же
+  // коммите оставил бы body вместо кебаба/кнопки футера)
+  const busy = pending !== null
 
   /**
    * Состояния индикаторов строки (T108): вкл = источник опубликован и
@@ -912,49 +941,6 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
             Завершить конференцию
           </button>
           {notice !== null && <output className="conference-moderation-notice">{notice}</output>}
-          {confirmation !== null && (
-            <div
-              className="conference-moderation-confirm"
-              role="alertdialog"
-              aria-labelledby={dialogTitleId}
-              aria-modal="false"
-            >
-              <p className="conference-moderation-confirm-text" id={dialogTitleId}>
-                {confirmationText(confirmation)}
-              </p>
-              <div className="conference-moderation-confirm-actions">
-                <button
-                  type="button"
-                  className="conference-moderation-button-danger"
-                  disabled={pending !== null}
-                  onClick={() => {
-                    const confirmed = confirmation
-                    setConfirmation(null)
-                    if (confirmed.kind === 'kick') {
-                      kick(confirmed.identity)
-                    } else if (confirmed.kind === 'revoke_invite') {
-                      revokeInvite()
-                    } else {
-                      end()
-                    }
-                  }}
-                >
-                  Подтвердить
-                </button>
-                <button
-                  type="button"
-                  className="conference-moderation-button"
-                  disabled={pending !== null}
-                  autoFocus
-                  onClick={() => {
-                    setConfirmation(null)
-                  }}
-                >
-                  Отмена
-                </button>
-              </div>
-            </div>
-          )}
         </>
       )}
       <ContextMenu
@@ -966,6 +952,40 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
           setMenuIdentity(null)
         }}
       />
+      {/* Подтверждение деструктивного №51/№53/№48 — модаль поверх
+          комнаты (T109): единая оболочка 008 (затемнение, Esc, фокус-
+          ловушка, возврат фокуса на инициатора — кебаб/кнопку футера),
+          тексты T042/T081; закрытие любым путём оболочки = отмена
+          (действие — только кнопкой в модали, danger-акцент) */}
+      <ModalShell
+        formId={confirmation !== null ? 'confirm' : null}
+        title={confirmation !== null ? confirmationUi(confirmation).title : ''}
+        onClose={() => {
+          setConfirmation(null)
+        }}
+      >
+        {confirmation !== null && (
+          <ConfirmDialog
+            text={confirmationUi(confirmation).text}
+            confirmLabel={confirmationUi(confirmation).confirmLabel}
+            variant="danger"
+            onConfirm={() => {
+              const confirmed = confirmation
+              setConfirmation(null)
+              if (confirmed.kind === 'kick') {
+                kick(confirmed.identity)
+              } else if (confirmed.kind === 'revoke_invite') {
+                revokeInvite()
+              } else {
+                end()
+              }
+            }}
+            onCancel={() => {
+              setConfirmation(null)
+            }}
+          />
+        )}
+      </ModalShell>
     </section>
   )
 }

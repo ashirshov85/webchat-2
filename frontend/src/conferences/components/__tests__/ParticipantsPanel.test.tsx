@@ -416,32 +416,52 @@ describe('ParticipantsPanel — единый список (009 US3 T041/T107)', 
     })
   })
 
-  it('№51 «Исключить» — деструктивное: подтверждение обязательно, kick только после «Подтвердить»; «Отмена» — без вызова', async () => {
+  it('№51 «Исключить» — деструктивное: МОДАЛЬ T109 поверх комнаты, kick только после действия в ней; «Отмена»/Esc — без вызова и с возвратом фокуса', async () => {
     api.kickParticipant.mockResolvedValue(undefined)
     lkc.useLocalParticipant.mockReturnValue({ localParticipant: moderatorRoom()[0] })
     lkc.useParticipants.mockReturnValue(moderatorRoom())
 
     render(<ParticipantsPanel conferenceId="c-1" />)
+
+    // инициатор — кебаб строки (браузер фокусирует кнопку по клику)
+    const kebab = within(rowOf('bob')).getByRole('button', {
+      name: 'Действия с участником bob',
+    })
+    kebab.focus()
     openRowMenu('bob')
     fireEvent.click(
       within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Исключить bob' }),
     )
 
-    const dialog = screen.getByRole('alertdialog')
+    // модаль, а НЕ инлайн-блок панели (T109): единая оболочка
+    // .modal-back.show + role=dialog, инлайн-конфигурации в DOM нет
+    const dialog = screen.getByRole('dialog')
+    expect(document.querySelector('.modal-back.show')).not.toBeNull()
+    expect(document.querySelector('.conference-moderation-confirm')).toBeNull()
     expect(within(dialog).getByText(/Исключить bob/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Отмена' })).toHaveFocus()
     expect(api.kickParticipant).not.toHaveBeenCalled()
 
+    // «Отмена» закрывает без вызова, фокус — на инициаторе
     fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(api.kickParticipant).not.toHaveBeenCalled()
+    expect(kebab).toHaveFocus()
+
+    // Esc — тот же исход (пути оболочки 008 = отмена)
+    openRowMenu('bob')
+    fireEvent.click(
+      within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Исключить bob' }),
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(api.kickParticipant).not.toHaveBeenCalled()
 
     openRowMenu('bob')
     fireEvent.click(
       within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Исключить bob' }),
     )
-    fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
-    )
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Исключить' }))
     await waitFor(() => {
       expect(api.kickParticipant).toHaveBeenCalledWith('c-1', BOB_ID)
     })

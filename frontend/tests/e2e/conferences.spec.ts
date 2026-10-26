@@ -1135,6 +1135,62 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
       `SC-005: блокировка источника в строке ${Date.now() - startedAt} мс`,
     ).toBeLessThanOrEqual(SC005_MS)
   })
+
+  test('T109: кик через кебаб → МОДАЛЬ подтверждения → действие — участник исчезает ≤ 2 c; «Отмена» не отключает', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+    activeConference = conference
+    creatorToken = aliceNow.accessToken
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
+    ])
+
+    // №51 из кебаб-меню открывает МОДАЛЬ (T109): единая оболочка
+    // .modal-back.show поверх комнаты (инлайн-блока в панели нет),
+    // заголовок/текст T042, кнопки «Отмена»/действие danger
+    const openKickModal = async (): Promise<void> => {
+      const row = participantRow(alicePage, bobNow.username)
+      await row.getByRole('button', { name: `Действия с участником ${bobNow.username}` }).click()
+      await alicePage.getByRole('menuitem', { name: 'Исключить' }).click()
+    }
+    await openKickModal()
+    const dialog = alicePage.getByRole('dialog')
+    await expect(alicePage.locator('.modal-back.show')).toBeVisible()
+    await expect(dialog).toHaveAccessibleName('Исключить участника')
+    await expect(dialog.getByText(`Исключить ${bobNow.username}`)).toBeVisible()
+    await expect(alicePage.locator('.conference-moderation-confirm')).toHaveCount(0)
+
+    // «Отмена» закрывает модаль БЕЗ кика: строка и тайл цели на месте
+    await dialog.getByRole('button', { name: 'Отмена' }).click()
+    await expect(alicePage.locator('.modal-back.show')).toHaveCount(0)
+    await expect(participantRow(alicePage, bobNow.username)).toBeVisible()
+
+    // подтверждение (действие в модали): строка цели исчезает из
+    // списка модератора ≤ 2 c (SC-005 — от клика по кнопке действия)
+    await openKickModal()
+    const startedAt = Date.now()
+    await alicePage
+      .getByRole('dialog')
+      .getByRole('button', { name: 'Исключить', exact: true })
+      .click()
+    await expect(participantRow(alicePage, bobNow.username)).toHaveCount(0, {
+      timeout: SC005_MS,
+    })
+    expect(Date.now() - startedAt, `SC-005: кик ${Date.now() - startedAt} мс`).toBeLessThanOrEqual(
+      SC005_MS,
+    )
+
+    // тайл цели у модератора схлопнулся вместе со строкой
+    await expect(tilesSection(alicePage).getByText(bobNow.username, { exact: true })).toHaveCount(0)
+  })
 })
 
 test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {

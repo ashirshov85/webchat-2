@@ -1687,9 +1687,10 @@ section[data-guest-join] {
 /* ============ ФУТЕР ИНСТРУМЕНТОВ ПАНЕЛИ (T107, только модератору):
  * ПОД списком и всегда видим — прокрутка живёт только у списка,
  * элементы футера flex:none не сжимаются и не прокручиваются.
- * Лексика кнопок переиспользована из панели модерации T042
- * (демонтирована); подтверждения переезжают в модаль в T109.
- * ============ */
+  * Лексика кнопок переиспользована из панели модерации T042
+  * (демонтирована); подтверждения деструктивных действий с T109 —
+  * модаль ui/ConfirmDialog (кнопки .m-btn), НЕ conferences.css.
+  * ============ */
 
 .conference-participants-divider {
   flex: none;
@@ -1700,23 +1701,14 @@ section[data-guest-join] {
 }
 
 /* ============================================================
- * Кнопки/подтверждение/строка отказа — переиспользованная лексика
- * футера объединённой панели (T042 → T107): «Подтвердить»/«Отмена»
- * деструктивных действий (инлайн-блок role=alertdialog до переноса
- * в модаль T109) и нейтральная строка отказов (role=status).
+ * Кнопки/строка отказа — переиспользованная лексика футера
+ * объединённой панели (T042 → T107): деструктивный акцент кнопок
+ * (№48/№53) и нейтральная строка отказов (role=status). Кнопки
+ * подтверждения деструктивных действий после T109 живут в модали
+ * ui/ConfirmDialog (лексика .m-btn 008), НЕ здесь.
  * ============================================================ */
 
-.conference-moderation-button {
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-panel);
-  background: var(--input-bg);
-  font: 12px var(--font-body);
-  color: var(--cream);
-  cursor: pointer;
-}
-
-/* Деструктивное (кик/завершение/подтверждение) — акцент отказа. */
+/* Деструктивное (кик/завершение/отзыв) — акцент отказа. */
 .conference-moderation-button-danger {
   border-color: var(--err);
   color: var(--err);
@@ -1734,29 +1726,6 @@ section[data-guest-join] {
   cursor: pointer;
 }
 
-/* Подтверждение деструктивного действия (role=alertdialog; T109
- * переносит в модальное окно ConfirmDialog). */
-.conference-moderation-confirm {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--err);
-  border-radius: var(--r-panel);
-  background: var(--input-bg);
-}
-
-.conference-moderation-confirm-text {
-  margin: 0;
-  font: 12.5px var(--font-body);
-  color: var(--cream);
-}
-
-.conference-moderation-confirm-actions {
-  display: flex;
-  gap: 8px;
-}
-
 /* Нейтральная строка отказа действия (<output> = role=status). */
 .conference-moderation-notice {
   font: italic 12px var(--font-body);
@@ -1769,8 +1738,9 @@ section[data-guest-join] {
   * свёрнут в кнопку «Пригласить гостя» (GET статуса ссылки в
   * контракте нет); после №52 — предупреждение Q17=A/Q13=B,
   * readonly-поле inviteUrl (ручное выделение — страховка «Копировать»),
-  * срок действия локальным временем (ui/time) и «Отозвать ссылку»
-  * через подтверждение (деструктивное — отключение гостей).
+ * срок действия локальным временем (ui/time) и «Отозвать ссылку»
+ * через подтверждение в модали (T109; деструктивное — отключение
+ * гостей).
   * ============================================================ */
 
 .conference-guest-invite {

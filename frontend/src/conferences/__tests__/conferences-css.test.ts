@@ -1162,16 +1162,29 @@ describe('объединённая панель участников (T107): с�
     ]) {
       expect(conferencesCss, `демонтированный селектор ${gone}`).not.toContain(gone)
     }
-    // переиспользовано футером/подтверждением (T109 перенесёт в модаль)
+    // переиспользовано футером (кнопки модали — лексика .m-btn
+    // ui/ConfirmDialog, NOT conferences.css)
     for (const kept of [
-      '.conference-moderation-button',
       '.conference-moderation-button-danger',
       '.conference-moderation-end',
-      '.conference-moderation-confirm',
       '.conference-moderation-notice',
       '.conference-guest-invite',
     ]) {
       expect(conferencesCss, `переиспользуемый селектор ${kept}`).toContain(kept)
+    }
+  })
+
+  it('T109: инлайн-блок подтверждения демонтирован — модаль ConfirmDialog/ModalShell 008, селекторов .conference-moderation-confirm* и базовой кнопки в conferences.css нет', () => {
+    for (const gone of [
+      '.conference-moderation-confirm',
+      '.conference-moderation-confirm-text',
+      '.conference-moderation-confirm-actions',
+      // базовая «Отмена»/«Подтвердить» инлайн-блока мертва после
+      // переезда кнопок в .m-btn ConfirmDialog (danger-вариант жив —
+      // «Отозвать ссылку»)
+      '.conference-moderation-button {',
+    ]) {
+      expect(conferencesCss, `демонтированный селектор ${gone}`).not.toContain(gone)
     }
   })
 

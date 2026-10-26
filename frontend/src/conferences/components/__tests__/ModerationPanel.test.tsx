@@ -6,9 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * модерационных действий (FR-008, №48–№53) поверх кебаб-меню строки и
  * футера панели (демонтаж отдельной панели модерации T042). №49
  * отправляет ПОЛНОЕ SET-состояние (выведенное из фактических grants
- * цели), №50 — противоположную роль, №51/№48 — только после явного
- * подтверждения (деструктивные; инлайн-блок до переноса в модаль
- * T109). Инструменты видны только роли модератора локального
+ * цели), №50 — противоположную роль, №51/№48/№53 — только после
+ * явного подтверждения в МОДАЛИ T109 (единая оболочка ui/ModalShell
+ * + ui/ConfirmDialog поверх комнаты: затемнение, Esc, фокус-менеджмент
+ * — вместо инлайн-блока в узком сайдбаре). Инструменты видны только
+ * роли модератора локального
  * подключения (metadata) и живьём следуют broadcast'у смены роли
  * (Q9=A). Примитивы @livekit/components-react и API-клиент заменены
  * фейками: предмет теста — оркестрация действий и подтверждения.
@@ -143,6 +145,21 @@ function openMenu(name: string): void {
 /** Выбрать пункт открытого меню. */
 function pickItem(label: string): void {
   fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: label }))
+}
+
+/**
+ * T109: модаль подтверждения деструктивного действия — единая
+ * оболочка (role=dialog + подложка .modal-back.show поверх комнаты),
+ * кнопки «Отмена»/действие (danger-акцент).
+ */
+function confirmDialog(): HTMLElement {
+  expect(document.querySelector('.modal-back.show')).not.toBeNull()
+  return screen.getByRole('dialog')
+}
+
+/** Кнопка действия в модали подтверждения (danger-акцент). */
+function confirmAction(label: string): HTMLElement {
+  return within(confirmDialog()).getByRole('button', { name: label })
 }
 
 /** Проблема-отказ домена (RFC 9457, errors: {field: [code]}). */
@@ -362,42 +379,59 @@ describe('объединённая панель: модерация №49–№5
     })
   })
 
-  it('№51 кик — деструктивное: подтверждение обязательно, №51 вызывается только после «Подтвердить»', async () => {
+  it('№51 кик — деструктивное: пункт меню открывает МОДАЛЬ (T109), №51 вызывается только после действия в ней; Esc/«Отмена» закрывают без вызова, фокус возвращается на кебаб', async () => {
     api.kickParticipant.mockResolvedValue(undefined)
     render(<ParticipantsPanel conferenceId="c-1" />)
 
+    // инициатор — кебаб строки цели (браузер фокусирует кнопку по клику)
+    const kebab = within(rowOf('bob')).getByRole('button', {
+      name: 'Действия с участником bob',
+    })
+    kebab.focus()
     openMenu('bob')
     pickItem('Исключить bob')
 
-    const dialog = screen.getByRole('alertdialog')
+    // модаль поверх комнаты (T109): единая оболочка, текст T042,
+    // вход фокуса — безопасная «Отмена» (008)
+    const dialog = confirmDialog()
     expect(within(dialog).getByText(/Исключить bob/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: 'Отмена' })).toHaveFocus()
     expect(api.kickParticipant).not.toHaveBeenCalled()
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Подтвердить' }))
+    // Esc закрывает модаль без вызова; фокус — на инициаторе-кебабе
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(api.kickParticipant).not.toHaveBeenCalled()
+    expect(kebab).toHaveFocus()
 
+    // повтор + действие в модали («Исключить», danger) → №51
+    openMenu('bob')
+    pickItem('Исключить bob')
+    fireEvent.click(confirmAction('Исключить'))
     await waitFor(() => {
       expect(api.kickParticipant).toHaveBeenCalledWith('c-1', BOB_ID)
     })
   })
 
-  it('№48 завершение конференции (футер) — деструктивное: подтверждение обязательно; «Отмена» — без вызова', async () => {
+  it('№48 завершение конференции (футер) — деструктивное: модаль T109, действие «Завершить»; «Отмена» — без вызова, фокус возвращается на кнопку футера', async () => {
     api.endConference.mockResolvedValue(undefined)
     render(<ParticipantsPanel conferenceId="c-1" />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Завершить конференцию' }))
+    const endButton = screen.getByRole('button', { name: 'Завершить конференцию' })
+    endButton.focus()
+    fireEvent.click(endButton)
 
-    const dialog = screen.getByRole('alertdialog')
+    const dialog = confirmDialog()
     expect(within(dialog).getByText(/Завершить конференцию для всех/)).toBeInTheDocument()
     expect(api.endConference).not.toHaveBeenCalled()
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(api.endConference).not.toHaveBeenCalled()
+    expect(endButton).toHaveFocus()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Завершить конференцию' }))
-    fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
-    )
+    fireEvent.click(endButton)
+    fireEvent.click(confirmAction('Завершить'))
     await waitFor(() => {
       expect(api.endConference).toHaveBeenCalledWith('c-1')
     })
@@ -419,9 +453,7 @@ describe('объединённая панель: модерация №49–№5
 
     openMenu('bob')
     pickItem('Исключить bob')
-    fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
-    )
+    fireEvent.click(confirmAction('Исключить'))
 
     expect(await screen.findByText('Участник уже не в конференции')).toBeInTheDocument()
   })
@@ -521,28 +553,29 @@ describe('объединённая панель: гостевая ссылка �
     expect(document.querySelector('.conference-guest-invite-copied')).not.toBeNull()
   })
 
-  it('(в) «Отозвать ссылку» — деструктивное: подтверждение упоминает отключение гостей; Отмена не вызывает; Подтвердить → №53', async () => {
+  it('(в) «Отозвать ссылку» — деструктивное: модаль T109 с текстом T081 (отключение гостей); Отмена не вызывает; действие «Отозвать» → №53', async () => {
     api.revokeGuestInvite.mockResolvedValue(undefined)
     render(<ParticipantsPanel conferenceId="c-1" />)
     await generateInvite('nonce-1')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
+    const revokeButton = screen.getByRole('button', { name: 'Отозвать ссылку' })
+    fireEvent.click(revokeButton)
 
-    const dialog = screen.getByRole('alertdialog')
-    expect(within(dialog).getByText(/гост[ейы]/i)).toBeInTheDocument()
-    expect(within(dialog).getByText(/отключ/i)).toBeInTheDocument()
+    const dialog = confirmDialog()
+    // текст T081 без изменений (T109 переносит представление, не текст)
+    expect(
+      within(dialog).getByText(/Все вошедшие по ней гости отключатся немедленно/),
+    ).toBeInTheDocument()
     expect(api.revokeGuestInvite).not.toHaveBeenCalled()
 
-    // «Отмена» закрывает подтверждение без вызова
+    // «Отмена» закрывает модаль без вызова
     fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(api.revokeGuestInvite).not.toHaveBeenCalled()
 
-    // повтор + «Подтвердить» → №53
-    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
-    fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
-    )
+    // повтор + действие в модали («Отозвать», danger) → №53
+    fireEvent.click(revokeButton)
+    fireEvent.click(confirmAction('Отозвать'))
     await waitFor(() => {
       expect(api.revokeGuestInvite).toHaveBeenCalledWith('c-1')
     })
@@ -554,9 +587,7 @@ describe('объединённая панель: гостевая ссылка �
 
     api.revokeGuestInvite.mockResolvedValueOnce(undefined)
     fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
-    fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
-    )
+    fireEvent.click(confirmAction('Отозвать'))
     await waitFor(() => {
       expect(container.querySelector('.conference-guest-invite-url')).toBeNull()
     })
@@ -566,9 +597,7 @@ describe('объединённая панель: гостевая ссылка �
     await generateInvite('nonce-2')
     api.revokeGuestInvite.mockRejectedValueOnce(problemWith('guest_invite_not_found', 404))
     fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
-    fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
-    )
+    fireEvent.click(confirmAction('Отозвать'))
     await waitFor(() => {
       expect(container.querySelector('.conference-guest-invite-url')).toBeNull()
     })
@@ -647,9 +676,7 @@ describe('объединённая панель: гостевая ссылка �
       }),
     )
     fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
-    fireEvent.click(
-      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
-    )
+    fireEvent.click(confirmAction('Отозвать'))
     await waitFor(() => {
       expect(api.revokeGuestInvite).toHaveBeenCalledTimes(1)
     })
