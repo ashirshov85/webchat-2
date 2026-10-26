@@ -56,7 +56,12 @@ body:has([data-conference-id], [data-guest-join]) section[data-conference-id],
 body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
+  /* T107: ОПРЕДЕЛЁННАЯ высота окна (не min-height) — авто-высота
+     пускала min-content сетки тайлов (крупный тайл на низком окне)
+     в рост секции: страница скроллилась вместо внутренней прокрутки
+     сетки/списка; фазы с высоким контентом (pre-join) переливаются
+     видимым overflow'ом — поведение прежнее */
+  height: 100dvh;
   margin-top: 0;
   padding: 16px 0;
   border: none;
@@ -484,13 +489,13 @@ body:has(.conference-room-pinned) {
   overflow: hidden;
 }
 
-/* Скрытие служебного окружения страницы (T079): панели
-   участников/модерации, колонка сайдбара T106 и компактная полоса
-   тайлов. Шапка страницы и identity-строка удалены из страниц целиком
-   (T087), output-подпись joined-формы и живой счётчик (T080) — тоже
-   (T092): селекторов скрытия для них больше не нужно. */
+/* Скрытие служебного окружения страницы (T079): панель участников
+   (объединённая — инструменты модератора живут в ней, T107), колонка
+   сайдбара T106 и компактная полоса тайлов. Шапка страницы и
+   identity-строка удалены из страниц целиком (T087), output-подпись
+   joined-формы и живой счётчик (T080) — тоже (T092): селекторов
+   скрытия для них больше не нужно. */
 body:has(.conference-room-pinned) .conference-participants,
-body:has(.conference-room-pinned) .conference-moderation,
 body:has(.conference-room-pinned) .conference-side,
 body:has(.conference-room-pinned) .conference-tiles-compact {
   display: none;
@@ -541,16 +546,14 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
  * tmp/conference-page-{moderator,participant}-{expanded,collapsed}.html,
  * при расхождениях побеждает прототип): рабочая область
  * .conference-main — flex-ROW «сетка тайлов слева + панель
- * участников справа», растягивается на всё окно браузера; скроллбаров
- * страницы нет — переполнение гасится ВНУТРИ (сетка тайлов
- * overflow-y:auto, когда тайлы не помещаются при минимальном 220px;
- * список участников панели — правилом панели ниже). Панель — правая
+ * участников справа» на всё окно браузера; скроллбаров страницы
+ * нет — переполнение гасится ВНУТРИ (правила ниже). Панель — правая
  * колонка фиксированной ширины 340px (на узких окнах сужается
- * media-запросом ниже); промежуточный каркас T106 держит в колонке
- * обе панели (участников T041 + модерации T042) — T107 объединит их
- * в один список, сама колонка .conference-side останется контейнером
- * слота и целью aria-controls кнопки. Сворачивание/разворачивание —
- * иконка-кнопка conference-panel-toggle (только svg 17px сайдбара с
+ * media-запросом ниже); T107: колонка держит ОБЪЕДИНЁННУЮ панель
+ * участников (единый список + футер модератора), оставаясь
+ * контейнером слота и целью aria-controls кнопки.
+ * Сворачивание/разворачивание — иконка-кнопка conference-panel-toggle
+ * (только svg 17px сайдбара с
  * шевроном: ‹ развёрнута / › свёрнута; без текста, рамки, фона и
  * теней — уточнение пользователя) в полосе .conference-toggle-row
  * над рабочей областью справа, прижата к ней (компенсация gap колонки
@@ -650,10 +653,10 @@ body:has(.conference-room-pinned) .conference-toggle-row {
   scrollbar-color: #55452c transparent;
 }
 
-/* Правая колонка сайдбара (T106): контейнер слота — панель участников
-   T041 и (до объединения T107) панель модерации T042; фиксированная
-   ширина синхронна панели, сама колонка прокручивается, пока панелей
-   две (после T107 скроллится только список панели). */
+/* Правая колонка сайдбара (T106/T107): контейнер слота — ОБЪЕДИНЁННАЯ
+   панель участников (единый список + футер модератора); собственной
+   прокрутки нет — скроллится только список панели, переполнение
+   гасится внутри (.conference-participants-list flex:1/min-height:0). */
 .conference-side {
   display: flex;
   flex-direction: column;
@@ -661,9 +664,6 @@ body:has(.conference-room-pinned) .conference-toggle-row {
   width: 340px;
   flex: none;
   min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: #55452c transparent;
 }
 
 /* Свёрнутое состояние — нативный [hidden]: гвард обязателен и для
@@ -1392,15 +1392,19 @@ section[data-guest-join] {
 }
 
 /* ============================================================
- * Панель участников (T041, US3; FR-008): список подключённых из
- * LiveKit — имя (fallback identity)/«вы», identity (ключ действий
- * модерации №49–№51), «гость» (US4/T051), роль, online, индикация
- * ограничений. Индикаторы — текстом, не только цветом (008).
- * T106: панель — правая колонка рабочей области .conference-main
- * (фиксированная ширина 340px, на узких окнах сужается); скроллбар
- * страницы не заводится — прокрутка ВНУТРИ списка участников
- * (заголовок остаётся сверху).
- * ============================================================ */
+  * Панель участников — ОБЪЕДИНЁННАЯ (T107, US3; FR-008; прототипы
+  * tmp/conference-page-{moderator,participant}.html, при расхождениях
+  * побеждает прототип): единый список вместо двух панелей (участники
+  * T041 + модерация T042) — строка = аватар + имя (+«вы») + роль
+  * ТОЛЬКО пометками «гость»/«модератор» (обычный участник без
+  * пометки, лексика тайлов T100: «·»-разделитель) + кебаб-кнопка
+  * действий модератора (у каждой строки, включая свою — Q21=A).
+  * identity-строка и текстовые заметки ограничений из строки убраны
+  * (истинное состояние источников несут индикаторы T108). Скролл —
+  * ТОЛЬКО у списка (flex:1/min-height:0/overflow-y:auto), заголовок
+  * сверху и футер инструментов (разделитель + гостевая ссылка +
+  * «Завершить конференцию», только модератору) всегда видимы.
+  * ============================================================ */
 
 .conference-participants {
   display: flex;
@@ -1411,7 +1415,7 @@ section[data-guest-join] {
   border-radius: var(--r-frame);
   background: var(--panel-bg);
   width: 340px;
-  flex: none;
+  flex: 1;
   min-height: 0;
 }
 
@@ -1422,9 +1426,9 @@ section[data-guest-join] {
   color: var(--cream-bright);
 }
 
-/* Список участников — внутренняя прокрутка (T106: «скроллбар может
-   быть у списка участников»): тонкий латунный скроллбар, заголовок
-   панели остаётся видимым сверху. */
+/* Список участников — ЕДИНСТВЕННАЯ прокручиваемая зона панели (T106/
+   T107: «скроллбар может быть у списка участников»): тонкий латунный
+   скроллбар, заголовок и футер остаются на месте. */
 .conference-participants-list {
   display: flex;
   flex-direction: column;
@@ -1439,28 +1443,42 @@ section[data-guest-join] {
   scrollbar-color: #55452c transparent;
 }
 
-/* Строка: аватар (T073, 34px design-tokens §4) + baseline-цепочка
-   пометок, перенос по ширине (панель узкая). */
+/* Строка: аватар 34px → центр (имя + «вы» + пометки) → кебаб
+   (модератор). Пометки роли — курсив --muted с «·»-разделителем
+   (лексика пометок тайлов T100). */
 .conference-participants-item {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  column-gap: 8px;
-  row-gap: 2px;
-  padding: 4px 6px;
+  gap: 8px;
+  padding: 6px 8px;
   border-radius: var(--r-panel);
+  transition: background 0.15s;
+}
+
+.conference-participants-item:hover {
+  background: rgba(201, 162, 74, 0.07);
+}
+
+.conference-participants-item .avatar {
+  width: 34px;
+  height: 34px;
+}
+
+.cp-main {
+  display: flex;
+  align-items: baseline;
+  column-gap: 6px;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
 }
 
 .conference-participants-name {
   font: 13px var(--font-body);
   color: var(--cream);
-}
-
-/* identity — ключ модерации (u:{userId}:{connId}/g:{connId}, без PII):
-   моно-шрифт машины, тише имени. */
-.conference-participants-identity {
-  font: italic 11px var(--font-mono);
-  color: var(--muted-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conference-participants-you {
@@ -1468,92 +1486,92 @@ section[data-guest-join] {
   color: var(--muted);
 }
 
-/* Бейдж «гость» — латунная рамка, отличим и без цвета (текст). */
-.conference-participants-guest {
-  padding: 1px 8px;
-  border: 1px solid var(--gold-dark);
-  border-radius: var(--r-field);
-  font: italic 11px var(--font-body);
-  color: var(--gold-light);
-}
-
-.conference-participants-role {
+/* Роль в конференции: выводится ТОЛЬКО «гость» или «модератор» —
+   приглушённый курсив с разделителем «·» (лексика пометок тайлов
+   T100); обычный участник — без пометки. */
+.conference-participants-mark {
   font: italic 11px var(--font-body);
   color: var(--muted);
+  letter-spacing: 0.02em;
 }
 
-/* online: присутствие в LiveKit — мягкая зелень токена --ok. */
-.conference-participants-online {
-  font: italic 11px var(--font-body);
-  color: var(--ok);
+.conference-participants-mark::before {
+  content: '·';
+  margin-right: 5px;
+  color: var(--muted-3);
 }
 
-/* Индикация ограничений («Все источники»/точечные источники, Q4/Q22=A). */
-.conference-participants-restricted {
-  font: italic 11px var(--font-body);
-  color: var(--err);
+/* Конвенция 008: видимый фокус с клавиатуры (все кнопки панели —
+   кебаби строк и кнопки футера). */
+.conference-participants button:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+.conference-participants button[disabled] {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ============ КЕБАБ «⋯» СТРОКИ (T107; паттерн .c-menu
+ * GroupMembersModal/contacts-modal.css — как у участников
+ * группового чата) ============ */
+
+.conference-participants .c-menu {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  align-self: center;
+  border-radius: 5px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  opacity: 1;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted-3);
+  transition: 0.15s;
+}
+
+.conference-participants .c-menu:hover {
+  color: var(--gold-light);
+  border-color: rgba(201, 162, 74, 0.4);
+  background: rgba(201, 162, 74, 0.1);
+}
+
+.conference-participants .c-menu:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 1px;
+}
+
+.conference-participants .c-menu svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+/* ============ ФУТЕР ИНСТРУМЕНТОВ ПАНЕЛИ (T107, только модератору):
+ * ПОД списком и всегда видим — прокрутка живёт только у списка,
+ * элементы футера flex:none не сжимаются и не прокручиваются.
+ * Лексика кнопок переиспользована из панели модерации T042
+ * (демонтирована); подтверждения переезжают в модаль в T109.
+ * ============ */
+
+.conference-participants-divider {
+  flex: none;
+  height: 1px;
+  margin: 6px 0;
+  border: none;
+  background: linear-gradient(90deg, transparent, var(--gold-dark), transparent);
 }
 
 /* ============================================================
- * Панель модерации (T042, US3; FR-008, №48–№51): действия
- * модератора по строкам участников (мьют микрофона/камеры/экрана,
- * «Все источники», назначение/снятие модератора, кик) и «Завершить
- * конференцию». Видна только роли модератора (metadata локального
- * подключения). Деструктивные действия (кик/завершение) — через
- * подтверждение role=alertdialog. Фокус с клавиатуры — 008.
+ * Кнопки/подтверждение/строка отказа — переиспользованная лексика
+ * футера объединённой панели (T042 → T107): «Подтвердить»/«Отмена»
+ * деструктивных действий (инлайн-блок role=alertdialog до переноса
+ * в модаль T109) и нейтральная строка отказов (role=status).
  * ============================================================ */
-
-.conference-moderation {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--gold-dark);
-  border-radius: var(--r-frame);
-  background: var(--panel-bg);
-}
-
-.conference-moderation-title {
-  margin: 0;
-  font: 15px var(--font-heading);
-  letter-spacing: 0.04em;
-  color: var(--gold-light);
-}
-
-.conference-moderation-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.conference-moderation-item {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 4px 6px;
-  border-radius: var(--r-panel);
-}
-
-.conference-moderation-name {
-  font: 13px var(--font-body);
-  color: var(--cream);
-}
-
-/* Действия строки: компактная переносимая цепочка кнопок. Нативная
-   fieldset-группа (implicit role=group): сбрасываем браузерные дефолты
-   fieldset (margin/min-width/padding/border) до лексики панели. */
-.conference-moderation-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-  margin: 0;
-  min-width: 0;
-  padding: 0;
-  border: none;
-}
 
 .conference-moderation-button {
   padding: 4px 10px;
@@ -1565,19 +1583,6 @@ section[data-guest-join] {
   cursor: pointer;
 }
 
-/* Тумблеры источников №49 (T094): постоянные подписи «Микрофон»/
-   «Камера»/«Экран»/«Все источники», нажатое состояние — aria-pressed
-   (008: состояние дублируется визуалом) + класс -restricted ниже. */
-.conference-moderation-toggle[aria-pressed='true'] {
-  font-style: italic;
-}
-
-/* Действующее ограничение — нажатый тумблер (латунь). */
-.conference-moderation-button-restricted {
-  border-color: var(--gold-dark);
-  color: var(--gold-light);
-}
-
 /* Деструктивное (кик/завершение/подтверждение) — акцент отказа. */
 .conference-moderation-button-danger {
   border-color: var(--err);
@@ -1585,6 +1590,7 @@ section[data-guest-join] {
 }
 
 .conference-moderation-end {
+  flex: none;
   align-self: flex-start;
   padding: 6px 14px;
   border: 1px solid var(--err);
@@ -1595,7 +1601,8 @@ section[data-guest-join] {
   cursor: pointer;
 }
 
-/* Подтверждение деструктивного действия (role=alertdialog). */
+/* Подтверждение деструктивного действия (role=alertdialog; T109
+ * переносит в модальное окно ConfirmDialog). */
 .conference-moderation-confirm {
   display: flex;
   flex-direction: column;
@@ -1623,25 +1630,15 @@ section[data-guest-join] {
   color: var(--muted);
 }
 
-/* Конвенция 008: видимый фокус с клавиатуры (все кнопки панели). */
-.conference-moderation button:focus-visible {
-  outline: 2px solid var(--gold-light);
-  outline-offset: 2px;
-}
-
-.conference-moderation button[disabled] {
-  opacity: 0.45;
-  cursor: default;
-}
-
 /* ============================================================
- * Блок «Гостевая ссылка» панели модерации (T081, US4, №52/№53):
- * по монтажу свёрнут в кнопку «Пригласить гостя» (GET статуса
- * ссылки в контракте нет); после №52 — предупреждение Q17=A/Q13=B,
- * readonly-поле inviteUrl (ручное выделение — страховка «Копировать»),
- * срок действия локальным временем (ui/time) и «Отозвать ссылку»
- * через подтверждение (деструктивное — отключение гостей).
- * ============================================================ */
+  * Блок «Гостевая ссылка» в футере объединённой панели (T081,
+  * US4, №52/№53; T107 — переезд из панели модерации): по монтажу
+  * свёрнут в кнопку «Пригласить гостя» (GET статуса ссылки в
+  * контракте нет); после №52 — предупреждение Q17=A/Q13=B,
+  * readonly-поле inviteUrl (ручное выделение — страховка «Копировать»),
+  * срок действия локальным временем (ui/time) и «Отозвать ссылку»
+  * через подтверждение (деструктивное — отключение гостей).
+  * ============================================================ */
 
 .conference-guest-invite {
   display: flex;
@@ -1649,6 +1646,7 @@ section[data-guest-join] {
   gap: 6px;
   margin: 0;
   min-width: 0;
+  flex: none;
   padding: 8px 8px 10px;
   border: 1px solid var(--gold-dark);
   border-radius: var(--r-panel);
@@ -1719,7 +1717,7 @@ section[data-guest-join] {
 }
 
 /* 008: фокус с клавиатуры — поле ссылки блока (кнопки — общим
-   правилом .conference-moderation button:focus-visible выше). */
+   правилом .conference-participants button:focus-visible выше). */
 .conference-guest-invite-url:focus-visible {
   outline: 2px solid var(--gold-light);
   outline-offset: 2px;

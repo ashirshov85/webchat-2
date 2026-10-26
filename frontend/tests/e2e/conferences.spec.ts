@@ -58,14 +58,17 @@ import {
  * зажигает ActiveSpeakersChanged, visual assert по классу); пометка
  * «модератор» стоит рядом с именем создателя (metadata §3, T017).
  *
- * 009, US3, T043 — e2e модерации (quickstart §3.3): мьют микрофона
+ * 009, US3, T043/T107 — e2e модерации (quickstart §3.3) поверх
+ * кебаб-меню объединённой панели участников: мьют микрофона
  * модератором (№49) блокирует тумблер ЦЕЛИ с пояснением и виден всем
  * ≤ 2 c (SC-005); снятие ограничения разблокирует тумбель обратно
  * (SET-семантика №49, live-обновление permission-событием + refetch №46).
- * T094: тумблеры панели — постоянные подписи + aria-pressed; сценарий
- * «три точечных подряд» — всё остаётся отключено и мастер «Все
- * источники» нажат (фикс кодирования canPublish=false), отжатие
- * мастера включает всё.
+ * T094/T107: подписи пунктов меню — от текущего SET-состояния;
+ * сценарий «три точечных подряд» — всё остаётся отключено, мастер
+ * показывает «Включить все источники» (фикс кодирования
+ * canPublish=false), его отжатие включает всё. Футер панели (T107):
+ * гостевая ссылка №52 и «Завершить конференцию» №48 видны при
+ * прокручивающемся списке — инструменты вне прокрутки.
  *
  * 009, US4, T052 — e2e гостевого доступа (quickstart §3.4): приватное
  * окно БЕЗ аккаунта по инвайт-ссылке №52 (SC-003 — ≤ 3 действий от
@@ -244,6 +247,30 @@ function tilesSection(page: Page) {
 }
 
 /**
+ * T107: действие модератора №49/№50/№51 поверх кебаб-меню строки
+ * объединённой панели — открыть кебаб участника и выбрать пункт
+ * (меню — портал в body, пункты role=menuitem). Возвращает момент
+ * времени ПЕРЕД кликом по пункту — бюджет SC-005 (≤ 2 c) считает
+ * применение действия, а не навигацию по меню.
+ */
+async function kebabAction(page: Page, participantName: string, item: string): Promise<number> {
+  const row = page.locator('.conference-participants-item').filter({ hasText: participantName })
+  await row.getByRole('button', { name: `Действия с участником ${participantName}` }).click()
+  const actedAt = Date.now()
+  await page.getByRole('menuitem', { name: item, exact: true }).click()
+  return actedAt
+}
+
+/** T107: состав пунктов кебаб-меню строки (подписи открытого меню). */
+async function kebabLabels(page: Page, participantName: string): Promise<string[]> {
+  const row = page.locator('.conference-participants-item').filter({ hasText: participantName })
+  await row.getByRole('button', { name: `Действия с участником ${participantName}` }).click()
+  const labels = await page.getByRole('menuitem').allTextContents()
+  await page.keyboard.press('Escape')
+  return labels
+}
+
+/**
  * T075: конференц-поверхность занимает окно — раскрытая корневая
  * секция (маркер data-conference-id) почти на всю ширину окна
  * (body-паттерн машины оставляет 16px полей с боков, допуск 64px);
@@ -307,7 +334,14 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
   let openedPages: Page[]
 
   test.beforeAll(async () => {
-    api = await request.newContext({ baseURL: API_URL })
+    // синтетический клиентский IP (TEST-NET-2) — изолированные бакеты
+    // register/login (паттерн сьютов US3/US4/US5 после пересобора их
+    // бакетов в T107-отладке): повторы прогона не исчерпывают per-IP
+    // бакет дефолтного IP (5/1ч)
+    api = await request.newContext({
+      baseURL: API_URL,
+      extraHTTPHeaders: { 'X-Forwarded-For': process.env.E2E_US1_IP ?? '198.51.100.51' },
+    })
     alice = await ensureAccount(api, `alice${RUN_ID}`)
     bob = await ensureAccount(api, `bob${RUN_ID}`)
     chatId = await ensureDirectChat(api, alice, bob)
@@ -780,13 +814,10 @@ test.describe.serial('конференции US1 e2e (009 T029)', () => {
       { timeout: 15_000 },
     )
 
-    // №49 (SC-005): alice глушит bob'у микрофон — бейдж цели гаснет
-    // у ОБЕИХ вкладок ≤ 2 c (серверный мьют отражается isMuted сам)
-    const startedAt = Date.now()
-    await alicePage
-      .getByRole('group', { name: bobNow.username })
-      .getByRole('button', { name: 'Микрофон', exact: true })
-      .click()
+    // №49 (SC-005): alice глушит bob'у микрофон из кебаб-меню строки
+    // (T107) — бейдж цели гаснет у ОБЕИХ вкладок ≤ 2 c (серверный
+    // мьют отражается isMuted сам)
+    const startedAt = await kebabAction(alicePage, bobNow.username, 'Отключить микрофон')
     await expect(bobTileAtAlice.locator('.conference-tile-mic')).toHaveAttribute(
       'data-mic',
       'off',
@@ -828,7 +859,15 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
   let creatorToken: string | null = null
 
   test.beforeAll(async () => {
-    api = await request.newContext({ baseURL: API_URL })
+    // синтетический клиентский IP (TEST-NET-2) — изолированные бакеты
+    // register/login (паттерн сьютов US4/US5): повторы прогона сьюта
+    // при отладке не исчерпывают per-IP бакет дефолтного IP (5/1ч),
+    // поделённый с сьютом US1; E2E_US3_IP переопределяет IP для
+    // повторных отладочных прогонов (бакет 1ч)
+    api = await request.newContext({
+      baseURL: API_URL,
+      extraHTTPHeaders: { 'X-Forwarded-For': process.env.E2E_US3_IP ?? '198.51.100.53' },
+    })
     alice = await ensureAccount(api, `mod${RUN_ID}a`)
     bob = await ensureAccount(api, `mod${RUN_ID}b`)
     chatId = await ensureDirectChat(api, alice, bob)
@@ -855,7 +894,7 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     creatorToken = null
   })
 
-  test('SC-005: мьют микрофона модератором блокирует кнопку цели с латунной tooltip-подсказкой ≤ 2 c и виден всем; снятие разблокирует', async ({
+  test('SC-005: мьют микрофона модератором из кебаб-меню блокирует кнопку цели с латунной tooltip-подсказкой ≤ 2 c и виден всем; снятие разблокирует', async ({
     browser,
   }) => {
     // alice — создатель = модератор (T017); обе стороны в звонке,
@@ -874,13 +913,9 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
       connectAndAwaitMedia(bobPage, aliceNow.username),
     ])
 
-    // №49: alice глушит bob'у микрофон (тумблер строки цели, T094 —
-    // постоянная подпись + aria-pressed по проекции)
-    const startedAt = Date.now()
-    await alicePage
-      .getByRole('group', { name: bobNow.username })
-      .getByRole('button', { name: 'Микрофон', exact: true })
-      .click()
+    // №49 через кебаб-меню строки (T107): alice глушит bob'у микрофон
+    // (бюджут SC-005 — от клика по пункту, навигация по меню не в счёт)
+    const startedAt = await kebabAction(alicePage, bobNow.username, 'Отключить микрофон')
 
     // у bob кнопка-иконка заблокирована (disabled по aria-label —
     // текстовых тумблеров больше нет, T098), точечное ограничение
@@ -897,23 +932,13 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
       Date.now() - startedAt,
       `SC-005: применение мьюта ${Date.now() - startedAt} мс`,
     ).toBeLessThanOrEqual(SC005_MS)
-    // состояние видно всем: строка bob в панели участников alice
-    await expect(alicePage.getByText('микрофон отключён', { exact: true }).first()).toBeVisible({
-      timeout: SC005_MS,
-    })
-    // тумблер строки цели нажат (проекция grants, SC-005)
-    await expect(
-      alicePage
-        .getByRole('group', { name: bobNow.username })
-        .getByRole('button', { name: 'Микрофон', exact: true }),
-    ).toHaveAttribute('aria-pressed', 'true', { timeout: SC005_MS })
+    // состояние видно модератору (SC-005): подпись пункта №49 следует
+    // SET-состоянию — меню строки цели перевернулось в «Включить …»
+    await expect.poll(() => kebabLabels(alicePage, bobNow.username)).toContain('Включить микрофон')
 
     // снятие ограничения (SET false, Q22=A): блокировка снята, tooltip
     // возвращается к имени ≤ 2 c
-    await alicePage
-      .getByRole('group', { name: bobNow.username })
-      .getByRole('button', { name: 'Микрофон', exact: true })
-      .click()
+    await kebabAction(alicePage, bobNow.username, 'Включить микрофон')
     await expect(bobMicToggle).toBeEnabled({
       timeout: SC005_MS,
     })
@@ -923,7 +948,7 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     })
   })
 
-  test('SC-005/T094: три точечных подряд — всё остаётся отключено, мастер «Все источники» нажат; отжатие мастера включает всё', async ({
+  test('SC-005/T094: три точечных подряд из кебаб-меню — всё остаётся отключено, мастер показывает «Включить все источники»; его отжатие включает всё', async ({
     browser,
   }) => {
     const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
@@ -941,21 +966,28 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     ])
 
     // регресс бага T094: третья точечная не сбрасывает отключения —
-    // после mic+camera+screen grants цели canPublish=false, панель
-    // показывает все три нажатыми И мастер нажатым ≤ 2 c (SC-005)
-    const bobRow = alicePage.getByRole('group', { name: bobNow.username })
-    const startedAt = Date.now()
-    for (const label of ['Микрофон', 'Камера', 'Экран']) {
-      await bobRow.getByRole('button', { name: label, exact: true }).click()
+    // после mic+camera+screen grants цели canPublish=false, меню
+    // держит «Включить …» по всем точкам И мастером ≤ 2 c (SC-005)
+    // (бюджет SC-005 — от клика по ТРЕТЬЕЙ точечной, навигация по меню
+    // и ожидание применения первых двух не в счёт)
+    let thirdActedAt = 0
+    for (const item of ['Отключить микрофон', 'Отключить камеру', 'Отключить экран']) {
+      thirdActedAt = await kebabAction(alicePage, bobNow.username, item)
     }
+    const startedAt = thirdActedAt
 
-    for (const label of ['Микрофон', 'Камера', 'Экран', 'Все источники']) {
-      await expect(bobRow.getByRole('button', { name: label, exact: true })).toHaveAttribute(
-        'aria-pressed',
-        'true',
-        { timeout: SC005_MS },
-      )
-    }
+    // состав меню цели (SET-состояние Q4=A): все точки — «Включить …»,
+    // мастер — «Включить все источники» (сброса ограничений нет)
+    await expect
+      .poll(() => kebabLabels(alicePage, bobNow.username))
+      .toEqual([
+        'Включить микрофон',
+        'Включить камеру',
+        'Включить экран',
+        'Включить все источники',
+        'Назначить модератором',
+        'Исключить',
+      ])
     expect(
       Date.now() - startedAt,
       `SC-005: применение третьей точечной ${Date.now() - startedAt} мс`,
@@ -975,14 +1007,57 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     await expect(bobPage.getByText('Публикация отключена модератором (право слова)')).toHaveCount(0)
     await expect(bobPage.getByText(/отключё[нн]а? модератором/)).toHaveCount(0)
 
-    // отжатие мастера включает всё: точечные тумблеры цели доступны ≤ 2 c
-    await bobRow.getByRole('button', { name: 'Все источники', exact: true }).click()
+    // отжатие мастера (пункт меню) включает всё: точечные кнопки цели
+    // доступны ≤ 2 c, подпись мастера вернулась в «Отключить …»
+    await kebabAction(alicePage, bobNow.username, 'Включить все источники')
     await expect(bobPage.getByRole('button', { name: 'Микрофон', exact: true })).toBeEnabled({
       timeout: SC005_MS,
     })
-    await expect(
-      bobRow.getByRole('button', { name: 'Все источники', exact: true }),
-    ).toHaveAttribute('aria-pressed', 'false', { timeout: SC005_MS })
+    await expect
+      .poll(() => kebabLabels(alicePage, bobNow.username))
+      .toContain('Отключить все источники')
+  })
+
+  test('T107: футер панели модератора всегда видим — при прокручивающемся списке инструменты на месте, скроллбаров страницы нет', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+    activeConference = conference
+    creatorToken = aliceNow.accessToken
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
+    ])
+
+    // низкое окно: список участников (2 строки + футер) перестаёт
+    // помещаться — прокрутка появляется ТОЛЬКО у списка (flex:1/
+    // min-height:0), футер flex:none остаётся видимым
+    await alicePage.setViewportSize({ width: 1280, height: 320 })
+    await expect(alicePage.getByRole('button', { name: 'Завершить конференцию' })).toBeVisible()
+    await expect(alicePage.getByRole('button', { name: 'Пригласить гостя' })).toBeVisible()
+    const listScrolls = await alicePage.evaluate(() => {
+      const list = document.querySelector('.conference-participants-list')
+      return list !== null && list.scrollHeight > list.clientHeight
+    })
+    expect(listScrolls, 'низкое окно: список участников прокручивается').toBe(true)
+    const fitsViewport = await alicePage.evaluate(
+      () =>
+        document.documentElement.scrollHeight <= window.innerHeight &&
+        document.documentElement.scrollWidth <= window.innerWidth,
+    )
+    expect(fitsViewport, 'футер на месте — скроллбары страницы не заводятся').toBe(true)
+
+    // у обычного участника футера нет вовсе (панель без инструментов,
+    // паритет прототипа участника)
+    await bobPage.setViewportSize({ width: 1280, height: 320 })
+    await expect(bobPage.getByRole('button', { name: 'Завершить конференцию' })).toHaveCount(0)
+    await expect(bobPage.getByRole('button', { name: 'Пригласить гостя' })).toHaveCount(0)
   })
 })
 
@@ -1061,7 +1136,7 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     await alicePage.getByRole('button', { name: 'Войти' }).click()
     await expect(alicePage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
 
-    // №52 через UI блока «Гостевая ссылка» панели модерации (T081):
+    // №52 через UI блока «Гостевая ссылка» в футере панели (T081/T107):
     // «Пригласить гостя» → inviteUrl в readonly-поле (в чат не постится);
     // прямая №52-нога apiCall удалена — ссылка берётся из приложения
     await alicePage.getByRole('button', { name: 'Пригласить гостя' }).click()
@@ -1133,7 +1208,7 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     await alicePage.getByRole('button', { name: 'Войти' }).click()
     await expect(alicePage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
 
-    // инвайт-ссылка через UI панели модерации (как в SC-003)
+    // инвайт-ссылка через UI футера панели (как в SC-003, T107)
     await alicePage.getByRole('button', { name: 'Пригласить гостя' }).click()
     const inviteField = alicePage.getByRole('textbox', { name: 'Ссылка-приглашение' })
     await expect(inviteField).toBeVisible({ timeout: 10_000 })
@@ -1152,12 +1227,12 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     await expect(guestPage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
     await expect(guestPage.getByRole('button', { name: 'Микрофон', exact: true })).toBeEnabled()
 
-    // строка цели в панели участников модератора (T094)
-    const guestRow = alicePage.getByRole('group', { name: guestName })
+    // строка цели в объединённой панели (T107): действия №49 — кебаб
+    const guestRowName = guestName
 
     // (1) mic: живой трек — сервер снимает публикацию, блокировка
     // приезжает трек-событием ≤ 2 c
-    await guestRow.getByRole('button', { name: 'Микрофон', exact: true }).click()
+    await kebabAction(alicePage, guestRowName, 'Отключить микрофон')
     await expect(guestPage.getByRole('button', { name: 'Микрофон', exact: true })).toBeDisabled({
       timeout: SC005_MS,
     })
@@ -1165,8 +1240,7 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     // (2) экран: источник НЕ опубликован — трек-события нет; регресс
     // бага T105 (гость без №46): bump-эпоха перерисовывает панель по
     // permission-событию, кнопка «Экран» блокируется ≤ 2 c
-    const screenStartedAt = Date.now()
-    await guestRow.getByRole('button', { name: 'Экран', exact: true }).click()
+    const screenStartedAt = await kebabAction(alicePage, guestRowName, 'Отключить экран')
     await expect(guestPage.getByRole('button', { name: 'Экран', exact: true })).toBeDisabled({
       timeout: SC005_MS,
     })
@@ -1179,8 +1253,7 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     // ВСЕ три кнопки-иконки disabled ≤ 2 c, «Камера» некликабельна
     // (регресс бага репорта: кнопка оставалась доступной, клик давал
     // «Не удалось включить камеру»)
-    const cameraStartedAt = Date.now()
-    await guestRow.getByRole('button', { name: 'Камера', exact: true }).click()
+    const cameraStartedAt = await kebabAction(alicePage, guestRowName, 'Отключить камеру')
     const guestCamera = guestPage.getByRole('button', { name: 'Камера', exact: true })
     await expect(guestCamera).toBeDisabled({ timeout: SC005_MS })
     expect(
@@ -1230,11 +1303,12 @@ test.describe.serial('индикатор «звонок идёт» US5 e2e (009 
 
   test.beforeAll(async () => {
     // синтетический клиентский IP (TEST-NET-2) — изолированные бакеты
-    // register/login (паттерн сьюта US4; регистрации US1/US3 уже заняли 4
-    // из 5/1ч дефолтного IP)
+    // register/login (паттерн сьютов US1/US3/US4 после пересобора их
+    // бакетов в T107-отладке; E2E_US5_IP переопределяет IP для
+    // повторных отладочных прогонов — бакет 1ч)
     api = await request.newContext({
       baseURL: API_URL,
-      extraHTTPHeaders: { 'X-Forwarded-For': '198.51.100.61' },
+      extraHTTPHeaders: { 'X-Forwarded-For': process.env.E2E_US5_IP ?? '198.51.100.61' },
     })
     alice = await ensureLogin(`alice${RUN_ID}`)
     carol = await ensureAccount(api, `carol${RUN_ID}`)

@@ -121,7 +121,7 @@ describe('каркас конференц-страницы (T075): статич�
     // joined/ended/error занимают всё окно)
     expect(section?.[1]).toContain('display: flex')
     expect(section?.[1]).toContain('flex-direction: column')
-    expect(section?.[1]).toContain('min-height: 100dvh')
+    expect(section?.[1]).toContain('height: 100dvh')
   })
 
   it('conferences.css: вертикальная цепочка роста (join → joined → room) и доли окна у тайлов', () => {
@@ -199,11 +199,11 @@ describe('полноэкранный пин-оверлей (T079): статич�
   })
 
   it('служебные панели страницы скрыты по body:has; статус-строки и тост — absolute-оверлеи сверху', () => {
-    // скрытие остального: панели участников/модерации (у гостя её
-    // нет — правило не матчится), компактная полоса остальных тайлов;
-    // шапка и identity-строка удалены целиком (T087), output-подпись
-    // joined-формы и живой счётчик T080 — тоже (T092): их селекторов
-    // в источнике больше нет
+    // скрытие остального: панель участников (объединённая T107 —
+    // инструменты модератора живут в ней), компактная полоса остальных
+    // тайлов; шапка и identity-строка удалены целиком (T087),
+    // output-подпись joined-формы и живой счётчик T080 — тоже (T092):
+    // их селекторов в источнике больше нет
     const hidden = conferencesCss.match(
       /body:has\(\.conference-room-pinned\) \.conference-participants[\s\S]{0,600}?\{([^}]*)\}/,
     )
@@ -211,7 +211,6 @@ describe('полноэкранный пин-оверлей (T079): статич�
     expect(hidden?.[1]).toContain('display: none')
     for (const selector of [
       'body:has(.conference-room-pinned) .conference-participants',
-      'body:has(.conference-room-pinned) .conference-moderation',
       'body:has(.conference-room-pinned) .conference-tiles-compact',
     ]) {
       expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
@@ -576,9 +575,10 @@ describe('санитаризация шапки/identity (T087): статиче�
   })
 
   it('селекторы пин-оверлея T079 для оставшихся поверхностей сохранены', () => {
+    // T107: панель модерации объединена в панель участников —
+    // отдельного селектора скрытия больше нет
     for (const selector of [
       'body:has(.conference-room-pinned) .conference-participants',
-      'body:has(.conference-room-pinned) .conference-moderation',
       'body:has(.conference-room-pinned) .conference-tiles-compact',
     ]) {
       expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
@@ -968,14 +968,16 @@ describe('каркас экрана — сайдбар участников сп
     expect(rule?.[1]).toContain('scrollbar-color: #55452c transparent')
   })
 
-  it('панель участников — фиксированная ширина 340px (flex:none) + [hidden]-гвард свёрнутого состояния', () => {
-    // правая колонка фиксированной ширины; свёрнутое состояние — панель
-    // скрыта нативным [hidden], тайлы занимают всю ширину (гвард обязателен:
+  it('панель участников — фиксированная ширина 340px, заполняет колонку (flex:1) + [hidden]-гвард свёрнутого состояния', () => {
+    // правая колонка фиксированной ширины; T107: панель — единственный
+    // ребёнок колонки, растягивается на её высоту (flex:1) и сжимается
+    // по min-height:0 — прокрутка живёт у СПИСКА, футер вне прокрутки;
+    // свёрнутое состояние — нативный [hidden] (гвард обязателен:
     // авторский display:flex сильнее UA-стиля [hidden])
     const rule = conferencesCss.match(/^\.conference-participants\s*\{([^}]*)\}/m)
     expect(rule).not.toBeNull()
     expect(rule?.[1]).toContain('width: 340px')
-    expect(rule?.[1]).toContain('flex: none')
+    expect(rule?.[1]).toContain('flex: 1')
     expect(rule?.[1]).toContain('min-height: 0')
     const guard = conferencesCss.match(
       /^\.conference-side\[hidden\],\s*\.conference-participants\[hidden\]\s*\{([^}]*)\}/m,
@@ -985,8 +987,8 @@ describe('каркас экрана — сайдбар участников сп
   })
 
   it('правая колонка .conference-side — контейнер слота сайдбара (width 340, flex-колонка), на узких окнах сужается media-запросом', () => {
-    // T106 (промежуточный каркас до объединения T107): колонка держит
-    // панель участников + панель модерации; ширина синхронна панели
+    // T107: колонка держит ОБЪЕДИНЁННУЮ панель участников; сама колонка
+    // не прокручивается — скроллится только список панели
     const rule = conferencesCss.match(/^\.conference-side\s*\{([^}]*)\}/m)
     expect(rule).not.toBeNull()
     expect(rule?.[1]).toContain('display: flex')
@@ -1049,8 +1051,8 @@ describe('каркас экрана — сайдбар участников сп
 
   it('полноэкранный пин T079: полоса с кнопкой и колонка сайдбара скрыты существующим механизмом body:has', () => {
     // в пин-оверлее полоса не нужна; колонка сайдбара скрывается вместе с
-    // панелями участников/модерации (панели остаются скрытыми и внутри
-    // колонки — прежние селекторы сохранены)
+    // панелью участников и компактной полосой тайлов (T107: отдельной
+    // панели модерации больше нет — объединена в список участников)
     expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-toggle-row')
     const toggleHidden = conferencesCss.match(
       /body:has\(\.conference-room-pinned\) \.conference-toggle-row\s*\{([^}]*)\}/,
@@ -1059,7 +1061,6 @@ describe('каркас экрана — сайдбар участников сп
     expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-side')
     for (const selector of [
       'body:has(.conference-room-pinned) .conference-participants',
-      'body:has(.conference-room-pinned) .conference-moderation',
       'body:has(.conference-room-pinned) .conference-tiles-compact',
     ]) {
       expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
@@ -1079,5 +1080,109 @@ describe('каркас экрана — сайдбар участников сп
     const doc = conferencesCss.slice(Math.max(0, at - 1800), at)
     expect(doc).toContain('T106')
     expect(doc).toContain('сайдбар')
+  })
+})
+
+describe('объединённая панель участников (T107): статический пин CSS', () => {
+  it('прокрутка ТОЛЬКО у списка: колонка .conference-side собственной прокрутки не имеет (после объединения панелей)', () => {
+    // T106 держал overflow-y у колонки, пока панелей две; T107 — единая
+    // панель: список flex:1/min-height:0/overflow-y:auto (пин T106 выше),
+    // футер вне прокрутки, колонка сама не скроллится
+    const rule = conferencesCss.match(/^\.conference-side\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).not.toContain('overflow-y')
+    expect(rule?.[1]).not.toContain('scrollbar-width')
+  })
+
+  it('футер вне прокрутки: разделитель и инструменты панели — flex:none (не сжимаются списком)', () => {
+    const divider = conferencesCss.match(/^\.conference-participants-divider\s*\{([^}]*)\}/m)
+    expect(divider).not.toBeNull()
+    expect(divider?.[1]).toContain('flex: none')
+    expect(divider?.[1]).toContain(
+      'linear-gradient(90deg, transparent, var(--gold-dark), transparent)',
+    )
+    const end = conferencesCss.match(/^\.conference-moderation-end\s*\{([^}]*)\}/m)
+    expect(end).not.toBeNull()
+    expect(end?.[1]).toContain('flex: none')
+    const invite = conferencesCss.match(/^\.conference-guest-invite\s*\{([^}]*)\}/m)
+    expect(invite).not.toBeNull()
+    expect(invite?.[1]).toContain('flex: none')
+  })
+
+  it('кебаб строки .c-menu — паттерн GroupMembersModal/contacts-modal: 22px, прозрачная рамка/фон, hover золотом, svg 14px fill currentColor', () => {
+    const rule = conferencesCss.match(/^\.conference-participants \.c-menu\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('width: 22px')
+    expect(rule?.[1]).toContain('height: 22px')
+    expect(rule?.[1]).toContain('border: 1px solid transparent')
+    expect(rule?.[1]).toContain('background: transparent')
+    const hover = conferencesCss.match(/^\.conference-participants \.c-menu:hover\s*\{([^}]*)\}/m)
+    expect(hover?.[1]).toContain('color: var(--gold-light)')
+    const focus = conferencesCss.match(
+      /^\.conference-participants \.c-menu:focus-visible\s*\{([^}]*)\}/m,
+    )
+    expect(focus?.[1]).toContain('outline: 2px solid var(--gold-light)')
+    const svg = conferencesCss.match(/^\.conference-participants \.c-menu svg\s*\{([^}]*)\}/m)
+    expect(svg).not.toBeNull()
+    expect(svg?.[1]).toContain('width: 14px')
+    expect(svg?.[1]).toContain('height: 14px')
+    expect(svg?.[1]).toContain('fill: currentColor')
+  })
+
+  it('строка: центр имени .cp-main (flex:1/min-width:0) и пометки роли «·»-разделителем (лексика тайлов T100)', () => {
+    const main = conferencesCss.match(/^\.cp-main\s*\{([^}]*)\}/m)
+    expect(main).not.toBeNull()
+    expect(main?.[1]).toContain('flex: 1')
+    expect(main?.[1]).toContain('min-width: 0')
+    const mark = conferencesCss.match(/^\.conference-participants-mark\s*\{([^}]*)\}/m)
+    expect(mark).not.toBeNull()
+    expect(mark?.[1]).toContain('font: italic 11px')
+    const sep = conferencesCss.match(/^\.conference-participants-mark::before\s*\{([^}]*)\}/m)
+    expect(sep?.[1]).toContain("content: '·'")
+  })
+
+  it('санация conference-moderation-*: контейнер/список/тумблеры панели модерации удалены, переиспользуемая лексика футера сохранена', () => {
+    for (const gone of [
+      '.conference-moderation {',
+      '.conference-moderation-title',
+      '.conference-moderation-list',
+      '.conference-moderation-item',
+      '.conference-moderation-actions',
+      '.conference-moderation-toggle',
+      '.conference-moderation-button-restricted',
+      'body:has(.conference-room-pinned) .conference-moderation',
+    ]) {
+      expect(conferencesCss, `демонтированный селектор ${gone}`).not.toContain(gone)
+    }
+    // переиспользовано футером/подтверждением (T109 перенесёт в модаль)
+    for (const kept of [
+      '.conference-moderation-button',
+      '.conference-moderation-button-danger',
+      '.conference-moderation-end',
+      '.conference-moderation-confirm',
+      '.conference-moderation-notice',
+      '.conference-guest-invite',
+    ]) {
+      expect(conferencesCss, `переиспользуемый селектор ${kept}`).toContain(kept)
+    }
+  })
+
+  it('демонтированные строки-заметки T041: identity/online/ограничения из строки убраны (индикаторы — T108)', () => {
+    for (const gone of [
+      '.conference-participants-identity',
+      '.conference-participants-online',
+      '.conference-participants-restricted',
+      '.conference-participants-role',
+    ]) {
+      expect(conferencesCss, `демонтированный селектор ${gone}`).not.toContain(gone)
+    }
+  })
+
+  it('докблок блока truthfully описывает объединённую панель (T107, прототип)', () => {
+    const at = conferencesCss.indexOf('.conference-participants-divider {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 2600), at)
+    expect(doc).toContain('T107')
+    expect(doc).toContain('кебаб')
   })
 })

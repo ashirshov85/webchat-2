@@ -2,30 +2,29 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
- * 009, US3, T042 — панель модерации (FR-008, №48–№51): действия
- * модератора адресуются по identity строк LiveKit; №49 отправляет
- * ПОЛНОЕ SET-состояние (выведенное из фактических grants цели),
- * №50 — противоположную роль, №51/№48 — только после явного
- * подтверждения (деструктивные). Панель видна только роли модератора
- * локального подключения (metadata) и живьём следует broadcast'у
- * смены роли (Q9=A). Примитивы @livekit/components-react и API-клиент
- * заменены фейками: предмет теста — оркестрация действий и
- * подтверждения (набор US3 — T043).
+ * 009, US3, T107 — объединённая панель участников: оркестрация
+ * модерационных действий (FR-008, №48–№53) поверх кебаб-меню строки и
+ * футера панели (демонтаж отдельной панели модерации T042). №49
+ * отправляет ПОЛНОЕ SET-состояние (выведенное из фактических grants
+ * цели), №50 — противоположную роль, №51/№48 — только после явного
+ * подтверждения (деструктивные; инлайн-блок до переноса в модаль
+ * T109). Инструменты видны только роли модератора локального
+ * подключения (metadata) и живьём следуют broadcast'у смены роли
+ * (Q9=A). Примитивы @livekit/components-react и API-клиент заменены
+ * фейками: предмет теста — оркестрация действий и подтверждения.
  *
- * T094: тумблеры источников — ПОСТОЯННЫЕ подписи («Микрофон»/
- * «Камера»/«Экран», мастер «Все источники» = доменное
- * speechRestricted)
- * с aria-pressed по проекции grants; SET-семантика: точечный клик
- * при отжатом мастере — flip одного поля, нажатие мастера
- * нормализует точки в speech, отжатие включает всё; третья точечная
- * (фикс grants canPublish=false) НЕ сбрасывает отключения — все три
- * остаются нажатыми и мастер нажат.
+ * T094: подписи пунктов №49 — от текущего SET-состояния
+ * (restrictionMarks): точки «Отключить/Включить …» и мастер
+ * «Отключить/Включить все источники» (доменное speechRestricted);
+ * третья точечная (фикс grants canPublish=false) НЕ сбрасывает
+ * отключения — меню показывает «Включить …» по всем трём точкам и
+ * «Включить все источники» мастером.
  *
- * T081 (US4): блок «Гостевая ссылка» №52/№53 — генерация readonly-
- * поля inviteUrl (срок + предупреждение Q17=A/Q13=B), «Копировать»
- * через navigator.clipboard, отзыв с подтверждением (деструктивное —
- * отключение гостей) и молчаливый коллапс по `404
- * guest_invite_not_found` (идемпотентность отзыва, Q21=A).
+ * T081 (US4): футер панели — блок «Гостевая ссылка» №52/№53:
+ * генерация readonly-поля inviteUrl (срок + предупреждение Q17=A/
+ * Q13=B), «Копировать» через navigator.clipboard, отзыв с
+ * подтверждением (деструктивное — отключение гостей) и молчаливый
+ * коллапс по `404 guest_invite_not_found` (идемпотентность, Q21=A).
  */
 
 /** Wire-константы TrackSource (@livekit/protocol) — как в панели. */
@@ -84,7 +83,10 @@ function installClipboard(): void {
   })
 }
 
-import ModerationPanel from '../ModerationPanel'
+import ParticipantsPanel from '../ParticipantsPanel'
+
+const ALICE_ID = 'u:11111111-1111-1111-1111-111111111111:conn-1'
+const BOB_ID = 'u:22222222-2222-4222-8222-222222222222:conn-2'
 
 function participant(overrides: Partial<FakeParticipant> & { identity: string }): FakeParticipant {
   return { isLocal: false, name: 'Имя', ...overrides }
@@ -98,14 +100,14 @@ function memberMetadata(role: 'moderator' | 'participant'): string {
 function defaultRoom(): FakeParticipant[] {
   return [
     participant({
-      identity: 'u:11111111-1111-1111-1111-111111111111:conn-1',
+      identity: ALICE_ID,
       name: 'alice',
       metadata: memberMetadata('moderator'),
       isLocal: true,
       permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
     }),
     participant({
-      identity: 'u:22222222-2222-4222-8222-222222222222:conn-2',
+      identity: BOB_ID,
       name: 'bob',
       metadata: memberMetadata('participant'),
       permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
@@ -113,13 +115,25 @@ function defaultRoom(): FakeParticipant[] {
   ]
 }
 
-/** Строка панели по identity цели (кнопки действий — внутри строки). */
-function rowOf(identity: string): HTMLElement {
-  const row = document.querySelector(`[data-participant-identity="${identity}"]`)
+/** Строка панели по имени цели (кебаб — внутри строки). */
+function rowOf(name: string): HTMLElement {
+  const row = screen.getByText(name).closest('li')
   if (row === null) {
-    throw new Error(`строка ${identity} не отрендерена`)
+    throw new Error(`строка ${name} не отрендерена`)
   }
-  return row as HTMLElement
+  return row
+}
+
+/** Открыть кебаб-меню строки цели. */
+function openMenu(name: string): void {
+  fireEvent.click(
+    within(rowOf(name)).getByRole('button', { name: `Действия с участником ${name}` }),
+  )
+}
+
+/** Выбрать пункт открытого меню. */
+function pickItem(label: string): void {
+  fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: label }))
 }
 
 /** Проблема-отказ домена (RFC 9457, errors: {field: [code]}). */
@@ -130,7 +144,7 @@ function problemWith(
   return { status, errors: { conference: [code] } }
 }
 
-describe('ModerationPanel (009 US3 T042)', () => {
+describe('объединённая панель: модерация №49–№51 через кебаб (009 US3 T107)', () => {
   beforeEach(() => {
     lkc.useParticipants.mockReset()
     lkc.useLocalParticipant.mockReset()
@@ -153,225 +167,138 @@ describe('ModerationPanel (009 US3 T042)', () => {
     vi.clearAllMocks()
   })
 
-  it('не-модератору панель не рендерится (роль локального — metadata; fail-closed)', () => {
-    const room = defaultRoom()
-    room[0] = participant({
-      identity: 'u:11111111-1111-1111-1111-111111111111:conn-1',
-      name: 'alice',
-      metadata: memberMetadata('participant'),
-      isLocal: true,
-      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
-    })
-    lkc.useLocalParticipant.mockReturnValue({ localParticipant: room[0] })
-    lkc.useParticipants.mockReturnValue(room)
-
-    const { container } = render(<ModerationPanel conferenceId="c-1" />)
-
-    expect(container.querySelector('.conference-moderation')).toBeNull()
-    expect(api.updateParticipantRestrictions).not.toHaveBeenCalled()
-  })
-
-  it('модератор: строки участников с действиями, включая себя (равноправие, Q21=A); тумблеры №49 — постоянные подписи (T094)', () => {
-    render(<ModerationPanel conferenceId="c-1" />)
-
-    expect(screen.getByText('Модерация')).toBeInTheDocument()
-    expect(screen.getByText('alice (вы)')).toBeInTheDocument()
-    expect(screen.getByText('bob')).toBeInTheDocument()
-    // обе строки (в т.ч. своя и вторая) несут полный набор действий №49–№51;
-    // тумблеры источников — постоянные подписи + aria-pressed по проекции
-    for (const identity of [
-      'u:11111111-1111-1111-1111-111111111111:conn-1',
-      'u:22222222-2222-4222-8222-222222222222:conn-2',
-    ]) {
-      const row = rowOf(identity)
-      expect(within(row).getByRole('button', { name: 'Микрофон' })).toHaveAttribute(
-        'aria-pressed',
-        'false',
-      )
-      expect(within(row).getByRole('button', { name: 'Камера' })).toHaveAttribute(
-        'aria-pressed',
-        'false',
-      )
-      expect(within(row).getByRole('button', { name: 'Экран' })).toHaveAttribute(
-        'aria-pressed',
-        'false',
-      )
-      expect(within(row).getByRole('button', { name: 'Все источники' })).toHaveAttribute(
-        'aria-pressed',
-        'false',
-      )
-      expect(within(row).getByRole('button', { name: 'Исключить' })).toBeInTheDocument()
-    }
-    expect(screen.getByRole('button', { name: 'Назначить модератором' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Завершить конференцию' })).toBeInTheDocument()
-  })
-
-  it('№49 точечный тумблер: полное SET-состояние из grants цели с переключённым одним полем (мастер отжат — проекция точна)', async () => {
+  it('№49 точечный пункт: полное SET-состояние из grants цели с переключённым одним полем (мастер отжат — проекция точна)', async () => {
     api.updateParticipantRestrictions.mockResolvedValue({})
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
-    fireEvent.click(
-      within(rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')).getByRole('button', {
-        name: 'Микрофон',
-      }),
-    )
+    openMenu('bob')
+    pickItem('Отключить микрофон')
 
     await waitFor(() => {
-      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith(
-        'c-1',
-        'u:22222222-2222-4222-8222-222222222222:conn-2',
-        {
-          micRestricted: true,
-          cameraRestricted: false,
-          screenRestricted: false,
-          speechRestricted: false,
-        },
-      )
+      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith('c-1', BOB_ID, {
+        micRestricted: true,
+        cameraRestricted: false,
+        screenRestricted: false,
+        speechRestricted: false,
+      })
     })
+    // меню закрыто выбором пункта
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
-  it('№49 тумблеры отражают действующие ограничения (aria-pressed); возврат микрофона сохраняет прочие состояния', async () => {
+  it('№49 возврат срезанного источника сохраняет прочие состояния (SET по проекции grants)', async () => {
     api.updateParticipantRestrictions.mockResolvedValue({})
     // цель: микрофон и экран срезаны, камера разрешена
     lkc.useParticipants.mockReturnValue([
       defaultRoom()[0],
       participant({
-        identity: 'u:22222222-2222-4222-8222-222222222222:conn-2',
+        identity: BOB_ID,
         name: 'bob',
         metadata: memberMetadata('participant'),
         permissions: { canPublish: true, canPublishSources: [CAMERA] },
       }),
     ])
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
-    const row = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
-    expect(within(row).getByRole('button', { name: 'Микрофон' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
-    expect(within(row).getByRole('button', { name: 'Камера' })).toHaveAttribute(
-      'aria-pressed',
-      'false',
-    )
-    expect(within(row).getByRole('button', { name: 'Экран' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    )
-    expect(within(row).getByRole('button', { name: 'Все источники' })).toHaveAttribute(
-      'aria-pressed',
-      'false',
-    )
+    openMenu('bob')
+    pickItem('Включить микрофон')
 
-    // возврат микрофона: SET с mic=false, прочие состояния сохранены
-    fireEvent.click(within(row).getByRole('button', { name: 'Микрофон' }))
     await waitFor(() => {
-      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith(
-        'c-1',
-        'u:22222222-2222-4222-8222-222222222222:conn-2',
-        {
-          micRestricted: false,
-          cameraRestricted: false,
-          screenRestricted: true,
-          speechRestricted: false,
-        },
-      )
+      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith('c-1', BOB_ID, {
+        micRestricted: false,
+        cameraRestricted: false,
+        screenRestricted: true,
+        speechRestricted: false,
+      })
     })
   })
 
-  it('№49 мастер «Все источники» (Q4=A): нажатие нормализует точки в speech; точечные под мастером нажаты и недоступны с пояснением', async () => {
+  it('№49 мастер «Все источники» (Q4=A): нажатие нормализует точки в speech; отжатие (после canPublish=false) включает всё', async () => {
     api.updateParticipantRestrictions.mockResolvedValue({})
-    const { rerender } = render(<ModerationPanel conferenceId="c-1" />)
+    const { rerender } = render(<ParticipantsPanel conferenceId="c-1" />)
 
-    const row = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
-    fireEvent.click(within(row).getByRole('button', { name: 'Все источники' }))
+    openMenu('bob')
+    pickItem('Отключить все источники')
 
     await waitFor(() => {
-      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith(
-        'c-1',
-        'u:22222222-2222-4222-8222-222222222222:conn-2',
-        {
-          micRestricted: false,
-          cameraRestricted: false,
-          screenRestricted: false,
-          speechRestricted: true,
-        },
-      )
+      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith('c-1', BOB_ID, {
+        micRestricted: false,
+        cameraRestricted: false,
+        screenRestricted: false,
+        speechRestricted: true,
+      })
     })
 
-    // после применения (broadcast permissions → canPublish=false): все
-    // четыре тумблера нажаты, точечные недоступны с доступным пояснением
+    // сервер применил (broadcast permissions → canPublish=false): меню
+    // цели показывает «Включить …» по точкам И мастером — сброса нет
     lkc.useParticipants.mockReturnValue([
       defaultRoom()[0],
       participant({
-        identity: 'u:22222222-2222-4222-8222-222222222222:conn-2',
+        identity: BOB_ID,
         name: 'bob',
         metadata: memberMetadata('participant'),
         permissions: { canPublish: false, canPublishSources: [] },
       }),
     ])
-    rerender(<ModerationPanel conferenceId="c-1" />)
+    rerender(<ParticipantsPanel conferenceId="c-1" />)
 
-    const appliedRow = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
-    for (const label of ['Микрофон', 'Камера', 'Экран', 'Все источники']) {
-      expect(within(appliedRow).getByRole('button', { name: label })).toHaveAttribute(
-        'aria-pressed',
-        'true',
-      )
-    }
-    for (const label of ['Микрофон', 'Камера', 'Экран']) {
-      const point = within(appliedRow).getByRole('button', { name: label })
-      expect(point).toBeDisabled()
-      expect(point).toHaveAttribute('title', 'Блокируется кнопкой «Все источники»')
-    }
-    // мастер остаётся доступным — отжатие включает всё
-    fireEvent.click(within(appliedRow).getByRole('button', { name: 'Все источники' }))
+    openMenu('bob')
+    // мастер нажат: точки — «Включить …» (эффективно «всё заблокировано»),
+    // мастер — «Включить все источники» (truthful состав)
+    expect(
+      within(screen.getByRole('menu'))
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual([
+      'Включить микрофон',
+      'Включить камеру',
+      'Включить экран',
+      'Включить все источники',
+      'Назначить модератором',
+      'Исключить',
+    ])
+
+    // отжатие мастера включает всё
+    pickItem('Включить все источники')
     await waitFor(() => {
-      expect(api.updateParticipantRestrictions).toHaveBeenLastCalledWith(
-        'c-1',
-        'u:22222222-2222-4222-8222-222222222222:conn-2',
-        {
-          micRestricted: false,
-          cameraRestricted: false,
-          screenRestricted: false,
-          speechRestricted: false,
-        },
-      )
+      expect(api.updateParticipantRestrictions).toHaveBeenLastCalledWith('c-1', BOB_ID, {
+        micRestricted: false,
+        cameraRestricted: false,
+        screenRestricted: false,
+        speechRestricted: false,
+      })
     })
   })
 
-  it('№49 третья точечная не сбрасывает отключения (регресс бага T094): mic+camera+screen → grants canPublish=false, все три нажаты И мастер нажат', async () => {
+  it('№49 третья точечная не сбрасывает отключения (регресс бага T094): mic+camera+screen → grants canPublish=false, меню держит «Включить …» по всем трём', async () => {
     api.updateParticipantRestrictions.mockResolvedValue({})
     // цель: микрофон и камера уже срезаны (экран разрешён)
     lkc.useParticipants.mockReturnValue([
       defaultRoom()[0],
       participant({
-        identity: 'u:22222222-2222-4222-8222-222222222222:conn-2',
+        identity: BOB_ID,
         name: 'bob',
         metadata: memberMetadata('participant'),
         permissions: { canPublish: true, canPublishSources: [SCREEN_SHARE, SCREEN_SHARE_AUDIO] },
       }),
     ])
-    const { rerender } = render(<ModerationPanel conferenceId="c-1" />)
+    const { rerender } = render(<ParticipantsPanel conferenceId="c-1" />)
 
-    const row = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
-    expect(within(row).getByRole('button', { name: 'Экран' })).toHaveAttribute(
-      'aria-pressed',
-      'false',
-    )
+    openMenu('bob')
+    pickItem('Отключить экран')
 
-    // третья точечная: SET экрана поверх двух действующих
-    fireEvent.click(within(row).getByRole('button', { name: 'Экран' }))
     await waitFor(() => {
-      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith(
-        'c-1',
-        'u:22222222-2222-4222-8222-222222222222:conn-2',
-        {
-          micRestricted: true,
-          cameraRestricted: true,
-          screenRestricted: true,
-          speechRestricted: false,
-        },
-      )
+      expect(api.updateParticipantRestrictions).toHaveBeenCalledWith('c-1', BOB_ID, {
+        micRestricted: true,
+        cameraRestricted: true,
+        screenRestricted: true,
+        speechRestricted: false,
+      })
+    })
+    // панель успокоилась (pending снят) ДО смены проекции grants —
+    // детерминизм повторного открытия меню
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Завершить конференцию' })).toBeEnabled()
     })
 
     // сервер применил (фикс T094): остаток-множество пуст → grants
@@ -379,75 +306,56 @@ describe('ModerationPanel (009 US3 T042)', () => {
     lkc.useParticipants.mockReturnValue([
       defaultRoom()[0],
       participant({
-        identity: 'u:22222222-2222-4222-8222-222222222222:conn-2',
+        identity: BOB_ID,
         name: 'bob',
         metadata: memberMetadata('participant'),
         permissions: { canPublish: false, canPublishSources: [] },
       }),
     ])
-    rerender(<ModerationPanel conferenceId="c-1" />)
+    rerender(<ParticipantsPanel conferenceId="c-1" />)
 
-    const appliedRow = rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')
-    for (const label of ['Микрофон', 'Камера', 'Экран', 'Все источники']) {
-      expect(within(appliedRow).getByRole('button', { name: label })).toHaveAttribute(
-        'aria-pressed',
-        'true',
-      )
-    }
+    openMenu('bob')
+    // состав меню цели: все точки «Включить …» И мастер «Включить все
+    // источники» — сброса ограничений не произошло
+    expect(
+      within(screen.getByRole('menu'))
+        .getAllByRole('menuitem')
+        .map((item) => item.textContent),
+    ).toEqual([
+      'Включить микрофон',
+      'Включить камеру',
+      'Включить экран',
+      'Включить все источники',
+      'Назначить модератором',
+      'Исключить',
+    ])
   })
 
-  it('№50 назначение/снятие модератора: противоположная роль цели — в т.ч. строки другого модератора и себя (Q21=A)', async () => {
+  it('№50 назначение/снятие модератора через меню: противоположная роль цели — в т.ч. строки другого модератора и себя (Q21=A)', async () => {
     api.updateParticipantRole.mockResolvedValue({})
-    lkc.useParticipants.mockReturnValue([
-      // второй модератор: собственная строка-модератор ниже покрывает цель-модератора
-      defaultRoom()[0],
-      participant({
-        identity: 'u:22222222-2222-4222-8222-222222222222:conn-2',
-        name: 'bob',
-        metadata: memberMetadata('participant'),
-        permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
-      }),
-    ])
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
     // цель-участник → назначение модератором
-    fireEvent.click(
-      within(rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')).getByRole('button', {
-        name: 'Назначить модератором',
-      }),
-    )
+    openMenu('bob')
+    pickItem('Назначить модератором')
     await waitFor(() => {
-      expect(api.updateParticipantRole).toHaveBeenCalledWith(
-        'c-1',
-        'u:22222222-2222-4222-8222-222222222222:conn-2',
-        'moderator',
-      )
+      expect(api.updateParticipantRole).toHaveBeenCalledWith('c-1', BOB_ID, 'moderator')
     })
 
     // цель-модератор (собственная строка) → снятие, включая с себя (равноправие, Q21=A)
-    fireEvent.click(
-      within(rowOf('u:11111111-1111-1111-1111-111111111111:conn-1')).getByRole('button', {
-        name: 'Снять модератора',
-      }),
-    )
+    openMenu('alice')
+    pickItem('Снять модератора')
     await waitFor(() => {
-      expect(api.updateParticipantRole).toHaveBeenCalledWith(
-        'c-1',
-        'u:11111111-1111-1111-1111-111111111111:conn-1',
-        'participant',
-      )
+      expect(api.updateParticipantRole).toHaveBeenCalledWith('c-1', ALICE_ID, 'participant')
     })
   })
 
   it('№51 кик — деструктивное: подтверждение обязательно, №51 вызывается только после «Подтвердить»', async () => {
     api.kickParticipant.mockResolvedValue(undefined)
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
-    fireEvent.click(
-      within(rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')).getByRole('button', {
-        name: 'Исключить',
-      }),
-    )
+    openMenu('bob')
+    pickItem('Исключить bob')
 
     const dialog = screen.getByRole('alertdialog')
     expect(within(dialog).getByText(/Исключить bob/)).toBeInTheDocument()
@@ -456,30 +364,13 @@ describe('ModerationPanel (009 US3 T042)', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Подтвердить' }))
 
     await waitFor(() => {
-      expect(api.kickParticipant).toHaveBeenCalledWith(
-        'c-1',
-        'u:22222222-2222-4222-8222-222222222222:conn-2',
-      )
+      expect(api.kickParticipant).toHaveBeenCalledWith('c-1', BOB_ID)
     })
   })
 
-  it('№51 кик: «Отмена» закрывает подтверждение без вызова', () => {
-    render(<ModerationPanel conferenceId="c-1" />)
-
-    fireEvent.click(
-      within(rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')).getByRole('button', {
-        name: 'Исключить',
-      }),
-    )
-    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Отмена' }))
-
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(api.kickParticipant).not.toHaveBeenCalled()
-  })
-
-  it('№48 завершение конференции — деструктивное: подтверждение обязательно', async () => {
+  it('№48 завершение конференции (футер) — деструктивное: подтверждение обязательно; «Отмена» — без вызова', async () => {
     api.endConference.mockResolvedValue(undefined)
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Завершить конференцию' }))
 
@@ -487,8 +378,14 @@ describe('ModerationPanel (009 US3 T042)', () => {
     expect(within(dialog).getByText(/Завершить конференцию для всех/)).toBeInTheDocument()
     expect(api.endConference).not.toHaveBeenCalled()
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Подтвердить' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(api.endConference).not.toHaveBeenCalled()
 
+    fireEvent.click(screen.getByRole('button', { name: 'Завершить конференцию' }))
+    fireEvent.click(
+      within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
+    )
     await waitFor(() => {
       expect(api.endConference).toHaveBeenCalledWith('c-1')
     })
@@ -496,26 +393,20 @@ describe('ModerationPanel (009 US3 T042)', () => {
 
   it('отказ действия — нейтральная строка по коду Problem (403 moderator_required), состояние не катится вручную', async () => {
     api.updateParticipantRestrictions.mockRejectedValue(problemWith('moderator_required'))
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
-    fireEvent.click(
-      within(rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')).getByRole('button', {
-        name: 'Микрофон',
-      }),
-    )
+    openMenu('bob')
+    pickItem('Отключить микрофон')
 
     expect(await screen.findByText('Недостаточно прав')).toBeInTheDocument()
   })
 
   it('цель ушла (404 participant_not_found) — нейтральная строка «уже не в конференции»', async () => {
     api.kickParticipant.mockRejectedValue(problemWith('participant_not_found', 404))
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
-    fireEvent.click(
-      within(rowOf('u:22222222-2222-4222-8222-222222222222:conn-2')).getByRole('button', {
-        name: 'Исключить',
-      }),
-    )
+    openMenu('bob')
+    pickItem('Исключить bob')
     fireEvent.click(
       within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Подтвердить' }),
     )
@@ -523,36 +414,42 @@ describe('ModerationPanel (009 US3 T042)', () => {
     expect(await screen.findByText('Участник уже не в конференции')).toBeInTheDocument()
   })
 
-  it('панель следует broadcast-у роли live: назначение №50 открывает панель, снятие — скрывает (Q9=A)', () => {
-    const room = defaultRoom()
-    lkc.useLocalParticipant.mockReturnValue({ localParticipant: room[0] })
-    lkc.useParticipants.mockReturnValue(room)
-    const { rerender } = render(<ModerationPanel conferenceId="c-1" />)
-    expect(screen.getByText('Модерация')).toBeInTheDocument()
+  it('«в полёте» кебаби и кнопки футера недоступны — повторные вызовы блокированы (единый pending)', async () => {
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
-    // UpdateParticipant §4: broadcast metadata снятия роли самому себе
-    const demoted = { ...room[0], metadata: memberMetadata('participant') }
-    lkc.useLocalParticipant.mockReturnValue({ localParticipant: demoted })
-    lkc.useParticipants.mockReturnValue([demoted, room[1]])
-    rerender(<ModerationPanel conferenceId="c-1" />)
-    expect(screen.queryByText('Модерация')).not.toBeInTheDocument()
+    // №49 в полёте: кебаби строк disabled, футер недоступен
+    let resolveUpdate: (value: unknown) => void = () => {}
+    api.updateParticipantRestrictions.mockReturnValue(
+      new Promise((resolve) => {
+        resolveUpdate = resolve
+      }),
+    )
+    openMenu('bob')
+    pickItem('Отключить микрофон')
+    await waitFor(() => {
+      expect(api.updateParticipantRestrictions).toHaveBeenCalledTimes(1)
+    })
+    for (const name of ['alice', 'bob']) {
+      expect(
+        within(rowOf(name)).getByRole('button', { name: `Действия с участником ${name}` }),
+      ).toBeDisabled()
+    }
+    expect(screen.getByRole('button', { name: 'Завершить конференцию' })).toBeDisabled()
 
-    // повторное назначение — панель возвращается
-    const promoted = { ...room[0], metadata: memberMetadata('moderator') }
-    lkc.useLocalParticipant.mockReturnValue({ localParticipant: promoted })
-    lkc.useParticipants.mockReturnValue([promoted, room[1]])
-    rerender(<ModerationPanel conferenceId="c-1" />)
-    expect(screen.getByText('Модерация')).toBeInTheDocument()
+    resolveUpdate({})
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Завершить конференцию' })).toBeEnabled()
+    })
   })
 })
 
-describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T081)', () => {
+describe('объединённая панель: гостевая ссылка №52/№53 в футере (009 US4 T081/T107)', () => {
   /** Успешный №52-ответ: публичный маршрут /join/{nonce} + срок TTL. */
   function inviteView(nonce: string): { inviteUrl: string; expiresAt: string } {
     return { inviteUrl: `https://app.example/join/${nonce}`, expiresAt: '2026-10-22T10:00:00Z' }
   }
 
-  /** Генерация №52 по кнопке блока → поле ссылки видно. */
+  /** Генерация №52 по кнопке футера → поле ссылки видно. */
   async function generateInvite(nonce: string): Promise<void> {
     api.createGuestInvite.mockResolvedValueOnce(inviteView(nonce))
     fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
@@ -578,7 +475,7 @@ describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T0
   })
 
   it('(а) по монтажу блок свёрнут; модератор: «Пригласить гостя» → №52 → ссылка/срок/предупреждение', async () => {
-    const { container } = render(<ModerationPanel conferenceId="c-1" />)
+    const { container } = render(<ParticipantsPanel conferenceId="c-1" />)
 
     // свёрнуто: только кнопка генерации, без поля (GET статуса в контракте нет)
     expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeInTheDocument()
@@ -598,7 +495,7 @@ describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T0
 
   it('(б) «Копировать» → clipboard.writeText(inviteUrl) и статус «Скопировано» (output aria-live)', async () => {
     clipboard.writeText.mockResolvedValue(undefined)
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
     await generateInvite('nonce-1')
 
     fireEvent.click(screen.getByRole('button', { name: 'Копировать' }))
@@ -612,7 +509,7 @@ describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T0
 
   it('(в) «Отозвать ссылку» — деструктивное: подтверждение упоминает отключение гостей; Отмена не вызывает; Подтвердить → №53', async () => {
     api.revokeGuestInvite.mockResolvedValue(undefined)
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
     await generateInvite('nonce-1')
 
     fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
@@ -638,7 +535,7 @@ describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T0
   })
 
   it('(г) успешный отзыв — блок свёрнут; 404 guest_invite_not_found — молчаливый коллапс без notice (Q21=A)', async () => {
-    const { container } = render(<ModerationPanel conferenceId="c-1" />)
+    const { container } = render(<ParticipantsPanel conferenceId="c-1" />)
     await generateInvite('nonce-1')
 
     api.revokeGuestInvite.mockResolvedValueOnce(undefined)
@@ -665,7 +562,7 @@ describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T0
   })
 
   it('(д) повторная генерация при живой ссылке — та же кнопка №52, поле заменено новым inviteUrl', async () => {
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
     await generateInvite('nonce-1')
 
     api.createGuestInvite.mockResolvedValueOnce(inviteView('nonce-2'))
@@ -676,10 +573,10 @@ describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T0
     expect(api.createGuestInvite).toHaveBeenCalledTimes(2)
   })
 
-  it('(е) не-модератор блока не видит (наследованный гейт — панель null)', () => {
+  it('(е) не-модератор блока не видит (гейт инструментов панели)', () => {
     const room = defaultRoom()
     room[0] = participant({
-      identity: 'u:11111111-1111-1111-1111-111111111111:conn-1',
+      identity: ALICE_ID,
       name: 'alice',
       metadata: memberMetadata('participant'),
       isLocal: true,
@@ -688,14 +585,14 @@ describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T0
     lkc.useLocalParticipant.mockReturnValue({ localParticipant: room[0] })
     lkc.useParticipants.mockReturnValue(room)
 
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
     expect(screen.queryByRole('button', { name: 'Пригласить гостя' })).not.toBeInTheDocument()
     expect(api.createGuestInvite).not.toHaveBeenCalled()
   })
 
   it('(ж) отказы №52 — нейтральные строки: 403 moderator_required и 409 conference_ended', async () => {
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
     api.createGuestInvite.mockRejectedValueOnce(problemWith('moderator_required'))
     fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
@@ -710,7 +607,7 @@ describe('ModerationPanel: гостевая ссылка №52/№53 (009 US4 T0
   })
 
   it('(з) «в полёте» кнопки блока недоступны — повторные вызовы блокированы (единый pending панели)', async () => {
-    render(<ModerationPanel conferenceId="c-1" />)
+    render(<ParticipantsPanel conferenceId="c-1" />)
 
     // №52 в полёте: повторный клик по «Пригласить гостя» не плодит вызовы
     let resolveCreate: (value: { inviteUrl: string; expiresAt: string }) => void = () => {}

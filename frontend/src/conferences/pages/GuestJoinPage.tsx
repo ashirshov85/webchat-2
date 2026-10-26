@@ -42,8 +42,10 @@
  * экран понятного отказа, что и №54; `name_invalid` — к шагу имени;
  * повторяемые (`conference_full` — квота общая с членами, Q23=A;
  * `rate_limited`; транспорт) — сообщение + «Повторить» на pre-join.
- * Панель модератора гостю не рендерится (прав нет, №48–№53
- * аутентифицированы и гейтнуты ролью); участники и пометка «гость» —
+ * Инструменты модератора гостю не рендерятся (прав нет, №48–№53
+ * аутентифицированы и гейтнуты ролью; кебаби/футер объединённой
+ * панели T107 — только роли модератора, гость — fail-closed
+ * «участник»); участники и пометка «гость» —
  * ParticipantsPanel (бейдж — T051) в слоте sidebar той же правой
  * колонки T106, что у члена (гостевой паритет контура, кнопка
  * сворачивания та же; без инструментов модерации); собственные
@@ -457,7 +459,7 @@ export default function GuestJoinPage({ inviteToken }: GuestJoinPageProps) {
             }
             initialDevices={selection?.devices}
             refreshTicket={refreshTicket}
-            sidebar={<ParticipantsPanel />}
+            sidebar={<ParticipantsPanel conferenceId={slotKey} />}
           >
             <MediaControls onLeave={leave} />
           </ConferenceRoom>
