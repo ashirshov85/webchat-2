@@ -594,6 +594,98 @@ interface ParticipantTileModel {
 }
 
 /**
+ * Слияние camera- и screen-рефов useTracks в слитые тайлы участников
+ * (T084) с микрофонным состоянием (T100) — чистая проекция живых
+ * рефов без хуков. Приоритет screen > camera > placeholder; порядок
+ * стабильный — камеры по порядку useTracks, затем экраны участников
+ * без camera-рефа. Микрофон тайла: local — isMicrophoneEnabled (свой
+ * тумблер T028/серверный мьют отражаются сам), remote — микрофонная
+ * публикация (нет/замучена → выкл; мьют тумблером цели снимает
+ * публикацию, серверный мьют №49 оставляет её замученной — оба пути
+ * дают «выкл», нет публикации = выкл).
+ */
+function buildParticipantTiles(
+  cameraTiles: readonly TrackReferenceOrPlaceholder[],
+  screenTiles: readonly TrackReference[],
+  micTiles: readonly TrackReference[],
+  localIdentity: string,
+  localMicOn: boolean,
+): ParticipantTileModel[] {
+  const micOnByIdentity = new Map<string, boolean>()
+  for (const ref of micTiles) {
+    micOnByIdentity.set(ref.participant.identity, ref.publication.isMuted !== true)
+  }
+  const screenByIdentity = new Map<string, TrackReference>()
+  for (const ref of screenTiles) {
+    screenByIdentity.set(ref.participant.identity, ref)
+  }
+  const micOn = (identity: string): boolean =>
+    identity === localIdentity ? localMicOn : (micOnByIdentity.get(identity) ?? false)
+  const tiles: ParticipantTileModel[] = cameraTiles.map((ref) => {
+    const identity = ref.participant.identity
+    return {
+      identity,
+      participant: ref.participant,
+      cameraRef: ref,
+      screenRef: screenByIdentity.get(identity),
+      micOn: micOn(identity),
+    }
+  })
+  const cameraIdentities = new Set(cameraTiles.map((ref) => ref.participant.identity))
+  for (const [identity, screenRef] of screenByIdentity) {
+    if (!cameraIdentities.has(identity)) {
+      tiles.push({
+        identity,
+        participant: screenRef.participant,
+        cameraRef: undefined,
+        screenRef,
+        micOn: micOn(identity),
+      })
+    }
+  }
+  return tiles
+}
+
+/**
+ * Автопин демонстрации экрана (T078, ключ identity — T084): появление
+ * НОВОГО screen-ключа (переход «не было → появился», включая
+ * собственную демонстрацию) при ПУСТОМ пине разворачивает слитый
+ * тайл демонстрирующего на весь экран без ручного клика — у всех
+ * участников. Детерминированное правило «только при пустом пине»:
+ * ручной пин зрителя стартом демонстрации не перебивается, вторая
+ * одновременная демонстрация не переключает уже автозакреплённую
+ * первую, ручное сворачивание автопина при живой демонстрации
+ * возвращает сетку БЕЗ повторного автопина (решение принимается на
+ * появление нового ключа, не на инвариант «пустой пин + живые экраны»
+ * — иначе цикл); повторная публикация трека (переподключение
+ * демонстрирующего: ключ ушёл из живых и вернулся) считается новой
+ * демонстрацией. Решение — вывод в фазе рендера (derived state,
+ * React): атомарно с рендером, заметившим новый ref, без гонки
+ * эффекта с ручным кликом на первом коммите. Замеченные демонстрации
+ * предыдущего рендера — локальный стейт хука: набор заменяется живыми
+ * ключами, ушедший ключ (завершение/переподключение) снова считается
+ * новым при возвращении.
+ */
+function useScreenShareAutoPin(
+  mediaVisible: boolean,
+  screenIdentities: readonly string[],
+  livePinTarget: boolean,
+  autoPin: (identity: string) => void,
+): void {
+  const [seenScreenKeys, setSeenScreenKeys] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const appearedScreenIdentity = screenIdentities.find((identity) => !seenScreenKeys.has(identity))
+  if (
+    mediaVisible &&
+    (appearedScreenIdentity !== undefined || seenScreenKeys.size !== screenIdentities.length)
+  ) {
+    if (appearedScreenIdentity !== undefined && !livePinTarget) {
+      autoPin(appearedScreenIdentity)
+    }
+    setSeenScreenKeys(new Set(screenIdentities))
+  }
+}
+
+/**
  * Медиа-слой + корневой контур комнаты (T079 — пин-состояние поднято
  * сюда из медиа-слоя; внутри RoomContext — хукам useTracks/
  * useSpeakingParticipants нужна живая комната): аудио всех удалённых
@@ -673,15 +765,10 @@ function ConferenceRoomLive({
   // isMicrophoneEnabled ниже (канонический источник собственного
   // микрофона).
   const micTiles = useTracks([Track.Source.Microphone], { onlySubscribed: false })
-  const micOnByIdentity = new Map<string, boolean>()
-  for (const ref of micTiles) {
-    micOnByIdentity.set(ref.participant.identity, ref.publication.isMuted !== true)
-  }
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant()
   const speakers = useSpeakingParticipants()
   const speakerIdentities = new Set(speakers.map((participant) => participant.identity))
   const [pinnedTileKey, setPinnedTileKey] = useState<string | null>(null)
-  const [seenScreenKeys, setSeenScreenKeys] = useState<ReadonlySet<string>>(() => new Set<string>())
   // Сайдбар участников (T106): развёрнут по умолчанию, сворачивается
   // кнопкой; локальный стейт комнаты без localStorage (паритет пина
   // T074) — на размонтировании звонка исчезает. id колонки — цель
@@ -691,45 +778,21 @@ function ConferenceRoomLive({
   // Медиа-тайлы рендерятся только в живых фазах (как монтаж медиа-слоя
   // до T079): маркер оверлея и автопин следуют тому же окну.
   const mediaVisible = phase === 'connected' || phase === 'reconnecting'
-  // Слияние camera+screen в один тайл по участнику (T084): приоритет
-  // screen > camera > placeholder; порядок стабильный — камеры по
-  // порядку useTracks, затем экраны участников без camera-рефа.
-  // React-ключ — identity: смена набора рефов (переключения камеры/
-  // экрана/заглушки) переиспользует те же DOM-узлы, сетка не
-  // перестраивается, второй тайл участника не рождается.
-  const cameraIdentities = new Set(cameraTiles.map((ref) => ref.participant.identity))
-  const screenByIdentity = new Map<string, TrackReference>()
-  for (const ref of screenTiles) {
-    screenByIdentity.set(ref.participant.identity, ref)
-  }
-  // Микрофон тайла (T100): local — isMicrophoneEnabled (свой тумблер
-  // T028/серверный мьют отражаются сам), remote — микрофонная
-  // публикация (нет/замучена → выкл).
-  const micOn = (identity: string): boolean =>
-    identity === localParticipant.identity
-      ? isMicrophoneEnabled
-      : (micOnByIdentity.get(identity) ?? false)
-  const tiles: ParticipantTileModel[] = cameraTiles.map((ref) => {
-    const identity = ref.participant.identity
-    return {
-      identity,
-      participant: ref.participant,
-      cameraRef: ref,
-      screenRef: screenByIdentity.get(identity),
-      micOn: micOn(identity),
-    }
-  })
-  for (const [identity, screenRef] of screenByIdentity) {
-    if (!cameraIdentities.has(identity)) {
-      tiles.push({
-        identity,
-        participant: screenRef.participant,
-        cameraRef: undefined,
-        screenRef,
-        micOn: micOn(identity),
-      })
-    }
-  }
+  // Слияние camera+screen в один тайл по участнику (T084) и микрофон
+  // тайлов (T100) — чистая проекция живых рефов buildParticipantTiles:
+  // приоритет screen > camera > placeholder, порядок стабильный —
+  // камеры по порядку useTracks, затем экраны участников без
+  // camera-рефа. React-ключ — identity: смена набора рефов
+  // (переключения камеры/экрана/заглушки) переиспользует те же
+  // DOM-узлы, сетка не перестраивается, второй тайл участника не
+  // рождается.
+  const tiles = buildParticipantTiles(
+    cameraTiles,
+    screenTiles,
+    micTiles,
+    localParticipant.identity,
+    isMicrophoneEnabled,
+  )
   // Пин-цель из живых тайлов по identity (undefined — цель исчезла:
   // выход участника из комнаты → обычная сетка; переключения
   // камера↔экран цель НЕ роняют — тайл жив, T084).
@@ -745,24 +808,17 @@ function ConferenceRoomLive({
   const togglePin = (identity: string): void => {
     setPinnedTileKey((current) => (current === identity ? null : identity))
   }
-  // Замеченные демонстрации предыдущего рендера (T078, ключ identity):
-  // набор заменяется живыми ключами — ушедший ключ (завершение/
-  // переподключение) снова считается новым при возвращении.
-  // Появление нового ключа при пустом пине — автопин ровно на первом
-  // рендере появления (derived state, setState в фазе рендера своего
-  // компонента — React перерендерит до коммита; последующие ручные
-  // клики видят уже применённый автопин).
-  const screenIdentities = screenTiles.map((ref) => ref.participant.identity)
-  const appearedScreenIdentity = screenIdentities.find((identity) => !seenScreenKeys.has(identity))
-  if (
-    mediaVisible &&
-    (appearedScreenIdentity !== undefined || seenScreenKeys.size !== screenIdentities.length)
-  ) {
-    if (appearedScreenIdentity !== undefined && !livePinTarget) {
-      setPinnedTileKey(appearedScreenIdentity)
-    }
-    setSeenScreenKeys(new Set(screenIdentities))
-  }
+  // Автопин демонстраций экрана (T078) — useScreenShareAutoPin ниже:
+  // появление нового screen-ключа при пустом пине применяется ровно
+  // на первом рендере появления (derived state, setState в фазе
+  // рендера своего компонента — React перерендерит до коммита;
+  // последующие ручные клики видят уже применённый автопин).
+  useScreenShareAutoPin(
+    mediaVisible,
+    screenTiles.map((ref) => ref.participant.identity),
+    livePinTarget,
+    setPinnedTileKey,
+  )
   // Клавиатурный выход из пин-оверлея (T082, доступность 008): Esc при
   // живом пине сворачивает закреплённый тайл — та же семантика, что
   // кнопка «Свернуть» (setPinnedTileKey(null), ≤1 закреплён, состояние
