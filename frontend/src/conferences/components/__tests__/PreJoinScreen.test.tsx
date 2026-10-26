@@ -508,7 +508,7 @@ describe('PreJoinScreen — уведомления над кнопками де�
   it('без отказов/ошибок уведомлений нет вовсе; пояснения №46 — стек под тумблерами и ДО устройств (регресс)', () => {
     camera.createLocalVideoTrack.mockResolvedValue(fakeVideoTrack())
     renderScreen({ mode: 'audio' })
-    expect(document.querySelectorAll('output.conference-prejoin-notice').length).toBe(0)
+    expect(document.querySelectorAll('output.conference-prejoin-notice')).toHaveLength(0)
     cleanup()
 
     renderScreen({ mode: 'audio', restrictions: restrictions({ micRestricted: true }) })
@@ -518,7 +518,7 @@ describe('PreJoinScreen — уведомления над кнопками де�
     }
     // единственный output — пояснение №46, живёт ВНУТРИ стека ограничений
     const outputs = dialog.querySelectorAll('output.conference-prejoin-notice')
-    expect(outputs.length).toBe(1)
+    expect(outputs).toHaveLength(1)
     const stack = dialog.querySelector('.conference-prejoin-restrictions')
     const toggles = dialog.querySelector('.conference-prejoin-toggles')
     const devices = dialog.querySelector('.conference-prejoin-devices')

@@ -101,7 +101,7 @@ import { Fragment, useId, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ContextMenu, type MenuItem } from '../../ui/ContextMenu'
 import { ConfirmDialog } from '../../ui/ConfirmDialog'
-import { ModalShell } from '../../ui/ModalShell'
+import { ModalShell, type ModalFormId } from '../../ui/ModalShell'
 import {
   createGuestInvite,
   endConference,
@@ -876,6 +876,13 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
     ]
   }
 
+  let modalFormId: ModalFormId | null = null
+  if (confirmation !== null) {
+    modalFormId = 'confirm'
+  } else if (inviteModal) {
+    modalFormId = 'guest-invite'
+  }
+
   return (
     <section className="conference-participants" aria-labelledby={titleId}>
       <h2 className="conference-participants-title" id={titleId}>
@@ -946,7 +953,7 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
           'confirm' БЕЗ второй подложки (stackPolicy одна на
           приложение), отмена подтверждения возвращает к ссылке */}
       <ModalShell
-        formId={confirmation !== null ? 'confirm' : inviteModal ? 'guest-invite' : null}
+        formId={modalFormId}
         title={confirmation !== null ? confirmationUi(confirmation).title : 'Гостевая ссылка'}
         onClose={() => {
           if (confirmation !== null) {

@@ -252,11 +252,11 @@ export function ChatListPanel({
       let next = rows
       for (const key of edges) {
         const active = key === 'chats-loading' ? listLoading : syncing
-        next = active
-          ? next.includes(key)
-            ? next
-            : [...next, key]
-          : next.filter((row) => row !== key)
+        if (!active) {
+          next = next.filter((row) => row !== key)
+        } else if (!next.includes(key)) {
+          next = [...next, key]
+        }
       }
       return next
     })

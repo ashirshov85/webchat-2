@@ -15,7 +15,8 @@
  * курсив Old Standard TT 12.5px по центру на --muted-3) — та же
  * лексика, что у «Загрузка чатов…»; сайдбар-паддинг 10px даёт
  * масштаб `.chat-panel .messenger-empty` без собственных правил.
- * Замки a11y сохранены дословно: role=status + текст live-region.
+ * Замки a11y сохранены дословно: неявный role=status элемента <output>
+ * + текст live-region.
  */
 import './states.css'
 
@@ -28,9 +29,5 @@ export function SyncIndicator({ syncing }: SyncIndicatorProps) {
   if (!syncing) {
     return null
   }
-  return (
-    <output role="status" className="messenger-empty">
-      Синхронизация сообщений…
-    </output>
-  )
+  return <output className="messenger-empty">Синхронизация сообщений…</output>
 }
