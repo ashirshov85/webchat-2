@@ -24,6 +24,12 @@ import { activeConferenceId, leaveActiveConference } from '../../hooks/useConfer
  * удалена (паритет ConferencePage) — joined-фазу маркирует заглушка
  * комнаты (data-testid="conference-room"): ранний сигнал, рендерится
  * сразу при join.
+ *
+ * T112: терминальный отказ ссылки (фаза refused) — пластина «звонок
+ * окончен» с тихой подсказкой p.guest-join-refused-hint «Можно
+ * закрыть эту страницу» для ВСЕХ причин; повторяемые ошибки
+ * (infoError №54 / joinError №55 с «Повторить») — прежняя аварийная
+ * разметка .conference-error без подсказки.
  */
 
 const conferences = vi.hoisted(() => ({
@@ -258,6 +264,10 @@ describe('GuestJoinPage (009 US4 T049/T052)', () => {
       render(<GuestJoinPage inviteToken={INVITE_TOKEN} />)
 
       expect(await screen.findByRole('alert')).toHaveTextContent(message)
+      // T112: терминальная пластина с тихой подсказкой — у гостя нет
+      // следующего шага (ни чата, ни кнопки — FR-010)
+      expect(screen.getByText('Можно закрыть эту страницу')).toHaveClass('guest-join-refused-hint')
+      expect(screen.getByRole('alert').closest('div')).toHaveClass('guest-join-refused')
       expect(screen.queryByLabelText('Ваше имя')).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Войти' })).not.toBeInTheDocument()
       expect(conferences.joinConferenceByInvite).not.toHaveBeenCalled()
@@ -269,6 +279,8 @@ describe('GuestJoinPage (009 US4 T049/T052)', () => {
     render(<GuestJoinPage inviteToken={INVITE_TOKEN} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Ссылка недействительна')
+    // T112: подсказка присутствует и для единого invalid-отказа
+    expect(screen.getByText('Можно закрыть эту страницу')).toHaveClass('guest-join-refused-hint')
     expect(screen.queryByLabelText('Ваше имя')).not.toBeInTheDocument()
     expect(conferences.joinConferenceByInvite).not.toHaveBeenCalled()
   })
@@ -278,6 +290,10 @@ describe('GuestJoinPage (009 US4 T049/T052)', () => {
     render(<GuestJoinPage inviteToken={INVITE_TOKEN} />)
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Не удалось проверить ссылку')
+    // T112: повторяемая ошибка — прежняя аварийная разметка без
+    // терминальной подсказки
+    expect(screen.queryByText('Можно закрыть эту страницу')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert').closest('div')).not.toHaveClass('guest-join-refused')
 
     conferences.getInviteInfo.mockResolvedValueOnce(inviteInfo())
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))
@@ -312,6 +328,8 @@ describe('GuestJoinPage (009 US4 T049/T052)', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Войти' }))
 
       expect(await screen.findByRole('alert')).toHaveTextContent(message)
+      // T112: подсказка терминальной пластины — для всех причин №55
+      expect(screen.getByText('Можно закрыть эту страницу')).toHaveClass('guest-join-refused-hint')
       expect(screen.queryByRole('button', { name: 'Войти' })).not.toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Повторить' })).not.toBeInTheDocument()
       expect(activeConferenceId()).toBeNull()
@@ -331,6 +349,9 @@ describe('GuestJoinPage (009 US4 T049/T052)', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Конференция заполнена — попробуйте позже',
     )
+    // T112: повторяемая ошибка — аварийная разметка без подсказки
+    expect(screen.queryByText('Можно закрыть эту страницу')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert').closest('div')).not.toHaveClass('guest-join-refused')
     expect(screen.getByRole('button', { name: 'Войти' })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Повторить' }))

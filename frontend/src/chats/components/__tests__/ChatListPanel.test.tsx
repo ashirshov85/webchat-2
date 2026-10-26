@@ -249,42 +249,105 @@ describe('ChatListPanel rows and the open dialog', () => {
  * не контент списка, поэтому виден в ОБОИХ режимах панели (обычный
  * список и псевдо-поиск T068). Без пропса полосы нет — все прежние
  * потребители панели зелёные без правок.
+ *
+ * 009 (T110): строка синхронизации — тихая подпись `.messenger-empty`
+ * (states.css, FR-032) и рендерится в ОБЩЕЙ упорядоченной очереди
+ * строк состояний сайдбара с «Загрузка чатов…»: порядок — по моменту
+ * возникновения события (кто начался раньше — выше), закрытие —
+ * независимо, по falling edge СВОЕГО флага.
  */
 describe('ChatListPanel catch-up stripe (009, T104)', () => {
   it('renders the SyncIndicator under the search row while `syncing` runs', () => {
     const { container } = render(panelElement([chatItem()], { syncing: true }))
     const panel = container.querySelector('.chat-panel')
     const searchRow = container.querySelector('.search-row')
-    const indicator = container.querySelector('.sync-indicator')
+    const indicator = screen.getByText('Синхронизация сообщений…')
 
-    expect(indicator).not.toBeNull()
-    expect(panel?.contains(indicator as Node)).toBe(true)
+    expect(panel?.contains(indicator)).toBe(true)
     // T104: DOM-порядок панели — .search-row, затем полоса, затем список.
     expect(
       (searchRow as Node).compareDocumentPosition(indicator as Node) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
-    expect(indicator).toHaveTextContent('Синхронизация сообщений…')
+    // T110: тихая подпись, не латунная плашка.
+    expect(indicator).toHaveClass('messenger-empty')
+    expect(screen.getByRole('status')).toBe(indicator)
   })
 
   it('renders no stripe without the prop (default false)', () => {
-    const { container } = render(panelElement([chatItem()]))
+    render(panelElement([chatItem()]))
 
-    expect(container.querySelector('.sync-indicator')).toBeNull()
+    expect(screen.queryByText('Синхронизация сообщений…')).toBeNull()
   })
 
   it('keeps the stripe under the search row in the pseudo-search mode', () => {
     const { container } = render(panelElement([chatItem()], { searchMode: true, syncing: true }))
     const searchRow = container.querySelector('.search-row')
-    const indicator = container.querySelector('.sync-indicator')
+    const indicator = screen.getByText('Синхронизация сообщений…')
 
     // Режим псевдо-поиска не прячет глобальный статус дозагрузки.
-    expect(indicator).not.toBeNull()
     expect(
       (searchRow as Node).compareDocumentPosition(indicator as Node) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     expect(screen.getByRole('list', { name: 'Результаты поиска' })).toBeVisible()
+  })
+})
+
+describe('ChatListPanel quiet state rows — очередь по возникновению (009, T110)', () => {
+  it('№12 в полёте при монте, затем подъём syncing — «Загрузка чатов…» ВЫШЕ «Синхронизации…»', () => {
+    const { rerender } = render(panelElement([], { status: 'loading' }))
+    expect(screen.getByText('Загрузка чатов…')).toBeVisible()
+
+    rerender(panelElement([], { status: 'loading', syncing: true }))
+    const loading = screen.getByText('Загрузка чатов…')
+    const syncing = screen.getByText('Синхронизация сообщений…')
+
+    // Первым возникло событие загрузки — его строка выше (DOM-порядок).
+    expect(loading.compareDocumentPosition(syncing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('syncing при готовом списке, затем рефетч №12 — «Синхронизация…» ВЫШЕ «Загрузки чатов…»', () => {
+    const { rerender } = render(panelElement([chatItem()], { syncing: true }))
+    expect(screen.getByText('Синхронизация сообщений…')).toBeVisible()
+
+    rerender(panelElement([chatItem()], { status: 'loading', syncing: true }))
+    const loading = screen.getByText('Загрузка чатов…')
+    const syncing = screen.getByText('Синхронизация сообщений…')
+
+    expect(syncing.compareDocumentPosition(loading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('falling edge загрузки убирает только её строку — синхронизация остаётся', () => {
+    const { rerender } = render(panelElement([], { status: 'loading', syncing: true }))
+
+    rerender(panelElement([chatItem()], { status: 'ready', syncing: true }))
+
+    expect(screen.queryByText('Загрузка чатов…')).toBeNull()
+    expect(screen.getByText('Синхронизация сообщений…')).toBeVisible()
+  })
+
+  it('falling edge синхронизации убирает только её строку — загрузка остаётся', () => {
+    const { rerender } = render(panelElement([], { status: 'loading', syncing: true }))
+
+    rerender(panelElement([], { status: 'loading', syncing: false }))
+
+    expect(screen.queryByText('Синхронизация сообщений…')).toBeNull()
+    expect(screen.getByText('Загрузка чатов…')).toBeVisible()
+  })
+
+  it('searchMode: «Загрузки чатов» в поиске не существует — одна тихая sync-строка', () => {
+    const { container } = render(
+      panelElement([], { searchMode: true, syncing: true, status: 'loading' }),
+    )
+    const searchRow = container.querySelector('.search-row')
+    const indicator = screen.getByText('Синхронизация сообщений…')
+
+    expect(screen.queryByText('Загрузка чатов…')).toBeNull()
+    expect(
+      (searchRow as Node).compareDocumentPosition(indicator as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
   })
 })
 

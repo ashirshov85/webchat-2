@@ -44,18 +44,24 @@
  *    it below like every other prototype-derived surface; the
  *    implemented snapshot is retired.
  *
+ * 009 (T110): the catch-up row of the sidebar is a QUIET
+ * `.messenger-empty` signature (states.css, FR-032 — the brass strip
+ * and its flick lamp of 008 T052 are dismantled), so the implemented
+ * baseline `us4-sync-indicator.png` is re-captured against the quiet
+ * lexicon; the steady-lit mechanics of the capture are unchanged.
+ *
  * Determinism of the implemented states: the outbox records are seeded
  * straight into `webchat.chats.outbox.<userId>` localStorage by an init
  * script (the harness wipe runs first — init scripts execute in
  * registration order), the page clock is frozen on the demo day
  * (19 сентября 2026, 19:30 +03:00 — after the last demo message), so
  * the seeded `retryAt` (+45 s) reads a constant countdown and the
- * deferred auto-retry never fires inside the shot; the sync indicator
+ * deferred auto-retry never fires inside the shot; the sync row
  * is held lit by opening the №18 stream with a completed keep-alive
  * body (every (re)open fires `onOpen` → the №26 catch-up) while the
  * sync POST itself is routed to hang — the single-flight cycle never
- * completes, the strip stays steady. `animations: 'disabled'` cancels
- * the strip's flick lamp; capture options mirror the T016 recipe.
+ * completes, the row stays steady. Capture options mirror the T016
+ * recipe.
  */
 import { expect } from '@playwright/test'
 import type { Page } from '@playwright/test'
@@ -192,11 +198,11 @@ visualTest.describe('T060 — US4 surfaces', () => {
     await expect(page.locator('.message-list').getByText('не отправлено')).toBeVisible()
     await expect(page.locator('.message-input-retry')).toHaveText('Повтор через 45 с')
     expect(await page.evaluate(() => Date.now())).toBe(FROZEN_MS)
-    // The catch-up strip of the sidebar stays out of the shot by
+    // The catch-up row of the sidebar stays out of the shot by
     // construction (the aborted №18 never fires onOpen, so no №26
     // cycle runs); the shot waits it dark regardless — a cheap guard
     // against any lingering cycle shifting the sidebar below.
-    await expect(page.locator('.sync-indicator')).toHaveCount(0)
+    await expect(page.locator('.chat-panel output.messenger-empty')).toHaveCount(0)
     // T085 (bug 7): the open seat folds «alex» at its last read row —
     // the seeded outbox rows land right below the fold, out of frame.
     // The capture's subject is the outbox states, so the feed parks
@@ -246,19 +252,32 @@ visualTest.describe('T060 — US4 surfaces', () => {
     onlyProject(DESKTOP)
     const { page } = messenger
     // The №26 catch-up never completes (its POST hangs), so the
-    // single-flight `syncing` flag — and the strip — stay lit; the №18
-    // stream opens with a completed keep-alive body, firing `onOpen`
-    // on every reconnect attempt (each joins the in-flight cycle).
+    // single-flight `syncing` flag — and the quiet row — stay lit. The
+    // №18 stream opens with a completed body carrying the contract's
+    // opening `connected` frame (the T093 cycle trigger — replayed to
+    // the late useSync subscriber, unlike the raw onOpen); the body
+    // ends at once, so the SSE client reconnects on the `retry: 3000`
+    // cadence and every fresh frame joins the in-flight cycle.
     await page.route('**/api/v1/users/me/sync', () => {})
     await page.route('**/api/v1/users/me/events', (route) =>
       route.fulfill({
         status: 200,
         headers: { 'content-type': 'text/event-stream' },
-        body: ': keep-alive\n\n',
+        body: [
+          'retry: 3000',
+          '',
+          'event: connected',
+          'data: {"connectionId":"7c9e6679-7425-40de-944e-e07fc1f90ae7"}',
+          '',
+          ': keep-alive',
+          '',
+          '',
+        ].join('\n'),
       }),
     )
     await page.reload()
-    await expect(page.locator('.sync-indicator')).toBeVisible()
+    // T110: тихая подпись .messenger-empty вместо латунной плашки.
+    await expect(page.locator('.chat-panel output.messenger-empty')).toBeVisible()
     await expect(messenger.chatItems).toHaveCount(AETHERGRAM.chatList.length)
     await openBootChat(messenger)
     await expect(page).toHaveScreenshot('us4-sync-indicator.png', SHOT)

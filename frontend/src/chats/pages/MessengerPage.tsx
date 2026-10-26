@@ -70,7 +70,9 @@
  * `message.created` frame acks its `seq` and advances the local
  * cursor — realtime and catch-up move the delivery position alike.
  * The SyncIndicator (T020) lights up UNDER the panel's search row
- * (inside ChatListPanel, 009 T104) while a cycle runs.
+ * (inside ChatListPanel, 009 T104) while a cycle runs — a quiet
+ * `.messenger-empty` signature (states.css, FR-032) queued by event
+ * order with the №12 loading row (009 T110).
  *
  * US2 queue overflow (feature 005, T028, FR-005): the panel-level
  * QueueOverflowBanner listens to the outbox eviction events of T026 —
@@ -484,6 +486,9 @@ const MODAL_TITLES: Record<ModalFormId, string> = {
   // 008b T046: житель-модаль смены пароля (кнопка из «Мой профиль»).
   'password-change': 'Смена пароля',
   confirm: 'Подтверждение',
+  // 009 T113: житель конференц-модуля (ParticipantsPanel) — в
+  // мессенджере не открывается, ключ обязателен Record'у обитателей.
+  'guest-invite': 'Гостевая ссылка',
 }
 
 /** Проекция внутренних форм «Контактов» (ModalForm) в обитателей оболочки (T034). */
@@ -1353,7 +1358,8 @@ function MessengerMachine() {
 
   // The §3.1 catch-up loop (feature 005): runs on every SSE (re)open,
   // its `syncing` drives the SyncIndicator rendered by ChatListPanel
-  // under the search row (009 T104).
+  // under the search row (009 T104) — a quiet `.messenger-empty`
+  // signature queued by event order with the №12 loading row (T110).
   const { syncing, error: syncError, onChatUpdate } = useSync(currentUserId)
   const realtime = useRealtime()
 

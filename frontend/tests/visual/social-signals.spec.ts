@@ -489,8 +489,8 @@ visualTest.describe('T040 — 008a US2: the typing row', () => {
 
       // The delivering connect's `onOpen` re-runs the №12/№36/sync
       // convergence refetches (all fixture-answered, pixel-neutral) —
-      // wait out the SyncIndicator strip before the shot.
-      await expect(messenger.page.locator('.sync-indicator')).toHaveCount(0)
+      // wait out the quiet sync row (T110) before the shot.
+      await expect(messenger.page.locator('.chat-panel output.messenger-empty')).toHaveCount(0)
 
       // The open seat parked the feed at its last row and the row
       // mounts BELOW it (no re-seat: the T079 autoscroll keys on
@@ -719,10 +719,10 @@ visualTest.describe('T060 — 008a US4: the bell on/off', () => {
       // no toast (the switch happened on ANOTHER device), no №42. The
       // delivering connect's `onOpen` re-runs the №12/№36/sync
       // convergence refetches (all fixture-answered, pixel-neutral) —
-      // wait out the SyncIndicator strip before the shot.
+      // wait out the quiet sync row (T110) before the shot.
       await expect(bell).toHaveClass('ch-btn off')
       await expect(bell).toHaveAttribute('aria-pressed', 'false')
-      await expect(page.locator('.sync-indicator')).toHaveCount(0)
+      await expect(page.locator('.chat-panel output.messenger-empty')).toHaveCount(0)
       await expect(page.locator('.toast.show')).toHaveCount(0)
       await expect(page).toHaveScreenshot('008a-bell-frame-off.png', SHOT)
     },

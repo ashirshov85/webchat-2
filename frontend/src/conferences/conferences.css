@@ -86,9 +86,11 @@ body:has([data-conference-id], [data-guest-join]) section[data-guest-join] {
   min-height: 0;
 }
 
-/* Каркас комнаты (T075 + T106): статус-строки + полоса кнопки панели
-   (T106) + рабочая область .conference-main (тайлы + сайдбар) + слот
-   MediaControls (T028) всегда внизу по центру;
+/* Каркас комнаты (T075 + T106 + T114): полоса кнопки панели (T106) +
+   рабочая область .conference-main (тайлы + сайдбар) + статус-строки
+   уведомлений (статус фаз/потери связи, media-предупреждение, тост
+   conference.warning — T114: ПОД рабочей областью, когда она
+   смонтирована) + слот MediaControls (T028) всегда внизу по центру;
    T075 — растёт внутри .conference-joined на оставшуюся высоту окна.
    min-height:0 обязателен: без него flex-automatic-minimum (контент)
    выталкивает комнату за высоту окна (T075). */
@@ -556,8 +558,9 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
  * (только svg 17px сайдбара с
  * шевроном: ‹ развёрнута / › свёрнута; без текста, рамки, фона и
  * теней — уточнение пользователя) в полосе .conference-toggle-row
- * над рабочей областью справа, прижата к ней (компенсация gap колонки
- * до ~2px); свёрнутое состояние — нативный [hidden] (гвард ниже
+ * над рабочей областью справа, прижата к ней по промеру T115 (видимый
+ * зазор глиф→рамка ≈ 2.5px; inset справа — над прямой частью рамки,
+ * не над скруглением); свёрнутое состояние — нативный [hidden] (гвард ниже
  * обязателен: авторский display:flex сильнее UA-стиля атрибута),
  * тайлы занимают всю ширину; состояние — локальный стейт комнаты
  * без localStorage (паритет пина T074). В полноэкранном пине T079
@@ -568,13 +571,21 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
  * T079). Гостевой паритет: GuestJoinPage монтирует тот же контур.
  * ============================================================ */
 
-/* Полоса места над окном конференции: кнопка-иконка справа, прижата
-   к рабочей области (компенсирует gap колонки комнаты до 2px). */
+/* Полоса места над окном конференции (пересмотр промера T115):
+   кнопка-иконка справа, прижата к рабочей области. Вертикаль:
+   компенсация calc(-1px - var(--gap-frame)) гасит gap колонки И
+   нижнее поле глифа svg (~3.5px: viewBox 24, rect y=5..19) — box
+   перекрывает рамку на 1px (поле прозрачно), видимый зазор
+   иконка→рамка ≈ 2.5px вместо «парящих» ~5.5px T106. Горизонталь:
+   inset справа calc(var(--r-machine) + 2px) — кнопка над ПРЯМОЙ
+   частью верхней рамки (сайдбар --r-frame 8px, машина сетки
+   --r-machine 18px в свёрнутом состоянии), не над скруглением. */
 .conference-toggle-row {
   display: flex;
   justify-content: flex-end;
   flex: none;
-  margin-bottom: calc(2px - var(--gap-frame));
+  padding-right: calc(var(--r-machine) + 2px);
+  margin-bottom: calc(-1px - var(--gap-frame));
 }
 
 /* Кнопка панели участников: минимум — только svg-иконка 17px (без
@@ -763,9 +774,13 @@ section[data-guest-join] {
 }
 
 /* Внутренняя рамка-вкладыш машины (прототип .machine::before): общая
- * для панели управления (T098), сетки тайлов (T099) и форм pre-join/
- * шага имени гостя (T101) — константа вкладыша задана один раз на
- * корневых секциях конференции. */
+ * для панели управления (T098), сетки тайлов (T099), форм pre-join/
+ * шага имени гостя (T101) и терминальных пластин «Конференция
+ * завершена» T112 (.conference-ended участника / .guest-join-refused
+ * гостя) — константа вкладыша задана один раз на корневых секциях
+ * конференции. */
+.conference-ended::before,
+.guest-join-refused::before,
 .conference-prejoin::before,
 .guest-join-name::before,
 .conference-controls::before,
@@ -1374,21 +1389,52 @@ section[data-guest-join] {
   cursor: default;
 }
 
-/* Предупреждение pre-join (отказ доступа к камере — Q6=A; <output> = role=status). */
+/* Уведомление pre-join (T111) — тихая латунная плашка-прибор в слоте
+   МЕЖДУ селектами устройств (.conference-prejoin-devices) и кнопками
+   действий (.conference-prejoin-actions — перенос из-под кнопок;
+   прототип tmp/conference-prejoin.html): предупреждение об отказе
+   доступа (T032, Q6=A) читается до кнопок, ошибка переключения
+   камеры — у селекта камеры. Закрывает ВСЕ box-свойства глобального
+   element-правила output, [role='status'] (index.css — зелёная плашка
+   auth-лексики; тот же корень/паттерн, что .guest-join-live T102):
+   рамка gold-dark в полсилы, заливка поверхности превью в
+   полпрозрачности (как фон пина тайла T074), радиус --r-panel как у
+   селектов/тумблеров; глиф-манометр ::before с data-URI (разметка
+   <output> не меняется). Текст прежний курсив --muted — предупреждение
+   остаётся некрикливым (вход доступен, T032 Q6=A). Тот же класс носят
+   пояснения блокировок №46 (T033) — плашку наследуют автоматически. */
 .conference-prejoin-notice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   margin: 0;
-  font: italic 12px var(--font-body);
+  padding: 7px 12px;
+  border: 1px solid rgba(138, 106, 44, 0.5);
+  border-radius: var(--r-panel);
+  background: rgba(6, 5, 3, 0.45);
+  font: italic 12px/1.45 var(--font-body);
   color: var(--muted);
+}
+
+.conference-prejoin-notice::before {
+  content: '';
+  flex: none;
+  width: 15px;
+  height: 15px;
+  opacity: 0.8;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cg fill='none' stroke='%23c9a24a' stroke-linecap='round'%3E%3Cpath d='M2.2 12.2a5.8 5.8 0 0 1 11.6 0' stroke-width='1.4'/%3E%3Cpath d='M8 11.4l3-4' stroke-width='1.2'/%3E%3C/g%3E%3Ccircle cx='8' cy='12' r='1.1' fill='%23c9a24a'/%3E%3C/svg%3E")
+    center/contain no-repeat;
 }
 
 /* Пояснения блокировки источников по №46 MeView (T033, FR-007):
    «Все источники» (доменное speechRestricted, T094; Q4=A) или точечные
-   restricted-поля — компактный стек строк под тумблерами (role=status
-   каждого <output>). */
+   restricted-поля — компактный стек плашек под тумблерами (role=status
+   каждого <output>; вид наследует .conference-prejoin-notice T111,
+   зазор 6px под плашки с рамкой). */
 .conference-prejoin-restrictions {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 /* ============================================================
@@ -1685,11 +1731,13 @@ section[data-guest-join] {
 }
 
 /* ============ ФУТЕР ИНСТРУМЕНТОВ ПАНЕЛИ (T107, только модератору):
- * ПОД списком и всегда видим — прокрутка живёт только у списка,
- * элементы футера flex:none не сжимаются и не прокручиваются.
+  * ПОД списком и всегда видим — прокрутка живёт только у списка,
+  * элементы футера flex:none не сжимаются и не прокручиваются.
   * Лексика кнопок переиспользована из панели модерации T042
   * (демонтирована); подтверждения деструктивных действий с T109 —
   * модаль ui/ConfirmDialog (кнопки .m-btn), НЕ conferences.css.
+  * T113: «Гостевая ссылка» — standalone-кнопка (обёртка fieldset
+  * демонтирована), содержимое блока переехало в модаль 'guest-invite'.
   * ============ */
 
 .conference-participants-divider {
@@ -1701,18 +1749,14 @@ section[data-guest-join] {
 }
 
 /* ============================================================
- * Кнопки/строка отказа — переиспользованная лексика футера
- * объединённой панели (T042 → T107): деструктивный акцент кнопок
- * (№48/№53) и нейтральная строка отказов (role=status). Кнопки
- * подтверждения деструктивных действий после T109 живут в модали
- * ui/ConfirmDialog (лексика .m-btn 008), НЕ здесь.
- * ============================================================ */
-
-/* Деструктивное (кик/завершение/отзыв) — акцент отказа. */
-.conference-moderation-button-danger {
-  border-color: var(--err);
-  color: var(--err);
-}
+  * Кнопки/строка отказа — переиспользованная лексика футера
+  * объединённой панели (T042 → T107): деструктивный акцент кнопок
+  * (№48/№53) и нейтральная строка отказов (role=status). Кнопки
+  * подтверждения деструктивных действий после T109 живут в модали
+  * ui/ConfirmDialog (лексика .m-btn 008), НЕ здесь; латунный
+  * danger-акцент старой кнопки отзыва демонтирован в T113 вместе
+  * с инлайн-кнопкой («Отозвать» модали — .m-btn danger).
+  * ============================================================ */
 
 .conference-moderation-end {
   flex: none;
@@ -1733,95 +1777,62 @@ section[data-guest-join] {
 }
 
 /* ============================================================
-  * Блок «Гостевая ссылка» в футере объединённой панели (T081,
-  * US4, №52/№53; T107 — переезд из панели модерации): по монтажу
-  * свёрнут в кнопку «Пригласить гостя» (GET статуса ссылки в
-  * контракте нет); после №52 — предупреждение Q17=A/Q13=B,
-  * readonly-поле inviteUrl (ручное выделение — страховка «Копировать»),
- * срок действия локальным временем (ui/time) и «Отозвать ссылку»
- * через подтверждение в модали (T109; деструктивное — отключение
- * гостей).
+  * Гостевая ссылка (T081 → T113): standalone-кнопка футера —
+  * лексика .conference-moderation-end (геометрия), но в текущем
+  * латунном акценте (НЕ красная); рамка-обёртка fieldset и
+  * инлайн-разворот демонтированы — содержимое (readonly inviteUrl/
+  * срок/«Копировать»/«Отозвать»/«Скопировано») переехало в МОДАЛЬ
+  * формы 'guest-invite' (единая оболочка ModalShell 008; кнопки —
+  * общая лексика .m-btn/.modal-btns confirm-dialog.css, НЕ здесь).
+  * Повторное открытие показывает ссылку из стейта панели БЕЗ №52 —
+  * hint перегенерации Q17=A не нужен (новая ссылка — только после
+  * отзыва №53).
   * ============================================================ */
 
-.conference-guest-invite {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  min-width: 0;
+.conference-guest-invite-open {
   flex: none;
-  padding: 8px 8px 10px;
-  border: 1px solid var(--gold-dark);
-  border-radius: var(--r-panel);
-}
-
-.conference-guest-invite-generate {
   align-self: flex-start;
-  padding: 4px 10px;
+  padding: 6px 14px;
   border: 1px solid var(--gold-dark);
   border-radius: var(--r-panel);
   background: var(--input-bg);
-  font: 12px var(--font-body);
+  font: 13px var(--font-body);
   color: var(--gold-light);
   cursor: pointer;
 }
 
-.conference-guest-invite-hint {
-  margin: 0;
-  font: italic 11.5px var(--font-body);
-  color: var(--muted);
-}
+/* ============================================================
+  * Тело модали «Гостевая ссылка» (T113): поле ссылки на всю ширину
+  * модали (ручное выделение — страховка «Копировать»), срок
+  * локальным временем (ui/time) и статус «Скопировано».
+  * ============================================================ */
 
-.conference-guest-invite-url {
+.conference-guest-modal-url {
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 8px;
+  padding: 5px 9px;
   border: 1px solid var(--line);
   border-radius: var(--r-panel);
   background: var(--input-bg);
-  font: 12px var(--font-body);
+  font: 12.5px var(--font-body);
   color: var(--cream);
 }
 
-.conference-guest-invite-expires {
+.conference-guest-modal-expires {
   margin: 0;
   font: 12px var(--font-body);
   color: var(--muted);
-}
-
-.conference-guest-invite-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-}
-
-.conference-guest-invite-actions .conference-guest-invite-copy,
-.conference-guest-invite-actions .conference-guest-invite-revoke {
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-panel);
-  background: var(--input-bg);
-  font: 12px var(--font-body);
-  color: var(--cream);
-  cursor: pointer;
-}
-
-/* Отзыв — деструктивный акцент (класс conference-moderation-button-danger
-   красит текст/рамку, здесь — базовая геометрия кнопки блока). */
-.conference-guest-invite-actions .conference-guest-invite-revoke {
-  border-color: var(--err);
-  color: var(--err);
 }
 
 /* Статус «Скопировано» (<output> = role=status, aria-live=polite). */
-.conference-guest-invite-copied {
+.conference-guest-modal-copied {
   font: 12px var(--font-body);
   color: var(--gold-light);
 }
 
-/* 008: фокус с клавиатуры — поле ссылки блока (кнопки — общим
-   правилом .conference-participants button:focus-visible выше). */
-.conference-guest-invite-url:focus-visible {
+/* 008: фокус с клавиатуры — поле ссылки модали (кнопки — общим
+   правилом .modal .m-btn:focus-visible confirm-dialog.css). */
+.conference-guest-modal-url:focus-visible {
   outline: 2px solid var(--gold-light);
   outline-offset: 2px;
 }
@@ -1839,7 +1850,11 @@ section[data-guest-join] {
 }
 
 /* Блок ошибки/отказа (ConferencePage №45/№47 и гостевые экраны №54/№55):
- * панель с понятным сообщением и повтором, где он допустим. */
+ * панель с понятным сообщением и повтором, где он допустим.
+ * ГВАРД T112: правило — только для ПОВТОРЯЕМЫХ ошибок (сбой
+ * загрузки/подключения с «Повторить»); терминальные состояния
+ * («Конференция завершена» и причины отказа ссылки №54/№55) ушли на
+ * пластины корпуса .conference-ended/.guest-join-refused ниже. */
 .conference-error {
   display: flex;
   flex-direction: column;
@@ -1848,22 +1863,6 @@ section[data-guest-join] {
   margin: 0 auto;
   padding: 12px 16px;
   border: 1px solid var(--err);
-  border-radius: var(--r-frame);
-  background: var(--panel-bg);
-}
-
-/* Терминальное состояние «Конференция завершена» (T071/T076 — подпись
- * с длительностью; T095/FR-019 — кнопка «Вернуться в чат» под ней,
- * без автоперехода): центрированная колонка, нейтральная панель. */
-.conference-ended {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  width: min(560px, 100%);
-  margin: 0 auto;
-  padding: 12px 16px;
-  border: 1px solid var(--line);
   border-radius: var(--r-frame);
   background: var(--panel-bg);
 }
@@ -1883,6 +1882,161 @@ section[data-guest-join] {
   font: 13px var(--font-body);
   color: var(--cream);
   cursor: pointer;
+}
+
+/* ============================================================
+ * ТЕРМИНАЛЬНЫЕ ПЛАСТИНЫ «КОНФЕРЕНЦИЯ ЗАВЕРШЕНА» (T112,
+ * US1/US4; прототипы tmp/conference-ended-{participant,guest}.html —
+ * при расхождениях побеждает прототип, по образцу FR-001 008):
+ * карточка участника (.conference-ended) и терминальный отказ гостя
+ * (.guest-join-refused) — единая пластина корпуса machine (T101:
+ * заливка + backdrop-blur + латунная окантовка + теневое кольцо +
+ * рамка-вкладыш ::before — общий список селекторов выше) с
+ * глифом-колоколом «звонок окончен» ::after (геометрия приборных
+ * бейджей .cp-sig T108, увеличенная; кольцо — выключенная латунь
+ * #55452c: машина в покое, без золотого свечения «вкл»). Разметка
+ * НЕ меняется (у участника output + button, у гостя p[role=alert] +
+ * добавленная подсказка): глобальные element-правила index.css
+ * (output/[role='status'] зелёная плашка auth-лексики, синий button,
+ * красная [role=alert]-плашка) перекрываются классами — паттерн
+ * .guest-join-live T102; повторяемые ошибки .conference-error выше
+ * остаются в аварийной лексике.
+ * ============================================================ */
+
+/* Пластина участника: подпись с длительностью T071 + «Вернуться в
+ * чат» T095/FR-019 под ней. margin: auto центрирует по обеим осям
+ * фазовой секции (паттерн T096), контент центрирован; ширина уже
+ * pre-join — контента мало. */
+.conference-ended {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: min(420px, 100%);
+  margin: auto;
+  padding: 30px 24px 28px;
+  border: var(--conference-machine-border);
+  border-radius: var(--conference-machine-radius);
+  background: var(--conference-machine-bg);
+  backdrop-filter: var(--conference-machine-blur);
+  box-shadow: var(--conference-machine-shadow);
+  color: var(--cream);
+  text-align: center;
+}
+
+/* Подпись (T071 «Конференция завершена · N мин», <output> =
+ * role=status): класс (0,1,1) перекрывает глобальное element-правило
+ * `output, [role='status']` (index.css — зелёная плашка auth-лексики:
+ * display/margin/padding/фон/радиус) — ВСЕ box-свойства закрываются
+ * явно, по образцу .guest-join-live (T102). Типографика заголовочная,
+ * как заголовки pre-join/шага имени (T091); длительность остаётся в
+ * той же строке. */
+.conference-ended output {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font: 16px var(--font-heading);
+  letter-spacing: 0.04em;
+  color: var(--cream-bright);
+  overflow-wrap: break-word;
+}
+
+/* «Вернуться в чат» — золотая акция (канон «Войти»/«Продолжить»):
+ * класс (0,1,1) перекрывает глобальный `button` (index.css — синий
+ * акцент #2f6fed/#6c9cff с align-self: flex-start). */
+.conference-ended button {
+  align-self: center;
+  padding: 8px 24px;
+  border: 1px solid var(--gold);
+  border-radius: var(--r-panel);
+  background: var(--input-bg);
+  font: 13px var(--font-body);
+  font-weight: 400;
+  color: var(--cream-bright);
+  cursor: pointer;
+}
+
+/* Конвенция 008 FR-035: видимый фокус с клавиатуры. */
+.conference-ended button:focus-visible {
+  outline: 2px solid var(--gold-light);
+  outline-offset: 2px;
+}
+
+/* Глиф-колокол «звонок окончен» — общий у обеих пластин: ::after
+ * контейнера с order:-1 встаёт первым ребёнком flex-колонки, разметка
+ * страниц не меняется. Кольцо — выключенная латунь #55452c (машина в
+ * покое — без золотого свечения состояния «вкл»), колокол латунный. */
+.conference-ended::after,
+.guest-join-refused::after {
+  content: '';
+  order: -1;
+  width: 46px;
+  height: 46px;
+  border: 1.5px solid #55452c;
+  border-radius: 50%;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='%23c9a24a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v1.4'/%3E%3Cpath d='M12 4.4a5.6 5.6 0 0 1 5.6 5.6c0 3.3.75 5.1 1.65 6.3.4.5.06 1.25-.6 1.25H5.35c-.66 0-1-.75-.6-1.25.9-1.2 1.65-3 1.65-6.3A5.6 5.6 0 0 1 12 4.4Z'/%3E%3Cpath d='M10.2 20.2a1.9 1.9 0 0 0 3.6 0'/%3E%3C/g%3E%3C/svg%3E")
+      center/24px 24px no-repeat,
+    radial-gradient(circle at 34% 26%, rgba(232, 200, 119, 0.12), rgba(10, 8, 6, 0.92) 60%);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(232, 200, 119, 0.18);
+}
+
+/* Терминальный отказ ссылки гостя (№54 reason / №55 terminal:
+ * ended/expired/revoked/invalid): та же пластина корпуса machine
+ * (T112, константы T101) и колокол, НЕ аварийная лексика —
+ * «Конференция завершена»/«Срок действия ссылки истёк» — штатные
+ * терминальные состояния, не ошибки. Правило стоит ПОСЛЕ
+ * .conference-error — специфичность равная (0,1,0), побеждает
+ * позднее. У гостя нет чата (FR-010) — кнопки не будет: пластина
+ * читается завершённо и без неё. */
+.guest-join-refused {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: min(420px, 100%);
+  margin: auto;
+  padding: 30px 24px 28px;
+  border: var(--conference-machine-border);
+  border-radius: var(--conference-machine-radius);
+  background: var(--conference-machine-bg);
+  backdrop-filter: var(--conference-machine-blur);
+  box-shadow: var(--conference-machine-shadow);
+  color: var(--cream);
+  text-align: center;
+}
+
+/* Сообщение причины отказа (p[role=alert]): (0,1,1) перекрывает и
+ * базовое .conference-error p, и глобальное element-правило
+ * `[role='alert']` (index.css — плашка --danger-bg/--danger) — ВСЕ
+ * box-свойства глобуса (margin/padding/border-radius/background)
+ * закрываются явно, по образцу .guest-join-live (T102). role=alert
+ * остаётся в разметке — живое объявление при переходе фазы.
+ * Типографика заголовочная — паритет подписи участника. */
+.guest-join-refused p {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font: 16px var(--font-heading);
+  letter-spacing: 0.04em;
+  color: var(--cream-bright);
+  overflow-wrap: break-word;
+}
+
+/* Тихая подсказка гостя (T112, единственная правка разметки задачи):
+ * у гостя нет следующего шага (ни чата, ни кнопки — FR-010), курсив
+ * приглушённой латыни закрывает вопрос «что дальше» без призыва
+ * к действию; копирайт — прототип tmp/conference-ended-guest.html. */
+.guest-join-refused-hint {
+  font: italic 12px var(--font-body);
+  color: var(--muted);
 }
 
 /* Шаг имени: форма по центру, как pre-join.

@@ -697,6 +697,19 @@ function useScreenShareAutoPin(
  * панели US3/US4) остаётся в DOM под RoomContext — переносить нельзя
  * (хуки livekit), геометрия пин-оверлея — CSS.
  *
+ * Порядок рендера детей колонки комнаты (T114): полоса кнопки панели
+ * (T106) → рабочая область .conference-main (тайлы + сайдбар) →
+ * уведомления комнаты (статус-строка фаз T027/T060, media-
+ * предупреждение T032, тост conference.warning T060) → слот controls
+ * (children, всегда внизу по центру): уведомления живут в полосе
+ * ПОД рабочей областью и НАД панелью управления — flex-поток колонки
+ * сам размещает плашки (gap колонки), рабочая область не отжимается
+ * сверху; фазы без main (connecting/failed/lost/closed) — уведомления
+ * остаются над всегда смонтированным controls; ранняя оболочка до
+ * создания комнаты — только статус (см. ConferenceRoom ниже); в
+ * пин-оверлее T079 DOM-позиция уведомлений не важна — их
+ * позиционируют absolute-правила CSS.
+ *
  * Пин-раскладка (T074, ключ identity — T084): локальное состояние
  * закреплённого тайла (identity участника) — закреплённый рендерится
  * большим, остальные — компактной полосой; повторный пин другого
@@ -857,16 +870,6 @@ function ConferenceRoomLive({
   const restTiles = pinnedTile === undefined ? tiles : tiles.filter((tile) => tile !== pinnedTile)
   return (
     <div className={roomClass} data-conference-room={conferenceId}>
-      {statusText !== null && <output className="conference-room-status">{statusText}</output>}
-      {mediaNotice !== null && <output className="conference-room-media">{mediaNotice}</output>}
-      {warningVisible && (
-        <output className="conference-warning-toast" data-conference-warning>
-          <span>{WARNING_TOAST_TEXT}</span>
-          <button type="button" onClick={onWarningDismiss}>
-            Закрыть
-          </button>
-        </output>
-      )}
       {mediaVisible && (
         <>
           <RoomAudioRenderer />
@@ -945,6 +948,24 @@ function ConferenceRoomLive({
             )}
           </div>
         </>
+      )}
+      {/* Уведомления комнаты (T114) — дети колонки ПОД рабочей областью
+          .conference-main (когда медиа-слой смонтирован) и НАД слотом
+          controls: flex-поток ставит плашки в полосу между ними (зазор —
+          gap колонки), рабочая область не отжимается сверху; фазы без
+          main (connecting/failed/lost/closed) — те же блоки остаются над
+          всегда смонтированным controls («под main, если есть»); в
+          пин-оверлее T079 DOM-позиция не важна — absolute-правила CSS.
+          Тексты/условия показа — прежние (T027/T032/T060). */}
+      {statusText !== null && <output className="conference-room-status">{statusText}</output>}
+      {mediaNotice !== null && <output className="conference-room-media">{mediaNotice}</output>}
+      {warningVisible && (
+        <output className="conference-warning-toast" data-conference-warning>
+          <span>{WARNING_TOAST_TEXT}</span>
+          <button type="button" onClick={onWarningDismiss}>
+            Закрыть
+          </button>
+        </output>
       )}
       {children}
     </div>
