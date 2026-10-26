@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 /**
@@ -28,6 +28,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * title T097; тексты-константы T097 сохранены), а «Все источники»
  * (canPublish=false, Q4=A; доменное speechRestricted, T094) блокирует
  * ВСЕ тумблеры БЕЗ уведомлений (silent — tooltip'ы только с именами).
+ *
+ * 009, US1, T103 — состояние «в полёте»: клик тумблера держит кнопку в
+ * data-state='pending' (переливающийся золотой контур + дышащая лампа —
+ * CSS-пин в conferences-css.test.ts) до резолва/реджекта промиса сеттера;
+ * aria-pressed — проекция ПОДТВЕРЖДЁННОГО состояния, tooltip полёта —
+ * «Включение …/Выключение …» над restrictionNotice/именем; повторные
+ * нажатия невозможны (disabled на весь полёт).
+ *
+ * 009, US1, T105 — два демонтажа/фикса панели: (1) bump-эпоха прав —
+ * livekit-client мутирует participant.permissions НА МЕСТЕ, поэтому
+ * permission-событие БЕЗ трек-изменений не перерисовывает
+ * useLocalParticipant (Object.is-bail out) — панель инкрементит эпоху
+ * в обработчике ParticipantPermissionsChanged и перечитывает grants
+ * сама (гость без снимка №46 блокируется live-грантами); (2) строка
+ * отказа .conference-controls-notice демонтирована — отказ переключения
+ * живёт в tooltip СВОЕЙ кнопки («Не удалось включить/выключить …»),
+ * полная цепочка приоритета tooltip'а: pending > failure > точечное
+ * ограничение > имя; живой области role=status в панели больше нет
+ * (осознанная уступка: автообъявление отказа скринридером прекращается).
  */
 
 /** Wire-константы TrackSource (@livekit/protocol) — как в ParticipantsPanel. */
@@ -267,18 +286,23 @@ describe('MediaControls: кнопки-иконки прототипа (009 US1 T
     expect(toggle('Покинуть')).toBeEnabled()
   })
 
-  it('отказ переключения — нейтральная строка (role=status), тумблеры снова доступны', async () => {
+  it('отказ переключения — tooltip своей кнопки «Не удалось …», строки под панелью нет (T105)', async () => {
     media.setScreenShareEnabled.mockRejectedValue(new Error('NotAllowedError'))
     renderControls()
 
     fireEvent.click(toggle('Экран'))
 
-    const notice = await screen.findByRole('status')
-    expect(notice).toHaveTextContent('Не удалось включить демонстрацию экрана')
+    // отказ живёт в tooltip СВОЕЙ кнопки; живой области role=status
+    // (<output>-строки) в панели больше нет
+    await waitFor(() => {
+      expect(tooltipOf('Экран').textContent).toBe('Не удалось включить демонстрацию экрана')
+    })
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(document.querySelector('.conference-controls-notice')).toBeNull()
     expect(toggle('Экран')).toBeEnabled()
   })
 
-  it('отмена браузерного пикера экрана (AbortError) — не ошибка, строки нет', async () => {
+  it('отмена браузерного пикера экрана (AbortError) — не ошибка, tooltip остаётся именем', async () => {
     const abort = Object.assign(new Error('Cancelled'), { name: 'AbortError' })
     media.setScreenShareEnabled.mockRejectedValue(abort)
     renderControls()
@@ -288,8 +312,8 @@ describe('MediaControls: кнопки-иконки прототипа (009 US1 T
     await waitFor(() => {
       expect(media.setScreenShareEnabled).toHaveBeenCalled()
     })
-    await new Promise((resolve) => {
-      setTimeout(resolve, 10)
+    await waitFor(() => {
+      expect(tooltipOf('Экран').textContent).toBe('Экран')
     })
     expect(screen.queryByRole('status')).toBeNull()
   })
@@ -488,15 +512,17 @@ describe('MediaControls: собственные ограничения — ла�
     expect(tooltipOf('Экран').textContent).toBe('Экран')
   })
 
-  it('регресс failure-notice: нейтральная строка отказа «Не удалось …» остаётся (.conference-controls-notice)', async () => {
+  it('демонтаж notice (T105): отказ «Не удалось включить микрофон» — в tooltip кнопки, строки нет', async () => {
     media.setMicrophoneEnabled.mockRejectedValue(new Error('NotAllowedError'))
     renderControls()
 
     fireEvent.click(toggle('Микрофон'))
 
-    const notice = await screen.findByRole('status')
-    expect(notice).toHaveClass('conference-controls-notice')
-    expect(notice).toHaveTextContent('Не удалось включить микрофон')
+    await waitFor(() => {
+      expect(tooltipOf('Микрофон').textContent).toBe('Не удалось включить микрофон')
+    })
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(document.querySelector('.conference-controls-notice')).toBeNull()
   })
 
   it('размонтирование снимает подписку permission-события', () => {
@@ -506,6 +532,419 @@ describe('MediaControls: собственные ограничения — ла�
     unmount()
 
     expect(media.room.off).toHaveBeenCalledWith('participantPermissionsChanged', handler)
+  })
+})
+
+describe('MediaControls: bump-эпоха прав — permission-событие без трек-изменений (009 US1 T105)', () => {
+  /**
+   * Гостевой баг T105: livekit-client мутирует localParticipant.permissions
+   * на месте — на RoomEvent.ParticipantPermissionsChanged БЕЗ трек-событий
+   * useLocalParticipant получает Object.is-идентичные значения и НЕ
+   * перерисовывается (React bail out). Гость входит «только микрофон»
+   * (Q1=C/Q3=A): у срезанных НЕопубликованных источников (экран/камера)
+   * нет ни трек-события, ни №46-рефетча (гость без снимка) — панель
+   * обязана перерисоваться сама: bump-эпоха в обработчике перечитывает
+   * restrictionMarks с мутированного объекта grants.
+   */
+
+  beforeEach(() => {
+    media.state = {
+      mic: false,
+      camera: false,
+      screen: false,
+      connection: 2,
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+    }
+    media.setMicrophoneEnabled.mockReset()
+    media.setCameraEnabled.mockReset()
+    media.setScreenShareEnabled.mockReset()
+    media.room.on.mockReset()
+    media.room.off.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('событие прав БЕЗ rerender хука: canPublish=false → все три кнопки blocked + замок (гостевая нога бага)', () => {
+    renderControls()
+    for (const name of ['Микрофон', 'Камера', 'Экран']) {
+      expect(toggle(name)).toBeEnabled()
+    }
+
+    // сервер применил «Все источники» (№49), НИ ОДИН трек не менялся —
+    // ре-рендер хука нет; до T105 кнопки держали СТАРЫЙ рендер
+    media.state.permissions = { canPublish: false, canPublishSources: [] }
+    act(() => {
+      permissionsHandler()(undefined, { isLocal: true })
+    })
+
+    for (const name of ['Микрофон', 'Камера', 'Экран']) {
+      expect(toggle(name)).toBeDisabled()
+      expect(toggle(name)).toHaveAttribute('data-state', 'blocked')
+      expect(lockOf(name)).not.toBeNull()
+    }
+    // мастер silent (T097/T094): tooltip'ы — только имена
+    for (const name of ['Микрофон', 'Камера', 'Экран']) {
+      expect(tooltipOf(name).textContent).toBe(name)
+    }
+  })
+
+  it('симметрично точечное mic-ограничение по событию: замок + tooltip, чужие доступны', () => {
+    renderControls()
+
+    media.state.permissions = {
+      canPublish: true,
+      canPublishSources: [CAMERA, SCREEN_SHARE, SCREEN_SHARE_AUDIO],
+    }
+    act(() => {
+      permissionsHandler()(undefined, { isLocal: true })
+    })
+
+    expect(toggle('Микрофон')).toBeDisabled()
+    expect(toggle('Микрофон')).toHaveAttribute('data-state', 'blocked')
+    expect(lockOf('Микрофон')).not.toBeNull()
+    expect(tooltipOf('Микрофон').textContent).toBe('Микрофон отключён модератором')
+    expect(toggle('Камера')).toBeEnabled()
+    expect(toggle('Экран')).toBeEnabled()
+  })
+
+  it('снятие ограничений по событию возвращает кнопки (эпоха перерисовывает в обе стороны)', () => {
+    media.state.permissions = { canPublish: false, canPublishSources: [] }
+    renderControls()
+    expect(toggle('Камера')).toBeDisabled()
+
+    media.state.permissions = { canPublish: true, canPublishSources: [...ALL_SOURCES] }
+    act(() => {
+      permissionsHandler()(undefined, { isLocal: true })
+    })
+
+    for (const name of ['Микрофон', 'Камера', 'Экран']) {
+      expect(toggle(name)).toBeEnabled()
+      expect(toggle(name)).toHaveAttribute('data-state', 'off')
+    }
+  })
+
+  it('bump не трогает чужие события: isLocal=false не перерисовывает панель', () => {
+    renderControls()
+    expect(toggle('Камера')).toBeEnabled()
+
+    media.state.permissions = { canPublish: false, canPublishSources: [] }
+    act(() => {
+      permissionsHandler()(undefined, { isLocal: false })
+    })
+
+    expect(toggle('Камера')).toBeEnabled()
+  })
+})
+
+describe('MediaControls: отказ в tooltip своей кнопки — жизненный цикл и приоритет (009 US1 T105)', () => {
+  beforeEach(() => {
+    media.state = {
+      mic: false,
+      camera: false,
+      screen: false,
+      connection: 2,
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+    }
+    media.setMicrophoneEnabled.mockReset()
+    media.setCameraEnabled.mockReset()
+    media.setScreenShareEnabled.mockReset()
+    media.room.on.mockReset()
+    media.room.off.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('новая попытка сбрасывает отказ: tooltip возвращается к имени (сбрасывается следующей попыткой)', async () => {
+    media.setMicrophoneEnabled.mockRejectedValueOnce(new Error('NotAllowedError'))
+    renderControls()
+
+    fireEvent.click(toggle('Микрофон'))
+    await waitFor(() => {
+      expect(tooltipOf('Микрофон').textContent).toBe('Не удалось включить микрофон')
+    })
+
+    // вторая попытка (успешная) — отказ сброшен началом flip
+    media.setMicrophoneEnabled.mockResolvedValue(undefined)
+    fireEvent.click(toggle('Микрофон'))
+    await waitFor(() => {
+      expect(tooltipOf('Микрофон').textContent).toBe('Микрофон')
+    })
+  })
+
+  it('новый отказ заменяет прежний — только на своей кнопке', async () => {
+    media.setMicrophoneEnabled.mockRejectedValueOnce(new Error('NotAllowedError'))
+    media.setCameraEnabled.mockRejectedValueOnce(new Error('NotAllowedError'))
+    renderControls()
+
+    fireEvent.click(toggle('Микрофон'))
+    await waitFor(() => {
+      expect(tooltipOf('Микрофон').textContent).toBe('Не удалось включить микрофон')
+    })
+
+    // отказ камеры: микрофонный отказ сброшен началом ЧУЖОЙ попытки,
+    // текст камеры — на своей кнопке
+    fireEvent.click(toggle('Камера'))
+    await waitFor(() => {
+      expect(tooltipOf('Камера').textContent).toBe('Не удалось включить камеру')
+    })
+    expect(tooltipOf('Микрофон').textContent).toBe('Микрофон')
+  })
+
+  it('цепочка приоритета: failure > точечное ограничение (отказ переживает подъехавший срез)', async () => {
+    media.setCameraEnabled.mockRejectedValueOnce(new Error('NotAllowedError'))
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+    await waitFor(() => {
+      expect(tooltipOf('Камера').textContent).toBe('Не удалось включить камеру')
+    })
+
+    // модератор срезал камеру ПОСЛЕ отказа: кнопка заблокирована, tooltip
+    // держит последнюю неудачу (приоритет failure над restrictionNotice)
+    media.state.permissions = {
+      canPublish: true,
+      canPublishSources: [MICROPHONE, SCREEN_SHARE, SCREEN_SHARE_AUDIO],
+    }
+    act(() => {
+      permissionsHandler()(undefined, { isLocal: true })
+    })
+    await waitFor(() => {
+      expect(toggle('Камера')).toBeDisabled()
+    })
+    expect(tooltipOf('Камера').textContent).toBe('Не удалось включить камеру')
+  })
+})
+
+describe('MediaControls: состояние «в полёте» — pending-кольцо тумблера (009 US1 T103)', () => {
+  /**
+   * Клик тумблера держит кнопку в data-state='pending' до резолва/реджекта
+   * промиса сеттера LiveKit: переливающийся золотой контур + дышащая лампа
+   * (прототип tmp/conference-controls.html, CSS-пин — conferences-css.test.ts).
+   * aria-pressed остаётся проекцией ПОДТВЕРЖДЁННОГО состояния (не-оптимистично),
+   * все тумблеры disabled (повторные нажатия невозможны), tooltip полёта —
+   * тексты-константы «Включение …/Выключение …» над restrictionNotice/именем.
+   */
+
+  /** Отложенный промис сеттера: полёт держится до явного резолва/реджекта. */
+  function deferred(): {
+    readonly promise: Promise<void>
+    readonly resolve: () => void
+    readonly reject: (cause?: unknown) => void
+  } {
+    let resolve!: () => void
+    let reject!: (cause?: unknown) => void
+    const promise = new Promise<void>((done, fail) => {
+      resolve = done
+      reject = fail
+    })
+    return { promise, resolve, reject }
+  }
+
+  beforeEach(() => {
+    media.state = {
+      mic: false,
+      camera: false,
+      screen: false,
+      connection: 2,
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+    }
+    media.setMicrophoneEnabled.mockReset()
+    media.setCameraEnabled.mockReset()
+    media.setScreenShareEnabled.mockReset()
+    media.room.on.mockReset()
+    media.room.off.mockReset()
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('полёт включения камеры: pending + disabled + aria-pressed=false + tooltip «Включение камеры…»; публикация → on', async () => {
+    const flight = deferred()
+    media.setCameraEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+
+    const camera = toggle('Камера')
+    await waitFor(() => {
+      expect(camera).toHaveAttribute('data-state', 'pending')
+    })
+    expect(camera).toBeDisabled()
+    // не-оптимистично: aria-pressed — ПОДТВЕРЖДЁННОЕ состояние, не цель клика
+    expect(camera).toHaveAttribute('aria-pressed', 'false')
+    expect(tooltipOf('Камера').textContent).toBe('Включение камеры…')
+    // чужие tooltip'ы не в полёте: имя как обычно
+    expect(tooltipOf('Микрофон').textContent).toBe('Микрофон')
+
+    // резолв сеттера = фактическая публикация: pending снят, комната
+    // переподнимает рендер уже с включённой камерой — состояние on
+    media.state.camera = true
+    flight.resolve()
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'on')
+    })
+    expect(toggle('Камера')).toBeEnabled()
+    expect(toggle('Камера')).toHaveAttribute('aria-pressed', 'true')
+    expect(tooltipOf('Камера').textContent).toBe('Камера')
+  })
+
+  it('повторные клики в полёте невозможны: второй вызов сеттера нет, чужие тумблеры игнорируются', async () => {
+    const flight = deferred()
+    media.setCameraEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'pending')
+    })
+
+    // повторный клик по той же кнопке и клики по двум другим — disabled-гвард
+    fireEvent.click(toggle('Камера'))
+    fireEvent.click(toggle('Микрофон'))
+    fireEvent.click(toggle('Экран'))
+
+    expect(media.setCameraEnabled).toHaveBeenCalledTimes(1)
+    expect(media.setMicrophoneEnabled).not.toHaveBeenCalled()
+    expect(media.setScreenShareEnabled).not.toHaveBeenCalled()
+
+    flight.resolve()
+    await waitFor(() => {
+      expect(toggle('Камера')).not.toBeDisabled()
+    })
+  })
+
+  it('полёт выключения камеры: tooltip «Выключение камеры…», aria-pressed=true — подтверждённое состояние', async () => {
+    media.state.camera = true
+    const flight = deferred()
+    media.setCameraEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'pending')
+    })
+    // камера ещё опубликована до подтверждения выключения
+    expect(toggle('Камера')).toHaveAttribute('aria-pressed', 'true')
+    expect(tooltipOf('Камера').textContent).toBe('Выключение камеры…')
+
+    media.state.camera = false
+    flight.resolve()
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'off')
+    })
+    expect(tooltipOf('Камера').textContent).toBe('Камера')
+  })
+
+  it('симметрия микрофона: полный pending-цикл «Включение микрофона…» → on → «Выключение микрофона…» → off', async () => {
+    renderControls()
+
+    const enable = deferred()
+    media.setMicrophoneEnabled.mockReturnValue(enable.promise)
+    fireEvent.click(toggle('Микрофон'))
+    await waitFor(() => {
+      expect(toggle('Микрофон')).toHaveAttribute('data-state', 'pending')
+    })
+    expect(tooltipOf('Микрофон').textContent).toBe('Включение микрофона…')
+    media.state.mic = true
+    enable.resolve()
+    await waitFor(() => {
+      expect(toggle('Микрофон')).toHaveAttribute('data-state', 'on')
+    })
+
+    const disable = deferred()
+    media.setMicrophoneEnabled.mockReturnValue(disable.promise)
+    fireEvent.click(toggle('Микрофон'))
+    await waitFor(() => {
+      expect(toggle('Микрофон')).toHaveAttribute('data-state', 'pending')
+    })
+    expect(tooltipOf('Микрофон').textContent).toBe('Выключение микрофона…')
+    media.state.mic = false
+    disable.resolve()
+    await waitFor(() => {
+      expect(toggle('Микрофон')).toHaveAttribute('data-state', 'off')
+    })
+  })
+
+  it('симметрия экрана: полный pending-цикл «Включение демонстрации…» → on → «Выключение демонстрации…» → off', async () => {
+    renderControls()
+
+    const enable = deferred()
+    media.setScreenShareEnabled.mockReturnValue(enable.promise)
+    fireEvent.click(toggle('Экран'))
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'pending')
+    })
+    expect(tooltipOf('Экран').textContent).toBe('Включение демонстрации…')
+    media.state.screen = true
+    enable.resolve()
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'on')
+    })
+
+    const disable = deferred()
+    media.setScreenShareEnabled.mockReturnValue(disable.promise)
+    fireEvent.click(toggle('Экран'))
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'pending')
+    })
+    expect(tooltipOf('Экран').textContent).toBe('Выключение демонстрации…')
+    media.state.screen = false
+    disable.resolve()
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'off')
+    })
+  })
+
+  it('реджект промиса: pending снят, data-state — подтверждённый off, отказ — в tooltip (T105)', async () => {
+    const flight = deferred()
+    media.setCameraEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Камера'))
+    await waitFor(() => {
+      expect(toggle('Камера')).toHaveAttribute('data-state', 'pending')
+    })
+
+    flight.reject(new Error('NotAllowedError'))
+
+    await waitFor(() => {
+      expect(tooltipOf('Камера').textContent).toBe('Не удалось включить камеру')
+    })
+    // состояние не откатывается вручную — источник истины комната;
+    // строки role=status под панелью больше нет (демонтаж T105)
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(toggle('Камера')).toHaveAttribute('data-state', 'off')
+    expect(toggle('Камера')).toBeEnabled()
+  })
+
+  it('отмена пикера экрана (AbortError): pending снят, tooltip остаётся именем (не отказ)', async () => {
+    const flight = deferred()
+    media.setScreenShareEnabled.mockReturnValue(flight.promise)
+    renderControls()
+
+    fireEvent.click(toggle('Экран'))
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'pending')
+    })
+
+    const abort = Object.assign(new Error('Cancelled'), { name: 'AbortError' })
+    flight.reject(abort)
+
+    await waitFor(() => {
+      expect(toggle('Экран')).toHaveAttribute('data-state', 'off')
+    })
+    expect(toggle('Экран')).toBeEnabled()
+    expect(tooltipOf('Экран').textContent).toBe('Экран')
+    expect(screen.queryByRole('status')).toBeNull()
   })
 })
 
@@ -587,9 +1026,9 @@ describe('MediaControls: автоотключение камеры при дем
 
     fireEvent.click(toggle('Экран'))
 
-    expect(await screen.findByRole('status')).toHaveTextContent(
-      'Не удалось включить демонстрацию экрана',
-    )
+    await waitFor(() => {
+      expect(tooltipOf('Экран').textContent).toBe('Не удалось включить демонстрацию экрана')
+    })
     expect(media.setCameraEnabled).not.toHaveBeenCalled()
   })
 
@@ -670,7 +1109,9 @@ describe('MediaControls: взаимное исключение «камера �
 
     fireEvent.click(toggle('Камера'))
 
-    expect(await screen.findByRole('status')).toHaveTextContent('Не удалось включить камеру')
+    await waitFor(() => {
+      expect(tooltipOf('Камера').textContent).toBe('Не удалось включить камеру')
+    })
     expect(media.setScreenShareEnabled).not.toHaveBeenCalled()
   })
 

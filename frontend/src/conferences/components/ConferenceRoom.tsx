@@ -127,6 +127,28 @@
  * «Имя · гость»; смена роли №50 (UpdateParticipant метаданных)
  * перерисовывает пометку тем же participants/tracks-стримом,
  * собственный тайл показывает свою роль тоже.
+ *
+ * Каркас экрана — сайдбар участников справа (T106, прототипы
+ * tmp/conference-page-{moderator,participant}-{expanded,collapsed}.html,
+ * при расхождениях побеждает прототип): рабочая область
+ * .conference-main (flex-row) — сетка тайлов слева (растягивается,
+ * внутренняя прокрутка) + правая колонка .conference-side со слотом
+ * sidebar (ОБЪЕДИНЁННАЯ панель участников T107: единый список с
+ * кебабом модератора и футером инструментов, скролл — только список);
+ * колонка сворачивается/разворачивается иконкой-кнопкой
+ * conference-panel-toggle в полосе .conference-toggle-row над
+ * рабочей областью (aria-expanded/aria-controls/динамический
+ * aria-label, только svg 17px без текста и рамки; свёрнутое
+ * состояние — нативный [hidden], тайлы занимают всю ширину);
+ * состояние — локальный стейт комнаты без localStorage (паритет пина
+ * T074), в пин-оверлее T079 полоса и колонка скрываются CSS
+ * body:has(.conference-room-pinned); controls (слот children) —
+ * ребёнок колонки комнаты ПОД .conference-main, всегда внизу по
+ * центру экрана (align-self:center; в оверлее — absolute T079).
+ * Скроллбаров страницы нет: переполнение гасится внутри (сетка
+ * тайлов, список участников объединённой панели T107). Гостевой паритет:
+ * GuestJoinPage монтирует тот же контур (панель без инструментов
+ * модерации).
  */
 import {
   isTrackReference,
@@ -140,7 +162,7 @@ import {
 import type { TrackReference, TrackReferenceOrPlaceholder } from '@livekit/components-react'
 import { DisconnectReason, Room, RoomEvent, Track } from 'livekit-client'
 import type { DataPacket_Kind, RemoteParticipant } from 'livekit-client'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ConferenceMode, JoinTicket } from '../api/conferences'
 import { bindConferenceDisconnect } from '../hooks/useConference'
@@ -214,7 +236,16 @@ export interface ConferenceRoomProps {
   readonly reconnectWindowMs?: number
   /** Интервал ретраев минта внутри окна (T060); переопределяется тестами. */
   readonly reconnectRetryDelayMs?: number
-  /** Слот для MediaControls (T028) и панелей US3/US4 — внутри RoomContext. */
+  /**
+   * Слот сайдбара участников (T106): правая колонка .conference-side
+   * рабочей области — ОБЪЕДИНЁННАЯ панель участников (T041/T107:
+   * единый список строк с кебабом действий модератора №49–№51 и
+   * футером инструментов №52/№53/№48); сворачивается/разворачивается
+   * кнопкой conference-panel-toggle (стейт комнаты). Гостевая точка
+   * входа монтирует тот же контур (панель без инструментов модерации).
+   */
+  readonly sidebar?: ReactNode
+  /** Слот для MediaControls (T028) — всегда внизу по центру под .conference-main (T106). */
   readonly children?: ReactNode
 }
 
@@ -563,6 +594,98 @@ interface ParticipantTileModel {
 }
 
 /**
+ * Слияние camera- и screen-рефов useTracks в слитые тайлы участников
+ * (T084) с микрофонным состоянием (T100) — чистая проекция живых
+ * рефов без хуков. Приоритет screen > camera > placeholder; порядок
+ * стабильный — камеры по порядку useTracks, затем экраны участников
+ * без camera-рефа. Микрофон тайла: local — isMicrophoneEnabled (свой
+ * тумблер T028/серверный мьют отражаются сам), remote — микрофонная
+ * публикация (нет/замучена → выкл; мьют тумблером цели снимает
+ * публикацию, серверный мьют №49 оставляет её замученной — оба пути
+ * дают «выкл», нет публикации = выкл).
+ */
+function buildParticipantTiles(
+  cameraTiles: readonly TrackReferenceOrPlaceholder[],
+  screenTiles: readonly TrackReference[],
+  micTiles: readonly TrackReference[],
+  localIdentity: string,
+  localMicOn: boolean,
+): ParticipantTileModel[] {
+  const micOnByIdentity = new Map<string, boolean>()
+  for (const ref of micTiles) {
+    micOnByIdentity.set(ref.participant.identity, ref.publication.isMuted !== true)
+  }
+  const screenByIdentity = new Map<string, TrackReference>()
+  for (const ref of screenTiles) {
+    screenByIdentity.set(ref.participant.identity, ref)
+  }
+  const micOn = (identity: string): boolean =>
+    identity === localIdentity ? localMicOn : (micOnByIdentity.get(identity) ?? false)
+  const tiles: ParticipantTileModel[] = cameraTiles.map((ref) => {
+    const identity = ref.participant.identity
+    return {
+      identity,
+      participant: ref.participant,
+      cameraRef: ref,
+      screenRef: screenByIdentity.get(identity),
+      micOn: micOn(identity),
+    }
+  })
+  const cameraIdentities = new Set(cameraTiles.map((ref) => ref.participant.identity))
+  for (const [identity, screenRef] of screenByIdentity) {
+    if (!cameraIdentities.has(identity)) {
+      tiles.push({
+        identity,
+        participant: screenRef.participant,
+        cameraRef: undefined,
+        screenRef,
+        micOn: micOn(identity),
+      })
+    }
+  }
+  return tiles
+}
+
+/**
+ * Автопин демонстрации экрана (T078, ключ identity — T084): появление
+ * НОВОГО screen-ключа (переход «не было → появился», включая
+ * собственную демонстрацию) при ПУСТОМ пине разворачивает слитый
+ * тайл демонстрирующего на весь экран без ручного клика — у всех
+ * участников. Детерминированное правило «только при пустом пине»:
+ * ручной пин зрителя стартом демонстрации не перебивается, вторая
+ * одновременная демонстрация не переключает уже автозакреплённую
+ * первую, ручное сворачивание автопина при живой демонстрации
+ * возвращает сетку БЕЗ повторного автопина (решение принимается на
+ * появление нового ключа, не на инвариант «пустой пин + живые экраны»
+ * — иначе цикл); повторная публикация трека (переподключение
+ * демонстрирующего: ключ ушёл из живых и вернулся) считается новой
+ * демонстрацией. Решение — вывод в фазе рендера (derived state,
+ * React): атомарно с рендером, заметившим новый ref, без гонки
+ * эффекта с ручным кликом на первом коммите. Замеченные демонстрации
+ * предыдущего рендера — локальный стейт хука: набор заменяется живыми
+ * ключами, ушедший ключ (завершение/переподключение) снова считается
+ * новым при возвращении.
+ */
+function useScreenShareAutoPin(
+  mediaVisible: boolean,
+  screenIdentities: readonly string[],
+  livePinTarget: boolean,
+  autoPin: (identity: string) => void,
+): void {
+  const [seenScreenKeys, setSeenScreenKeys] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const appearedScreenIdentity = screenIdentities.find((identity) => !seenScreenKeys.has(identity))
+  if (
+    mediaVisible &&
+    (appearedScreenIdentity !== undefined || seenScreenKeys.size !== screenIdentities.length)
+  ) {
+    if (appearedScreenIdentity !== undefined && !livePinTarget) {
+      autoPin(appearedScreenIdentity)
+    }
+    setSeenScreenKeys(new Set(screenIdentities))
+  }
+}
+
+/**
  * Медиа-слой + корневой контур комнаты (T079 — пин-состояние поднято
  * сюда из медиа-слоя; внутри RoomContext — хукам useTracks/
  * useSpeakingParticipants нужна живая комната): аудио всех удалённых
@@ -617,6 +740,7 @@ function ConferenceRoomLive({
   mediaNotice,
   warningVisible,
   onWarningDismiss,
+  sidebar,
   children,
 }: {
   readonly conferenceId: string
@@ -626,6 +750,8 @@ function ConferenceRoomLive({
   /** Тост conference.warning показан (T060 ← T056). */
   readonly warningVisible: boolean
   readonly onWarningDismiss: () => void
+  /** Слот сайдбара участников (T106) — правая колонка рабочей области. */
+  readonly sidebar?: ReactNode
   readonly children?: ReactNode
 }) {
   const cameraTiles = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }], {
@@ -639,57 +765,34 @@ function ConferenceRoomLive({
   // isMicrophoneEnabled ниже (канонический источник собственного
   // микрофона).
   const micTiles = useTracks([Track.Source.Microphone], { onlySubscribed: false })
-  const micOnByIdentity = new Map<string, boolean>()
-  for (const ref of micTiles) {
-    micOnByIdentity.set(ref.participant.identity, ref.publication.isMuted !== true)
-  }
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant()
   const speakers = useSpeakingParticipants()
   const speakerIdentities = new Set(speakers.map((participant) => participant.identity))
   const [pinnedTileKey, setPinnedTileKey] = useState<string | null>(null)
-  const [seenScreenKeys, setSeenScreenKeys] = useState<ReadonlySet<string>>(() => new Set<string>())
+  // Сайдбар участников (T106): развёрнут по умолчанию, сворачивается
+  // кнопкой; локальный стейт комнаты без localStorage (паритет пина
+  // T074) — на размонтировании звонка исчезает. id колонки — цель
+  // aria-controls кнопки.
+  const [participantsOpen, setParticipantsOpen] = useState(true)
+  const participantsPanelId = useId()
   // Медиа-тайлы рендерятся только в живых фазах (как монтаж медиа-слоя
   // до T079): маркер оверлея и автопин следуют тому же окну.
   const mediaVisible = phase === 'connected' || phase === 'reconnecting'
-  // Слияние camera+screen в один тайл по участнику (T084): приоритет
-  // screen > camera > placeholder; порядок стабильный — камеры по
-  // порядку useTracks, затем экраны участников без camera-рефа.
-  // React-ключ — identity: смена набора рефов (переключения камеры/
-  // экрана/заглушки) переиспользует те же DOM-узлы, сетка не
-  // перестраивается, второй тайл участника не рождается.
-  const cameraIdentities = new Set(cameraTiles.map((ref) => ref.participant.identity))
-  const screenByIdentity = new Map<string, TrackReference>()
-  for (const ref of screenTiles) {
-    screenByIdentity.set(ref.participant.identity, ref)
-  }
-  // Микрофон тайла (T100): local — isMicrophoneEnabled (свой тумблер
-  // T028/серверный мьют отражаются сам), remote — микрофонная
-  // публикация (нет/замучена → выкл).
-  const micOn = (identity: string): boolean =>
-    identity === localParticipant.identity
-      ? isMicrophoneEnabled
-      : (micOnByIdentity.get(identity) ?? false)
-  const tiles: ParticipantTileModel[] = cameraTiles.map((ref) => {
-    const identity = ref.participant.identity
-    return {
-      identity,
-      participant: ref.participant,
-      cameraRef: ref,
-      screenRef: screenByIdentity.get(identity),
-      micOn: micOn(identity),
-    }
-  })
-  for (const [identity, screenRef] of screenByIdentity) {
-    if (!cameraIdentities.has(identity)) {
-      tiles.push({
-        identity,
-        participant: screenRef.participant,
-        cameraRef: undefined,
-        screenRef,
-        micOn: micOn(identity),
-      })
-    }
-  }
+  // Слияние camera+screen в один тайл по участнику (T084) и микрофон
+  // тайлов (T100) — чистая проекция живых рефов buildParticipantTiles:
+  // приоритет screen > camera > placeholder, порядок стабильный —
+  // камеры по порядку useTracks, затем экраны участников без
+  // camera-рефа. React-ключ — identity: смена набора рефов
+  // (переключения камеры/экрана/заглушки) переиспользует те же
+  // DOM-узлы, сетка не перестраивается, второй тайл участника не
+  // рождается.
+  const tiles = buildParticipantTiles(
+    cameraTiles,
+    screenTiles,
+    micTiles,
+    localParticipant.identity,
+    isMicrophoneEnabled,
+  )
   // Пин-цель из живых тайлов по identity (undefined — цель исчезла:
   // выход участника из комнаты → обычная сетка; переключения
   // камера↔экран цель НЕ роняют — тайл жив, T084).
@@ -705,24 +808,17 @@ function ConferenceRoomLive({
   const togglePin = (identity: string): void => {
     setPinnedTileKey((current) => (current === identity ? null : identity))
   }
-  // Замеченные демонстрации предыдущего рендера (T078, ключ identity):
-  // набор заменяется живыми ключами — ушедший ключ (завершение/
-  // переподключение) снова считается новым при возвращении.
-  // Появление нового ключа при пустом пине — автопин ровно на первом
-  // рендере появления (derived state, setState в фазе рендера своего
-  // компонента — React перерендерит до коммита; последующие ручные
-  // клики видят уже применённый автопин).
-  const screenIdentities = screenTiles.map((ref) => ref.participant.identity)
-  const appearedScreenIdentity = screenIdentities.find((identity) => !seenScreenKeys.has(identity))
-  if (
-    mediaVisible &&
-    (appearedScreenIdentity !== undefined || seenScreenKeys.size !== screenIdentities.length)
-  ) {
-    if (appearedScreenIdentity !== undefined && !livePinTarget) {
-      setPinnedTileKey(appearedScreenIdentity)
-    }
-    setSeenScreenKeys(new Set(screenIdentities))
-  }
+  // Автопин демонстраций экрана (T078) — useScreenShareAutoPin ниже:
+  // появление нового screen-ключа при пустом пине применяется ровно
+  // на первом рендере появления (derived state, setState в фазе
+  // рендера своего компонента — React перерендерит до коммита;
+  // последующие ручные клики видят уже применённый автопин).
+  useScreenShareAutoPin(
+    mediaVisible,
+    screenTiles.map((ref) => ref.participant.identity),
+    livePinTarget,
+    setPinnedTileKey,
+  )
   // Клавиатурный выход из пин-оверлея (T082, доступность 008): Esc при
   // живом пине сворачивает закреплённый тайл — та же семантика, что
   // кнопка «Свернуть» (setPinnedTileKey(null), ≤1 закреплён, состояние
@@ -774,31 +870,80 @@ function ConferenceRoomLive({
       {mediaVisible && (
         <>
           <RoomAudioRenderer />
-          {pinnedTile !== undefined && (
-            <ConferenceTile
-              model={pinnedTile}
-              pinned
-              speaking={speakerIdentities.has(pinnedTile.identity)}
-              onTogglePin={() => togglePin(pinnedTile.identity)}
-            />
+          {sidebar !== undefined && (
+            // Полоса места над рабочей областью (T106): иконка-кнопка
+            // справа, прижата к рабочей области (компенсация gap — CSS);
+            // доступность 008 — aria-expanded/aria-controls/динамический
+            // aria-label; в пин-оверлее T079 полоса скрывается CSS
+            // body:has(.conference-room-pinned)
+            <div className="conference-toggle-row">
+              <button
+                type="button"
+                className="conference-panel-toggle"
+                aria-expanded={participantsOpen}
+                aria-controls={participantsPanelId}
+                aria-label={
+                  participantsOpen ? 'Свернуть панель участников' : 'Развернуть панель участников'
+                }
+                onClick={() => {
+                  setParticipantsOpen((open) => !open)
+                }}
+              >
+                {/* только svg-иконка сайдбара с шевроном 17px — без
+                    текста, рамки, фона и теней (прототип T106); шеврон
+                    ‹ развёрнута / › свёрнута — поворот CSS-правилом */}
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <rect x="3.5" y="5" width="17" height="14" rx="2" />
+                  <path d="M14.5 5v14" />
+                  <path className="conference-panel-chevron" d="M10.5 9.5 8 12l2.5 2.5" />
+                </svg>
+              </button>
+            </div>
           )}
-          <section
-            className={
-              pinnedTile === undefined
-                ? 'conference-tiles'
-                : 'conference-tiles conference-tiles-compact'
-            }
-            aria-label="Участники конференции"
-          >
-            {restTiles.map((tile) => (
+          {/* Рабочая область на всё окно (T106): тайлы слева (растягиваются,
+              внутренняя прокрутка) + правая колонка сайдбара; пин-тайл
+              T074/T079 — первый ребёнок области (в оверлее остальное
+              скрыто CSS); controls (children) — ПОД областью в колонке
+              комнаты, всегда внизу по центру экрана */}
+          <div className="conference-main">
+            {pinnedTile !== undefined && (
               <ConferenceTile
-                key={tile.identity}
-                model={tile}
-                speaking={speakerIdentities.has(tile.identity)}
-                onTogglePin={() => togglePin(tile.identity)}
+                model={pinnedTile}
+                pinned
+                speaking={speakerIdentities.has(pinnedTile.identity)}
+                onTogglePin={() => togglePin(pinnedTile.identity)}
               />
-            ))}
-          </section>
+            )}
+            <section
+              className={
+                pinnedTile === undefined
+                  ? 'conference-tiles'
+                  : 'conference-tiles conference-tiles-compact'
+              }
+              aria-label="Участники конференции"
+            >
+              {restTiles.map((tile) => (
+                <ConferenceTile
+                  key={tile.identity}
+                  model={tile}
+                  speaking={speakerIdentities.has(tile.identity)}
+                  onTogglePin={() => togglePin(tile.identity)}
+                />
+              ))}
+            </section>
+            {sidebar !== undefined && (
+              // Правая колонка сайдбара (T106): свёрнутое состояние —
+              // нативный [hidden] (CSS-гвард гасит display:flex), тайлы
+              // занимают всю ширину; DOM слота остаётся смонтированным
+              <aside
+                className="conference-side"
+                id={participantsPanelId}
+                hidden={!participantsOpen}
+              >
+                {sidebar}
+              </aside>
+            )}
+          </div>
         </>
       )}
       {children}
@@ -815,6 +960,7 @@ export default function ConferenceRoom({
   refreshTicket,
   reconnectWindowMs = DEFAULT_RECONNECT_WINDOW_MS,
   reconnectRetryDelayMs = DEFAULT_RECONNECT_RETRY_DELAY_MS,
+  sidebar,
   children,
 }: ConferenceRoomProps) {
   /** Комната текущего жизненного цикла тикета (создаётся эффектом, T027). */
@@ -1106,6 +1252,7 @@ export default function ConferenceRoom({
         onWarningDismiss={() => {
           setWarningVisible(false)
         }}
+        sidebar={sidebar}
       >
         {children}
       </ConferenceRoomLive>

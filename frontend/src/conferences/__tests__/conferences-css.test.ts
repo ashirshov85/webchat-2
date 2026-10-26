@@ -46,8 +46,13 @@ import { describe, expect, it } from 'vitest'
  * (T043): уведомления о точечных ограничениях всплывают нативным
  * title тумблера, состояние «все источники отключены модератором»
  * (доменное speechRestricted, T094) в conference-controls не
- * выводится вовсе — правило удалено из источника целиком; нейтральная
- * строка отказа переключения .conference-controls-notice остаётся.
+ * выводится вовсе — правило удалено из источника целиком.
+ *
+ * T105 — полный демонтаж строки отказа .conference-controls-notice:
+ * все уведомления панели живут в tooltip'ах кнопок (отказ переключения
+ * «Не удалось включить/выключить …» — в tooltip СВОЕЙ кнопки, приоритет
+ * pending > failure > точечное ограничение > имя) — правило удалено
+ * из источника целиком (реинверсия сохранения из T097).
  *
  * T098 — полная замена conference-controls на стимпанк-прототип кнопок-
  * иконок tmp/conference-controls.html: оболочка machine на fieldset
@@ -82,6 +87,14 @@ import { describe, expect, it } from 'vitest'
  * геометрия prejoin-тумблеров T098 не регрессируют; обвязка
  * .guest-join-prejoin сама не красится — двойной рамки у pre-join
  * гостя не возникает.
+ *
+ * T108 — индикаторы микрофона/камеры/экрана в строке участника
+ * (прототипы tmp/conference-page-{moderator,participant}.html):
+ * латунные мини-бейджи .cp-sig 22px между именем и кебабом, состояние
+ * — data-state on/off/blocked; on = золото + on-части иконки, off =
+ * приглушение + диагональный штрих --err, blocked = приглушение
+ * saturate + замок-бейдж (только в виду модератора). Индикаторы НЕ
+ * кликабельны (pointer-events: none) и БЕЗ tooltip.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -116,7 +129,7 @@ describe('каркас конференц-страницы (T075): статич�
     // joined/ended/error занимают всё окно)
     expect(section?.[1]).toContain('display: flex')
     expect(section?.[1]).toContain('flex-direction: column')
-    expect(section?.[1]).toContain('min-height: 100dvh')
+    expect(section?.[1]).toContain('height: 100dvh')
   })
 
   it('conferences.css: вертикальная цепочка роста (join → joined → room) и доли окна у тайлов', () => {
@@ -194,11 +207,11 @@ describe('полноэкранный пин-оверлей (T079): статич�
   })
 
   it('служебные панели страницы скрыты по body:has; статус-строки и тост — absolute-оверлеи сверху', () => {
-    // скрытие остального: панели участников/модерации (у гостя её
-    // нет — правило не матчится), компактная полоса остальных тайлов;
-    // шапка и identity-строка удалены целиком (T087), output-подпись
-    // joined-формы и живой счётчик T080 — тоже (T092): их селекторов
-    // в источнике больше нет
+    // скрытие остального: панель участников (объединённая T107 —
+    // инструменты модератора живут в ней), компактная полоса остальных
+    // тайлов; шапка и identity-строка удалены целиком (T087),
+    // output-подпись joined-формы и живой счётчик T080 — тоже (T092):
+    // их селекторов в источнике больше нет
     const hidden = conferencesCss.match(
       /body:has\(\.conference-room-pinned\) \.conference-participants[\s\S]{0,600}?\{([^}]*)\}/,
     )
@@ -206,7 +219,6 @@ describe('полноэкранный пин-оверлей (T079): статич�
     expect(hidden?.[1]).toContain('display: none')
     for (const selector of [
       'body:has(.conference-room-pinned) .conference-participants',
-      'body:has(.conference-room-pinned) .conference-moderation',
       'body:has(.conference-room-pinned) .conference-tiles-compact',
     ]) {
       expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
@@ -571,9 +583,10 @@ describe('санитаризация шапки/identity (T087): статиче�
   })
 
   it('селекторы пин-оверлея T079 для оставшихся поверхностей сохранены', () => {
+    // T107: панель модерации объединена в панель участников —
+    // отдельного селектора скрытия больше нет
     for (const selector of [
       'body:has(.conference-room-pinned) .conference-participants',
-      'body:has(.conference-room-pinned) .conference-moderation',
       'body:has(.conference-room-pinned) .conference-tiles-compact',
     ]) {
       expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
@@ -662,15 +675,12 @@ describe('демонтаж стека пояснений conference-controls (T0
     expect(conferencesCss).not.toContain('.conference-controls-restrictions')
   })
 
-  it('нейтральная строка отказа .conference-controls-notice сохранена (регресс)', () => {
-    // «Не удалось включить/выключить …» — единственный потребитель
-    // класса после T097; геометрия не регрессирует (^ и m — не цеплять
-    // хвосты составных селекторов)
-    const rule = conferencesCss.match(/^\.conference-controls-notice\s*\{([^}]*)\}/m)
-    expect(rule).not.toBeNull()
-    expect(rule?.[1]).toContain('flex-basis: 100%')
-    expect(rule?.[1]).toContain('font: italic 12px var(--font-body)')
-    expect(rule?.[1]).toContain('color: var(--muted)')
+  it('правило .conference-controls-notice удалено из источника (демонтаж строки отказа T105)', () => {
+    // все уведомления панели живут в tooltip'ах кнопок: отказ
+    // переключения «Не удалось включить/выключить …» — в tooltip СВОЕЙ
+    // кнопки, <output>-строки под кнопками больше нет — мёртвое
+    // правило не остаётся в CSS (реинверсия по образцу T097)
+    expect(conferencesCss).not.toContain('.conference-controls-notice')
   })
 })
 
@@ -776,5 +786,502 @@ describe('индикатор микрофона и пометки ролей т�
     expect(doc).toContain('T100')
     expect(doc).toContain('прототип')
     expect(doc).toContain('РОВНО ДВА состояния')
+  })
+})
+
+describe('тематическая live-плашка шага имени гостя (T102): статический пин CSS', () => {
+  it('плашка закрывает ВСЕ box-свойства глобального output-стиля: margin 0, ширина поля имени, тёмная пластина, латунная рамка, паддинг input', () => {
+    // глобальное element-правило `output, [role='status']` (index.css)
+    // навешивает каждому <output> светлую зелёную плашку auth-лексики
+    // (margin 0 0 14px / padding 10px 12px / background
+    // var(--success-bg)); класс (0,1,0) обязан закрыть каждое из них
+    const rule = conferencesCss.match(/^\.guest-join-live\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: 0')
+    // во всю ширину поля имени: оба — flex-дети колонки .guest-join-name
+    expect(rule?.[1]).toContain('width: 100%')
+    // явная тёмная пластина прототипа — зелёная лексика исключена
+    expect(rule?.[1]).toContain(
+      'linear-gradient(180deg, rgba(34, 28, 18, 0.9), rgba(20, 16, 10, 0.92))',
+    )
+    expect(rule?.[1]).toContain('border: 1px solid var(--gold-dark)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+    expect(rule?.[1]).not.toContain('var(--success)')
+    // паддинг равен .guest-join-name-input — пластина геометрически
+    // совпадает с полем имени (7px 10px)
+    const input = conferencesCss.match(/^\.guest-join-name-input\s*\{([^}]*)\}/m)
+    expect(input?.[1]).toContain('padding: 7px 10px')
+    expect(rule?.[1]).toContain('padding: 7px 10px')
+    expect(rule?.[1]).toContain('overflow-wrap: break-word')
+  })
+
+  it('контент по центру + лампа-точка ::before с пульсом live-flick (паритет лампы тумблеров T098)', () => {
+    const rule = conferencesCss.match(/^\.guest-join-live\s*\{([^}]*)\}/m)
+    expect(rule?.[1]).toContain('display: flex')
+    expect(rule?.[1]).toContain('align-items: center')
+    expect(rule?.[1]).toContain('justify-content: center')
+    expect(rule?.[1]).toContain('column-gap: 7px')
+    expect(rule?.[1]).toContain('text-align: center')
+    // лампа-точка 6px: radial-градиент прототипа + свечение + флик
+    const lamp = conferencesCss.match(/^\.guest-join-live::before\s*\{([^}]*)\}/m)
+    expect(lamp).not.toBeNull()
+    expect(lamp?.[1]).toContain("content: ''")
+    expect(lamp?.[1]).toContain('flex: none')
+    expect(lamp?.[1]).toContain('width: 6px')
+    expect(lamp?.[1]).toContain('height: 6px')
+    expect(lamp?.[1]).toContain(
+      'radial-gradient(circle at 35% 30%, #fff6d8, var(--gold-light) 45%, var(--gold-dark))',
+    )
+    expect(lamp?.[1]).toContain('box-shadow: 0 0 6px rgba(232, 200, 119, 0.8)')
+    expect(lamp?.[1]).toContain('animation: live-flick 4s ease-in-out infinite')
+    // кадры мерцания прототипа tmp/guest-join-title.html
+    const frames = conferencesCss.match(/@keyframes live-flick\s*\{([\s\S]*?)\n\}/)
+    expect(frames).not.toBeNull()
+    expect(frames?.[1]).toContain('opacity: 0.6')
+  })
+
+  it('регресс-пины формы (T091/T096/T101) не меняются; глобальный output-стиль в index.css не правится', () => {
+    // корпус machine, центрирование по обеим осям и ширина формы — на месте
+    const form = conferencesCss.match(/^\.guest-join-name\s*\{([^}]*)\}/m)
+    expect(form?.[1]).toContain('margin: auto')
+    expect(form?.[1]).toContain('width: min(560px, 100%)')
+    expect(form?.[1]).toContain('background: var(--conference-machine-bg)')
+    const title = conferencesCss.match(/^\.guest-join-title\s*\{([^}]*)\}/m)
+    expect(title?.[1]).toContain('text-align: center')
+    // глобальное правило живёт без изменений — им пользуются
+    // auth/настройки/статус-баннеры (status-banners.css перекрывает
+    // его своими классами — тот же паттерн переопределения)
+    const output = indexCss.match(/output,\s*\[role='status'\]\s*\{([^}]*)\}/)
+    expect(output).not.toBeNull()
+    expect(output?.[1]).toContain('var(--success-bg)')
+  })
+
+  it('докблок правила truthfully описывает перекрытие глобального output-стиля', () => {
+    const at = conferencesCss.indexOf('.guest-join-live {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1400), at)
+    expect(doc).toContain('output')
+    expect(doc).toContain('глобальн')
+    expect(doc).toContain('T102')
+  })
+})
+
+describe('состояние «в полёте» тумблеров — переливающийся контур (T103): статический пин CSS', () => {
+  it("селектор [data-state='pending']: золотой бордер, штрих скрыт, on-части приглушены до 0.45", () => {
+    // кнопка читается «нажатой, источник прогревается»: тёмная лампа/штрих
+    // выкл уходит, но полного «вкл» нет — on-части иконки на 0.45
+    const pending = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\]\s*\{([^}]*)\}/,
+    )
+    expect(pending).not.toBeNull()
+    expect(pending?.[1]).toContain('border-color: var(--gold)')
+    const slash = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\] \.conference-controls-off-slash\s*\{([^}]*)\}/,
+    )
+    expect(slash).not.toBeNull()
+    expect(slash?.[1]).toContain('opacity: 0')
+    const onPart = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\] \.conference-controls-on-part\s*\{([^}]*)\}/,
+    )
+    expect(onPart).not.toBeNull()
+    expect(onPart?.[1]).toContain('opacity: 0.45')
+  })
+
+  it('кольцо ::after — вращающийся conic-gradient золотых тонов, замаскированный в тонкое кольцо поверх бордера', () => {
+    const ring = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\]::after\s*\{([^}]*)\}/,
+    )
+    expect(ring).not.toBeNull()
+    expect(ring?.[1]).toContain('position: absolute')
+    expect(ring?.[1]).toContain('inset: -5px')
+    expect(ring?.[1]).toContain('border-radius: 50%')
+    // перелив: конус от прозрачного через золотые тона прототипа
+    expect(ring?.[1]).toContain('conic-gradient')
+    expect(ring?.[1]).toContain('var(--gold-light)')
+    expect(ring?.[1]).toContain('#fff6d8')
+    expect(ring?.[1]).toContain('var(--gold)')
+    // маска оставляет тонкое кольцо ~1px (farthest-side, calc-ступени)
+    expect(ring?.[1]).toContain('farthest-side')
+    expect(ring?.[1]).toContain('calc(100% - 4px)')
+    expect(ring?.[1]).toContain('calc(100% - 3px)')
+    expect(ring?.[1]).toContain('mask:')
+    expect(ring?.[1]).toContain('animation: conference-controls-ring-crawl 1.4s linear infinite')
+    expect(ring?.[1]).toContain('pointer-events: none')
+  })
+
+  it('лампа «дышит» в полёте: горящий градиент + lamp-breathe 1.4s (пульс 0.35↔1)', () => {
+    const lamp = conferencesCss.match(
+      /\.conference-controls-toggle\[data-state='pending'\] \.conference-controls-lamp\s*\{([^}]*)\}/,
+    )
+    expect(lamp).not.toBeNull()
+    expect(lamp?.[1]).toContain(
+      'radial-gradient(circle at 35% 30%, #fff6d8, var(--gold-light) 45%, var(--gold-dark))',
+    )
+    expect(lamp?.[1]).toContain(
+      'animation: conference-controls-lamp-breathe 1.4s ease-in-out infinite',
+    )
+    // кадры прототипа: горящая лампа пульсирует 0.35↔1
+    const breathe = conferencesCss.match(
+      /@keyframes conference-controls-lamp-breathe\s*\{([\s\S]*?)\n\}/,
+    )
+    expect(breathe).not.toBeNull()
+    expect(breathe?.[1]).toContain('opacity: 0.35')
+    expect(breathe?.[1]).toContain('opacity: 1')
+    const crawl = conferencesCss.match(
+      /@keyframes conference-controls-ring-crawl\s*\{([\s\S]*?)\n\}/,
+    )
+    expect(crawl).not.toBeNull()
+    expect(crawl?.[1]).toContain('rotate(360deg)')
+  })
+
+  it('disabled-затемнение несёт карве-аут :not([data-state=pending]) — кнопка в полёте НЕ гаснет', () => {
+    // прототип .ctl:disabled:not([data-state='pending']): две соседние
+    // кнопки в полёте затемняются как раньше, летящая остаётся полной
+    const rule = conferencesCss.match(
+      /\.conference-controls button\[disabled\]:not\(\[data-state='blocked'\]\):not\(\[data-state='pending'\]\)\s*\{([^}]*)\}/,
+    )
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('opacity: 0.45')
+  })
+})
+
+describe('каркас экрана — сайдбар участников справа (T106): статический пин CSS', () => {
+  it('.conference-main — flex-ROW: тайлы слева растягиваются, высота гасится внутри (flex:1 + min-height:0)', () => {
+    // прототип tmp/conference-page-{moderator,participant}-{expanded,collapsed}.html:
+    // рабочая область — строка «сетка тайлов + панель участников», flex:1
+    // колонки комнаты, переполнение гасится ВНУТРИ (скроллбаров страницы нет)
+    const rule = conferencesCss.match(/^\.conference-main\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: flex')
+    expect(rule?.[1]).toContain('flex-direction: row')
+    expect(rule?.[1]).toContain('flex: 1')
+    expect(rule?.[1]).toContain('min-height: 0')
+    expect(rule?.[1]).toContain('gap: var(--gap-frame)')
+  })
+
+  it('сетка тайлов внутри .conference-main — flex:1/min-width:0 + ВНУТРЕННЯЯ прокрутка с тонким латунным скроллбаром', () => {
+    // скроллбар появляется, только когда тайлы не помещаются при
+    // минимальном 220px (auto-fit); align-content:start — строки не
+    // растягиваются по свободной высоте; компактная полоса пина T074
+    // живёт своей геометрией (:not-гвард, паритет машины T099)
+    const rule = conferencesCss.match(
+      /^\.conference-main \.conference-tiles:not\(\.conference-tiles-compact\)\s*\{([^}]*)\}/m,
+    )
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('flex: 1')
+    expect(rule?.[1]).toContain('min-width: 0')
+    expect(rule?.[1]).toContain('align-content: start')
+    expect(rule?.[1]).toContain('overflow-y: auto')
+    expect(rule?.[1]).toContain('scrollbar-width: thin')
+    expect(rule?.[1]).toContain('scrollbar-color: #55452c transparent')
+  })
+
+  it('панель участников — фиксированная ширина 340px, заполняет колонку (flex:1) + [hidden]-гвард свёрнутого состояния', () => {
+    // правая колонка фиксированной ширины; T107: панель — единственный
+    // ребёнок колонки, растягивается на её высоту (flex:1) и сжимается
+    // по min-height:0 — прокрутка живёт у СПИСКА, футер вне прокрутки;
+    // свёрнутое состояние — нативный [hidden] (гвард обязателен:
+    // авторский display:flex сильнее UA-стиля [hidden])
+    const rule = conferencesCss.match(/^\.conference-participants\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('width: 340px')
+    expect(rule?.[1]).toContain('flex: 1')
+    expect(rule?.[1]).toContain('min-height: 0')
+    const guard = conferencesCss.match(
+      /^\.conference-side\[hidden\],\s*\.conference-participants\[hidden\]\s*\{([^}]*)\}/m,
+    )
+    expect(guard).not.toBeNull()
+    expect(guard?.[1]).toContain('display: none')
+  })
+
+  it('правая колонка .conference-side — контейнер слота сайдбара (width 340, flex-колонка), на узких окнах сужается media-запросом', () => {
+    // T107: колонка держит ОБЪЕДИНЁННУЮ панель участников; сама колонка
+    // не прокручивается — скроллится только список панели
+    const rule = conferencesCss.match(/^\.conference-side\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: flex')
+    expect(rule?.[1]).toContain('flex-direction: column')
+    expect(rule?.[1]).toContain('width: 340px')
+    expect(rule?.[1]).toContain('flex: none')
+    expect(rule?.[1]).toContain('min-height: 0')
+    // media-запрос прототипа: на узких окнах панель сужается
+    const media = conferencesCss.match(
+      /@media \(max-width: ?960px\)\s*\{[^@]*?\.conference-side,\s*\.conference-participants\s*\{([^}]*)\}/,
+    )
+    expect(media).not.toBeNull()
+    expect(media?.[1]).toContain('width: min(300px, 46vw)')
+  })
+
+  it('список участников — ВНУТРЕННЯЯ прокрутка (flex:1/min-height:0), тонкий латунный скроллбар', () => {
+    // скроллбар может быть у списка участников (уточнение пользователя):
+    // сама панель не скроллится — заголовок сверху остаётся видимым
+    const rule = conferencesCss.match(/^\.conference-participants-list\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('flex: 1')
+    expect(rule?.[1]).toContain('min-height: 0')
+    expect(rule?.[1]).toContain('overflow-y: auto')
+    expect(rule?.[1]).toContain('scrollbar-width: thin')
+    expect(rule?.[1]).toContain('scrollbar-color: #55452c transparent')
+  })
+
+  it('полоса .conference-toggle-row над рабочей областью: кнопка справа, прижата к ней компенсацией gap', () => {
+    const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: flex')
+    expect(rule?.[1]).toContain('justify-content: flex-end')
+    expect(rule?.[1]).toContain('flex: none')
+    expect(rule?.[1]).toContain('margin-bottom: calc(2px - var(--gap-frame))')
+  })
+
+  it('кнопка .conference-panel-toggle — ТОЛЬКО svg-иконка 17px: без текста, рамки, фона и теней; шеврон различает состояния', () => {
+    // уточнения пользователя: «убрать текст и границы кнопки» — прототип:
+    // border:none, background:transparent, теней нет; hover золотом,
+    // focus-visible (008), шеврон ‹ развёрнута / › свёрнута (rotate 180)
+    const rule = conferencesCss.match(/^\.conference-panel-toggle\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('border: none')
+    expect(rule?.[1]).toContain('background: transparent')
+    expect(rule?.[1]).not.toContain('box-shadow')
+    const svg = conferencesCss.match(/^\.conference-panel-toggle svg\s*\{([^}]*)\}/m)
+    expect(svg).not.toBeNull()
+    expect(svg?.[1]).toContain('width: 17px')
+    expect(svg?.[1]).toContain('height: 17px')
+    const hover = conferencesCss.match(/^\.conference-panel-toggle:hover\s*\{([^}]*)\}/m)
+    expect(hover?.[1]).toContain('color: var(--gold-light)')
+    const focus = conferencesCss.match(/^\.conference-panel-toggle:focus-visible\s*\{([^}]*)\}/m)
+    expect(focus?.[1]).toContain('outline: 2px solid var(--gold-light)')
+    const chevron = conferencesCss.match(
+      /^\.conference-panel-toggle\[aria-expanded='false'\] \.conference-panel-chevron\s*\{([^}]*)\}/m,
+    )
+    expect(chevron).not.toBeNull()
+    expect(chevron?.[1]).toContain('transform: rotate(180deg)')
+  })
+
+  it('полноэкранный пин T079: полоса с кнопкой и колонка сайдбара скрыты существующим механизмом body:has', () => {
+    // в пин-оверлее полоса не нужна; колонка сайдбара скрывается вместе с
+    // панелью участников и компактной полосой тайлов (T107: отдельной
+    // панели модерации больше нет — объединена в список участников)
+    expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-toggle-row')
+    const toggleHidden = conferencesCss.match(
+      /body:has\(\.conference-room-pinned\) \.conference-toggle-row\s*\{([^}]*)\}/,
+    )
+    expect(toggleHidden?.[1]).toContain('display: none')
+    expect(conferencesCss).toContain('body:has(.conference-room-pinned) .conference-side')
+    for (const selector of [
+      'body:has(.conference-room-pinned) .conference-participants',
+      'body:has(.conference-room-pinned) .conference-tiles-compact',
+    ]) {
+      expect(conferencesCss, `селектор скрытия ${selector}`).toContain(selector)
+    }
+  })
+
+  it('controls всегда внизу по центру: align-self:center колонки комнаты (регресс базового правила)', () => {
+    // «ребёнок колонки комнаты ПОД .conference-main» — базовое правило
+    // оболочки уже центрирует (T098); в пин-оверлее — absolute T079
+    const shell = conferencesCss.match(/^\.conference-controls\s*\{([^}]*)\}/m)
+    expect(shell?.[1]).toContain('align-self: center')
+  })
+
+  it('докблок блока truthfully описывает каркас сайдбара (T106, прототип)', () => {
+    const at = conferencesCss.indexOf('.conference-toggle-row {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1800), at)
+    expect(doc).toContain('T106')
+    expect(doc).toContain('сайдбар')
+  })
+})
+
+describe('объединённая панель участников (T107): статический пин CSS', () => {
+  it('прокрутка ТОЛЬКО у списка: колонка .conference-side собственной прокрутки не имеет (после объединения панелей)', () => {
+    // T106 держал overflow-y у колонки, пока панелей две; T107 — единая
+    // панель: список flex:1/min-height:0/overflow-y:auto (пин T106 выше),
+    // футер вне прокрутки, колонка сама не скроллится
+    const rule = conferencesCss.match(/^\.conference-side\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).not.toContain('overflow-y')
+    expect(rule?.[1]).not.toContain('scrollbar-width')
+  })
+
+  it('футер вне прокрутки: разделитель и инструменты панели — flex:none (не сжимаются списком)', () => {
+    const divider = conferencesCss.match(/^\.conference-participants-divider\s*\{([^}]*)\}/m)
+    expect(divider).not.toBeNull()
+    expect(divider?.[1]).toContain('flex: none')
+    expect(divider?.[1]).toContain(
+      'linear-gradient(90deg, transparent, var(--gold-dark), transparent)',
+    )
+    const end = conferencesCss.match(/^\.conference-moderation-end\s*\{([^}]*)\}/m)
+    expect(end).not.toBeNull()
+    expect(end?.[1]).toContain('flex: none')
+    const invite = conferencesCss.match(/^\.conference-guest-invite\s*\{([^}]*)\}/m)
+    expect(invite).not.toBeNull()
+    expect(invite?.[1]).toContain('flex: none')
+  })
+
+  it('кебаб строки .c-menu — паттерн GroupMembersModal/contacts-modal: 22px, прозрачная рамка/фон, hover золотом, svg 14px fill currentColor', () => {
+    const rule = conferencesCss.match(/^\.conference-participants \.c-menu\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('width: 22px')
+    expect(rule?.[1]).toContain('height: 22px')
+    expect(rule?.[1]).toContain('border: 1px solid transparent')
+    expect(rule?.[1]).toContain('background: transparent')
+    const hover = conferencesCss.match(/^\.conference-participants \.c-menu:hover\s*\{([^}]*)\}/m)
+    expect(hover?.[1]).toContain('color: var(--gold-light)')
+    const focus = conferencesCss.match(
+      /^\.conference-participants \.c-menu:focus-visible\s*\{([^}]*)\}/m,
+    )
+    expect(focus?.[1]).toContain('outline: 2px solid var(--gold-light)')
+    const svg = conferencesCss.match(/^\.conference-participants \.c-menu svg\s*\{([^}]*)\}/m)
+    expect(svg).not.toBeNull()
+    expect(svg?.[1]).toContain('width: 14px')
+    expect(svg?.[1]).toContain('height: 14px')
+    expect(svg?.[1]).toContain('fill: currentColor')
+  })
+
+  it('строка: центр имени .cp-main (flex:1/min-width:0) и пометки роли «·»-разделителем (лексика тайлов T100)', () => {
+    const main = conferencesCss.match(/^\.cp-main\s*\{([^}]*)\}/m)
+    expect(main).not.toBeNull()
+    expect(main?.[1]).toContain('flex: 1')
+    expect(main?.[1]).toContain('min-width: 0')
+    const mark = conferencesCss.match(/^\.conference-participants-mark\s*\{([^}]*)\}/m)
+    expect(mark).not.toBeNull()
+    expect(mark?.[1]).toContain('font: italic 11px')
+    const sep = conferencesCss.match(/^\.conference-participants-mark::before\s*\{([^}]*)\}/m)
+    expect(sep?.[1]).toContain("content: '·'")
+  })
+
+  it('санация conference-moderation-*: контейнер/список/тумблеры панели модерации удалены, переиспользуемая лексика футера сохранена', () => {
+    for (const gone of [
+      '.conference-moderation {',
+      '.conference-moderation-title',
+      '.conference-moderation-list',
+      '.conference-moderation-item',
+      '.conference-moderation-actions',
+      '.conference-moderation-toggle',
+      '.conference-moderation-button-restricted',
+      'body:has(.conference-room-pinned) .conference-moderation',
+    ]) {
+      expect(conferencesCss, `демонтированный селектор ${gone}`).not.toContain(gone)
+    }
+    // переиспользовано футером (кнопки модали — лексика .m-btn
+    // ui/ConfirmDialog, NOT conferences.css)
+    for (const kept of [
+      '.conference-moderation-button-danger',
+      '.conference-moderation-end',
+      '.conference-moderation-notice',
+      '.conference-guest-invite',
+    ]) {
+      expect(conferencesCss, `переиспользуемый селектор ${kept}`).toContain(kept)
+    }
+  })
+
+  it('T109: инлайн-блок подтверждения демонтирован — модаль ConfirmDialog/ModalShell 008, селекторов .conference-moderation-confirm* и базовой кнопки в conferences.css нет', () => {
+    for (const gone of [
+      '.conference-moderation-confirm',
+      '.conference-moderation-confirm-text',
+      '.conference-moderation-confirm-actions',
+      // базовая «Отмена»/«Подтвердить» инлайн-блока мертва после
+      // переезда кнопок в .m-btn ConfirmDialog (danger-вариант жив —
+      // «Отозвать ссылку»)
+      '.conference-moderation-button {',
+    ]) {
+      expect(conferencesCss, `демонтированный селектор ${gone}`).not.toContain(gone)
+    }
+  })
+
+  it('демонтированные строки-заметки T041: identity/online/ограничения из строки убраны (индикаторы — T108)', () => {
+    for (const gone of [
+      '.conference-participants-identity',
+      '.conference-participants-online',
+      '.conference-participants-restricted',
+      '.conference-participants-role',
+    ]) {
+      expect(conferencesCss, `демонтированный селектор ${gone}`).not.toContain(gone)
+    }
+  })
+
+  it('докблок блока truthfully описывает объединённую панель (T107, прототип)', () => {
+    const at = conferencesCss.indexOf('.conference-participants-divider {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 2600), at)
+    expect(doc).toContain('T107')
+    expect(doc).toContain('кебаб')
+  })
+})
+
+describe('индикаторы источников строки участника (T108): статический пин CSS', () => {
+  it('мини-бейдж .cp-sig — круг 22px с латунной рамкой; контейнер .cp-sigs не сжимает строку (flex:none)', () => {
+    const box = conferencesCss.match(/^\.cp-sigs\s*\{([^}]*)\}/m)
+    expect(box).not.toBeNull()
+    expect(box?.[1]).toContain('display: inline-flex')
+    expect(box?.[1]).toContain('flex: none')
+    const sig = conferencesCss.match(/^\.cp-sig\s*\{([^}]*)\}/m)
+    expect(sig).not.toBeNull()
+    expect(sig?.[1]).toContain('width: 22px')
+    expect(sig?.[1]).toContain('height: 22px')
+    expect(sig?.[1]).toContain('border-radius: 50%')
+    expect(sig?.[1]).toContain('border: 1.5px solid var(--gold)')
+    // svg приборов 12px, инлайн-штриховка currentColor
+    const svg = conferencesCss.match(/^\.cp-sig svg\s*\{([^}]*)\}/m)
+    expect(svg).not.toBeNull()
+    expect(svg?.[1]).toContain('width: 12px')
+    expect(svg?.[1]).toContain('height: 12px')
+  })
+
+  it('НЕ кликабельны: pointer-events:none + user-select:none — индикатор span, не кнопка', () => {
+    const sig = conferencesCss.match(/^\.cp-sig\s*\{([^}]*)\}/m)
+    expect(sig?.[1]).toContain('pointer-events: none')
+    expect(sig?.[1]).toContain('user-select: none')
+  })
+
+  it('ТРИ состояния [data-state]: on — золото + on-части; off — приглушение + штрих --err; blocked — saturate + замок', () => {
+    const on = conferencesCss.match(/\.cp-sig\[data-state='on'\]\s*\{([^}]*)\}/)
+    expect(on).not.toBeNull()
+    expect(on?.[1]).toContain('border-color: var(--gold)')
+    expect(on?.[1]).toContain('color: var(--gold-light)')
+    const onPart = conferencesCss.match(/\.cp-sig\[data-state='on'\] \.cp-sig-on\s*\{([^}]*)\}/)
+    expect(onPart?.[1]).toContain('opacity: 1')
+    const off = conferencesCss.match(/\.cp-sig\[data-state='off'\]\s*\{([^}]*)\}/)
+    expect(off).not.toBeNull()
+    expect(off?.[1]).toContain('border-color: #55452c')
+    expect(off?.[1]).toContain('color: var(--muted)')
+    const slash = conferencesCss.match(/^\.cp-sig-slash\s*\{([^}]*)\}/m)
+    expect(slash?.[1]).toContain('var(--err)')
+    const slashShown = conferencesCss.match(
+      /\.cp-sig\[data-state='off'\] \.cp-sig-slash\s*\{([^}]*)\}/,
+    )
+    expect(slashShown?.[1]).toContain('opacity: 0.95')
+    // третье состояние «отключено модератором» — лексика blocked тумблеров T098
+    const blocked = conferencesCss.match(/\.cp-sig\[data-state='blocked'\]\s*\{([^}]*)\}/)
+    expect(blocked).not.toBeNull()
+    expect(blocked?.[1]).toContain('saturate(0.55)')
+    const lock = conferencesCss.match(
+      /\.cp-sig\[data-state='blocked'\] \.cp-sig-lock\s*\{([^}]*)\}/,
+    )
+    expect(lock?.[1]).toContain('opacity: 1')
+  })
+
+  it('БЕЗ tooltip: у индикаторов нет tooltip-классов/правил (запрос T108)', () => {
+    expect(conferencesCss).not.toMatch(/\.cp-sig[^{}]*tooltip/)
+  })
+
+  it('замок-бейдж — 12px в правом нижнем углу (right/bottom -3px), латунный круг', () => {
+    const lock = conferencesCss.match(/^\.cp-sig-lock\s*\{([^}]*)\}/m)
+    expect(lock).not.toBeNull()
+    expect(lock?.[1]).toContain('position: absolute')
+    expect(lock?.[1]).toContain('right: -3px')
+    expect(lock?.[1]).toContain('bottom: -3px')
+    expect(lock?.[1]).toContain('width: 12px')
+    expect(lock?.[1]).toContain('height: 12px')
+    const lockSvg = conferencesCss.match(/^\.cp-sig-lock svg\s*\{([^}]*)\}/m)
+    expect(lockSvg?.[1]).toContain('width: 7px')
+    expect(lockSvg?.[1]).toContain('height: 7px')
+  })
+
+  it('докблок блока truthfully описывает индикаторы (T108, прототип, три состояния)', () => {
+    const at = conferencesCss.indexOf('.cp-sigs {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1600), at)
+    expect(doc).toContain('T108')
+    expect(doc).toContain('прототип')
   })
 })

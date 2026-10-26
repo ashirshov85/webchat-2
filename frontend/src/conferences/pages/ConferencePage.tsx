@@ -34,12 +34,15 @@
  * остаются видимыми (Q20=A, уточнения T071/T076).
  * Блок joined монтирует медиа-комнату ConferenceRoom (T027):
  * подключение по JoinTicket, тайлы участников и адаптацию качества
- * (FR-004); в слоте children — ParticipantsPanel (T041): список
- * участников из LiveKit (identity/name, роль, online, ограничения),
- * ModerationPanel (T042): панель действий модератора №48–№51
- * (рендерится только роли модератора — сама скрывается broadcast'ом
- * снятия роли), и MediaControls (T028): тумблеры микрофона/камеры/
- * экрана и «Покинуть» — выход (leave слота вкладки, Q10=A) возвращает
+ * (FR-004); T106: в слоте sidebar — ПРАВАЯ КОЛОНКА рабочей области
+ * (сворачивается/разворачивается кнопкой conference-panel-toggle):
+ * ОБЪЕДИНЁННАЯ панель участников (T041/T107) — единый список строк
+ * с кебабом действий модератора №49–№51 и футером инструментов
+ * (гостевая ссылка №52/№53 + «Завершить конференцию» №48; кебаби и
+ * футер — только роли модератора, скрываются broadcast'ом снятия
+ * роли), а в слоте children — MediaControls (T028): тумблеры
+ * микрофона/камеры/экрана и «Покинуть» — всегда внизу по центру
+ * экрана; выход (leave слота вкладки, Q10=A) возвращает
  * в мессенджер с открытым чатом конференции (FR-019, T095: возврат на
  * pre-join отменён; путь модератора после №48 — комната 'closed' →
  * «Покинуть» → чат — сходится этой же кнопкой).
@@ -66,7 +69,6 @@ import { endedConferenceLabel, formatSpanDuration } from '../../ui/duration'
 import ConferenceRoom from '../components/ConferenceRoom'
 import type { ConferenceRoomInitialMedia } from '../components/ConferenceRoom'
 import MediaControls from '../components/MediaControls'
-import ModerationPanel from '../components/ModerationPanel'
 import ParticipantsPanel from '../components/ParticipantsPanel'
 import PreJoinScreen from '../components/PreJoinScreen'
 import type { PreJoinSelection } from '../components/PreJoinScreen'
@@ -128,7 +130,7 @@ function loadErrorMessage(code: ConferenceErrorCode | null): string {
     : 'Не удалось загрузить конференцию'
 }
 
-/** Блок подключенной вкладки (T026/T027/T028 + панель участников T041): медиа-комната + список участников + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
+/** Блок подключенной вкладки (T026/T027/T028 + объединённая панель участников T041/T107): медиа-комната + список участников с кебабом модератора + панель управления (тумблеры микрофона/камеры/экрана, «Покинуть»). */
 function JoinedPanel({
   conferenceId,
   ticket,
@@ -167,9 +169,8 @@ function JoinedPanel({
         initialMedia={initialMedia}
         initialDevices={initialDevices}
         refreshTicket={refreshTicket}
+        sidebar={<ParticipantsPanel conferenceId={conferenceId} />}
       >
-        <ParticipantsPanel />
-        <ModerationPanel conferenceId={conferenceId} />
         <MediaControls
           restrictions={restrictions}
           onRestrictionsSync={onRestrictionsSync}
