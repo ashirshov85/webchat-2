@@ -528,12 +528,14 @@ describe('счётчик непрочитанных при входе (T052, и�
   })
 
   /**
-   * 009 (US1, T104): полоса «Синхронизация сообщений…» рендерится
-   * ВНУТРИ ChatListPanel — под строкой поиска (не над всей панелью):
-   * появляется, пока цикл §3.1 висит в №26, и гаснет по завершении.
-   * Отложенный №26 макротаском держит фазу true→false видимой.
+   * 009 (US1, T104 → T110): строка «Синхронизация сообщений…»
+   * рендерится ВНУТРИ ChatListPanel — под строкой поиска (не над всей
+   * панелью): появляется, пока цикл §3.1 висит в №26, и гаснет по
+   * завершении. T110: строка — тихая подпись `.messenger-empty`
+   * (states.css, FR-032), не латунная плашка. Отложенный №26
+   * макротаском держит фазу true→false видимой.
    */
-  it('T104: индикатор дозагрузки — под .search-row внутри панели, гаснет по завершении цикла', async () => {
+  it('T110: тихая строка дозагрузки — под .search-row внутри панели, гаснет по завершении цикла', async () => {
     let releaseSync!: (response: SyncResponse) => void
     mockChats.sync.mockImplementation(
       () =>
@@ -543,32 +545,33 @@ describe('счётчик непрочитанных при входе (T052, и�
     )
     mockChats.listChats.mockResolvedValue([directRow(0, makeMessage(ALICE_CHAT_ID, 10, ALICE))])
     const stream = await renderMessengerPage()
-    expect(document.querySelector('.sync-indicator')).toBeNull()
+    expect(document.querySelector('.chat-panel output.messenger-empty')).toBeNull()
 
     openStream(stream)
 
-    // Цикл идёт (№26 висит) — полоса на месте: внутри .chat-panel,
-    // ПОСЛЕ .search-row в DOM-порядке.
+    // Цикл идёт (№26 висит) — тихая строка на месте: внутри .chat-panel,
+    // ПОСЛЕ .search-row в DOM-порядке, в лексике тихих подписей.
     await waitFor(() => {
-      expect(document.querySelector('.sync-indicator')).not.toBeNull()
+      expect(document.querySelector('.chat-panel output.messenger-empty')).not.toBeNull()
     })
     const panel = document.querySelector('.chat-panel')
     const searchRow = document.querySelector('.search-row')
-    const indicator = document.querySelector('.sync-indicator')
+    const indicator = document.querySelector('.chat-panel output.messenger-empty')
     expect(panel?.contains(indicator as Node)).toBe(true)
     expect(
       (searchRow as Node).compareDocumentPosition(indicator as Node) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
     expect(indicator).toHaveTextContent('Синхронизация сообщений…')
+    expect(indicator).toHaveClass('messenger-empty')
 
-    // №26 ответило, flush №25 прошёл — цикл завершён, полоса погасла.
+    // №26 ответило, flush №25 прошёл — цикл завершён, строка погасла.
     await act(async () => {
       releaseSync(syncResponse([]))
       await Promise.resolve()
     })
     await waitFor(() => {
-      expect(document.querySelector('.sync-indicator')).toBeNull()
+      expect(document.querySelector('.chat-panel output.messenger-empty')).toBeNull()
     })
   })
 })

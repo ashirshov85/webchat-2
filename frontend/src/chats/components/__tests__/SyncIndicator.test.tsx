@@ -8,6 +8,12 @@ import { SyncIndicator } from '../SyncIndicator'
  * мелькнул и погас»). Purely driven by the single-flight `syncing`
  * signal of useSync (T019) — one steady indication for the whole
  * cycle, no per-request blinking.
+ *
+ * 009 (T110): строка переведена в семью тихих подписей — лексика
+ * «Загрузка чатов…» и подсказок сайдбара (`.messenger-empty`,
+ * states.css, FR-032), не латунная плашка полос доставки: класс
+ * `.sync-indicator` и точка-«лампа» `.sync-indicator-dot` демонтированы,
+ * а замки a11y (role=status + дословный текст live-region) — на месте.
  */
 
 afterEach(cleanup)
@@ -23,6 +29,15 @@ describe('SyncIndicator (T020)', () => {
     render(<SyncIndicator syncing={true} />)
 
     expect(screen.getByRole('status')).toHaveTextContent('Синхронизация сообщений…')
+  })
+
+  it('T110: rides the quiet `.messenger-empty` family — no brass strip, no dot', () => {
+    const { container } = render(<SyncIndicator syncing={true} />)
+    const status = screen.getByRole('status')
+
+    expect(status).toHaveClass('messenger-empty')
+    expect(status).not.toHaveClass('sync-indicator')
+    expect(container.querySelector('.sync-indicator-dot')).toBeNull()
   })
 
   it('lights up for the cycle and goes dark on completion', () => {

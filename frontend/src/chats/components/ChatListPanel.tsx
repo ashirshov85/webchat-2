@@ -66,6 +66,17 @@
  * а не контент списка, поэтому полоса видна в ОБОИХ режимах панели.
  * Состояние остаётся у страницы (проп `syncing`, дефолт false — без
  * пропса полосы нет).
+ *
+ * 009 (T110): строки «Загрузка чатов…» и «Синхронизация сообщений…»
+ * — тихие подписи `.messenger-empty` (states.css, FR-032) в ОДНОЙ
+ * упорядоченной очереди: список поддерживается по краям флагов
+ * (rising edge `status==='loading'` / `syncing` — append в конец,
+ * falling edge — удаление), рендер идёт в порядке очереди — кто
+ * возник раньше, тот выше; каждая строка гаснет по завершении СВОЕГО
+ * события, не дожидаясь соседа. Начальный `'loading'` useChatList
+ * считается возникшим в момент монта панели. В режиме поиска
+ * «Загрузки чатов» не существует — sync-строка остаётся глобальным
+ * статусом под `.search-row` (T104).
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ChatListItem as ChatListItemData } from '../../api/chats'
@@ -92,6 +103,13 @@ function chatMatchesQuery(item: ChatListItemData, normalizedQuery: string): bool
   const label = item.type === 'group' ? item.title : item.peer?.username
   return label !== undefined && label.toLowerCase().includes(normalizedQuery)
 }
+
+/**
+ * T110: ключи строк очереди состояний сайдбара. Порядок массива —
+ * порядок возникновения событий; рендер идёт по массиву, поэтому
+ * первый возникший флаг стоит выше.
+ */
+type StateRowKey = 'chats-loading' | 'syncing'
 
 /**
  * Строка-результат псевдо-поиска (T068): проекция сообщения открытого
@@ -202,6 +220,48 @@ export function ChatListPanel({
   const searchFieldRef = useRef<HTMLInputElement>(null)
   const trimmedSearchQuery = searchQuery.trim()
 
+  /**
+   * T110: упорядоченная очередь активных строк состояний — список
+   * держится по краям флагов: rising edge (`status==='loading'` /
+   * `syncing`) добавляет ключ в КОНЕЦ, falling edge — удаляет. Начальный
+   * `'loading'` useChatList (useChatList.ts:503) считается возникшим в
+   * момент монта панели — он сидит в стартовом состоянии; монтаж с уже
+   * поднятым `syncing` регистрируется первым проходом эффекта как
+   * rising edge (рефы стартуют по `false`).
+   */
+  const [stateRows, setStateRows] = useState<readonly StateRowKey[]>(() =>
+    status === 'loading' ? ['chats-loading'] : [],
+  )
+  const wasListLoadingRef = useRef(status === 'loading')
+  const wasSyncingRef = useRef(false)
+  useEffect(() => {
+    const listLoading = status === 'loading'
+    const edges: StateRowKey[] = []
+    if (listLoading !== wasListLoadingRef.current) {
+      wasListLoadingRef.current = listLoading
+      edges.push('chats-loading')
+    }
+    if (syncing !== wasSyncingRef.current) {
+      wasSyncingRef.current = syncing
+      edges.push('syncing')
+    }
+    if (edges.length === 0) {
+      return
+    }
+    setStateRows((rows) => {
+      let next = rows
+      for (const key of edges) {
+        const active = key === 'chats-loading' ? listLoading : syncing
+        next = active
+          ? next.includes(key)
+            ? next
+            : [...next, key]
+          : next.filter((row) => row !== key)
+      }
+      return next
+    })
+  }, [status, syncing])
+
   // Включение режима фокусирует поле и чистит локальный запрос обычного
   // режима (прототип :1571 — value='' + focus; выход тоже чистит).
   useEffect(() => {
@@ -244,9 +304,25 @@ export function ChatListPanel({
           />
         </div>
       </div>
-      {/* T104: глобальный статус дозагрузки — под строкой поиска, в
-          обоих режимах панели (SyncIndicator рендерит null при false). */}
-      <SyncIndicator syncing={syncing} />
+      {/* T104/T110: строки состояний сайдбара — тихие подписи
+          .messenger-empty в порядке возникновения событий (кто начался
+          раньше — выше). В режиме поиска «Загрузки чатов» не
+          существует — остаётся глобальный sync-статус (T104). */}
+      {searchMode ? (
+        <SyncIndicator syncing={syncing} />
+      ) : (
+        stateRows.map((row) =>
+          row === 'syncing' ? (
+            <SyncIndicator key="syncing" syncing={syncing} />
+          ) : (
+            status === 'loading' && (
+              <p key="chats-loading" className="messenger-empty">
+                Загрузка чатов…
+              </p>
+            )
+          ),
+        )
+      )}
       {searchMode ? (
         <ul className="chat-list" aria-label="Результаты поиска">
           <li className="sr-head">
@@ -287,7 +363,6 @@ export function ChatListPanel({
         </ul>
       ) : (
         <>
-          {status === 'loading' && <p className="messenger-empty">Загрузка чатов…</p>}
           {status === 'error' && (
             <div className="chat-panel-error">
               <ErrorBanner error={error} />

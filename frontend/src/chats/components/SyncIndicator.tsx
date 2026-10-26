@@ -9,11 +9,15 @@
  * polite live region: screen readers announce the catch-up without
  * interrupting the realtime rendering that continues in parallel.
  *
- * 008 (US4, T052; FR-030): the strip is skinned with the machine's
- * design tokens — status-banners.css, shared with the other delivery
- * notifications; the DOM and its sidebar position are unchanged.
+ * 009 (T110): строка переведена из лексики полос доставки (008
+ * US4/T052 — латунная плашка + мерцающая точка, status-banners.css)
+ * в семью тихих подписей `.messenger-empty` (states.css, FR-032:
+ * курсив Old Standard TT 12.5px по центру на --muted-3) — та же
+ * лексика, что у «Загрузка чатов…»; сайдбар-паддинг 10px даёт
+ * масштаб `.chat-panel .messenger-empty` без собственных правил.
+ * Замки a11y сохранены дословно: role=status + текст live-region.
  */
-import './status-banners.css'
+import './states.css'
 
 export interface SyncIndicatorProps {
   /** A §3.1 catch-up cycle is running (useSync `syncing`, T019). */
@@ -25,9 +29,8 @@ export function SyncIndicator({ syncing }: SyncIndicatorProps) {
     return null
   }
   return (
-    <output className="sync-indicator">
-      <span className="sync-indicator-dot" aria-hidden="true" />
-      <span>Синхронизация сообщений…</span>
+    <output role="status" className="messenger-empty">
+      Синхронизация сообщений…
     </output>
   )
 }
