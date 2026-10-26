@@ -1285,3 +1285,85 @@ describe('индикаторы источников строки участни�
     expect(doc).toContain('прототип')
   })
 })
+
+describe('уведомления pre-join — латунная плашка над кнопками (T111): статический пин CSS', () => {
+  /**
+   * T111 — перенос .conference-prejoin-notice (accessNotice T032 +
+   * «Не удалось переключить камеру») в слот между .conference-prejoin-devices
+   * и .conference-prejoin-actions (разметка — PreJoinScreen.test.tsx) +
+   * тихая латунная плашка-прибор вместо «голой» строки: закрывает ВСЕ
+   * box-свойства глобального element-правила output, [role='status']
+   * (index.css — зелёная плашка auth-лексики; паттерн .guest-join-live
+   * T102), глиф-манометр ::before с data-URI (разметка <output> не
+   * меняется). Пояснения №46 (T033) — тот же класс, плашку наследуют;
+   * зазор стека 4→6px под плашки с рамкой. Прототип —
+   * tmp/conference-prejoin.html, при расхождениях побеждает прототип.
+   */
+
+  it('плашка закрывает ВСЕ box-свойства глобуса: латунная рамка в полсилы, заливка превью, радиус панели, паддинг', () => {
+    const rule = conferencesCss.match(/^\.conference-prejoin-notice\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 7px 12px')
+    expect(rule?.[1]).toContain('border: 1px solid rgba(138, 106, 44, 0.5)')
+    expect(rule?.[1]).toContain('border-radius: var(--r-panel)')
+    expect(rule?.[1]).toContain('background: rgba(6, 5, 3, 0.45)')
+    // зелёная лексика auth-поверхностей исключена
+    expect(rule?.[1]).not.toContain('var(--success)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+    // flex-строка: глиф слева, текст справа
+    expect(rule?.[1]).toContain('display: flex')
+    expect(rule?.[1]).toContain('align-items: center')
+    expect(rule?.[1]).toContain('gap: 9px')
+    // прежний некрикливый текст — вход остаётся доступным (T032 Q6=A)
+    expect(rule?.[1]).toContain('font: italic 12px/1.45 var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
+  })
+
+  it('глиф-манометр ::before 15px — data-URI SVG латунью #c9a24a (разметка <output> не меняется)', () => {
+    const glyph = conferencesCss.match(/^\.conference-prejoin-notice::before\s*\{([^}]*)\}/m)
+    expect(glyph).not.toBeNull()
+    expect(glyph?.[1]).toContain("content: ''")
+    expect(glyph?.[1]).toContain('flex: none')
+    expect(glyph?.[1]).toContain('width: 15px')
+    expect(glyph?.[1]).toContain('height: 15px')
+    expect(glyph?.[1]).toContain('opacity: 0.8')
+    expect(glyph?.[1]).toMatch(
+      /url\("data:image\/svg\+xml[^)]*%23c9a24a[^)]*\)\s*center\/contain no-repeat/,
+    )
+  })
+
+  it('стек пояснений №46 — зазор 6px под плашки с рамкой (было 4px)', () => {
+    const stack = conferencesCss.match(/^\.conference-prejoin-restrictions\s*\{([^}]*)\}/m)
+    expect(stack).not.toBeNull()
+    expect(stack?.[1]).toContain('gap: 6px')
+    expect(stack?.[1]).not.toContain('gap: 4px')
+  })
+
+  it('регресс-пины форм (T091/T096/T101/T102) не меняются; глобальный output-стиль в index.css не правится', () => {
+    // корпус machine + центрирование pre-join — на месте
+    const form = conferencesCss.match(/^\.conference-prejoin\s*\{([^}]*)\}/m)
+    expect(form?.[1]).toContain('margin: auto')
+    expect(form?.[1]).toContain('background: var(--conference-machine-bg)')
+    const title = conferencesCss.match(/^\.conference-prejoin-title\s*\{([^}]*)\}/m)
+    expect(title?.[1]).toContain('text-align: center')
+    // плашка гостя T102 — на месте
+    const live = conferencesCss.match(/^\.guest-join-live\s*\{([^}]*)\}/m)
+    expect(live?.[1]).toContain('border: 1px solid var(--gold-dark)')
+    // глобальное правило живёт без изменений — им пользуются
+    // auth/настройки/статус-баннеры (паттерн T102)
+    const output = indexCss.match(/output,\s*\[role='status'\]\s*\{([^}]*)\}/)
+    expect(output).not.toBeNull()
+    expect(output?.[1]).toContain('var(--success-bg)')
+  })
+
+  it('докблок правила truthfully описывает новое размещение (между устройствами и кнопками) и плашку', () => {
+    const at = conferencesCss.indexOf('.conference-prejoin-notice {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1600), at)
+    expect(doc).toContain('T111')
+    expect(doc).toContain('output')
+    expect(doc).toContain('глобальн')
+    expect(doc).toContain('устройств')
+  })
+})

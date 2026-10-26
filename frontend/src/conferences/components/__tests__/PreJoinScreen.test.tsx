@@ -417,6 +417,124 @@ describe('PreJoinScreen — закрытие без «Войти»: отключ
   })
 })
 
+describe('PreJoinScreen — уведомления над кнопками действий (009 US2 T111)', () => {
+  /**
+   * T111 — перенос уведомлений pre-join (accessNotice отказа доступа
+   * T032 и notice «Не удалось переключить камеру») из позиции ПОД
+   * .conference-prejoin-actions в слот между .conference-prejoin-devices
+   * и .conference-prejoin-actions: предупреждение читается ДО кнопок,
+   * ошибка переключения — у селекта камеры, к которому относится
+   * (прототип tmp/conference-prejoin.html). Тексты/состояния/role=status
+   * прежние — меняется только размещение.
+   */
+
+  beforeEach(() => {
+    resetMediaEnv()
+  })
+
+  afterEach(() => {
+    clearMediaEnv()
+  })
+
+  /** Порядок слота уведомлений: селекты устройств → output → кнопки. */
+  function expectNoticeBetweenDevicesAndActions(notice: Element): void {
+    const dialog = document.querySelector('.conference-prejoin')
+    if (dialog === null) {
+      throw new Error('pre-join диалог не смонтирован')
+    }
+    const devices = dialog.querySelector('.conference-prejoin-devices')
+    const actions = dialog.querySelector('.conference-prejoin-actions')
+    if (devices === null || actions === null) {
+      throw new Error('геометрия формы (devices/actions) не смонтирована')
+    }
+    expect(
+      Boolean(devices.compareDocumentPosition(notice) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true)
+    expect(
+      Boolean(notice.compareDocumentPosition(actions) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true)
+  }
+
+  it('отказ доступа: плашка стоит между селектами устройств и кнопками (не под кнопками)', async () => {
+    installPermissions({ microphone: 'denied', camera: 'denied' })
+    camera.createLocalVideoTrack.mockRejectedValue(new Error('NotAllowedError'))
+    renderScreen({ mode: 'video' })
+
+    const notice = await screen.findByText(/Нет доступа к камере и микрофону/)
+    expect(notice.tagName).toBe('OUTPUT')
+    expect(notice).toHaveClass('conference-prejoin-notice')
+    expectNoticeBetweenDevicesAndActions(notice)
+  })
+
+  it('ошибка переключения камеры: «Не удалось переключить камеру» в том же слоте над кнопками', async () => {
+    const track = fakeVideoTrack()
+    track.setDeviceId.mockRejectedValue(new Error('DeviceError'))
+    camera.createLocalVideoTrack.mockResolvedValue(track)
+    renderScreen({ mode: 'video' })
+    await waitFor(() => {
+      expect(cameraToggle()).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    const cameraSelect = screen.getByRole('combobox', { name: 'Камера' })
+    fireEvent.change(cameraSelect, { target: { value: 'cam-1' } })
+
+    const notice = await screen.findByText('Не удалось переключить камеру')
+    expectNoticeBetweenDevicesAndActions(notice)
+  })
+
+  it('оба уведомления одновременно — стек в новом слоте, обе плашки до кнопок', async () => {
+    installPermissions({ microphone: 'denied', camera: 'granted' })
+    const track = fakeVideoTrack()
+    track.setDeviceId.mockRejectedValue(new Error('DeviceError'))
+    camera.createLocalVideoTrack.mockResolvedValue(track)
+    renderScreen({ mode: 'video' })
+    await waitFor(() => {
+      expect(cameraToggle()).toHaveAttribute('aria-pressed', 'true')
+    })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Камера' }), {
+      target: { value: 'cam-1' },
+    })
+
+    const access = await screen.findByText('Нет доступа к микрофону — можно войти без звука')
+    const switchNotice = await screen.findByText('Не удалось переключить камеру')
+    expectNoticeBetweenDevicesAndActions(access)
+    expectNoticeBetweenDevicesAndActions(switchNotice)
+    // порядок стека: предупреждение доступа — первым, ошибка переключения — за ним
+    expect(
+      Boolean(access.compareDocumentPosition(switchNotice) & Node.DOCUMENT_POSITION_FOLLOWING),
+    ).toBe(true)
+  })
+
+  it('без отказов/ошибок уведомлений нет вовсе; пояснения №46 — стек под тумблерами и ДО устройств (регресс)', () => {
+    camera.createLocalVideoTrack.mockResolvedValue(fakeVideoTrack())
+    renderScreen({ mode: 'audio' })
+    expect(document.querySelectorAll('output.conference-prejoin-notice').length).toBe(0)
+    cleanup()
+
+    renderScreen({ mode: 'audio', restrictions: restrictions({ micRestricted: true }) })
+    const dialog = document.querySelector('.conference-prejoin')
+    if (dialog === null) {
+      throw new Error('pre-join диалог не смонтирован')
+    }
+    // единственный output — пояснение №46, живёт ВНУТРИ стека ограничений
+    const outputs = dialog.querySelectorAll('output.conference-prejoin-notice')
+    expect(outputs.length).toBe(1)
+    const stack = dialog.querySelector('.conference-prejoin-restrictions')
+    const toggles = dialog.querySelector('.conference-prejoin-toggles')
+    const devices = dialog.querySelector('.conference-prejoin-devices')
+    if (stack === null || toggles === null || devices === null) {
+      throw new Error('геометрия формы (toggles/restrictions/devices) не смонтирована')
+    }
+    expect(outputs[0]?.closest('.conference-prejoin-restrictions')).toBe(stack)
+    expect(Boolean(toggles.compareDocumentPosition(stack) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
+      true,
+    )
+    expect(Boolean(stack.compareDocumentPosition(devices) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(
+      true,
+    )
+  })
+})
+
 describe('PreJoinScreen — StrictMode-перемонтаж acquisition камеры (009 регрессия T064)', () => {
   /**
    * Регрессия e2e T064 (dev-рендер: main.tsx StrictMode двойной монтаж

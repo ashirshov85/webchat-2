@@ -66,7 +66,13 @@
  * тумблеров со визуальным индикатором «вкл/выкл» (aria-hidden; классы
  * .conference-prejoin-toggle/-state — текстовая геометрия T028 после
  * переименования T098), label + select устройств, focus-visible
- * (conferences.css), статус-строка <output> (неявный role=status).
+ * (conferences.css), статус-строки <output> (неявный role=status):
+ * уведомления pre-join (отказ доступа T032 / ошибка переключения
+ * камеры) — в слоте МЕЖДУ селектами устройств и кнопками действий
+ * (T111: читаются до «Отмена»/«Войти», ошибка переключения — у
+ * селекта камеры), тихая латунная плашка-прибор с глифом-манометром
+ * (conferences.css); пояснения блокировок №46 (T033) — стеком под
+ * тумблерами тем же классом.
  */
 import { createLocalVideoTrack } from 'livekit-client'
 import type { LocalVideoTrack } from 'livekit-client'
@@ -527,6 +533,10 @@ export default function PreJoinScreen({
           </select>
         </div>
       </div>
+      {accessNotice !== null && (
+        <output className="conference-prejoin-notice">{accessNotice}</output>
+      )}
+      {notice !== null && <output className="conference-prejoin-notice">{notice}</output>}
       <div className="conference-prejoin-actions">
         {onCancel !== undefined && (
           <button type="button" className="conference-prejoin-cancel" onClick={handleCancel}>
@@ -543,10 +553,6 @@ export default function PreJoinScreen({
           Войти
         </button>
       </div>
-      {accessNotice !== null && (
-        <output className="conference-prejoin-notice">{accessNotice}</output>
-      )}
-      {notice !== null && <output className="conference-prejoin-notice">{notice}</output>}
     </dialog>
   )
 }
