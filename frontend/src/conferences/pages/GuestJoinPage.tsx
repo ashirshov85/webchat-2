@@ -393,9 +393,16 @@ export default function GuestJoinPage({ inviteToken }: GuestJoinPageProps) {
           </button>
         </div>
       )}
+      {/* T112: терминальный отказ ссылки — пластина корпуса machine
+       * с глифом-колоколом «звонок окончен» (conferences.css, прототип
+       * tmp/conference-ended-guest.html): причина — заголовочной
+       * гарнитурой, role=alert сохранён (живое объявление при переходе
+       * фазы); тихая подсказка закрывает вопрос «что дальше» — у гостя
+       * нет следующего шага (ни чата, ни кнопки, FR-010). */}
       {phase === 'refused' && refusal !== null && (
         <div className="conference-error guest-join-refused">
           <p role="alert">{refusalMessage(refusal)}</p>
+          <p className="guest-join-refused-hint">Можно закрыть эту страницу</p>
         </div>
       )}
       {phase === 'name' && (

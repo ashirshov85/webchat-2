@@ -95,6 +95,18 @@ import { describe, expect, it } from 'vitest'
  * приглушение + диагональный штрих --err, blocked = приглушение
  * saturate + замок-бейдж (только в виду модератора). Индикаторы НЕ
  * кликабельны (pointer-events: none) и БЕЗ tooltip.
+ *
+ * T112 — терминальные экраны «Конференция завершена» на пластине
+ * корпуса machine (прототипы tmp/conference-ended-{participant,guest}.html):
+ * карточка участника .conference-ended (подпись T071 + «Вернуться в
+ * чат» T095) и терминальный отказ гостя .guest-join-refused (№54
+ * reason / №55 terminal) уходят с чужих лексик — глобальные
+ * element-правила index.css (зелёная output-плашка auth-лексики,
+ * синяя акцентная кнопка, красная [role=alert]-плашка) перекрываются
+ * классами по паттерну T102, сами глобусы и повторяемые ошибки
+ * .conference-error НЕ меняются; глиф-колокол «звонок окончен» —
+ * ::after контейнеров (разметка output/button/p не меняется, у гостя
+ * добавляется только тихая подсказка .guest-join-refused-hint).
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -1365,5 +1377,215 @@ describe('уведомления pre-join — латунная плашка на
     expect(doc).toContain('output')
     expect(doc).toContain('глобальн')
     expect(doc).toContain('устройств')
+  })
+})
+
+describe('терминальные экраны «Конференция завершена» — пластина машины с колоколом (T112): статический пин CSS', () => {
+  /**
+   * T112 — карточка участника (.conference-ended: подпись T071 +
+   * «Вернуться в чат» T095) и терминальный отказ гостя
+   * (.conference-error.guest-join-refused: №54 reason / №55 terminal)
+   * переводятся с чужих лексик (зелёная output-плашка + синяя
+   * глобальная кнопка у участника; красная аварийная панель у гостя)
+   * на пластину корпуса machine T101 с глифом-колоколом «звонок
+   * окончен» (геометрия .cp-sig T108, кольцо — выключенная латунь
+   * #55452c: машина в покое) и тихой подписью-подсказкой у гостя.
+   * Глобальные element-правила index.css и повторяемые ошибки
+   * .conference-error (№45/№47 «Повторить», №54 infoError / №55
+   * joinError) НЕ правятся — перекрытие классами по паттерну T102.
+   * Прототипы — tmp/conference-ended-{participant,guest}.html, при
+   * расхождениях побеждает прототип (по образцу FR-001 008).
+   */
+
+  it('пластина участника .conference-ended несёт константы корпуса machine; лексика узкой панели 008 ушла', () => {
+    // фон навешивается на существующую карточку (DOM/TSX участника не
+    // меняются); константы корпуса — из общего
+    // --conference-machine-*-лексикона (T099/T101)
+    const rule = conferencesCss.match(/^\.conference-ended\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    // position: relative — опора ::before-вкладыша
+    expect(rule?.[1]).toContain('position: relative')
+    expect(rule?.[1]).toContain('border: var(--conference-machine-border)')
+    expect(rule?.[1]).toContain('border-radius: var(--conference-machine-radius)')
+    expect(rule?.[1]).toContain('background: var(--conference-machine-bg)')
+    expect(rule?.[1]).toContain('backdrop-filter: var(--conference-machine-blur)')
+    expect(rule?.[1]).toContain('box-shadow: var(--conference-machine-shadow)')
+    // центрирование по обеим осям фазовой секции (паттерн T096);
+    // ширина уже pre-join — контента мало
+    expect(rule?.[1]).toContain('margin: auto')
+    expect(rule?.[1]).toContain('width: min(420px, 100%)')
+    expect(rule?.[1]).toContain('text-align: center')
+    // старая лексика узкой панели 008 исключена
+    expect(rule?.[1]).not.toContain('var(--line)')
+    expect(rule?.[1]).not.toContain('var(--r-frame)')
+    expect(rule?.[1]).not.toContain('var(--panel-bg)')
+  })
+
+  it('глиф-колокол ::after (order:-1, кольцо выключенной латуни #55452c) — общий у обеих пластин; вкладыш ::before в общем правиле форм T101', () => {
+    const bell = conferencesCss.match(
+      /\.conference-ended::after,\s*\.guest-join-refused::after\s*\{([^}]*)\}/,
+    )
+    expect(bell).not.toBeNull()
+    expect(bell?.[1]).toContain("content: ''")
+    // ::after встаёт первым ребёнком flex-колонки — разметка не меняется
+    expect(bell?.[1]).toContain('order: -1')
+    expect(bell?.[1]).toContain('width: 46px')
+    expect(bell?.[1]).toContain('height: 46px')
+    // машина в покое — выключенная латунь, без золотого свечения «вкл»
+    expect(bell?.[1]).toContain('border: 1.5px solid #55452c')
+    expect(bell?.[1]).toContain('border-radius: 50%')
+    // инлайн data-URI колокола латунью #c9a24a (паттерн глифа T111)
+    expect(bell?.[1]).toMatch(
+      /url\("data:image\/svg\+xml[^)]*%23c9a24a[^)]*\)\s*center\/24px 24px no-repeat/,
+    )
+    // рамка-вкладыш — общий список селекторов T101 расширен пластинами
+    const inner = conferencesCss.match(
+      /\.conference-ended::before,\s*\.guest-join-refused::before,\s*\.conference-prejoin::before,\s*\.guest-join-name::before,\s*\.conference-controls::before,\s*\.conference-tiles:not\(\.conference-tiles-compact\)::before\s*\{([^}]*)\}/,
+    )
+    expect(inner).not.toBeNull()
+    expect(inner?.[1]).toContain('inset: 4px')
+    expect(inner?.[1]).toContain('border: 1px solid var(--conference-machine-inner)')
+    expect(inner?.[1]).toContain('pointer-events: none')
+  })
+
+  it('подпись .conference-ended output закрывает ВСЕ box-свойства глобального output-правила — заголовочная типографика без зелёной плашки', () => {
+    // <output> = role=status ловит глобальное element-правило
+    // `output, [role='status']` (index.css — зелёная плашка auth-лексики);
+    // класс (0,1,1) перекрывает — паттерн .guest-join-live T102
+    const rule = conferencesCss.match(/^\.conference-ended output\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: block')
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    // типографика заголовочная — паритет заголовков T091
+    expect(rule?.[1]).toContain('font: 16px var(--font-heading)')
+    expect(rule?.[1]).toContain('letter-spacing: 0.04em')
+    expect(rule?.[1]).toContain('color: var(--cream-bright)')
+    // зелёная лексика auth-поверхностей исключена
+    expect(rule?.[1]).not.toContain('var(--success)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+  })
+
+  it('«Вернуться в чат» — золотая акция: перекрывает глобальный button, без синего --accent', () => {
+    // глобальный `button` (index.css) — синяя акцентная с
+    // align-self: flex-start; канон конференции — золото «Войти»/«Продолжить»
+    const rule = conferencesCss.match(/^\.conference-ended button\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('align-self: center')
+    expect(rule?.[1]).toContain('padding: 8px 24px')
+    expect(rule?.[1]).toContain('border: 1px solid var(--gold)')
+    expect(rule?.[1]).toContain('border-radius: var(--r-panel)')
+    expect(rule?.[1]).toContain('background: var(--input-bg)')
+    expect(rule?.[1]).toContain('font-weight: 400')
+    expect(rule?.[1]).toContain('color: var(--cream-bright)')
+    expect(rule?.[1]).not.toContain('var(--accent)')
+    // конвенция 008 FR-035: видимый фокус с клавиатуры
+    const focus = conferencesCss.match(/^\.conference-ended button:focus-visible\s*\{([^}]*)\}/m)
+    expect(focus).not.toBeNull()
+    expect(focus?.[1]).toContain('outline: 2px solid var(--gold-light)')
+    expect(focus?.[1]).toContain('outline-offset: 2px')
+  })
+
+  it('пластина отказа гостя .guest-join-refused стоит ПОСЛЕ .conference-error и несёт те же константы корпуса', () => {
+    // равная специфичность (0,1,0) — побеждает позднее правило: пин
+    // ПОРЯДКА в файле (иначе аварийная лексика .conference-error
+    // перебивает пластину)
+    const errorAt = conferencesCss.indexOf('.conference-error {')
+    const refusedAt = conferencesCss.indexOf('.guest-join-refused {')
+    expect(errorAt, 'селектор .conference-error').toBeGreaterThan(0)
+    expect(refusedAt, 'селектор .guest-join-refused').toBeGreaterThan(errorAt)
+
+    const rule = conferencesCss.match(/^\.guest-join-refused\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('position: relative')
+    expect(rule?.[1]).toContain('border: var(--conference-machine-border)')
+    expect(rule?.[1]).toContain('border-radius: var(--conference-machine-radius)')
+    expect(rule?.[1]).toContain('background: var(--conference-machine-bg)')
+    expect(rule?.[1]).toContain('backdrop-filter: var(--conference-machine-blur)')
+    expect(rule?.[1]).toContain('box-shadow: var(--conference-machine-shadow)')
+    expect(rule?.[1]).toContain('margin: auto')
+    expect(rule?.[1]).toContain('width: min(420px, 100%)')
+    expect(rule?.[1]).toContain('text-align: center')
+    // аварийная лексика на самой пластине исключена
+    expect(rule?.[1]).not.toContain('var(--err)')
+  })
+
+  it('сообщение отказа .guest-join-refused p перекрывает [role=alert] глобуса — без красной плашки, заголовочная гарнитура', () => {
+    // (0,1,1) перекрывает и базовое .conference-error p, и глобальный
+    // `[role='alert']` (index.css — плашка --danger-bg); role=alert
+    // остаётся в разметке (живое объявление при переходе фазы)
+    const baseP = conferencesCss.indexOf('.conference-error p {')
+    const refusedP = conferencesCss.indexOf('.guest-join-refused p {')
+    expect(refusedP, 'порядок p-правил').toBeGreaterThan(baseP)
+
+    const rule = conferencesCss.match(/^\.guest-join-refused p\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    expect(rule?.[1]).toContain('font: 16px var(--font-heading)')
+    expect(rule?.[1]).toContain('letter-spacing: 0.04em')
+    expect(rule?.[1]).toContain('color: var(--cream-bright)')
+    // красная лексика аварийных панелей исключена
+    expect(rule?.[1]).not.toContain('var(--danger-bg)')
+    expect(rule?.[1]).not.toContain('var(--danger)')
+    expect(rule?.[1]).not.toContain('var(--err)')
+  })
+
+  it('тихая подсказка .guest-join-refused-hint — курсив приглушённой латыни (без призыва к действию)', () => {
+    const rule = conferencesCss.match(/^\.guest-join-refused-hint\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('font: italic 12px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
+  })
+
+  it('регресс: повторяемые ошибки .conference-error сохраняют аварийную лексику; глобальные element-правила index.css не правятся', () => {
+    // №45/№47 «Повторить», №54 infoError / №55 joinError гостя —
+    // по-прежнему красная аварийная панель (правила не меняются)
+    const rule = conferencesCss.match(/^\.conference-error\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('border: 1px solid var(--err)')
+    expect(rule?.[1]).toContain('background: var(--panel-bg)')
+    const p = conferencesCss.match(/^\.conference-error p\s*\{([^}]*)\}/m)
+    expect(p?.[1]).toContain('color: var(--err)')
+    // глобусы живы без изменений — ими пользуются
+    // auth/настройки/статус-баннеры (паттерн T102)
+    const alert = indexCss.match(/\[role='alert'\]\s*\{([^}]*)\}/)
+    expect(alert?.[1]).toContain('var(--danger-bg)')
+    const output = indexCss.match(/output,\s*\[role='status'\]\s*\{([^}]*)\}/)
+    expect(output?.[1]).toContain('var(--success-bg)')
+    const button = indexCss.match(/^button\s*\{([^}]*)\}/m)
+    expect(button?.[1]).toContain('var(--accent)')
+  })
+
+  it('регресс-пины форм (T091/T096/T101/T102/T111) не меняются', () => {
+    const prejoin = conferencesCss.match(/^\.conference-prejoin\s*\{([^}]*)\}/m)
+    expect(prejoin?.[1]).toContain('margin: auto')
+    expect(prejoin?.[1]).toContain('background: var(--conference-machine-bg)')
+    const name = conferencesCss.match(/^\.guest-join-name\s*\{([^}]*)\}/m)
+    expect(name?.[1]).toContain('margin: auto')
+    const live = conferencesCss.match(/^\.guest-join-live\s*\{([^}]*)\}/m)
+    expect(live?.[1]).toContain('border: 1px solid var(--gold-dark)')
+    const notice = conferencesCss.match(/^\.conference-prejoin-notice\s*\{([^}]*)\}/m)
+    expect(notice?.[1]).toContain('background: rgba(6, 5, 3, 0.45)')
+  })
+
+  it('докблоки правил truthfully описывают пластины и перекрытия глобальных правил', () => {
+    for (const selector of ['.conference-ended {', '.guest-join-refused {']) {
+      const at = conferencesCss.indexOf(selector)
+      expect(at, `селектор ${selector}`).toBeGreaterThan(0)
+      const doc = conferencesCss.slice(Math.max(0, at - 1600), at)
+      expect(doc, `докблок ${selector}`).toContain('T112')
+      expect(doc, `докблок ${selector}`).toContain('machine')
+    }
+    const endedOutAt = conferencesCss.indexOf('.conference-ended output {')
+    expect(endedOutAt).toBeGreaterThan(0)
+    expect(conferencesCss.slice(Math.max(0, endedOutAt - 900), endedOutAt)).toContain('output')
+    const refusedPAt = conferencesCss.indexOf('.guest-join-refused p {')
+    expect(refusedPAt).toBeGreaterThan(0)
+    expect(conferencesCss.slice(Math.max(0, refusedPAt - 900), refusedPAt)).toContain('role')
   })
 })
