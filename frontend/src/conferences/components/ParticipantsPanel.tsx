@@ -58,17 +58,26 @@
  *
  * Футер панели — только модератору, ПОД списком и всегда видим
  * (скролл ТОЛЬКО у .conference-participants-list, футер flex:none):
- * разделитель + блок «Гостевая ссылка» (T081, №52/№53 как есть) +
- * «Завершить конференцию» (№48, T038). Отказ — нейтральная строка
- * role=status по коду Problem (moderator_required/
- * participant_not_found/conference_ended), без раскрытия деталей.
- * Деструктивные №51/№53/№48 — явное подтверждение в МОДАЛИ (T109):
- * единая оболочка ui/ModalShell (затемнение поверх комнаты, Esc,
- * фокус-ловушка, возврат фокуса на инициатора) + ui/ConfirmDialog
- * (кнопки «Отмена»/действие, danger-акцент) с текстами T042/T081 —
- * инлайн-блок в узком сайдбаре демонтирован (распирал список и
- * конфликтовал с прижатым футером). «В полёте» кебаби и кнопки
- * футера недоступны (без гонок повторных вызовов).
+ * разделитель + standalone-кнопка «Гостевая ссылка» (T113, №52/№53
+ * как есть; лексика .conference-moderation-end с латунным акцентом,
+ * рамка-обёртка fieldset демонтирована) + «Завершить конференцию»
+ * (№48, T038). Отказ — нейтральная строка role=status по коду
+ * Problem (moderator_required/participant_not_found/
+ * conference_ended), без раскрытия деталей. Деструктивные №51/№53/№48
+ * — явное подтверждение в МОДАЛИ (T109): единая оболочка ui/ModalShell
+ * (затемнение поверх комнаты, Esc, фокус-ловушка, возврат фокуса на
+ * инициатора) + ui/ConfirmDialog (кнопки «Отмена»/действие,
+ * danger-акцент) с текстами T042/T081 — инлайн-блок в узком сайдбаре
+ * демонтирован (распирал список и конфликтовал с прижатым футером).
+ * Гостевая ссылка — та же оболочка формой 'guest-invite' (T113):
+ * первое открытие генерит №52, повторные показывают ссылку из стейта
+ * панели БЕЗ вызова (GET статуса в контракте нет), «Копировать»/
+ * «Отозвать»/«Скопировано»/срок — в модали; закрытие («Отмена»/Esc/
+ * фон press+release) — без изменений состояния и без API; «Отзыв»
+ * переключает formId на 'confirm' в ТОЙ ЖЕ подложке, успех закрывает
+ * модаль и сбрасывает ссылку — следующее открытие генерит заново.
+ * «В полёте» кебаби и кнопки футера недоступны (без гонок повторных
+ * вызовов).
  *
  * Видимость инструментов — роль ЛОКАЛЬНОГО подключения из его
  * metadata (не №46-снимок pre-join): снятие/назначение №50 приходит
@@ -554,8 +563,10 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
   const [confirmation, setConfirmation] = useState<ModerationConfirmation | null>(null)
   /** Нейтральная строка последнего отказа (сбрасывается следующей попыткой). */
   const [notice, setNotice] = useState<string | null>(null)
-  /** Действующая гостевая ссылка в руках модератора (T081; null — блок свёрнут). */
+  /** Действующая гостевая ссылка в руках модератора (T081/T113; null — не сгенерирована/отозвана). */
   const [guestInvite, setGuestInvite] = useState<GuestInviteView | null>(null)
+  /** Открыта модаль «Гостевая ссылка» (T113; ссылка живёт в guestInvite). */
+  const [inviteModal, setInviteModal] = useState(false)
   /** Статус «Скопировано» после успешного clipboard.writeText. */
   const [copied, setCopied] = useState(false)
   /** Строка открытого кебаб-меню (identity) + якорь её кнопки. */
@@ -619,7 +630,9 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
   /**
    * Единое выполнение действия: нейтральный отказ по коду, без локального
    * отката; извлечение кода переопределяется для гостевой ссылки (№52/№53
-   * несут guestInviteErrorCode вместо ModerationErrorCode).
+   * несут guestInviteErrorCode вместо ModerationErrorCode). Возвращает
+   * успех (T113: модаль №52 закрывается только на отказ — на успехе
+   * показывает сгенерированную ссылку).
    */
   async function run(
     action: ModerationAction,
@@ -627,13 +640,15 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
     codeOf: (
       cause: unknown,
     ) => ModerationErrorCode | GuestInviteErrorCode | null = moderationErrorCode,
-  ): Promise<void> {
+  ): Promise<boolean> {
     setNotice(null)
     setPending(action)
     try {
       await call()
+      return true
     } catch (cause) {
       setNotice(moderationNotice(codeOf(cause)))
+      return false
     } finally {
       setPending(null)
     }
@@ -716,24 +731,37 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
   }
 
   /**
-   * №52: генерация ссылки — первая и повторная той же кнопкой (сервер
-   * атомарно отзывает предыдущую, Q17=A — клиент ничего не вычисляет).
+   * Модаль «Гостевая ссылка» (T113): открытие показывает модаль; №52
+   * генерится ТОЛЬКО при guestInvite===null (null — не генерировали или
+   * отозвали №53; GET статуса в контракте нет — панель хранит ссылку с
+   * первой генерации). Повторное открытие при живой ссылке — показ без
+   * вызова; отказ №52 закрывает модаль (notice остаётся в панели).
    */
-  function inviteGuest(): void {
+  function openInviteModal(): void {
     setCopied(false)
+    setInviteModal(true)
+    if (guestInvite !== null) {
+      return
+    }
     void run(
       { kind: 'invite' },
       async () => {
         setGuestInvite(await createGuestInvite(conferenceId))
       },
       guestInviteErrorCode,
-    )
+    ).then((ok) => {
+      if (!ok) {
+        setInviteModal(false)
+      }
+    })
   }
 
   /**
    * №53: отзыв после явного подтверждения (деструктивное — отключение
    * гостей, Q13=B); `404 guest_invite_not_found` — идемпотентный успех
    * (ссылку мог отозвать другой модератор, Q21=A): молчаливый коллапс.
+   * Успех сбрасывает ссылку и закрывает модаль (T113) — следующее
+   * открытие сгенерирует новую.
    */
   function revokeInvite(): void {
     void run(
@@ -748,6 +776,7 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
         }
         setGuestInvite(null)
         setCopied(false)
+        setInviteModal(false)
       },
       guestInviteErrorCode,
     )
@@ -871,65 +900,20 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
       {moderator && (
         // Футер инструментов панели (T107): ПОД списком, всегда видим —
         // прокрутка живёт ТОЛЬКО у .conference-participants-list (CSS:
-        // flex:none у футера), при длинном списке инструменты на месте
+        // flex:none у футера), при длинном списке инструменты на месте.
+        // T113: «Гостевая ссылка» — standalone-кнопка без рамки-обёртки
+        // (лексика .conference-moderation-end, латунный акцент), ссылка —
+        // в модали формы 'guest-invite' ниже
         <>
           <hr className="conference-participants-divider" />
-          <fieldset className="conference-guest-invite" aria-label="Гостевая ссылка">
-            <button
-              type="button"
-              className="conference-guest-invite-generate"
-              disabled={busy}
-              onClick={inviteGuest}
-            >
-              Пригласить гостя
-            </button>
-            {guestInvite !== null && (
-              <>
-                {/* Q17=A/Q13=B: генерация отзывает предыдущую — заранее о последствиях */}
-                <p className="conference-guest-invite-hint">
-                  Новая ссылка отзовёт предыдущую — вошедшие по ней гости отключатся.
-                </p>
-                <input
-                  className="conference-guest-invite-url"
-                  type="text"
-                  aria-label="Ссылка-приглашение"
-                  readOnly
-                  aria-readonly="true"
-                  value={guestInvite.inviteUrl}
-                />
-                {expiresLabel !== null && (
-                  <p className="conference-guest-invite-expires">Действует {expiresLabel}</p>
-                )}
-                <div className="conference-guest-invite-actions">
-                  <button
-                    type="button"
-                    className="conference-guest-invite-copy"
-                    disabled={busy}
-                    onClick={() => {
-                      void copyInvite()
-                    }}
-                  >
-                    Копировать
-                  </button>
-                  <button
-                    type="button"
-                    className="conference-guest-invite-revoke conference-moderation-button-danger"
-                    disabled={busy}
-                    onClick={() => {
-                      setConfirmation({ kind: 'revoke_invite' })
-                    }}
-                  >
-                    Отозвать ссылку
-                  </button>
-                </div>
-                {copied && (
-                  <output className="conference-guest-invite-copied" aria-live="polite">
-                    Скопировано
-                  </output>
-                )}
-              </>
-            )}
-          </fieldset>
+          <button
+            type="button"
+            className="conference-guest-invite-open"
+            disabled={busy}
+            onClick={openInviteModal}
+          >
+            Гостевая ссылка
+          </button>
           <button
             type="button"
             className="conference-moderation-end"
@@ -953,18 +937,26 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
         }}
       />
       {/* Подтверждение деструктивного №51/№53/№48 — модаль поверх
-          комнаты (T109): единая оболочка 008 (затемнение, Esc, фокус-
+          комнаты (T109), единая оболочка 008 (затемнение, Esc, фокус-
           ловушка, возврат фокуса на инициатора — кебаб/кнопку футера),
           тексты T042/T081; закрытие любым путём оболочки = отмена
-          (действие — только кнопкой в модали, danger-акцент) */}
+          (действие — только кнопкой в модали, danger-акцент).
+          T113: та же оболочка принимает форму 'guest-invite' — модаль
+          гостевой ссылки (№52/№53); «Отозвать» переключает formId на
+          'confirm' БЕЗ второй подложки (stackPolicy одна на
+          приложение), отмена подтверждения возвращает к ссылке */}
       <ModalShell
-        formId={confirmation !== null ? 'confirm' : null}
-        title={confirmation !== null ? confirmationUi(confirmation).title : ''}
+        formId={confirmation !== null ? 'confirm' : inviteModal ? 'guest-invite' : null}
+        title={confirmation !== null ? confirmationUi(confirmation).title : 'Гостевая ссылка'}
         onClose={() => {
-          setConfirmation(null)
+          if (confirmation !== null) {
+            setConfirmation(null)
+            return
+          }
+          setInviteModal(false)
         }}
       >
-        {confirmation !== null && (
+        {confirmation !== null ? (
           <ConfirmDialog
             text={confirmationUi(confirmation).text}
             confirmLabel={confirmationUi(confirmation).confirmLabel}
@@ -984,6 +976,62 @@ export default function ParticipantsPanel({ conferenceId }: ParticipantsPanelPro
               setConfirmation(null)
             }}
           />
+        ) : (
+          <div className="conference-guest-modal">
+            {/* readonly inviteUrl — ручное выделение остаётся страховкой
+                «Копировать» (сбой клипборда молчит); пусто, пока №52 в
+                полёте */}
+            <input
+              className="conference-guest-modal-url"
+              type="text"
+              aria-label="Ссылка-приглашение"
+              readOnly
+              aria-readonly="true"
+              value={guestInvite === null ? '' : guestInvite.inviteUrl}
+            />
+            {expiresLabel !== null && (
+              <p className="conference-guest-modal-expires">Действует {expiresLabel}</p>
+            )}
+            {copied && (
+              <output className="conference-guest-modal-copied" aria-live="polite">
+                Скопировано
+              </output>
+            )}
+            {/* Кнопки — общая лексика .m-btn/.modal-btns 008
+                (confirm-dialog.css), «Отозвать» — danger-акцент;
+                «Отмена»/Esc/фон — закрытие без изменений (пути оболочки) */}
+            <div className="modal-btns">
+              <button
+                type="button"
+                className="m-btn"
+                onClick={() => {
+                  setInviteModal(false)
+                }}
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                className="m-btn primary"
+                disabled={busy || guestInvite === null}
+                onClick={() => {
+                  void copyInvite()
+                }}
+              >
+                Копировать
+              </button>
+              <button
+                type="button"
+                className="m-btn primary danger"
+                disabled={busy || guestInvite === null}
+                onClick={() => {
+                  setConfirmation({ kind: 'revoke_invite' })
+                }}
+              >
+                Отозвать
+              </button>
+            </div>
+          </div>
         )}
       </ModalShell>
     </section>

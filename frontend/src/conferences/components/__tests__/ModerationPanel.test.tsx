@@ -22,11 +22,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * отключения — меню показывает «Включить …» по всем трём точкам и
  * «Включить все источники» мастером.
  *
- * T081 (US4): футер панели — блок «Гостевая ссылка» №52/№53:
- * генерация readonly-поля inviteUrl (срок + предупреждение Q17=A/
- * Q13=B), «Копировать» через navigator.clipboard, отзыв с
- * подтверждением (деструктивное — отключение гостей) и молчаливый
- * коллапс по `404 guest_invite_not_found` (идемпотентность, Q21=A).
+ * T081/T113 (US4): футер панели — standalone-кнопка «Гостевая ссылка»
+ * (рамка-обёртка fieldset демонтирована) → модаль формы 'guest-invite'
+ * (единая оболочка ModalShell): первое открытие генерит №52, повторные
+ * показывают ту же ссылку БЕЗ вызова (GET статуса в контракте нет),
+ * «Копировать» через navigator.clipboard, «Отозвать» — с подтверждением
+ * T109 (переключением formId в той же подложке; деструктивное —
+ * отключение гостей) и молчаливым коллапсом по
+ * `404 guest_invite_not_found` (идемпотентность, Q21=A).
  */
 
 /** Wire-константы TrackSource (@livekit/protocol) — как в панели. */
@@ -487,17 +490,29 @@ describe('объединённая панель: модерация №49–№5
   })
 })
 
-describe('объединённая панель: гостевая ссылка №52/№53 в футере (009 US4 T081/T107)', () => {
+describe('объединённая панель: гостевая ссылка №52/№53 — кнопка + модаль (009 US4 T081/T107/T113)', () => {
   /** Успешный №52-ответ: публичный маршрут /join/{nonce} + срок TTL. */
   function inviteView(nonce: string): { inviteUrl: string; expiresAt: string } {
     return { inviteUrl: `https://app.example/join/${nonce}`, expiresAt: '2026-10-22T10:00:00Z' }
   }
 
-  /** Генерация №52 по кнопке футера → поле ссылки видно. */
-  async function generateInvite(nonce: string): Promise<void> {
+  /**
+   * T113: модаль гостевой ссылки — та же единая оболочка .modal-back.show
+   * (formId 'guest-invite', stackPolicy одна на приложение), доступное имя
+   * диалога — заголовок «Гостевая ссылка».
+   */
+  function inviteDialog(): HTMLElement {
+    expect(document.querySelector('.modal-back.show')).not.toBeNull()
+    return screen.getByRole('dialog', { name: 'Гостевая ссылка' })
+  }
+
+  /** Открыть модаль кнопкой футера; первое открытие генерит №52 (nonce). */
+  async function openInviteModal(nonce: string): Promise<void> {
     api.createGuestInvite.mockResolvedValueOnce(inviteView(nonce))
-    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
-    expect(await screen.findByDisplayValue(`https://app.example/join/${nonce}`)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Гостевая ссылка' }))
+    expect(
+      await within(inviteDialog()).findByDisplayValue(`https://app.example/join/${nonce}`),
+    ).toBeInTheDocument()
   }
 
   beforeEach(() => {
@@ -520,103 +535,155 @@ describe('объединённая панель: гостевая ссылка �
     vi.clearAllMocks()
   })
 
-  it('(а) по монтажу блок свёрнут; модератор: «Пригласить гостя» → №52 → ссылка/срок/предупреждение', async () => {
+  it('(а) первое открытие — №52 + модаль со ссылкой/сроком; hint Q17 демонтирован (перегенерации тем же путём больше нет)', async () => {
     const { container } = render(<ParticipantsPanel conferenceId="c-1" />)
 
-    // свёрнуто: только кнопка генерации, без поля (GET статуса в контракте нет)
-    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeInTheDocument()
-    expect(container.querySelector('.conference-guest-invite-url')).toBeNull()
+    // по монтажу модали нет (GET статуса ссылки в контракте нет)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Пригласить гостя' })).not.toBeInTheDocument()
 
-    api.createGuestInvite.mockResolvedValueOnce(inviteView('nonce-1'))
-    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+    await openInviteModal('nonce-1')
 
     await waitFor(() => {
       expect(api.createGuestInvite).toHaveBeenCalledWith('c-1')
     })
-    // ссылка, срок (локальное время) и предупреждение Q17=A/Q13=B
-    expect(await screen.findByDisplayValue('https://app.example/join/nonce-1')).toBeInTheDocument()
-    expect(screen.getByText(/^Действует до /)).toBeInTheDocument()
-    expect(screen.getByText(/отзовёт предыдущую/i)).toBeInTheDocument()
+    const dialog = inviteDialog()
+    // срок — локальным временем (ui/time)
+    expect(within(dialog).getByText(/^Действует до /)).toBeInTheDocument()
+    // инлайн-разворот в футере демонтирован: содержимое — ТОЛЬКО в модали
+    expect(container.querySelector('fieldset.conference-guest-invite')).toBeNull()
+    expect(screen.queryByText(/отзовёт предыдущую/i)).not.toBeInTheDocument()
   })
 
-  it('(б) «Копировать» → clipboard.writeText(inviteUrl) и статус «Скопировано» (output aria-live)', async () => {
+  it('(б) закрытие «Отмена» — без вызовов API и без изменений состояния; повторное открытие — БЕЗ №52, та же ссылка', async () => {
+    api.revokeGuestInvite.mockResolvedValue(undefined)
+    render(<ParticipantsPanel conferenceId="c-1" />)
+    await openInviteModal('nonce-1')
+
+    fireEvent.click(within(inviteDialog()).getByRole('button', { name: 'Отмена' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(api.revokeGuestInvite).not.toHaveBeenCalled()
+
+    // повторное открытие: ссылка живёт в стейте панели — №52 НЕ дергается
+    fireEvent.click(screen.getByRole('button', { name: 'Гостевая ссылка' }))
+    expect(
+      await within(inviteDialog()).findByDisplayValue('https://app.example/join/nonce-1'),
+    ).toBeInTheDocument()
+    expect(api.createGuestInvite).toHaveBeenCalledTimes(1)
+  })
+
+  it('(б′) закрытие кликом по фону (press+release вне окна) — тот же исход: без API, состояние сохранено', async () => {
+    render(<ParticipantsPanel conferenceId="c-1" />)
+    await openInviteModal('nonce-1')
+
+    const back = document.querySelector('.modal-back.show')
+    expect(back).not.toBeNull()
+    fireEvent.mouseDown(back as Element, { button: 0 })
+    fireEvent.mouseUp(back as Element, { button: 0 })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(api.revokeGuestInvite).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Гостевая ссылка' }))
+    expect(
+      await within(inviteDialog()).findByDisplayValue('https://app.example/join/nonce-1'),
+    ).toBeInTheDocument()
+    expect(api.createGuestInvite).toHaveBeenCalledTimes(1)
+  })
+
+  it('(в) «Копировать» → clipboard.writeText(inviteUrl) и статус «Скопировано» (output aria-live)', async () => {
     clipboard.writeText.mockResolvedValue(undefined)
     render(<ParticipantsPanel conferenceId="c-1" />)
-    await generateInvite('nonce-1')
+    await openInviteModal('nonce-1')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Копировать' }))
+    fireEvent.click(within(inviteDialog()).getByRole('button', { name: 'Копировать' }))
 
     await waitFor(() => {
       expect(clipboard.writeText).toHaveBeenCalledWith('https://app.example/join/nonce-1')
     })
-    expect(await screen.findByText('Скопировано')).toBeInTheDocument()
-    expect(document.querySelector('.conference-guest-invite-copied')).not.toBeNull()
+    expect(await within(inviteDialog()).findByText('Скопировано')).toBeInTheDocument()
   })
 
-  it('(в) «Отозвать ссылку» — деструктивное: модаль T109 с текстом T081 (отключение гостей); Отмена не вызывает; действие «Отозвать» → №53', async () => {
+  it('(г) «Отозвать» — подтверждение T109 поверх (одна подложка, formId-переключение); отмена подтверждения возвращает ссылку; действие → №53 → модаль закрыта', async () => {
     api.revokeGuestInvite.mockResolvedValue(undefined)
     render(<ParticipantsPanel conferenceId="c-1" />)
-    await generateInvite('nonce-1')
+    await openInviteModal('nonce-1')
 
-    const revokeButton = screen.getByRole('button', { name: 'Отозвать ссылку' })
-    fireEvent.click(revokeButton)
+    fireEvent.click(within(inviteDialog()).getByRole('button', { name: 'Отозвать' }))
 
-    const dialog = confirmDialog()
-    // текст T081 без изменений (T109 переносит представление, не текст)
+    // подтверждение T109 — в ТОЙ ЖЕ оболочке (вторая подложка не рождается)
+    const dialog = screen.getByRole('dialog', { name: 'Отозвать гостевую ссылку' })
+    expect(document.querySelectorAll('.modal-back.show')).toHaveLength(1)
     expect(
       within(dialog).getByText(/Все вошедшие по ней гости отключатся немедленно/),
     ).toBeInTheDocument()
     expect(api.revokeGuestInvite).not.toHaveBeenCalled()
 
-    // «Отмена» закрывает модаль без вызова
+    // «Отмена» подтверждения — возврат к ссылке, без вызова
     fireEvent.click(within(dialog).getByRole('button', { name: 'Отмена' }))
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(
+      await within(inviteDialog()).findByDisplayValue('https://app.example/join/nonce-1'),
+    ).toBeInTheDocument()
     expect(api.revokeGuestInvite).not.toHaveBeenCalled()
 
-    // повтор + действие в модали («Отозвать», danger) → №53
-    fireEvent.click(revokeButton)
-    fireEvent.click(confirmAction('Отозвать'))
+    // действие в подтверждении → №53 → успех закрывает модаль целиком
+    fireEvent.click(within(inviteDialog()).getByRole('button', { name: 'Отозвать' }))
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Отозвать гостевую ссылку' })).getByRole('button', {
+        name: 'Отозвать',
+      }),
+    )
     await waitFor(() => {
       expect(api.revokeGuestInvite).toHaveBeenCalledWith('c-1')
     })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
   })
 
-  it('(г) успешный отзыв — блок свёрнут; 404 guest_invite_not_found — молчаливый коллапс без notice (Q21=A)', async () => {
-    const { container } = render(<ParticipantsPanel conferenceId="c-1" />)
-    await generateInvite('nonce-1')
-
-    api.revokeGuestInvite.mockResolvedValueOnce(undefined)
-    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
-    fireEvent.click(confirmAction('Отозвать'))
-    await waitFor(() => {
-      expect(container.querySelector('.conference-guest-invite-url')).toBeNull()
-    })
-    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeInTheDocument()
-
-    // ссылку мог отозвать другой модератор — идемпотентность без notice
-    await generateInvite('nonce-2')
-    api.revokeGuestInvite.mockRejectedValueOnce(problemWith('guest_invite_not_found', 404))
-    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
-    fireEvent.click(confirmAction('Отозвать'))
-    await waitFor(() => {
-      expect(container.querySelector('.conference-guest-invite-url')).toBeNull()
-    })
-    expect(container.querySelector('.conference-moderation-notice')).toBeNull()
-  })
-
-  it('(д) повторная генерация при живой ссылке — та же кнопка №52, поле заменено новым inviteUrl', async () => {
+  it('(д) после отзыва повторное открытие — НОВЫЙ №52 и новая ссылка (null-состояние генерит заново)', async () => {
+    api.revokeGuestInvite.mockResolvedValue(undefined)
     render(<ParticipantsPanel conferenceId="c-1" />)
-    await generateInvite('nonce-1')
+    await openInviteModal('nonce-1')
 
-    api.createGuestInvite.mockResolvedValueOnce(inviteView('nonce-2'))
-    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+    fireEvent.click(within(inviteDialog()).getByRole('button', { name: 'Отозвать' }))
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Отозвать гостевую ссылку' })).getByRole('button', {
+        name: 'Отозвать',
+      }),
+    )
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
 
-    expect(await screen.findByDisplayValue('https://app.example/join/nonce-2')).toBeInTheDocument()
-    expect(screen.queryByDisplayValue('https://app.example/join/nonce-1')).not.toBeInTheDocument()
+    await openInviteModal('nonce-2')
+    expect(api.createGuestInvite).toHaveBeenCalledTimes(2)
+    expect(
+      within(inviteDialog()).getByDisplayValue('https://app.example/join/nonce-2'),
+    ).toBeInTheDocument()
+  })
+
+  it('(е) 404 guest_invite_not_found на №53 — идемпотентный успех: модаль закрыта, без notice (Q21=A)', async () => {
+    render(<ParticipantsPanel conferenceId="c-1" />)
+    await openInviteModal('nonce-1')
+
+    api.revokeGuestInvite.mockRejectedValueOnce(problemWith('guest_invite_not_found', 404))
+    fireEvent.click(within(inviteDialog()).getByRole('button', { name: 'Отозвать' }))
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Отозвать гостевую ссылку' })).getByRole('button', {
+        name: 'Отозвать',
+      }),
+    )
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+    expect(document.querySelector('.conference-moderation-notice')).toBeNull()
+
+    // ссылка сброшена — следующее открытие генерит заново
+    await openInviteModal('nonce-2')
     expect(api.createGuestInvite).toHaveBeenCalledTimes(2)
   })
 
-  it('(е) не-модератор блока не видит (гейт инструментов панели)', () => {
+  it('(ж) не-модератор кнопки и модали не видит (гейт инструментов панели)', () => {
     const room = defaultRoom()
     room[0] = participant({
       identity: ALICE_ID,
@@ -630,62 +697,78 @@ describe('объединённая панель: гостевая ссылка �
 
     render(<ParticipantsPanel conferenceId="c-1" />)
 
-    expect(screen.queryByRole('button', { name: 'Пригласить гостя' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Гостевая ссылка' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(api.createGuestInvite).not.toHaveBeenCalled()
   })
 
-  it('(ж) отказы №52 — нейтральные строки: 403 moderator_required и 409 conference_ended', async () => {
+  it('(з) отказы №52 — нейтральные строки 403/409, модаль закрыта без ссылки', async () => {
     render(<ParticipantsPanel conferenceId="c-1" />)
 
     api.createGuestInvite.mockRejectedValueOnce(problemWith('moderator_required'))
-    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
-    expect(await screen.findByText('Недостаточно прав')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Гостевая ссылка' }))
+    await waitFor(() => {
+      expect(screen.getByText('Недостаточно прав')).toBeInTheDocument()
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
 
     api.createGuestInvite.mockRejectedValueOnce(problemWith('conference_ended', 409))
-    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
-    expect(await screen.findByText('Конференция завершена')).toBeInTheDocument()
-
-    // ссылка не появилась — блок остался свёрнут
-    expect(document.querySelector('.conference-guest-invite-url')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Гостевая ссылка' }))
+    await waitFor(() => {
+      expect(screen.getByText('Конференция завершена')).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
-  it('(з) «в полёте» кнопки блока недоступны — повторные вызовы блокированы (единый pending панели)', async () => {
+  it('(и) «в полёте» кнопки недоступны — повторные вызовы блокированы (единый pending панели)', async () => {
     render(<ParticipantsPanel conferenceId="c-1" />)
 
-    // №52 в полёте: повторный клик по «Пригласить гостя» не плодит вызовы
+    // №52 в полёте: повторный клик по «Гостевая ссылка» не плодит вызовы
     let resolveCreate: (value: { inviteUrl: string; expiresAt: string }) => void = () => {}
     api.createGuestInvite.mockReturnValue(
       new Promise((resolve) => {
         resolveCreate = resolve
       }),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
-    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeDisabled()
-    fireEvent.click(screen.getByRole('button', { name: 'Пригласить гостя' }))
+    const footerButton = screen.getByRole('button', { name: 'Гостевая ссылка' })
+    fireEvent.click(footerButton)
+    expect(footerButton).toBeDisabled()
+    fireEvent.click(footerButton)
     expect(api.createGuestInvite).toHaveBeenCalledTimes(1)
 
     resolveCreate(inviteView('nonce-1'))
-    expect(await screen.findByDisplayValue('https://app.example/join/nonce-1')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeEnabled()
+    expect(
+      await within(inviteDialog()).findByDisplayValue('https://app.example/join/nonce-1'),
+    ).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Гостевая ссылка' })).toBeEnabled()
+    })
 
-    // №53 в полёте: все кнопки блока недоступны
+    // №53 в полёте: кнопки модали недоступны
     let resolveRevoke: (value: undefined) => void = () => {}
     api.revokeGuestInvite.mockReturnValue(
       new Promise((resolve) => {
         resolveRevoke = resolve
       }),
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Отозвать ссылку' }))
-    fireEvent.click(confirmAction('Отозвать'))
+    fireEvent.click(within(inviteDialog()).getByRole('button', { name: 'Отозвать' }))
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Отозвать гостевую ссылку' })).getByRole('button', {
+        name: 'Отозвать',
+      }),
+    )
     await waitFor(() => {
       expect(api.revokeGuestInvite).toHaveBeenCalledTimes(1)
     })
-    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Копировать' })).toBeDisabled()
+    const dialog = inviteDialog()
+    expect(within(dialog).getByRole('button', { name: 'Копировать' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Отозвать' })).toBeDisabled()
 
     resolveRevoke(undefined)
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeEnabled()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
   })
 })

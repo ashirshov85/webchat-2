@@ -1124,9 +1124,10 @@ describe('объединённая панель участников (T107): с�
     const end = conferencesCss.match(/^\.conference-moderation-end\s*\{([^}]*)\}/m)
     expect(end).not.toBeNull()
     expect(end?.[1]).toContain('flex: none')
-    const invite = conferencesCss.match(/^\.conference-guest-invite\s*\{([^}]*)\}/m)
-    expect(invite).not.toBeNull()
-    expect(invite?.[1]).toContain('flex: none')
+    // T113: обёртка fieldset демонтирована — flex:none несёт standalone-кнопка
+    const inviteOpen = conferencesCss.match(/^\.conference-guest-invite-open\s*\{([^}]*)\}/m)
+    expect(inviteOpen).not.toBeNull()
+    expect(inviteOpen?.[1]).toContain('flex: none')
   })
 
   it('кебаб строки .c-menu — паттерн GroupMembersModal/contacts-modal: 22px, прозрачная рамка/фон, hover золотом, svg 14px fill currentColor', () => {
@@ -1175,12 +1176,12 @@ describe('объединённая панель участников (T107): с�
       expect(conferencesCss, `демонтированный селектор ${gone}`).not.toContain(gone)
     }
     // переиспользовано футером (кнопки модали — лексика .m-btn
-    // ui/ConfirmDialog, NOT conferences.css)
+    // ui/ConfirmDialog, NOT conferences.css); T113: обёртка
+    // .conference-guest-invite демонтирована — живёт standalone-кнопка
     for (const kept of [
-      '.conference-moderation-button-danger',
       '.conference-moderation-end',
       '.conference-moderation-notice',
-      '.conference-guest-invite',
+      '.conference-guest-invite-open',
     ]) {
       expect(conferencesCss, `переиспользуемый селектор ${kept}`).toContain(kept)
     }
@@ -1295,6 +1296,75 @@ describe('индикаторы источников строки участни�
     const doc = conferencesCss.slice(Math.max(0, at - 1600), at)
     expect(doc).toContain('T108')
     expect(doc).toContain('прототип')
+  })
+})
+
+describe('кнопка «Гостевая ссылка» и модаль гостевой ссылки (T113): статический пин CSS', () => {
+  /**
+   * T113 — демонтаж рамки-обёртки fieldset .conference-guest-invite:
+   * кнопка standalone в лексике .conference-moderation-end (геометрия),
+   * но в текущем латунном цвете (НЕ красная); содержимое блока
+   * (readonly inviteUrl/срок/«Копировать»/«Отозвать»/«Скопировано»)
+   * переехало из инлайн-разворота футера в МОДАЛЬ формы 'guest-invite'
+   * (ModalShell 008; кнопки — общая лексика .m-btn/.modal-btns
+   * confirm-dialog.css, НЕ conferences.css).
+   */
+
+  it('демонтаж обёртки и инлайн-разворота: rules .conference-guest-invite/-generate/-hint/-actions и мёртвый danger-акцент футера исчезли', () => {
+    for (const gone of [
+      '.conference-guest-invite {',
+      '.conference-guest-invite-generate',
+      '.conference-guest-invite-hint',
+      '.conference-guest-invite-actions',
+      // мёртвый после переезда «Отозвать» в .m-btn danger модали
+      '.conference-moderation-button-danger',
+    ]) {
+      expect(conferencesCss, `демонтированный селектор ${gone}`).not.toContain(gone)
+    }
+  })
+
+  it('standalone-кнопка .conference-guest-invite-open — константы геометрии .conference-moderation-end + латунный акцент БЕЗ --err', () => {
+    const rule = conferencesCss.match(/^\.conference-guest-invite-open\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    // геометрия .conference-moderation-end (лексика футера T107)
+    for (const constant of [
+      'flex: none',
+      'align-self: flex-start',
+      'padding: 6px 14px',
+      'border-radius: var(--r-panel)',
+      'background: var(--input-bg)',
+      'font: 13px var(--font-body)',
+    ]) {
+      expect(rule?.[1], `константа ${constant}`).toContain(constant)
+    }
+    // латунный акцент текущего цвета — НЕ красная
+    expect(rule?.[1]).toContain('var(--gold-dark)')
+    expect(rule?.[1]).toContain('var(--gold-light)')
+    expect(rule?.[1]).not.toContain('var(--err)')
+  })
+
+  it('тело модали .conference-guest-modal — readonly-поле ссылки, срок, статус «Скопировано»', () => {
+    const url = conferencesCss.match(/^\.conference-guest-modal-url\s*\{([^}]*)\}/m)
+    expect(url).not.toBeNull()
+    expect(url?.[1]).toContain('width: 100%')
+    expect(url?.[1]).toContain('box-sizing: border-box')
+    const expires = conferencesCss.match(/^\.conference-guest-modal-expires\s*\{([^}]*)\}/m)
+    expect(expires).not.toBeNull()
+    expect(expires?.[1]).toContain('var(--muted)')
+    const copied = conferencesCss.match(/^\.conference-guest-modal-copied\s*\{([^}]*)\}/m)
+    expect(copied).not.toBeNull()
+    expect(copied?.[1]).toContain('var(--gold-light)')
+    // 008: фокус с клавиатуры — поле ссылки модали
+    const focus = conferencesCss.match(/^\.conference-guest-modal-url:focus-visible\s*\{([^}]*)\}/m)
+    expect(focus?.[1]).toContain('outline: 2px solid var(--gold-light)')
+  })
+
+  it('докблок блока truthfully описывает кнопку+модаль (T113)', () => {
+    const at = conferencesCss.indexOf('.conference-guest-invite-open {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1600), at)
+    expect(doc).toContain('T113')
+    expect(doc).toContain('модал')
   })
 })
 

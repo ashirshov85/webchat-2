@@ -1720,11 +1720,13 @@ section[data-guest-join] {
 }
 
 /* ============ ФУТЕР ИНСТРУМЕНТОВ ПАНЕЛИ (T107, только модератору):
- * ПОД списком и всегда видим — прокрутка живёт только у списка,
- * элементы футера flex:none не сжимаются и не прокручиваются.
+  * ПОД списком и всегда видим — прокрутка живёт только у списка,
+  * элементы футера flex:none не сжимаются и не прокручиваются.
   * Лексика кнопок переиспользована из панели модерации T042
   * (демонтирована); подтверждения деструктивных действий с T109 —
   * модаль ui/ConfirmDialog (кнопки .m-btn), НЕ conferences.css.
+  * T113: «Гостевая ссылка» — standalone-кнопка (обёртка fieldset
+  * демонтирована), содержимое блока переехало в модаль 'guest-invite'.
   * ============ */
 
 .conference-participants-divider {
@@ -1736,18 +1738,14 @@ section[data-guest-join] {
 }
 
 /* ============================================================
- * Кнопки/строка отказа — переиспользованная лексика футера
- * объединённой панели (T042 → T107): деструктивный акцент кнопок
- * (№48/№53) и нейтральная строка отказов (role=status). Кнопки
- * подтверждения деструктивных действий после T109 живут в модали
- * ui/ConfirmDialog (лексика .m-btn 008), НЕ здесь.
- * ============================================================ */
-
-/* Деструктивное (кик/завершение/отзыв) — акцент отказа. */
-.conference-moderation-button-danger {
-  border-color: var(--err);
-  color: var(--err);
-}
+  * Кнопки/строка отказа — переиспользованная лексика футера
+  * объединённой панели (T042 → T107): деструктивный акцент кнопок
+  * (№48/№53) и нейтральная строка отказов (role=status). Кнопки
+  * подтверждения деструктивных действий после T109 живут в модали
+  * ui/ConfirmDialog (лексика .m-btn 008), НЕ здесь; латунный
+  * danger-акцент старой кнопки отзыва демонтирован в T113 вместе
+  * с инлайн-кнопкой («Отозвать» модали — .m-btn danger).
+  * ============================================================ */
 
 .conference-moderation-end {
   flex: none;
@@ -1768,95 +1766,62 @@ section[data-guest-join] {
 }
 
 /* ============================================================
-  * Блок «Гостевая ссылка» в футере объединённой панели (T081,
-  * US4, №52/№53; T107 — переезд из панели модерации): по монтажу
-  * свёрнут в кнопку «Пригласить гостя» (GET статуса ссылки в
-  * контракте нет); после №52 — предупреждение Q17=A/Q13=B,
-  * readonly-поле inviteUrl (ручное выделение — страховка «Копировать»),
- * срок действия локальным временем (ui/time) и «Отозвать ссылку»
- * через подтверждение в модали (T109; деструктивное — отключение
- * гостей).
+  * Гостевая ссылка (T081 → T113): standalone-кнопка футера —
+  * лексика .conference-moderation-end (геометрия), но в текущем
+  * латунном акценте (НЕ красная); рамка-обёртка fieldset и
+  * инлайн-разворот демонтированы — содержимое (readonly inviteUrl/
+  * срок/«Копировать»/«Отозвать»/«Скопировано») переехало в МОДАЛЬ
+  * формы 'guest-invite' (единая оболочка ModalShell 008; кнопки —
+  * общая лексика .m-btn/.modal-btns confirm-dialog.css, НЕ здесь).
+  * Повторное открытие показывает ссылку из стейта панели БЕЗ №52 —
+  * hint перегенерации Q17=A не нужен (новая ссылка — только после
+  * отзыва №53).
   * ============================================================ */
 
-.conference-guest-invite {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  min-width: 0;
+.conference-guest-invite-open {
   flex: none;
-  padding: 8px 8px 10px;
-  border: 1px solid var(--gold-dark);
-  border-radius: var(--r-panel);
-}
-
-.conference-guest-invite-generate {
   align-self: flex-start;
-  padding: 4px 10px;
+  padding: 6px 14px;
   border: 1px solid var(--gold-dark);
   border-radius: var(--r-panel);
   background: var(--input-bg);
-  font: 12px var(--font-body);
+  font: 13px var(--font-body);
   color: var(--gold-light);
   cursor: pointer;
 }
 
-.conference-guest-invite-hint {
-  margin: 0;
-  font: italic 11.5px var(--font-body);
-  color: var(--muted);
-}
+/* ============================================================
+  * Тело модали «Гостевая ссылка» (T113): поле ссылки на всю ширину
+  * модали (ручное выделение — страховка «Копировать»), срок
+  * локальным временем (ui/time) и статус «Скопировано».
+  * ============================================================ */
 
-.conference-guest-invite-url {
+.conference-guest-modal-url {
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 8px;
+  padding: 5px 9px;
   border: 1px solid var(--line);
   border-radius: var(--r-panel);
   background: var(--input-bg);
-  font: 12px var(--font-body);
+  font: 12.5px var(--font-body);
   color: var(--cream);
 }
 
-.conference-guest-invite-expires {
+.conference-guest-modal-expires {
   margin: 0;
   font: 12px var(--font-body);
   color: var(--muted);
-}
-
-.conference-guest-invite-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-}
-
-.conference-guest-invite-actions .conference-guest-invite-copy,
-.conference-guest-invite-actions .conference-guest-invite-revoke {
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-panel);
-  background: var(--input-bg);
-  font: 12px var(--font-body);
-  color: var(--cream);
-  cursor: pointer;
-}
-
-/* Отзыв — деструктивный акцент (класс conference-moderation-button-danger
-   красит текст/рамку, здесь — базовая геометрия кнопки блока). */
-.conference-guest-invite-actions .conference-guest-invite-revoke {
-  border-color: var(--err);
-  color: var(--err);
 }
 
 /* Статус «Скопировано» (<output> = role=status, aria-live=polite). */
-.conference-guest-invite-copied {
+.conference-guest-modal-copied {
   font: 12px var(--font-body);
   color: var(--gold-light);
 }
 
-/* 008: фокус с клавиатуры — поле ссылки блока (кнопки — общим
-   правилом .conference-participants button:focus-visible выше). */
-.conference-guest-invite-url:focus-visible {
+/* 008: фокус с клавиатуры — поле ссылки модали (кнопки — общим
+   правилом .modal .m-btn:focus-visible confirm-dialog.css). */
+.conference-guest-modal-url:focus-visible {
   outline: 2px solid var(--gold-light);
   outline-offset: 2px;
 }

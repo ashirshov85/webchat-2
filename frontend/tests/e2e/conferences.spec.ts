@@ -1062,7 +1062,7 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     // min-height:0), футер flex:none остаётся видимым
     await alicePage.setViewportSize({ width: 1280, height: 320 })
     await expect(alicePage.getByRole('button', { name: 'Завершить конференцию' })).toBeVisible()
-    await expect(alicePage.getByRole('button', { name: 'Пригласить гостя' })).toBeVisible()
+    await expect(alicePage.getByRole('button', { name: 'Гостевая ссылка' })).toBeVisible()
     const listScrolls = await alicePage.evaluate(() => {
       const list = document.querySelector('.conference-participants-list')
       return list !== null && list.scrollHeight > list.clientHeight
@@ -1079,7 +1079,7 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     // паритет прототипа участника)
     await bobPage.setViewportSize({ width: 1280, height: 320 })
     await expect(bobPage.getByRole('button', { name: 'Завершить конференцию' })).toHaveCount(0)
-    await expect(bobPage.getByRole('button', { name: 'Пригласить гостя' })).toHaveCount(0)
+    await expect(bobPage.getByRole('button', { name: 'Гостевая ссылка' })).toHaveCount(0)
   })
 
   test('T108: индикаторы источников в строке участника — выключенный микрофон со штрихом; №49 модератором → замок у модератора, «выкл» у жертвы ≤ 2 c', async ({
@@ -1268,14 +1268,20 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     await alicePage.getByRole('button', { name: 'Войти' }).click()
     await expect(alicePage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
 
-    // №52 через UI блока «Гостевая ссылка» в футере панели (T081/T107):
-    // «Пригласить гостя» → inviteUrl в readonly-поле (в чат не постится);
-    // прямая №52-нога apiCall удалена — ссылка берётся из приложения
-    await alicePage.getByRole('button', { name: 'Пригласить гостя' }).click()
+    // №52 через UI «Гостевая ссылка» (T081/T107/T113): кнопка футера
+    // открывает МОДАЛЬ (первое открытие генерит ссылку; в чат не
+    // постится); inviteUrl в readonly-поле модали — прямая №52-нога
+    // apiCall удалена, ссылка берётся из приложения. Поле видно сразу
+    // (пусто, пока №52 в полёте) — ждём ЗНАЧЕНИЕ, не видимость
+    await alicePage.getByRole('button', { name: 'Гостевая ссылка' }).click()
     const inviteField = alicePage.getByRole('textbox', { name: 'Ссылка-приглашение' })
-    await expect(inviteField).toBeVisible({ timeout: 10_000 })
+    await expect(inviteField).toHaveValue(/\/join\//, { timeout: 10_000 })
     const inviteUrl = await inviteField.inputValue()
-    expect(inviteUrl).toContain('/join/')
+    // возвращаем комнате обзор — модаль закрыта «Отменой» (без API)
+    await alicePage
+      .getByRole('dialog', { name: 'Гостевая ссылка' })
+      .getByRole('button', { name: 'Отмена' })
+      .click()
 
     // приватное окно без аккаунта открывает ссылку №52 (путь — из
     // inviteUrl; хостом остаётся baseURL стенда — app.public-base-url
@@ -1327,6 +1333,63 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     await expect(guestPage).toHaveURL(/\/login/)
   })
 
+  test('T113: модаль гостевой ссылки — «Отмена» сохраняет ссылку, повторное открытие БЕЗ перегенерации, отзыв через подтверждение → новая ссылка', async ({
+    browser,
+  }) => {
+    const aliceNow = await login(api, alice.username)
+    const conference = await createConference(api, aliceNow, chatId)
+
+    const alicePage = await openConferencePage(browser, aliceNow, conference.id)
+    openedContexts.push(alicePage.context())
+    await alicePage.getByRole('button', { name: 'Войти' }).click()
+    await expect(alicePage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
+
+    // первое открытие — №52 → ссылка в модали (readonly-поле видно
+    // пустым, пока №52 в полёте — ждём значение)
+    const inviteButton = alicePage.getByRole('button', { name: 'Гостевая ссылка' })
+    await inviteButton.click()
+    const inviteField = alicePage.getByRole('textbox', { name: 'Ссылка-приглашение' })
+    await expect(inviteField).toHaveValue(/\/join\//, { timeout: 10_000 })
+    const firstUrl = await inviteField.inputValue()
+
+    // «Отмена» закрывает модаль без изменений; повторное открытие —
+    // ТА ЖЕ ссылка (стейт панели, без повторного №52)
+    await alicePage
+      .getByRole('dialog', { name: 'Гостевая ссылка' })
+      .getByRole('button', { name: 'Отмена' })
+      .click()
+    await expect(alicePage.getByRole('dialog')).toHaveCount(0)
+    await inviteButton.click()
+    await expect(inviteField).toHaveValue(firstUrl)
+
+    // «Отозвать» — подтверждение T109 поверх (заголовок «Отозвать
+    // гостевую ссылку»), действие закрывает всё: ссылка сброшена
+    await alicePage
+      .getByRole('dialog', { name: 'Гостевая ссылка' })
+      .getByRole('button', { name: 'Отозвать', exact: true })
+      .click()
+    const confirm = alicePage.getByRole('dialog', { name: 'Отозвать гостевую ссылку' })
+    await expect(confirm).toBeVisible()
+    await confirm.getByRole('button', { name: 'Отозвать', exact: true }).click()
+    await expect(alicePage.getByRole('dialog')).toHaveCount(0)
+
+    // повторное открытие после отзыва — НОВАЯ ссылка (№52 заново);
+    // поле сначала пусто — ждём значение, отличное от firstUrl
+    await inviteButton.click()
+    await expect.poll(async () => inviteField.inputValue(), { timeout: 10_000 }).toContain('/join/')
+    expect(await inviteField.inputValue()).not.toBe(firstUrl)
+    await alicePage
+      .getByRole('dialog', { name: 'Гостевая ссылка' })
+      .getByRole('button', { name: 'Отмена' })
+      .click()
+
+    // комнату завершаю сам (создатель): активная комната не достанется
+    // следующему сюиту с ghost-подключениями закрытых вкладок
+    await apiCall(api, 'post', `/api/v1/conferences/${conference.id}/end`, {
+      token: aliceNow.accessToken,
+    }).catch(() => {})
+  })
+
   test('T105: гостевая нога SC-005 — mic→экран→камера гостю «только микрофон»: кнопки блокируются ≤ 2 c, «Камера» некликабельна', async ({
     browser,
   }) => {
@@ -1340,11 +1403,17 @@ test.describe.serial('гостевой доступ US4 e2e (009 T052)', () => {
     await alicePage.getByRole('button', { name: 'Войти' }).click()
     await expect(alicePage.locator('.conference-room')).toBeVisible({ timeout: 15_000 })
 
-    // инвайт-ссылка через UI футера панели (как в SC-003, T107)
-    await alicePage.getByRole('button', { name: 'Пригласить гостя' }).click()
+    // инвайт-ссылка через UI «Гостевая ссылка» + модаль (как в SC-003,
+    // T113; значение ждём — поле видно пустым, пока №52 в полёте);
+    // модаль закрывается «Отменой» — кебаби панели доступны
+    await alicePage.getByRole('button', { name: 'Гостевая ссылка' }).click()
     const inviteField = alicePage.getByRole('textbox', { name: 'Ссылка-приглашение' })
-    await expect(inviteField).toBeVisible({ timeout: 10_000 })
+    await expect(inviteField).toHaveValue(/\/join\//, { timeout: 10_000 })
     const inviteUrl = await inviteField.inputValue()
+    await alicePage
+      .getByRole('dialog', { name: 'Гостевая ссылка' })
+      .getByRole('button', { name: 'Отмена' })
+      .click()
 
     // гость входит «только микрофон» (Q1=C/Q3=A): камера/экран
     // НЕ опубликованы — у их кнопок нет трек-событий, единственная

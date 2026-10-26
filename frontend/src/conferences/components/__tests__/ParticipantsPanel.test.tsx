@@ -250,7 +250,7 @@ describe('ParticipantsPanel — единый список (009 US3 T041/T107)', 
     expect(screen.queryByRole('button', { name: /Действия с участником/ })).not.toBeInTheDocument()
     expect(container.querySelector('.c-menu')).toBeNull()
     // футера нет: инструменты панели — только модератору
-    expect(screen.queryByRole('button', { name: 'Пригласить гостя' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Гостевая ссылка' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Завершить конференцию' })).not.toBeInTheDocument()
     expect(container.querySelector('.conference-participants-divider')).toBeNull()
     expect(api.updateParticipantRestrictions).not.toHaveBeenCalled()
@@ -278,14 +278,17 @@ describe('ParticipantsPanel — единый список (009 US3 T041/T107)', 
     }
   })
 
-  it('футер модератора: разделитель + блок гостевой ссылки + «Завершить конференцию» (№52/№48)', () => {
+  it('футер модератора: разделитель + standalone-кнопка «Гостевая ссылка» + «Завершить конференцию» (№52/№48; T113 — без рамки-обёртки)', () => {
     lkc.useLocalParticipant.mockReturnValue({ localParticipant: moderatorRoom()[0] })
     lkc.useParticipants.mockReturnValue(moderatorRoom())
 
     const { container } = render(<ParticipantsPanel conferenceId="c-1" />)
 
     expect(container.querySelector('.conference-participants-divider')).not.toBeNull()
-    expect(screen.getByRole('button', { name: 'Пригласить гостя' })).toBeInTheDocument()
+    // T113: переименование + демонтаж fieldset-обёртки — кнопка standalone
+    expect(screen.queryByText('Пригласить гостя')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Гостевая ссылка' })).toBeInTheDocument()
+    expect(container.querySelector('fieldset.conference-guest-invite')).toBeNull()
     expect(screen.getByRole('button', { name: 'Завершить конференцию' })).toBeInTheDocument()
   })
 
