@@ -75,6 +75,16 @@ import type { JoinTicket } from '../../api/conferences'
  * (Playwright getByText exact), пометки «гость»/«модератор» из
  * participant.metadata (§3, парсер ParticipantsPanel T041) рядом с
  * именем приглушённым курсивом, живо следуют UpdateParticipant №50.
+ *
+ * 009, US1/US5, T114 — уведомления комнаты под рабочей областью:
+ * conference-room-status (фазы T027/потеря связи T060),
+ * conference-room-media (отказ устройств T032) и тост
+ * conference-warning-toast (T060 ← T056) — дети flex-колонки ПОД
+ * .conference-main (когда медиа-слой смонтирован) и НАД слотом
+ * controls: DOM-порядок детей комнаты — toggle-row → main →
+ * статус/media/тост → controls (compareDocumentPosition); фазы без
+ * main (failed) — статус остаётся над всегда смонтированным
+ * controls; пин-оверлей T079 DOM-позицию не меняет (absolute — CSS).
  */
 
 const lk = vi.hoisted(() => {
@@ -2954,4 +2964,157 @@ describe('ConferenceRoom — каркас экрана: сайдбар учас�
     expect(screen.queryByRole('button', { name: /панель участников/ })).toBeNull()
     expect(mainArea()).toContainElement(tilesSection())
   })
+})
+
+describe('ConferenceRoom — уведомления комнаты под рабочей областью (009 US1/US5 T114)', () => {
+  /** Элемент комнаты по селектору (с внятной ошибкой, если не смонтирован). */
+  function roomElement(selector: string): HTMLElement {
+    const element = document.querySelector<HTMLElement>(selector)
+    if (element === null) {
+      throw new Error(`${selector} не смонтирован`)
+    }
+    return element
+  }
+
+  /** Слот controls (fieldset MediaControls обеих точек входа). */
+  function controlsSlot(): HTMLElement {
+    return roomElement('fieldset.conference-controls')
+  }
+
+  function renderRoom(): ReturnType<typeof render> {
+    return render(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn().mockResolvedValue(null)}
+        reconnectWindowMs={60_000}
+        reconnectRetryDelayMs={5_000}
+        sidebar={<div data-testid="side-slot" />}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+  }
+
+  /** Data-пакет шедулера T056 — тост conference.warning (T060). */
+  function emitWarning(room: InstanceType<typeof lk.FakeRoom>): void {
+    room.emit(
+      lk.RoomEvent.DataReceived,
+      new TextEncoder().encode(JSON.stringify({ type: 'conference.warning' })),
+      undefined,
+      undefined,
+      'conference.warning',
+    )
+  }
+
+  beforeEach(() => {
+    lk.FakeRoom.instances.length = 0
+    lkc.trackRefs = [{ participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' }]
+    lkc.speakers = []
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('(а) DOM-порядок детей колонки: полоса → .conference-main → статус/media/тост → controls (compareDocumentPosition)', async () => {
+    renderRoom()
+    const room = lastRoom()
+    // отказ устройств (T032) — media-предупреждение в живой фазе
+    room.micImpl = () => Promise.reject(new Error('NotAllowedError'))
+    room.cameraImpl = () => Promise.reject(new Error('NotFoundError'))
+    expect(
+      await screen.findByText('Нет доступа к камере и микрофону — можно включить их в звонке'),
+    ).toBeVisible()
+
+    // тост conference.warning (T060 ← T056, FR-015)
+    emitWarning(room)
+    expect(await screen.findByText('Конференция завершится по лимиту длительности')).toBeVisible()
+
+    // потеря связи (T060): фаза reconnecting сохраняет медиа-слой —
+    // статус виден ОДНОВРЕМЕННО с рабочей областью и controls, между
+    // ними (не отжимает рабочую область сверху)
+    room.state = lk.ConnectionState.Disconnected
+    room.emit(lk.RoomEvent.Disconnected)
+    expect(await screen.findByText('Соединение потеряно — переподключение…')).toBeVisible()
+
+    const toggleRow = roomElement('.conference-toggle-row')
+    const main = roomElement('.conference-main')
+    const status = roomElement('.conference-room-status')
+    const media = roomElement('.conference-room-media')
+    const toast = roomElement('.conference-warning-toast')
+    const controls = controlsSlot()
+    // T114: полоса и рабочая область — выше всех уведомлений
+    expect(toggleRow.compareDocumentPosition(main)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(main.compareDocumentPosition(status)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(main.compareDocumentPosition(media)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(main.compareDocumentPosition(toast)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    // уведомления — выше всегда смонтированного controls (слот children)
+    expect(status.compareDocumentPosition(controls)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(media.compareDocumentPosition(controls)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(toast.compareDocumentPosition(controls)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('(б) фаза failed без .conference-main в DOM — статус остаётся НАД controls', async () => {
+    lk.FakeRoom.defaultConnectImpl = () => Promise.reject(new Error('signal failed'))
+    try {
+      renderRoom()
+
+      const status = await screen.findByText('Не удалось подключиться к медиа-серверу')
+      expect(document.querySelector('.conference-main')).toBeNull()
+      // controls смонтирован всегда (слот children вне mediaVisible) —
+      // «под conference-main (если есть)» выполняется тривиально
+      const controls = controlsSlot()
+      expect(status.compareDocumentPosition(controls)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    } finally {
+      lk.FakeRoom.defaultConnectImpl = null
+    }
+  })
+
+  it('(в) пин-оверлей T079 не меняет порядок: уведомления в DOM между main и controls — позиционирование CSS', async () => {
+    const view = renderRoom()
+    const room = lastRoom()
+    await waitFor(() => {
+      expect(room.connectCalls).toHaveLength(1)
+    })
+    emitWarning(room)
+    expect(await screen.findByText('Конференция завершится по лимиту длительности')).toBeVisible()
+
+    // живая демонстрация → автопин T078 → маркер T079 на корневом div
+    lkc.trackRefs = [
+      { participant: { identity: 'u:1:a', name: 'alice' }, source: 'camera' },
+      { participant: { identity: 'u:2:b', name: 'bob' }, source: 'screen_share' },
+    ]
+    view.rerender(
+      <ConferenceRoom
+        conferenceId="c-1"
+        ticket={ticket('jwt-1')}
+        mode="video"
+        refreshTicket={vi.fn().mockResolvedValue(null)}
+        reconnectWindowMs={60_000}
+        reconnectRetryDelayMs={5_000}
+        sidebar={<div data-testid="side-slot" />}
+      >
+        <fieldset className="conference-controls" data-testid="controls-slot" />
+      </ConferenceRoom>,
+    )
+    await waitFor(() => {
+      expect(roomElement('.conference-room-pinned')).toBeVisible()
+    })
+
+    // для absolute-оверлеев T079 DOM-позиция не важна — тост остаётся
+    // между main и controls (существующие правила CSS позиционируют)
+    const main = roomElement('.conference-main')
+    const toast = roomElement('.conference-warning-toast')
+    expect(main.compareDocumentPosition(toast)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+    expect(toast.compareDocumentPosition(controlsSlot())).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  // Ранняя оболочка (room === null, эффект ещё не создал комнату) —
+  // существующий гвард T027 без изменений: статус — единственный
+  // ребёнок, main/controls отсутствуют; показ/закрытие тоста и снятие
+  // media-предупреждения публикацией трека — существующие тесты
+  // описок T060/T032 выше (ожидания не менялись).
 })
