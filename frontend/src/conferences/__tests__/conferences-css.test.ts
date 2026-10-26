@@ -87,6 +87,14 @@ import { describe, expect, it } from 'vitest'
  * геометрия prejoin-тумблеров T098 не регрессируют; обвязка
  * .guest-join-prejoin сама не красится — двойной рамки у pre-join
  * гостя не возникает.
+ *
+ * T108 — индикаторы микрофона/камеры/экрана в строке участника
+ * (прототипы tmp/conference-page-{moderator,participant}.html):
+ * латунные мини-бейджи .cp-sig 22px между именем и кебабом, состояние
+ * — data-state on/off/blocked; on = золото + on-части иконки, off =
+ * приглушение + диагональный штрих --err, blocked = приглушение
+ * saturate + замок-бейдж (только в виду модератора). Индикаторы НЕ
+ * кликабельны (pointer-events: none) и БЕЗ tooltip.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -1184,5 +1192,83 @@ describe('объединённая панель участников (T107): с�
     const doc = conferencesCss.slice(Math.max(0, at - 2600), at)
     expect(doc).toContain('T107')
     expect(doc).toContain('кебаб')
+  })
+})
+
+describe('индикаторы источников строки участника (T108): статический пин CSS', () => {
+  it('мини-бейдж .cp-sig — круг 22px с латунной рамкой; контейнер .cp-sigs не сжимает строку (flex:none)', () => {
+    const box = conferencesCss.match(/^\.cp-sigs\s*\{([^}]*)\}/m)
+    expect(box).not.toBeNull()
+    expect(box?.[1]).toContain('display: inline-flex')
+    expect(box?.[1]).toContain('flex: none')
+    const sig = conferencesCss.match(/^\.cp-sig\s*\{([^}]*)\}/m)
+    expect(sig).not.toBeNull()
+    expect(sig?.[1]).toContain('width: 22px')
+    expect(sig?.[1]).toContain('height: 22px')
+    expect(sig?.[1]).toContain('border-radius: 50%')
+    expect(sig?.[1]).toContain('border: 1.5px solid var(--gold)')
+    // svg приборов 12px, инлайн-штриховка currentColor
+    const svg = conferencesCss.match(/^\.cp-sig svg\s*\{([^}]*)\}/m)
+    expect(svg).not.toBeNull()
+    expect(svg?.[1]).toContain('width: 12px')
+    expect(svg?.[1]).toContain('height: 12px')
+  })
+
+  it('НЕ кликабельны: pointer-events:none + user-select:none — индикатор span, не кнопка', () => {
+    const sig = conferencesCss.match(/^\.cp-sig\s*\{([^}]*)\}/m)
+    expect(sig?.[1]).toContain('pointer-events: none')
+    expect(sig?.[1]).toContain('user-select: none')
+  })
+
+  it('ТРИ состояния [data-state]: on — золото + on-части; off — приглушение + штрих --err; blocked — saturate + замок', () => {
+    const on = conferencesCss.match(/\.cp-sig\[data-state='on'\]\s*\{([^}]*)\}/)
+    expect(on).not.toBeNull()
+    expect(on?.[1]).toContain('border-color: var(--gold)')
+    expect(on?.[1]).toContain('color: var(--gold-light)')
+    const onPart = conferencesCss.match(/\.cp-sig\[data-state='on'\] \.cp-sig-on\s*\{([^}]*)\}/)
+    expect(onPart?.[1]).toContain('opacity: 1')
+    const off = conferencesCss.match(/\.cp-sig\[data-state='off'\]\s*\{([^}]*)\}/)
+    expect(off).not.toBeNull()
+    expect(off?.[1]).toContain('border-color: #55452c')
+    expect(off?.[1]).toContain('color: var(--muted)')
+    const slash = conferencesCss.match(/^\.cp-sig-slash\s*\{([^}]*)\}/m)
+    expect(slash?.[1]).toContain('var(--err)')
+    const slashShown = conferencesCss.match(
+      /\.cp-sig\[data-state='off'\] \.cp-sig-slash\s*\{([^}]*)\}/,
+    )
+    expect(slashShown?.[1]).toContain('opacity: 0.95')
+    // третье состояние «отключено модератором» — лексика blocked тумблеров T098
+    const blocked = conferencesCss.match(/\.cp-sig\[data-state='blocked'\]\s*\{([^}]*)\}/)
+    expect(blocked).not.toBeNull()
+    expect(blocked?.[1]).toContain('saturate(0.55)')
+    const lock = conferencesCss.match(
+      /\.cp-sig\[data-state='blocked'\] \.cp-sig-lock\s*\{([^}]*)\}/,
+    )
+    expect(lock?.[1]).toContain('opacity: 1')
+  })
+
+  it('БЕЗ tooltip: у индикаторов нет tooltip-классов/правил (запрос T108)', () => {
+    expect(conferencesCss).not.toMatch(/\.cp-sig[^{}]*tooltip/)
+  })
+
+  it('замок-бейдж — 12px в правом нижнем углу (right/bottom -3px), латунный круг', () => {
+    const lock = conferencesCss.match(/^\.cp-sig-lock\s*\{([^}]*)\}/m)
+    expect(lock).not.toBeNull()
+    expect(lock?.[1]).toContain('position: absolute')
+    expect(lock?.[1]).toContain('right: -3px')
+    expect(lock?.[1]).toContain('bottom: -3px')
+    expect(lock?.[1]).toContain('width: 12px')
+    expect(lock?.[1]).toContain('height: 12px')
+    const lockSvg = conferencesCss.match(/^\.cp-sig-lock svg\s*\{([^}]*)\}/m)
+    expect(lockSvg?.[1]).toContain('width: 7px')
+    expect(lockSvg?.[1]).toContain('height: 7px')
+  })
+
+  it('докблок блока truthfully описывает индикаторы (T108, прототип, три состояния)', () => {
+    const at = conferencesCss.indexOf('.cp-sigs {')
+    expect(at).toBeGreaterThan(0)
+    const doc = conferencesCss.slice(Math.max(0, at - 1600), at)
+    expect(doc).toContain('T108')
+    expect(doc).toContain('прототип')
   })
 })

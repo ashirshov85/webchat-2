@@ -42,16 +42,19 @@ interface FakeParticipant {
   readonly metadata?: string
   readonly isLocal: boolean
   readonly permissions?: { readonly canPublish: boolean; readonly canPublishSources: number[] }
+  readonly getTrackPublication?: (source: string) => { readonly isMuted: boolean } | undefined
 }
 
 const lkc = vi.hoisted(() => ({
   useParticipants: vi.fn(),
   useLocalParticipant: vi.fn(),
+  useTracks: vi.fn(),
 }))
 
 vi.mock('@livekit/components-react', () => ({
   useParticipants: lkc.useParticipants,
   useLocalParticipant: lkc.useLocalParticipant,
+  useTracks: lkc.useTracks,
 }))
 
 const api = vi.hoisted(() => ({
@@ -89,7 +92,13 @@ const ALICE_ID = 'u:11111111-1111-1111-1111-111111111111:conn-1'
 const BOB_ID = 'u:22222222-2222-4222-8222-222222222222:conn-2'
 
 function participant(overrides: Partial<FakeParticipant> & { identity: string }): FakeParticipant {
-  return { isLocal: false, name: 'Имя', ...overrides }
+  // T108: индикаторы строк читают публикации mic/cam — без треков «выкл»
+  return {
+    isLocal: false,
+    name: 'Имя',
+    getTrackPublication: () => undefined,
+    ...overrides,
+  }
 }
 
 function memberMetadata(role: 'moderator' | 'participant'): string {
@@ -148,6 +157,9 @@ describe('объединённая панель: модерация №49–№5
   beforeEach(() => {
     lkc.useParticipants.mockReset()
     lkc.useLocalParticipant.mockReset()
+    // T108: индикаторы источников строки — экран по screen-рефам useTracks
+    lkc.useTracks.mockReset()
+    lkc.useTracks.mockReturnValue([])
     api.endConference.mockReset()
     api.kickParticipant.mockReset()
     api.updateParticipantRestrictions.mockReset()
@@ -459,6 +471,8 @@ describe('объединённая панель: гостевая ссылка �
   beforeEach(() => {
     lkc.useParticipants.mockReset()
     lkc.useLocalParticipant.mockReset()
+    lkc.useTracks.mockReset()
+    lkc.useTracks.mockReturnValue([])
     api.createGuestInvite.mockReset()
     api.revokeGuestInvite.mockReset()
     clipboard.writeText.mockReset()

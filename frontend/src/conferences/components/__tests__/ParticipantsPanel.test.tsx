@@ -28,23 +28,35 @@ const SCREEN_SHARE_AUDIO = 4
 
 const ALL_SOURCES = [CAMERA, MICROPHONE, SCREEN_SHARE, SCREEN_SHARE_AUDIO]
 
-/** Минимальный контракт участника LiveKit, используемый панелью. */
+/**
+ * Минимальный контракт участника LiveKit, используемый панелью.
+ * tracks — публикации mic/cam (T108: remote-состояние индикаторов —
+ * publication.isMuted, source — строковый Track.Source livekit-client;
+ * экран — screen-реф useTracks, T084).
+ */
 interface FakeParticipant {
   readonly identity: string
   readonly name?: string
   readonly metadata?: string
   readonly isLocal: boolean
   readonly permissions?: { readonly canPublish: boolean; readonly canPublishSources: number[] }
+  readonly tracks?: {
+    readonly mic?: { readonly isMuted: boolean }
+    readonly cam?: { readonly isMuted: boolean }
+  }
+  readonly getTrackPublication?: (source: string) => { readonly isMuted: boolean } | undefined
 }
 
 const lkc = vi.hoisted(() => ({
   useParticipants: vi.fn(),
   useLocalParticipant: vi.fn(),
+  useTracks: vi.fn(),
 }))
 
 vi.mock('@livekit/components-react', () => ({
   useParticipants: lkc.useParticipants,
   useLocalParticipant: lkc.useLocalParticipant,
+  useTracks: lkc.useTracks,
 }))
 
 const api = vi.hoisted(() => ({
@@ -67,7 +79,16 @@ vi.mock('../../api/conferences', async (importOriginal) => ({
 }))
 
 function participant(overrides: Partial<FakeParticipant> & { identity: string }): FakeParticipant {
-  return { isLocal: false, name: 'Имя', ...overrides }
+  const { tracks, ...rest } = { isLocal: false, name: 'Имя', ...overrides }
+  // Track.Source livekit-client — строковый enum ('microphone'/'camera')
+  const publications = new Map<string, { readonly isMuted: boolean }>()
+  if (tracks?.mic !== undefined) {
+    publications.set('microphone', tracks.mic)
+  }
+  if (tracks?.cam !== undefined) {
+    publications.set('camera', tracks.cam)
+  }
+  return { ...rest, getTrackPublication: (source: string) => publications.get(source) }
 }
 
 /** Метаданные члена чата/гостя по контракту §3. */
@@ -116,6 +137,8 @@ describe('ParticipantsPanel — единый список (009 US3 T041/T107)', 
   beforeEach(() => {
     lkc.useParticipants.mockReset()
     lkc.useLocalParticipant.mockReset()
+    lkc.useTracks.mockReset()
+    lkc.useTracks.mockReturnValue([])
     api.endConference.mockReset()
     api.kickParticipant.mockReset()
     api.updateParticipantRestrictions.mockReset()
@@ -515,6 +538,8 @@ describe('ParticipantsPanel — аватары строк (009 US1 T073, «ка�
   beforeEach(() => {
     lkc.useParticipants.mockReset()
     lkc.useLocalParticipant.mockReset()
+    lkc.useTracks.mockReset()
+    lkc.useTracks.mockReturnValue([])
     lkc.useLocalParticipant.mockReturnValue({
       localParticipant: participant({
         identity: `u:${ALICE}:22222222-2222-4222-8222-222222222222`,
@@ -634,5 +659,267 @@ describe('ParticipantsPanel — аватары строк (009 US1 T073, «ка�
     )
     expect(screen.getByText('гость')).toBeInTheDocument()
     expect(row?.querySelector('.avatar')).not.toBeNull()
+  })
+})
+
+describe('ParticipantsPanel — индикаторы источников строки (009 US3 T108)', () => {
+  /**
+   * Латунные мини-бейджи 22px в строке участника: у обычного участника
+   * РОВНО ДВА состояния (вкл/выкл), у модератора ТРИ (третье «отключено
+   * модератором» — замок, только в виду модератора: жертва видит
+   * «выкл»). Состояние — проекция публикации LiveKit (local —
+   * isMicrophoneEnabled/…, remote — publication.isMuted; экран —
+   * screen-реф useTracks T084) + grants restrictionMarks с поглощением
+   * мастером Q4=A.
+   */
+
+  /** Мини-бейдж источника строки участника. */
+  function sigOf(name: string, src: 'mic' | 'cam' | 'screen'): HTMLElement {
+    const sig = rowOf(name).querySelector<HTMLElement>(`.cp-sig[data-src="${src}"]`)
+    if (sig === null) {
+      throw new Error(`индикатор «${src}» строки «${name}» не найден`)
+    }
+    return sig
+  }
+
+  /** Visually-hidden текст состояния (конвенция 008). */
+  function sigText(name: string, src: 'mic' | 'cam' | 'screen'): string {
+    const text = rowOf(name).querySelector(`[data-src-text="${src}"]`)
+    if (text === null || text.textContent === null) {
+      throw new Error(`текст индикатора «${src}» строки «${name}» не найден`)
+    }
+    return text.textContent
+  }
+
+  /** Локальный модератор alice (микрофон/камера/экран вкл — своя строка). */
+  function moderatorLocal(overrides: Record<string, unknown> = {}): FakeParticipant {
+    return participant({
+      identity: ALICE_ID,
+      name: 'alice',
+      metadata: memberMetadata('moderator'),
+      isLocal: true,
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+      ...overrides,
+    })
+  }
+
+  beforeEach(() => {
+    lkc.useParticipants.mockReset()
+    lkc.useLocalParticipant.mockReset()
+    lkc.useTracks.mockReset()
+    lkc.useTracks.mockReturnValue([])
+    lkc.useLocalParticipant.mockReturnValue({
+      localParticipant: moderatorLocal(),
+      isMicrophoneEnabled: true,
+      isCameraEnabled: true,
+      isScreenShareEnabled: false,
+    })
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllMocks()
+  })
+
+  it('матрица модератора: публикация вкл → on; замученная камера → off; срезанный экран → blocked (замок); тексты 008 соответствуют', () => {
+    lkc.useParticipants.mockReturnValue([
+      moderatorLocal(),
+      participant({
+        identity: BOB_ID,
+        name: 'bob',
+        metadata: memberMetadata('participant'),
+        // микрофон опубликован и говорящ, камера опубликована, но замучена
+        tracks: { mic: { isMuted: false }, cam: { isMuted: true } },
+        // экран срезан точечно (cam+mic разрешены)
+        permissions: { canPublish: true, canPublishSources: [CAMERA, MICROPHONE] },
+      }),
+    ])
+
+    render(<ParticipantsPanel conferenceId="c-1" />)
+
+    expect(sigOf('bob', 'mic')).toHaveAttribute('data-state', 'on')
+    expect(sigText('bob', 'mic')).toBe('микрофон включён')
+    expect(sigOf('bob', 'cam')).toHaveAttribute('data-state', 'off')
+    expect(sigText('bob', 'cam')).toBe('камера выключена')
+    // ограничение в виду модератора — третье состояние (замок-бейдж в CSS)
+    expect(sigOf('bob', 'screen')).toHaveAttribute('data-state', 'blocked')
+    expect(sigText('bob', 'screen')).toBe('экран отключён модератором')
+    // замок-бейдж живёт внутри индикатора blocked
+    expect(sigOf('bob', 'screen').querySelector('.cp-sig-lock')).not.toBeNull()
+    expect(sigOf('bob', 'mic').querySelector('.cp-sig-lock')).not.toBeNull()
+  })
+
+  it('паритет участника: та же жертва блокировки читается как обычное «выкл» — замка/blocked нет ни у одной строки', () => {
+    const local = participant({
+      identity: 'u:9:c9',
+      name: 'zoe',
+      metadata: memberMetadata('participant'),
+      isLocal: true,
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+    })
+    lkc.useLocalParticipant.mockReturnValue({
+      localParticipant: local,
+      isMicrophoneEnabled: true,
+      isCameraEnabled: false,
+      isScreenShareEnabled: false,
+    })
+    lkc.useParticipants.mockReturnValue([
+      local,
+      participant({
+        identity: BOB_ID,
+        name: 'bob',
+        metadata: memberMetadata('participant'),
+        tracks: { mic: { isMuted: false } },
+        permissions: { canPublish: true, canPublishSources: [CAMERA, MICROPHONE] },
+      }),
+    ])
+
+    render(<ParticipantsPanel conferenceId="c-1" />)
+
+    // у жертвы срезанный экран — обычное «выкл» (прототип участника)
+    expect(sigOf('bob', 'screen')).toHaveAttribute('data-state', 'off')
+    expect(sigText('bob', 'screen')).toBe('экран выключен')
+    // blocked-состояния в панели участника нет ВООБЩЕ
+    expect(document.querySelector(".cp-sig[data-state='blocked']")).toBeNull()
+  })
+
+  it('мастер canPublish=false поглощает точки (Q4=A): у модератора все три blocked, у участника все три off', () => {
+    lkc.useParticipants.mockReturnValue([
+      moderatorLocal(),
+      participant({
+        identity: BOB_ID,
+        name: 'bob',
+        metadata: memberMetadata('participant'),
+        tracks: { mic: { isMuted: false }, cam: { isMuted: false } },
+        permissions: { canPublish: false, canPublishSources: [] },
+      }),
+    ])
+
+    render(<ParticipantsPanel conferenceId="c-1" />)
+    for (const src of ['mic', 'cam', 'screen'] as const) {
+      expect(sigOf('bob', src)).toHaveAttribute('data-state', 'blocked')
+    }
+
+    // та же комната глазами участника: всё «выкл» (fail-closed паритет)
+    const asParticipant = participant({
+      identity: 'u:9:c9',
+      name: 'zoe',
+      metadata: memberMetadata('participant'),
+      isLocal: true,
+    })
+    lkc.useLocalParticipant.mockReturnValue({ localParticipant: asParticipant })
+    lkc.useParticipants.mockReturnValue([
+      asParticipant,
+      participant({
+        identity: BOB_ID,
+        name: 'bob',
+        metadata: memberMetadata('participant'),
+        tracks: { mic: { isMuted: false }, cam: { isMuted: false } },
+        permissions: { canPublish: false, canPublishSources: [] },
+      }),
+    ])
+    cleanup()
+    render(<ParticipantsPanel conferenceId="c-1" />)
+    for (const src of ['mic', 'cam', 'screen'] as const) {
+      expect(sigOf('bob', src)).toHaveAttribute('data-state', 'off')
+    }
+  })
+
+  it('локальная строка — своя проекция useLocalParticipant: выключенный микрофон → «выкл» (штрих), включённые камера/экран → on', () => {
+    lkc.useParticipants.mockReturnValue([moderatorLocal()])
+
+    render(<ParticipantsPanel conferenceId="c-1" />)
+
+    expect(sigOf('alice', 'mic')).toHaveAttribute('data-state', 'on')
+    expect(sigText('alice', 'mic')).toBe('микрофон включён')
+    expect(sigOf('alice', 'cam')).toHaveAttribute('data-state', 'on')
+    expect(sigOf('alice', 'screen')).toHaveAttribute('data-state', 'off')
+    expect(sigText('alice', 'screen')).toBe('экран выключен')
+
+    // микрофон выключен своим тумблером — isMicrophoneEnabled=false
+    lkc.useLocalParticipant.mockReturnValue({
+      localParticipant: moderatorLocal(),
+      isMicrophoneEnabled: false,
+      isCameraEnabled: true,
+      isScreenShareEnabled: false,
+    })
+    cleanup()
+    render(<ParticipantsPanel conferenceId="c-1" />)
+    expect(sigOf('alice', 'mic')).toHaveAttribute('data-state', 'off')
+    expect(sigText('alice', 'mic')).toBe('микрофон выключен')
+  })
+
+  it('экран remote — screen-реф слитого тайла (useTracks T084): появление/исчезновение публикации меняет индикатор live', () => {
+    const bob = participant({
+      identity: BOB_ID,
+      name: 'bob',
+      metadata: memberMetadata('participant'),
+      permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+    })
+    lkc.useParticipants.mockReturnValue([moderatorLocal(), bob])
+    const { rerender } = render(<ParticipantsPanel conferenceId="c-1" />)
+    expect(sigOf('bob', 'screen')).toHaveAttribute('data-state', 'off')
+
+    // старт демонстрации: screen-реф появился (T077 гасит камеру — не важно)
+    lkc.useTracks.mockReturnValue([{ participant: bob, publication: {} }])
+    rerender(<ParticipantsPanel conferenceId="c-1" />)
+    expect(sigOf('bob', 'screen')).toHaveAttribute('data-state', 'on')
+    expect(sigText('bob', 'screen')).toBe('экран включён')
+
+    // завершение демонстрации: рефа нет — «выкл»
+    lkc.useTracks.mockReturnValue([])
+    rerender(<ParticipantsPanel conferenceId="c-1" />)
+    expect(sigOf('bob', 'screen')).toHaveAttribute('data-state', 'off')
+  })
+
+  it('live-переключение публикации микрофона remote (TrackMuted) меняет индикатор без перемонтирования', () => {
+    lkc.useParticipants.mockReturnValue([
+      moderatorLocal(),
+      participant({
+        identity: BOB_ID,
+        name: 'bob',
+        metadata: memberMetadata('participant'),
+        tracks: { mic: { isMuted: false } },
+        permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+      }),
+    ])
+    const { rerender } = render(<ParticipantsPanel conferenceId="c-1" />)
+    expect(sigOf('bob', 'mic')).toHaveAttribute('data-state', 'on')
+
+    // серверный мьют №49 / собственный mute цели — isMuted=true
+    lkc.useParticipants.mockReturnValue([
+      moderatorLocal(),
+      participant({
+        identity: BOB_ID,
+        name: 'bob',
+        metadata: memberMetadata('participant'),
+        tracks: { mic: { isMuted: true } },
+        permissions: { canPublish: true, canPublishSources: [...ALL_SOURCES] },
+      }),
+    ])
+    rerender(<ParticipantsPanel conferenceId="c-1" />)
+    expect(sigOf('bob', 'mic')).toHaveAttribute('data-state', 'off')
+    expect(sigText('bob', 'mic')).toBe('микрофон выключен')
+  })
+
+  it('индикатор — span, НЕ button: не кликабельны, без title/tooltip; строка несёт РОВНО три бейджа mic/cam/screen', () => {
+    lkc.useParticipants.mockReturnValue(moderatorRoom())
+
+    const { container } = render(<ParticipantsPanel conferenceId="c-1" />)
+
+    const sigs = container.querySelectorAll('.cp-sig')
+    expect(sigs).toHaveLength(6) // две строки × три источника
+    for (const sig of sigs) {
+      expect(sig.tagName).toBe('SPAN')
+      expect(sig).not.toHaveAttribute('title')
+      expect(sig.querySelector('button')).toBeNull()
+    }
+    // tooltip-классов у индикаторов нет (T108: без tooltip)
+    expect(container.querySelector('.cp-sig-tooltip')).toBeNull()
+    // тексты состояний скрыты от зрения, но доступны экранным читалкам
+    expect(container.querySelectorAll('[data-src-text]')).toHaveLength(6)
+    for (const text of container.querySelectorAll('[data-src-text]')) {
+      expect(text).toHaveClass('visually-hidden')
+    }
   })
 })

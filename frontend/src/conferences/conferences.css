@@ -1501,6 +1501,139 @@ section[data-guest-join] {
   color: var(--muted-3);
 }
 
+/* ============ ИНДИКАТОРЫ ИСТОЧНИКОВ СТРОКИ (T108; прототипы
+ * tmp/conference-page-{moderator,participant}.html, при расхождениях
+ * побеждает прототип) ============ */
+
+/* Три латунных мини-бейджа 22px между именем и кебабом (микрофон/
+   камера/экран, инлайн-SVG приборов лексики T098/T100): состояние —
+   data-state. on = золото + on-части иконки (волны/ирис/луч),
+   off = тёмная латунь + диагональный штрих --err, blocked = «отключено
+   модератором» — приглушение + замок (только в виду модератора:
+   жертва читает блокировку как обычное «выкл», прототип участника).
+   Индикатор — span, НЕ кнопка: не кликабельны и БЕЗ tooltip (запрос
+   T108); состояние дублируется visually-hidden текстом (008). */
+.cp-sigs {
+  display: inline-flex;
+  gap: 5px;
+  flex: none;
+}
+
+.cp-sig {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 1.5px solid var(--gold);
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 34% 26%,
+    rgba(232, 200, 119, 0.14),
+    rgba(10, 8, 6, 0.92) 60%
+  );
+  color: var(--gold-light);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(232, 200, 119, 0.2);
+  pointer-events: none;
+  user-select: none;
+  transition:
+    border-color 0.25s,
+    color 0.25s,
+    box-shadow 0.25s,
+    filter 0.25s;
+}
+
+.cp-sig svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Вкл: золото + мягкое свечение (on-части иконки — ниже). */
+.cp-sig[data-state='on'] {
+  border-color: var(--gold);
+  color: var(--gold-light);
+  box-shadow:
+    0 0 6px rgba(232, 200, 119, 0.25),
+    inset 0 1px 0 rgba(232, 200, 119, 0.2);
+}
+
+/* Выкл: тёмная латунь + приглушение (штрих — ниже). */
+.cp-sig[data-state='off'] {
+  border-color: #55452c;
+  color: var(--muted);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+/* «Отключено модератором»: приглушение saturate + замок-бейдж —
+   лексика blocked тумблеров T098; только в виду модератора. */
+.cp-sig[data-state='blocked'] {
+  border-color: #55452c;
+  color: rgba(141, 127, 99, 0.6);
+  filter: saturate(0.55);
+}
+
+/* On-части иконок (волны/ирис/луч) проявляются во вкл. */
+.cp-sig-on {
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.cp-sig[data-state='on'] .cp-sig-on {
+  opacity: 1;
+}
+
+/* Диагональный штрих выключенного источника. */
+.cp-sig-slash {
+  opacity: 0;
+  transition: opacity 0.25s;
+  stroke: var(--err);
+  stroke-width: 2;
+}
+
+.cp-sig[data-state='off'] .cp-sig-slash {
+  opacity: 0.95;
+}
+
+/* Замок «отключено модератором». */
+.cp-sig-lock {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid var(--gold-dark);
+  background: radial-gradient(circle at 34% 26%, #2a2318, #171208 75%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.cp-sig[data-state='blocked'] .cp-sig-lock {
+  opacity: 1;
+}
+
+.cp-sig-lock svg {
+  width: 7px;
+  height: 7px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* Конвенция 008: видимый фокус с клавиатуры (все кнопки панели —
    кебаби строк и кнопки футера). */
 .conference-participants button:focus-visible {

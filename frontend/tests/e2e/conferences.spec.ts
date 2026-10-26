@@ -70,6 +70,13 @@ import {
  * гостевая ссылка №52 и «Завершить конференцию» №48 видны при
  * прокручивающемся списке — инструменты вне прокрутки.
  *
+ * 009, US3, T108 — e2e индикаторов источников строки участника
+ * (прототипы tmp/conference-page-{moderator,participant}.html):
+ * выключенный собственным тумблером микрофон — диагональный штрих в
+ * строке у всех вкладок; применение №49 модератором — замок
+ * («отключено модератором») в виду модератора и обычное «выкл» у
+ * жертвы ≤ 2 c (SC-005), тексты состояний 008 соответствуют.
+ *
  * 009, US4, T052 — e2e гостевого доступа (quickstart §3.4): приватное
  * окно БЕЗ аккаунта по инвайт-ссылке №52 (SC-003 — ≤ 3 действий от
  * открытия ссылки до конференции: имя → «Продолжить» → «Войти»; pre-join
@@ -268,6 +275,21 @@ async function kebabLabels(page: Page, participantName: string): Promise<string[
   const labels = await page.getByRole('menuitem').allTextContents()
   await page.keyboard.press('Escape')
   return labels
+}
+
+/** T108: строка участника объединённой панели по имени. */
+function participantRow(page: Page, participantName: string) {
+  return page.locator('.conference-participants-item').filter({ hasText: participantName })
+}
+
+/** T108: индикатор источника (mic/cam/screen) в строке участника. */
+function rowSignal(page: Page, participantName: string, src: 'mic' | 'cam' | 'screen') {
+  return participantRow(page, participantName).locator(`.cp-sig[data-src="${src}"]`)
+}
+
+/** T108: visually-hidden текст состояния источника строки (008). */
+function rowSignalText(page: Page, participantName: string, src: 'mic' | 'cam' | 'screen') {
+  return participantRow(page, participantName).locator(`[data-src-text="${src}"]`)
 }
 
 /**
@@ -1058,6 +1080,60 @@ test.describe.serial('модерация US3 e2e (009 T043)', () => {
     await bobPage.setViewportSize({ width: 1280, height: 320 })
     await expect(bobPage.getByRole('button', { name: 'Завершить конференцию' })).toHaveCount(0)
     await expect(bobPage.getByRole('button', { name: 'Пригласить гостя' })).toHaveCount(0)
+  })
+
+  test('T108: индикаторы источников в строке участника — выключенный микрофон со штрихом; №49 модератором → замок у модератора, «выкл» у жертвы ≤ 2 c', async ({
+    browser,
+  }) => {
+    const [aliceNow, bobNow] = [await login(api, alice.username), await login(api, bob.username)]
+    const conference = await createConference(api, aliceNow, chatId)
+    activeConference = conference
+    creatorToken = aliceNow.accessToken
+    const [alicePage, bobPage] = await Promise.all([
+      openConferencePage(browser, aliceNow, conference.id),
+      openConferencePage(browser, bobNow, conference.id),
+    ])
+    openedPages.push(alicePage, bobPage)
+    await Promise.all([
+      connectAndAwaitMedia(alicePage, bobNow.username),
+      connectAndAwaitMedia(bobPage, aliceNow.username),
+    ])
+
+    // дефолты mode=video: микрофон bob опубликован — у обеих вкладок
+    // бейдж строки горит (состояние — projection публикации)
+    await expect(rowSignal(alicePage, bobNow.username, 'mic')).toHaveAttribute('data-state', 'on')
+    await expect(rowSignal(bobPage, bobNow.username, 'mic')).toHaveAttribute('data-state', 'on')
+
+    // bob выключает микрофон СВОИМ тумблером (T098): публикация
+    // замучена — диагональный штрих в строке у ВСЕХ зрителей
+    await bobPage.getByRole('button', { name: 'Микрофон', exact: true }).click()
+    await expect(rowSignal(bobPage, bobNow.username, 'mic')).toHaveAttribute('data-state', 'off')
+    await expect(rowSignal(alicePage, bobNow.username, 'mic')).toHaveAttribute('data-state', 'off')
+    await expect(rowSignalText(bobPage, bobNow.username, 'mic')).toHaveText('микрофон выключен')
+
+    // bob возвращает микрофон — бейдж снова горит
+    await bobPage.getByRole('button', { name: 'Микрофон', exact: true }).click()
+    await expect(rowSignal(bobPage, bobNow.username, 'mic')).toHaveAttribute('data-state', 'on')
+
+    // №49 из кебаб-меню (SC-005 ≤ 2 c): alice глушит bob'у микрофон —
+    // модератор видит ТРЕТЬЕ состояние «отключено модератором» (замок),
+    // жертва читает блокировку как обычное «выкл» (прототип участника)
+    const startedAt = await kebabAction(alicePage, bobNow.username, 'Отключить микрофон')
+    await expect(rowSignal(alicePage, bobNow.username, 'mic')).toHaveAttribute(
+      'data-state',
+      'blocked',
+      { timeout: SC005_MS },
+    )
+    await expect(rowSignal(bobPage, bobNow.username, 'mic')).toHaveAttribute('data-state', 'off', {
+      timeout: SC005_MS,
+    })
+    await expect(rowSignalText(alicePage, bobNow.username, 'mic')).toHaveText(
+      'микрофон отключён модератором',
+    )
+    expect(
+      Date.now() - startedAt,
+      `SC-005: блокировка источника в строке ${Date.now() - startedAt} мс`,
+    ).toBeLessThanOrEqual(SC005_MS)
   })
 })
 
