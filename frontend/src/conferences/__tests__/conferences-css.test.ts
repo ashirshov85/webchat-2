@@ -1051,9 +1051,9 @@ describe('каркас экрана — сайдбар участников сп
     expect(rule?.[1]).toContain('display: flex')
     expect(rule?.[1]).toContain('justify-content: flex-end')
     expect(rule?.[1]).toContain('flex: none')
-    // пересмотр промера T115: константа 2px → −1px (нижнее поле глифа
-    // ~3.5px гасится, видимый зазор ≈ 2.5px) — полный пин в блоке T115
-    expect(rule?.[1]).toMatch(/margin-bottom:\s*calc\(-1px - var\(--gap-frame\)\)/)
+    // ревизия T117 переписала компенсацию промера T115 (видимый зазор
+    // иконка→рамка = --gap-frame ≈ 12px) — полный пин в блоке T117
+    expect(rule?.[1]).toMatch(/margin-bottom:\s*-3\.5px/)
   })
 
   it('кнопка .conference-panel-toggle — ТОЛЬКО svg-иконка 17px: без текста, рамки, фона и теней; шеврон различает состояния', () => {
@@ -1114,26 +1114,39 @@ describe('каркас экрана — сайдбар участников сп
   })
 })
 
-describe('прижатие кнопки conference-panel-toggle к рабочей области (T115): статический пин CSS', () => {
-  it('вертикаль: компенсация пересмотрена промером — номинал −1px гасит нижнее поле глифа, видимый зазор ≈ 2.5px', () => {
-    // промер T115: svg 17px (viewBox 24) — прямоугольник панели-иконки
-    // занимает y=5..19 → под глифом ~3.5px пустого поля; номинальные
-    // +2px T106 давали видимый зазор ~5.5px («парящая» кнопка). Новая
-    // компенсация calc(-1px - var(--gap-frame)): box перекрывает рамку
-    // на 1px (поле глифа прозрачное), видимый зазор глиф→рамка ≈ 2.5px
-    // (цель 2–3px); высотный бюджет НЕ растёт — компенсация отрицательная
+describe('ревизия геометрии полосы conference-panel-toggle (T117, пересмотр промера T115): статический пин CSS', () => {
+  it('вертикаль: видимый зазор иконка→рамка = var(--gap-frame) ≈ 12px — единый ритм каркаса, компенсация −3.5px', () => {
+    // ревизия T117: зазор ≈2.5px промера T115 не совпадал ни с одним
+    // шагом каркаса (gap колонки 12px, gap сетки 8px) и читался
+    // случайным; выбран осознанный ритм --gap-frame — тот же, что
+    // между .conference-tiles и .conference-participants. Арифметика:
+    // gap колонки 12px − 3.5px → низ box'а кнопки на 8.5px выше рамки;
+    // нижнее поле глифа svg (~3.5px: viewBox 24, rect y=5..19 →
+    // 17px·5/24) добавляет свои ~3.5px → видимый зазор 8.5 + 3.5 ≈
+    // 12px = var(--gap-frame); высотный бюджет НЕ растёт — компенсация
+    // отрицательная, зазор расходует поле глифа и остаток gap
     const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
     expect(rule).not.toBeNull()
-    expect(rule?.[1]).toMatch(/margin-bottom:\s*calc\(-1px - var\(--gap-frame\)\)/)
+    expect(rule?.[1]).toMatch(/margin-bottom:\s*-3\.5px/)
+    expect(rule?.[1]).not.toContain('padding-right')
     expect(rule?.[1]).toContain('flex: none')
   })
 
-  it('горизонталь: inset справа — кнопка над ПРЯМОЙ частью верхней рамки, не над скруглением', () => {
-    // развёрнут сайдбар: верхняя рамка --r-frame 8px; свёрнут: машина
-    // сетки --r-machine 18px до края окна — inset = радиус машины + 2px
-    // гасит ОБА скругления; кнопка остаётся в границах колонки 340px
-    const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
-    expect(rule?.[1]).toMatch(/padding-right:\s*calc\(var\(--r-machine\) \+ 2px\)/)
+  it('горизонталь: правая видимая кромка иконки — край в край с правым краем .conference-main', () => {
+    // inset справа calc(var(--r-machine) + 2px) убран — правая кромка
+    // кнопки «висела» в отрыве от края рабочей области; padding-right
+    // полосы нет вовсе, правое поле глифа (~2.5px: viewBox 24, rect
+    // x=3.5..20.5 → 17px·3.5/24) компенсировано отрицательным
+    // margin-right на самой кнопке; прозрачный вылет box'а ~2.5px за
+    // правый край полосы скроллбара НЕ рождает (html/body overflow-x
+    // hidden, machine.css; у кнопки нет фона/рамки — вылет невидим);
+    // кнопка стоит над скруглением угла (--r-frame 8px развёрнут /
+    // --r-machine 18px свёрнут) — край в край, так задумано
+    const row = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
+    expect(row?.[1]).not.toContain('padding-right')
+    const btn = conferencesCss.match(/^\.conference-panel-toggle\s*\{([^}]*)\}/m)
+    expect(btn).not.toBeNull()
+    expect(btn?.[1]).toMatch(/margin-right:\s*-2\.5px/)
   })
 
   it('регресс лексики T106: кнопка по-прежнему ТОЛЬКО svg-иконка — без padding/рамки/фона/теней', () => {
@@ -1157,12 +1170,12 @@ describe('прижатие кнопки conference-panel-toggle к рабоче�
     expect(side?.[1]).toContain('width: 340px')
   })
 
-  it('докблок полосы truthfully описывает прижатие по промеру T115', () => {
+  it('докблок полосы truthfully описывает ритм --gap-frame и край в край (T117)', () => {
     const at = conferencesCss.indexOf('.conference-toggle-row {')
     expect(at).toBeGreaterThan(0)
     const doc = conferencesCss.slice(Math.max(0, at - 900), at)
-    expect(doc).toContain('T115')
-    expect(doc).toContain('промер')
+    expect(doc).toContain('T117')
+    expect(doc).toContain('--gap-frame')
   })
 })
 
@@ -1406,7 +1419,18 @@ describe('кнопка «Гостевая ссылка» и модаль гос�
     expect(rule?.[1]).not.toContain('var(--err)')
   })
 
-  it('тело модали .conference-guest-modal — readonly-поле ссылки, срок, статус «Скопировано»', () => {
+  it('тело модали .conference-guest-modal — контейнер-ритм, readonly-поле ссылки, срок, статус «Скопировано»', () => {
+    // T119: вертикальный ритм тела — flex-колонка gap 8 (лексика
+    // форм-обитателей 008: .profile-form/.contacts-form): поле →
+    // «Действует …» → «Скопировано» шаг 8px, до .modal-btns стабильные
+    // 12px (gap 8 + margin-top 4 confirm-dialog.css — паритет gap 12
+    // заголовок→тело .modal, modal-shell.css); появление/исчезновение
+    // «Скопировано» кнопки не смещает — ритм держит один gap
+    const body = conferencesCss.match(/^\.conference-guest-modal\s*\{([^}]*)\}/m)
+    expect(body).not.toBeNull()
+    expect(body?.[1]).toContain('display: flex')
+    expect(body?.[1]).toContain('flex-direction: column')
+    expect(body?.[1]).toContain('gap: 8px')
     const url = conferencesCss.match(/^\.conference-guest-modal-url\s*\{([^}]*)\}/m)
     expect(url).not.toBeNull()
     expect(url?.[1]).toContain('width: 100%')
@@ -1417,6 +1441,14 @@ describe('кнопка «Гостевая ссылка» и модаль гос�
     const copied = conferencesCss.match(/^\.conference-guest-modal-copied\s*\{([^}]*)\}/m)
     expect(copied).not.toBeNull()
     expect(copied?.[1]).toContain('var(--gold-light)')
+    // T118 (перепин T113): <output> тянет success-плашку глобуса —
+    // договорка замыкает КАЖДОЕ box-свойство (display/margin/padding/
+    // border-radius/background): тихая золотая подпись без плашки
+    expect(copied?.[1]).toContain('display: block')
+    expect(copied?.[1]).toContain('margin: 0')
+    expect(copied?.[1]).toContain('padding: 0')
+    expect(copied?.[1]).toContain('border-radius: 0')
+    expect(copied?.[1]).toContain('background: none')
     // 008: фокус с клавиатуры — поле ссылки модали
     const focus = conferencesCss.match(/^\.conference-guest-modal-url:focus-visible\s*\{([^}]*)\}/m)
     expect(focus?.[1]).toContain('outline: 2px solid var(--gold-light)')
@@ -1720,5 +1752,137 @@ describe('терминальные экраны «Конференция зав�
     const refusedPAt = conferencesCss.indexOf('.guest-join-refused p {')
     expect(refusedPAt).toBeGreaterThan(0)
     expect(conferencesCss.slice(Math.max(0, refusedPAt - 900), refusedPAt)).toContain('role')
+  })
+})
+
+describe('замыкание плашек глобуса за уведомлениями конференций (T118): статический пин CSS', () => {
+  /**
+   * T118 (конференц-часть; chats-пикеры — message-list-css.test.ts) —
+   * за статусами/ошибками конференций, чьи классы перекрывали
+   * глобальные element-правила index.css (`output, [role='status']` —
+   * success-плашка, `[role='alert']` — danger-плашка, auth-лексика)
+   * только по типографике/цвету текста, «просвечивала» чужая светлая
+   * заливка. Договорка по паттерну T051/T102: правило компонента
+   * обязано объявить КАЖДОЕ box-свойство глобуса —
+   * display/margin/padding/border-radius/background.
+   *
+   * Специфичность: index.css идёт ПОСЛЕ компонентных CSS в сборке
+   * (main.tsx импортирует App раньше './index.css' — докблок
+   * status-banners.css), поэтому «ties» (0,1,0) с `[role='alert']`
+   * ПРОИГРЫВАЮТ и требуют запаса класс+элемент (0,1,1)+;
+   * element-селектор `output` (0,0,1) класс (0,1,0) бьёт по
+   * объявленным свойствам — договорка добирает необъявленные.
+   * Сами глобальные правила index.css НЕ правятся — ими живут
+   * auth/настройки; закрытые ранее поверхности (T111/T112/T102)
+   * не регрессируют.
+   */
+
+  it('строка отказов модерации .conference-moderation-notice — тихая подпись: договорка всех box-свойств глобуса', () => {
+    // <output> (ParticipantsPanel): отказы «Недостаточно прав» и
+    // др. — нейтральный курсив-muted БЕЗ success-плашки auth
+    const rule = conferencesCss.match(/^\.conference-moderation-notice\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: block')
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    // прежняя лексика тихой подписи
+    expect(rule?.[1]).toContain('font: italic 12px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+  })
+
+  it('статус проверки ссылки .guest-join-status — тихая подпись без success-плашки', () => {
+    // <output> «Проверка ссылки…» (GuestJoinPage №54)
+    const rule = conferencesCss.match(/^\.guest-join-status\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: block')
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    // прежняя лексика тихой подписи
+    expect(rule?.[1]).toContain('font: italic 12.5px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+  })
+
+  it('тексты повторяемых ошибок .conference-error p — договорка необъявленных box-свойств [role=alert]', () => {
+    // p[role=alert] внутри КРАСНОЙ панели (№45/№47 load/join, №54/№55
+    // гостевые): (0,1,1) уже бьёт глобус по порядку — договорка
+    // добирает padding/border-radius/background: тихая подпись
+    // внутри существующей панели, НЕ плашка на плашке
+    const rule = conferencesCss.match(/^\.conference-error p\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    // аварийная лексика панели прежняя
+    expect(rule?.[1]).toContain('font: 13px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--err)')
+    expect(rule?.[1]).not.toContain('var(--danger-bg)')
+  })
+
+  it('loading-подпись конференции .conference-loading-status — новое правило тихой подписи (T118: единственная правка разметки)', () => {
+    // ConferencePage №45: голый <output> «Загрузка конференции…» был
+    // без класса — полная success-плашка глобуса; класс +
+    // паритет лексики .guest-join-status/.message-history
+    const rule = conferencesCss.match(/^\.conference-loading-status\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: block')
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    expect(rule?.[1]).toContain('font: italic 12.5px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+  })
+
+  it('ошибка имени гостя — селектор с запасом p.guest-join-name-error (0,1,1) + договорка', () => {
+    // <p role="alert" class="guest-join-name-error"> (GuestJoinPage):
+    // tie класса (0,1,0) проигрывал бы глобусу — запас класс+элемент;
+    // договорка заодно возвращает --err против глобального --danger,
+    // который сейчас побеждает по порядку сборки
+    const rule = conferencesCss.match(/^p\.guest-join-name-error\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    // прежняя лексика тихой опасности
+    expect(rule?.[1]).toContain('font: italic 12px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--err)')
+    expect(rule?.[1]).not.toContain('var(--danger-bg)')
+    expect(rule?.[1]).not.toContain('var(--danger)')
+    // старый tie-селектор без элемента больше не живёт
+    expect(conferencesCss).not.toMatch(/^\.guest-join-name-error\s*\{/m)
+  })
+
+  it('регресс: глобальные element-правила index.css живы без изменений — ими пользуются auth/настройки', () => {
+    // границы задачи: глобальное правило НЕ правится (паттерн T102)
+    const alert = indexCss.match(/\[role='alert'\]\s*\{([^}]*)\}/)
+    expect(alert?.[1]).toContain('padding: 10px 12px')
+    expect(alert?.[1]).toContain('var(--danger-bg)')
+    const output = indexCss.match(/output,\s*\[role='status'\]\s*\{([^}]*)\}/)
+    expect(output?.[1]).toContain('padding: 10px 12px')
+    expect(output?.[1]).toContain('var(--success-bg)')
+  })
+
+  it('докблоки правил truthfully описывают договорки глобуса (T118)', () => {
+    for (const selector of [
+      '.conference-moderation-notice {',
+      '.conference-guest-modal-copied {',
+      '.guest-join-status {',
+      '.conference-loading-status {',
+      'p.guest-join-name-error {',
+    ]) {
+      const at = conferencesCss.indexOf(selector)
+      expect(at, `селектор ${selector}`).toBeGreaterThan(0)
+      const doc = conferencesCss.slice(Math.max(0, at - 1000), at)
+      expect(doc, `докблок ${selector}`).toContain('T118')
+    }
   })
 })

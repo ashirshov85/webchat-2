@@ -558,9 +558,11 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
  * (только svg 17px сайдбара с
  * шевроном: ‹ развёрнута / › свёрнута; без текста, рамки, фона и
  * теней — уточнение пользователя) в полосе .conference-toggle-row
- * над рабочей областью справа, прижата к ней по промеру T115 (видимый
- * зазор глиф→рамка ≈ 2.5px; inset справа — над прямой частью рамки,
- * не над скруглением); свёрнутое состояние — нативный [hidden] (гвард ниже
+ * над рабочей областью справа: видимый зазор иконка→рамка =
+ * var(--gap-frame) ≈ 12px — единый ритм каркаса, тот же, что между
+ * сеткой тайлов и панелью участников, а правая видимая кромка
+ * иконки — край в край с правым краем .conference-main (ревизия
+ * промера T115 — T117); свёрнутое состояние — нативный [hidden] (гвард ниже
  * обязателен: авторский display:flex сильнее UA-стиля атрибута),
  * тайлы занимают всю ширину; состояние — локальный стейт комнаты
  * без localStorage (паритет пина T074). В полноэкранном пине T079
@@ -571,27 +573,35 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
  * T079). Гостевой паритет: GuestJoinPage монтирует тот же контур.
  * ============================================================ */
 
-/* Полоса места над окном конференции (пересмотр промера T115):
-   кнопка-иконка справа, прижата к рабочей области. Вертикаль:
-   компенсация calc(-1px - var(--gap-frame)) гасит gap колонки И
-   нижнее поле глифа svg (~3.5px: viewBox 24, rect y=5..19) — box
-   перекрывает рамку на 1px (поле прозрачно), видимый зазор
-   иконка→рамка ≈ 2.5px вместо «парящих» ~5.5px T106. Горизонталь:
-   inset справа calc(var(--r-machine) + 2px) — кнопка над ПРЯМОЙ
-   частью верхней рамки (сайдбар --r-frame 8px, машина сетки
-   --r-machine 18px в свёрнутом состоянии), не над скруглением. */
+/* Полоса места над окном конференции (ревизия промера T115 — T117):
+   кнопка-иконка справа. Вертикаль: видимый зазор иконка→рамка =
+   var(--gap-frame) ≈ 12px — ТАКОЙ ЖЕ, как отступ между сеткой тайлов
+   и панелью участников внутри .conference-main (единый ритм каркаса
+   T106): gap колонки 12px − 3.5px → низ box'а кнопки на 8.5px выше
+   рамки, нижнее поле глифа svg (~3.5px: viewBox 24, rect y=5..19 →
+   17px·5/24) добавляет свои ~3.5px → видимый зазор 8.5 + 3.5 ≈ 12px.
+   Горизонталь: правое поле глифа (~2.5px: rect x=3.5..20.5 →
+   17px·3.5/24) компенсировано margin-right на самой кнопке — видимый
+   правый край иконки заподлицо с правым краем .conference-main;
+   кнопка стоит над скруглением угла (сайдбар --r-frame 8px
+   развёрнут, машина сетки --r-machine 18px свёрнут) — край в край,
+   так задумано (ревизия T117); прозрачный вылет box'а кнопки ~2.5px
+   за правый край полосы скроллбара НЕ рождает (html/body overflow-x
+   hidden, machine.css; у кнопки нет фона/рамки — вылет невидим). */
 .conference-toggle-row {
   display: flex;
   justify-content: flex-end;
   flex: none;
-  padding-right: calc(var(--r-machine) + 2px);
-  margin-bottom: calc(-1px - var(--gap-frame));
+  margin-bottom: -3.5px;
 }
 
 /* Кнопка панели участников: минимум — только svg-иконка 17px (без
    фона, рамки, круга и теней — уточнение пользователя «убрать текст
    и границы кнопки»); шеврон различает состояния (‹ — развёрнута,
-   › — свёрнута); hover золотом, focus-visible (008 FR-035). */
+   › — свёрнута); hover золотом, focus-visible (008 FR-035).
+   margin-right ≈ -2.5px — компенсация ПРАВОГО поля глифа (17px·3.5/24
+   ≈ 2.5px): видимая правая кромка иконки заподлицо с правым краем
+   .conference-main (T117); прозрачный вылет box'а за край невидим. */
 .conference-panel-toggle {
   display: flex;
   align-items: center;
@@ -601,6 +611,7 @@ body:has(.conference-room-pinned) .conference-tiles-compact {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
+  margin-right: -2.5px;
   transition: color 0.2s;
 }
 
@@ -1770,8 +1781,17 @@ section[data-guest-join] {
   cursor: pointer;
 }
 
-/* Нейтральная строка отказа действия (<output> = role=status). */
+/* Нейтральная строка отказа действия (<output> = role=status).
+   T118: договорка box-свойств глобального element-правила output
+   (index.css — success-плашка auth-лексики; класс бьёт element-
+   селектор только по объявленным свойствам) — тихая подпись без
+   плашки (паттерн T051/T102). */
 .conference-moderation-notice {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: italic 12px var(--font-body);
   color: var(--muted);
 }
@@ -1802,10 +1822,24 @@ section[data-guest-join] {
 }
 
 /* ============================================================
-  * Тело модали «Гостевая ссылка» (T113): поле ссылки на всю ширину
-  * модали (ручное выделение — страховка «Копировать»), срок
-  * локальным временем (ui/time) и статус «Скопировано».
-  * ============================================================ */
+ * Тело модали «Гостевая ссылка» (T113): поле ссылки на всю ширину
+ * модали (ручное выделение — страховка «Копировать»), срок
+ * локальным временем (ui/time) и статус «Скопировано».
+ * T119 — вертикальный ритм тела: контейнер flex-колонка gap 8
+ * (лексика форм-обитателей 008 — .profile-form profile-modal.css,
+ * .contacts-form contacts-modal.css): поле → «Действует …» →
+ * «Скопировано» шаг 8px; до ряда кнопок стабильные 12px в обоих
+ * состояниях статуса (gap 8 + margin-top 4 .modal-btns
+ * confirm-dialog.css — паритет gap 12 заголовок→тело .modal,
+ * modal-shell.css); вертикальные margin в flex не схлопываются,
+ * ритм держит один gap — кнопки не смещаются.
+ * ============================================================ */
+
+.conference-guest-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
 .conference-guest-modal-url {
   width: 100%;
@@ -1824,8 +1858,15 @@ section[data-guest-join] {
   color: var(--muted);
 }
 
-/* Статус «Скопировано» (<output> = role=status, aria-live=polite). */
+/* Статус «Скопировано» (<output> = role=status, aria-live=polite).
+   T118: договорка box-свойств глобуса (success-плашка auth-лексики
+   заливала золотую подпись) — тихая подпись без плашки (T051/T102). */
 .conference-guest-modal-copied {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: 12px var(--font-body);
   color: var(--gold-light);
 }
@@ -1843,8 +1884,31 @@ section[data-guest-join] {
  * та же тёмная лексика модуля (панель/крем/латунь, 008).
  * ============================================================ */
 
-/* Статус проверки №54 (<output> = role=status). */
+/* Статус проверки №54 (<output> = role=status).
+   T118: договорка box-свойств глобуса — тихая подпись без
+   success-плашки auth-лексики (паттерн T051/T102). */
 .guest-join-status {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font: italic 12.5px var(--font-body);
+  color: var(--muted);
+}
+
+/* Loading-подпись «Загрузка конференции…» (ConferencePage №45).
+   T118: единственная правка разметки задачи — класс на голом
+   <output>, жившем с ПОЛНОЙ success-плашкой глобального element-
+   правила index.css. Тихая подпись — паритет лексики
+   .guest-join-status/.message-history: договорка каждого
+   box-свойства глобуса (паттерн T051/T102). */
+.conference-loading-status {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: italic 12.5px var(--font-body);
   color: var(--muted);
 }
@@ -1867,8 +1931,14 @@ section[data-guest-join] {
   background: var(--panel-bg);
 }
 
+/* T118: p[role=alert] — специфичность (0,1,1) уже бьёт глобус,
+ * договорка замыкает НЕобъявленные box-свойства [role='alert']
+ * (плашка auth-лексики) — тихая подпись внутри аварийной панели. */
 .conference-error p {
   margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: 13px var(--font-body);
   color: var(--err);
 }
@@ -2158,8 +2228,17 @@ section[data-guest-join] {
   border-color: var(--err);
 }
 
-.guest-join-name-error {
+/* T118: ошибка поля имени гостя (<p role="alert">) — селектор с
+   запасом класс+элемент (0,1,1): tie класса с [role='alert'] (0,1,0)
+   проигрывал бы глобусу (index.css идёт ПОСЛЕ компонентных CSS в
+   сборке); договорка замыкает box-свойства danger-плашки и заодно
+   возвращает --err против глобального --danger, который сейчас
+   побеждает по порядку сборки. */
+p.guest-join-name-error {
   margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: italic 12px var(--font-body);
   color: var(--err);
 }

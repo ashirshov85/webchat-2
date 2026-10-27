@@ -13,7 +13,14 @@ import { describe, expect, it } from 'vitest'
  * селекторами `output.sync-indicator*`; строка живёт в семье
  * `.messenger-empty` (states.css, FR-032) — курсив Old Standard TT
  * 12.5px по центру на --muted-3, сайдбар-масштаб `.chat-panel
- * .messenger-empty` (padding 10px) без новых правил. В status-banners
+ * .messenger-empty` (padding 10px) без новых селекторов.
+ *
+ * T116 (багфикс T110): за `<output>` просвечивала success-плашка
+ * глобального element-правила `output,[role='status']` (index.css:
+ * background/border-radius не были объявлены классом) — правило
+ * сайдбар-масштаба закрывает КАЖДОЕ box-свойство глобуса
+ * (display/border-radius/background — паттерн T051/T102, эталон
+ * tmp/chat-list-state-rows.html §5). В status-banners
  * остаются ErrorBanner/QueueOverflowBanner; srFlash остаётся (его
  * использует danger-семья); keyframes flick живут в ui/avatar.css и
  * не затрагиваются.
@@ -41,10 +48,18 @@ describe('тихая подпись синхронизации (T110): стат�
     expect(avatarCss.match(/@keyframes flick\s*\{/)).not.toBeNull()
   })
 
-  it('states.css: сайдбар-масштаб .chat-panel .messenger-empty — без новых правил для sync-строки', () => {
+  it('states.css: сайдбар-масштаб .chat-panel .messenger-empty — замыкание box-свойств глобального element-стиля (T116)', () => {
     const scale = statesCss.match(/\.chat-panel \.messenger-empty\s*\{([^}]*)\}/)
     expect(scale).not.toBeNull()
     expect(scale?.[1]).toContain('padding: 10px')
+    // T116: элемент <output> тянет за собой ЗЕЛЁНУЮ плашку auth-лексики
+    // глобуса (display/margin/padding/radius/color/background) — класс
+    // бьёт element-селектор ТОЛЬКО по объявленным свойствам, поэтому
+    // правило сайдбар-масштаба закрывает каждое box-свойство явно:
+    // тихая подпись, НЕ плашка (паттерн T051/T102, эталон §5).
+    expect(scale?.[1]).toContain('display: block')
+    expect(scale?.[1]).toContain('border-radius: 0')
+    expect(scale?.[1]).toContain('background: none')
     // Строка синхронизации входит в существующую семью — собственных
     // селекторов в states.css не появляется.
     expect(statesCss.includes('sync-indicator')).toBe(false)
