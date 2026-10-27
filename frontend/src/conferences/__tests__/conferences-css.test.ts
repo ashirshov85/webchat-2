@@ -1419,7 +1419,18 @@ describe('кнопка «Гостевая ссылка» и модаль гос�
     expect(rule?.[1]).not.toContain('var(--err)')
   })
 
-  it('тело модали .conference-guest-modal — readonly-поле ссылки, срок, статус «Скопировано»', () => {
+  it('тело модали .conference-guest-modal — контейнер-ритм, readonly-поле ссылки, срок, статус «Скопировано»', () => {
+    // T119: вертикальный ритм тела — flex-колонка gap 8 (лексика
+    // форм-обитателей 008: .profile-form/.contacts-form): поле →
+    // «Действует …» → «Скопировано» шаг 8px, до .modal-btns стабильные
+    // 12px (gap 8 + margin-top 4 confirm-dialog.css — паритет gap 12
+    // заголовок→тело .modal, modal-shell.css); появление/исчезновение
+    // «Скопировано» кнопки не смещает — ритм держит один gap
+    const body = conferencesCss.match(/^\.conference-guest-modal\s*\{([^}]*)\}/m)
+    expect(body).not.toBeNull()
+    expect(body?.[1]).toContain('display: flex')
+    expect(body?.[1]).toContain('flex-direction: column')
+    expect(body?.[1]).toContain('gap: 8px')
     const url = conferencesCss.match(/^\.conference-guest-modal-url\s*\{([^}]*)\}/m)
     expect(url).not.toBeNull()
     expect(url?.[1]).toContain('width: 100%')
