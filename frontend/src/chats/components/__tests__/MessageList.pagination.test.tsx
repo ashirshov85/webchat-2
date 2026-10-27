@@ -330,6 +330,11 @@ describe('MessageList empty chat state pins the composer to the bottom (bug 10 /
     const sidebar = ruleBody(statesCss, '.chat-panel .messenger-empty')
     expect(sidebar).toContain('padding: 10px')
     expect(sidebar).not.toContain('flex')
-    expect(sidebar).not.toContain('background')
+    // T116: единственный допустимый background сайдбар-строки —
+    // замыкание `background: none` (тихая подпись <output>, паттерн
+    // T051/T102): никакой ленты/плашки, как и до T088.
+    expect(declaration(sidebar, 'background')).toBe('none')
+    expect(sidebar).not.toContain('background-color')
+    expect(sidebar).not.toContain('background-image')
   })
 })
