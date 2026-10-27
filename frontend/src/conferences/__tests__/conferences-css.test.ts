@@ -1051,9 +1051,9 @@ describe('каркас экрана — сайдбар участников сп
     expect(rule?.[1]).toContain('display: flex')
     expect(rule?.[1]).toContain('justify-content: flex-end')
     expect(rule?.[1]).toContain('flex: none')
-    // пересмотр промера T115: константа 2px → −1px (нижнее поле глифа
-    // ~3.5px гасится, видимый зазор ≈ 2.5px) — полный пин в блоке T115
-    expect(rule?.[1]).toMatch(/margin-bottom:\s*calc\(-1px - var\(--gap-frame\)\)/)
+    // ревизия T117 переписала компенсацию промера T115 (видимый зазор
+    // иконка→рамка = --gap-frame ≈ 12px) — полный пин в блоке T117
+    expect(rule?.[1]).toMatch(/margin-bottom:\s*-3\.5px/)
   })
 
   it('кнопка .conference-panel-toggle — ТОЛЬКО svg-иконка 17px: без текста, рамки, фона и теней; шеврон различает состояния', () => {
@@ -1114,26 +1114,39 @@ describe('каркас экрана — сайдбар участников сп
   })
 })
 
-describe('прижатие кнопки conference-panel-toggle к рабочей области (T115): статический пин CSS', () => {
-  it('вертикаль: компенсация пересмотрена промером — номинал −1px гасит нижнее поле глифа, видимый зазор ≈ 2.5px', () => {
-    // промер T115: svg 17px (viewBox 24) — прямоугольник панели-иконки
-    // занимает y=5..19 → под глифом ~3.5px пустого поля; номинальные
-    // +2px T106 давали видимый зазор ~5.5px («парящая» кнопка). Новая
-    // компенсация calc(-1px - var(--gap-frame)): box перекрывает рамку
-    // на 1px (поле глифа прозрачное), видимый зазор глиф→рамка ≈ 2.5px
-    // (цель 2–3px); высотный бюджет НЕ растёт — компенсация отрицательная
+describe('ревизия геометрии полосы conference-panel-toggle (T117, пересмотр промера T115): статический пин CSS', () => {
+  it('вертикаль: видимый зазор иконка→рамка = var(--gap-frame) ≈ 12px — единый ритм каркаса, компенсация −3.5px', () => {
+    // ревизия T117: зазор ≈2.5px промера T115 не совпадал ни с одним
+    // шагом каркаса (gap колонки 12px, gap сетки 8px) и читался
+    // случайным; выбран осознанный ритм --gap-frame — тот же, что
+    // между .conference-tiles и .conference-participants. Арифметика:
+    // gap колонки 12px − 3.5px → низ box'а кнопки на 8.5px выше рамки;
+    // нижнее поле глифа svg (~3.5px: viewBox 24, rect y=5..19 →
+    // 17px·5/24) добавляет свои ~3.5px → видимый зазор 8.5 + 3.5 ≈
+    // 12px = var(--gap-frame); высотный бюджет НЕ растёт — компенсация
+    // отрицательная, зазор расходует поле глифа и остаток gap
     const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
     expect(rule).not.toBeNull()
-    expect(rule?.[1]).toMatch(/margin-bottom:\s*calc\(-1px - var\(--gap-frame\)\)/)
+    expect(rule?.[1]).toMatch(/margin-bottom:\s*-3\.5px/)
+    expect(rule?.[1]).not.toContain('padding-right')
     expect(rule?.[1]).toContain('flex: none')
   })
 
-  it('горизонталь: inset справа — кнопка над ПРЯМОЙ частью верхней рамки, не над скруглением', () => {
-    // развёрнут сайдбар: верхняя рамка --r-frame 8px; свёрнут: машина
-    // сетки --r-machine 18px до края окна — inset = радиус машины + 2px
-    // гасит ОБА скругления; кнопка остаётся в границах колонки 340px
-    const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
-    expect(rule?.[1]).toMatch(/padding-right:\s*calc\(var\(--r-machine\) \+ 2px\)/)
+  it('горизонталь: правая видимая кромка иконки — край в край с правым краем .conference-main', () => {
+    // inset справа calc(var(--r-machine) + 2px) убран — правая кромка
+    // кнопки «висела» в отрыве от края рабочей области; padding-right
+    // полосы нет вовсе, правое поле глифа (~2.5px: viewBox 24, rect
+    // x=3.5..20.5 → 17px·3.5/24) компенсировано отрицательным
+    // margin-right на самой кнопке; прозрачный вылет box'а ~2.5px за
+    // правый край полосы скроллбара НЕ рождает (html/body overflow-x
+    // hidden, machine.css; у кнопки нет фона/рамки — вылет невидим);
+    // кнопка стоит над скруглением угла (--r-frame 8px развёрнут /
+    // --r-machine 18px свёрнут) — край в край, так задумано
+    const row = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
+    expect(row?.[1]).not.toContain('padding-right')
+    const btn = conferencesCss.match(/^\.conference-panel-toggle\s*\{([^}]*)\}/m)
+    expect(btn).not.toBeNull()
+    expect(btn?.[1]).toMatch(/margin-right:\s*-2\.5px/)
   })
 
   it('регресс лексики T106: кнопка по-прежнему ТОЛЬКО svg-иконка — без padding/рамки/фона/теней', () => {
@@ -1157,12 +1170,12 @@ describe('прижатие кнопки conference-panel-toggle к рабоче�
     expect(side?.[1]).toContain('width: 340px')
   })
 
-  it('докблок полосы truthfully описывает прижатие по промеру T115', () => {
+  it('докблок полосы truthfully описывает ритм --gap-frame и край в край (T117)', () => {
     const at = conferencesCss.indexOf('.conference-toggle-row {')
     expect(at).toBeGreaterThan(0)
     const doc = conferencesCss.slice(Math.max(0, at - 900), at)
-    expect(doc).toContain('T115')
-    expect(doc).toContain('промер')
+    expect(doc).toContain('T117')
+    expect(doc).toContain('--gap-frame')
   })
 })
 
