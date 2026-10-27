@@ -1051,9 +1051,9 @@ describe('каркас экрана — сайдбар участников сп
     expect(rule?.[1]).toContain('display: flex')
     expect(rule?.[1]).toContain('justify-content: flex-end')
     expect(rule?.[1]).toContain('flex: none')
-    // ревизия T117 переписала компенсацию промера T115 (видимый зазор
-    // иконка→рамка = --gap-frame ≈ 12px) — полный пин в блоке T117
-    expect(rule?.[1]).toMatch(/margin-bottom:\s*-3\.5px/)
+    // ревизия T120 переписала вертикаль T117 (видимый зазор иконка→рамка
+    // = полшага --gap-frame ≈ 6px) — полный пин в блоке T120
+    expect(rule?.[1]).toMatch(/margin-bottom:\s*-9\.5px/)
   })
 
   it('кнопка .conference-panel-toggle — ТОЛЬКО svg-иконка 17px: без текста, рамки, фона и теней; шеврон различает состояния', () => {
@@ -1108,26 +1108,32 @@ describe('каркас экрана — сайдбар участников сп
   it('докблок блока truthfully описывает каркас сайдбара (T106, прототип)', () => {
     const at = conferencesCss.indexOf('.conference-toggle-row {')
     expect(at).toBeGreaterThan(0)
-    const doc = conferencesCss.slice(Math.max(0, at - 1800), at)
+    // окно 3600: подробные докблоки шапки T106 и полосы T120 длиннее
+    // окна T117-эпохи — шапка каркаса всё ещё должна попадать в срез
+    const doc = conferencesCss.slice(Math.max(0, at - 3600), at)
     expect(doc).toContain('T106')
     expect(doc).toContain('сайдбар')
   })
 })
 
-describe('ревизия геометрии полосы conference-panel-toggle (T117, пересмотр промера T115): статический пин CSS', () => {
-  it('вертикаль: видимый зазор иконка→рамка = var(--gap-frame) ≈ 12px — единый ритм каркаса, компенсация −3.5px', () => {
-    // ревизия T117: зазор ≈2.5px промера T115 не совпадал ни с одним
-    // шагом каркаса (gap колонки 12px, gap сетки 8px) и читался
-    // случайным; выбран осознанный ритм --gap-frame — тот же, что
-    // между .conference-tiles и .conference-participants. Арифметика:
-    // gap колонки 12px − 3.5px → низ box'а кнопки на 8.5px выше рамки;
-    // нижнее поле глифа svg (~3.5px: viewBox 24, rect y=5..19 →
-    // 17px·5/24) добавляет свои ~3.5px → видимый зазор 8.5 + 3.5 ≈
-    // 12px = var(--gap-frame); высотный бюджет НЕ растёт — компенсация
-    // отрицательная, зазор расходует поле глифа и остаток gap
+describe('ревизия вертикали полосы conference-panel-toggle (T120, пересмотр T117): статический пин CSS', () => {
+  it('вертикаль: видимый зазор иконка→рамка УМЕНЬШЕН — полшага --gap-frame ≈ 6px, компенсация −9.5px (строго ниже −3.5px ритма T117)', () => {
+    // ревизия T120: номинальное равенство T117 (зазор = --gap-frame
+    // 12px) не дало оптического паритета — видимый глиф всего
+    // ≈12×10px, и один и тот же 12px-шаг рядом с ним субъективно
+    // читается в 1.5–2 раза больше, чем рядом с большими пластинами
+    // (сетка тайлов ↔ панель 340px); полоса почти пуста. Решение:
+    // кнопка прижата ближе к .conference-main с небольшим ВИДИМЫМ
+    // отступом — полшага каркаса: X = --gap-frame/2 ≈ 6px. Арифметика
+    // (две закрытые точки: X=12 → −3.5px T117; X=2.5 → −13px T115):
+    // видимый зазор X = gap колонки 12px + margin-bottom + поле глифа
+    // ~3.5px → margin-bottom = X − 15.5px = 6 − 15.5 = −9.5px —
+    // строго меньше −3.5px (видимый зазор < --gap-frame); высотный
+    // бюджет НЕ растёт — компенсация отрицательная, зазор расходует
+    // поле глифа и остаток gap
     const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
     expect(rule).not.toBeNull()
-    expect(rule?.[1]).toMatch(/margin-bottom:\s*-3\.5px/)
+    expect(rule?.[1]).toMatch(/margin-bottom:\s*-9\.5px/)
     expect(rule?.[1]).not.toContain('padding-right')
     expect(rule?.[1]).toContain('flex: none')
   })
@@ -1170,12 +1176,16 @@ describe('ревизия геометрии полосы conference-panel-toggle
     expect(side?.[1]).toContain('width: 340px')
   })
 
-  it('докблок полосы truthfully описывает ритм --gap-frame и край в край (T117)', () => {
+  it('докблок полосы truthfully описывает новый зазор (T120: полшага --gap-frame ≈ 6px, без формулировок «единый ритм»)', () => {
     const at = conferencesCss.indexOf('.conference-toggle-row {')
     expect(at).toBeGreaterThan(0)
-    const doc = conferencesCss.slice(Math.max(0, at - 900), at)
-    expect(doc).toContain('T117')
+    // окно 2200: докблок T120 подробнее T117-эпохи (окно 900) —
+    // заголовок и арифметика промера должны попадать в срез
+    const doc = conferencesCss.slice(Math.max(0, at - 2200), at)
+    expect(doc).toContain('T120')
     expect(doc).toContain('--gap-frame')
+    expect(doc).toContain('полшага')
+    expect(doc).not.toContain('единый ритм')
   })
 })
 
