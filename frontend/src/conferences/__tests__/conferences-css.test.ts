@@ -116,6 +116,19 @@ import { describe, expect, it } from 'vitest'
  * горизонталь — inset справа calc(var(--r-machine) + 2px): кнопка над
  * ПРЯМОЙ частью верхней рамки (сайдбар --r-frame 8px, машина сетки
  * --r-machine 18px в свёрнутом состоянии), не над скруглением.
+ *
+ * T120 — оверлей полосы conference-toggle-row над рабочей областью
+ * (запрос 2026-10-27: «margin-bottom: -30px»): полоса перестаёт
+ * расходовать высотный бюджет каркаса (25.5px → −1px: верх
+ * .conference-main почти заподлицо с кромкой комнаты, +26.5px тайлам/
+ * списку); уход в оверлей меняет порядок рисования (полоса в DOM раньше
+ * .conference-main — панель и тайлы красятся позже) → договорка стека
+ * position:relative + z-index:2 поднимает кнопку НАД сайдбаром/тайлами
+ * (внутренние оверлеи тайлов z-index:1; паритет пин-оверлеев T079
+ * z-index:2, где полоса всё равно display:none); вертикальная
+ * арифметика ритма --gap-frame ревизии T117 переписана оверлеем
+ * (видимая иконка ≈4.5–14.5px ниже верхней рамки), горизонталь T117
+ * (margin-right −2.5px кнопки, край в край) сохранена.
  */
 
 const conferencesCss = readFileSync(join(import.meta.dirname, '../conferences.css'), 'utf8')
@@ -1045,15 +1058,18 @@ describe('каркас экрана — сайдбар участников сп
     expect(rule?.[1]).toContain('scrollbar-color: #55452c transparent')
   })
 
-  it('полоса .conference-toggle-row над рабочей областью: кнопка справа, прижата к ней компенсацией gap', () => {
+  it('полоса .conference-toggle-row над рабочей областью: кнопка справа, оверлей −30px со стеком (T120)', () => {
     const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
     expect(rule).not.toBeNull()
     expect(rule?.[1]).toContain('display: flex')
     expect(rule?.[1]).toContain('justify-content: flex-end')
     expect(rule?.[1]).toContain('flex: none')
-    // ревизия T117 переписала компенсацию промера T115 (видимый зазор
-    // иконка→рамка = --gap-frame ≈ 12px) — полный пин в блоке T117
-    expect(rule?.[1]).toMatch(/margin-bottom:\s*-3\.5px/)
+    // T120: вертикальная компенсация ритма --gap-frame (−3.5px ревизии
+    // T117) заменена оверлеем −30px + договоркой стека — полный пин
+    // вертикали и стека в блоке T120 ниже
+    expect(rule?.[1]).toMatch(/margin-bottom:\s*-30px/)
+    expect(rule?.[1]).toContain('position: relative')
+    expect(rule?.[1]).toMatch(/z-index:\s*2/)
   })
 
   it('кнопка .conference-panel-toggle — ТОЛЬКО svg-иконка 17px: без текста, рамки, фона и теней; шеврон различает состояния', () => {
@@ -1108,28 +1124,44 @@ describe('каркас экрана — сайдбар участников сп
   it('докблок блока truthfully описывает каркас сайдбара (T106, прототип)', () => {
     const at = conferencesCss.indexOf('.conference-toggle-row {')
     expect(at).toBeGreaterThan(0)
-    const doc = conferencesCss.slice(Math.max(0, at - 1800), at)
+    const doc = conferencesCss.slice(Math.max(0, at - 3600), at)
     expect(doc).toContain('T106')
     expect(doc).toContain('сайдбар')
   })
 })
 
 describe('ревизия геометрии полосы conference-panel-toggle (T117, пересмотр промера T115): статический пин CSS', () => {
-  it('вертикаль: видимый зазор иконка→рамка = var(--gap-frame) ≈ 12px — единый ритм каркаса, компенсация −3.5px', () => {
-    // ревизия T117: зазор ≈2.5px промера T115 не совпадал ни с одним
-    // шагом каркаса (gap колонки 12px, gap сетки 8px) и читался
-    // случайным; выбран осознанный ритм --gap-frame — тот же, что
-    // между .conference-tiles и .conference-participants. Арифметика:
-    // gap колонки 12px − 3.5px → низ box'а кнопки на 8.5px выше рамки;
-    // нижнее поле глифа svg (~3.5px: viewBox 24, rect y=5..19 →
-    // 17px·5/24) добавляет свои ~3.5px → видимый зазор 8.5 + 3.5 ≈
-    // 12px = var(--gap-frame); высотный бюджет НЕ растёт — компенсация
-    // отрицательная, зазор расходует поле глифа и остаток gap
+  it('вертикаль T120: оверлей −30px вместо компенсации −3.5px — высотный бюджет отдаётся рабочей области', () => {
+    // T120 (запрос 2026-10-27: «margin-bottom: -30px»): каркас T106
+    // резервировал под «парящую» кнопку 25.5px вертикали окна (17px
+    // полоса + 12px gap колонки); оверлей −30px возвращает их рабочей
+    // области (17 + 12 − 30 = −1px — верх .conference-main почти
+    // заподлицо с кромкой комнаты, +26.5px тайлам/списку); видимая
+    // иконка (за вычетом ~3.5px нижнего поля глифа svg) сидит
+    // ≈4.5–14.5px ниже верхней рамки сайдбара (развёрнут) / сетки
+    // тайлов (свёрнут) — арифметика ритма --gap-frame ревизии T117
+    // переписана оверлеем (запись T117 сохраняет историю промера)
     const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
     expect(rule).not.toBeNull()
-    expect(rule?.[1]).toMatch(/margin-bottom:\s*-3\.5px/)
+    expect(rule?.[1]).toMatch(/margin-bottom:\s*-30px/)
     expect(rule?.[1]).not.toContain('padding-right')
     expect(rule?.[1]).toContain('flex: none')
+  })
+
+  it('стек T120: position relative + z-index 2 — кнопка НАД сайдбаром/тайлами, но ниже пин-оверлея комнаты', () => {
+    // уход в оверлей меняет порядок рисования: полоса стоит в DOM
+    // РАНЬШЕ .conference-main, а панель .conference-participants и
+    // тайлы красятся ПОЗЖЕ → без подъёма стека кнопка оказалась бы ЗА
+    // ними — невидима и некликабельна (e2e T106 жмёт её по имени);
+    // z-index:2 выше потока рабочей области и внутренних оверлеев
+    // тайлов (mic-бейдж/кнопка пина — z-index:1), паритет с оверлеями
+    // пин-режима T079 (z-index:2), где полоса всё равно display:none
+    // (пин-оверлей комнаты — z-index:60 выше)
+    const rule = conferencesCss.match(/^\.conference-toggle-row\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('position: relative')
+    expect(rule?.[1]).toMatch(/z-index:\s*2/)
+    expect(rule?.[1]).not.toMatch(/z-index:\s*(1|[3-9]|[1-9]\d)/)
   })
 
   it('горизонталь: правая видимая кромка иконки — край в край с правым краем .conference-main', () => {
@@ -1170,12 +1202,14 @@ describe('ревизия геометрии полосы conference-panel-toggle
     expect(side?.[1]).toContain('width: 340px')
   })
 
-  it('докблок полосы truthfully описывает ритм --gap-frame и край в край (T117)', () => {
+  it('докблок полосы truthfully описывает оверлей −30px и край в край (T117 → T120)', () => {
     const at = conferencesCss.indexOf('.conference-toggle-row {')
     expect(at).toBeGreaterThan(0)
-    const doc = conferencesCss.slice(Math.max(0, at - 900), at)
+    const doc = conferencesCss.slice(Math.max(0, at - 1700), at)
+    expect(doc).toContain('T120')
+    expect(doc).toContain('-30px')
+    expect(doc).toContain('z-index')
     expect(doc).toContain('T117')
-    expect(doc).toContain('--gap-frame')
   })
 })
 
