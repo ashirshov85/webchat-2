@@ -1781,8 +1781,17 @@ section[data-guest-join] {
   cursor: pointer;
 }
 
-/* Нейтральная строка отказа действия (<output> = role=status). */
+/* Нейтральная строка отказа действия (<output> = role=status).
+   T118: договорка box-свойств глобального element-правила output
+   (index.css — success-плашка auth-лексики; класс бьёт element-
+   селектор только по объявленным свойствам) — тихая подпись без
+   плашки (паттерн T051/T102). */
 .conference-moderation-notice {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: italic 12px var(--font-body);
   color: var(--muted);
 }
@@ -1835,8 +1844,15 @@ section[data-guest-join] {
   color: var(--muted);
 }
 
-/* Статус «Скопировано» (<output> = role=status, aria-live=polite). */
+/* Статус «Скопировано» (<output> = role=status, aria-live=polite).
+   T118: договорка box-свойств глобуса (success-плашка auth-лексики
+   заливала золотую подпись) — тихая подпись без плашки (T051/T102). */
 .conference-guest-modal-copied {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: 12px var(--font-body);
   color: var(--gold-light);
 }
@@ -1854,8 +1870,31 @@ section[data-guest-join] {
  * та же тёмная лексика модуля (панель/крем/латунь, 008).
  * ============================================================ */
 
-/* Статус проверки №54 (<output> = role=status). */
+/* Статус проверки №54 (<output> = role=status).
+   T118: договорка box-свойств глобуса — тихая подпись без
+   success-плашки auth-лексики (паттерн T051/T102). */
 .guest-join-status {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font: italic 12.5px var(--font-body);
+  color: var(--muted);
+}
+
+/* Loading-подпись «Загрузка конференции…» (ConferencePage №45).
+   T118: единственная правка разметки задачи — класс на голом
+   <output>, жившем с ПОЛНОЙ success-плашкой глобального element-
+   правила index.css. Тихая подпись — паритет лексики
+   .guest-join-status/.message-history: договорка каждого
+   box-свойства глобуса (паттерн T051/T102). */
+.conference-loading-status {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: italic 12.5px var(--font-body);
   color: var(--muted);
 }
@@ -1878,8 +1917,14 @@ section[data-guest-join] {
   background: var(--panel-bg);
 }
 
+/* T118: p[role=alert] — специфичность (0,1,1) уже бьёт глобус,
+ * договорка замыкает НЕобъявленные box-свойства [role='alert']
+ * (плашка auth-лексики) — тихая подпись внутри аварийной панели. */
 .conference-error p {
   margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: 13px var(--font-body);
   color: var(--err);
 }
@@ -2169,8 +2214,17 @@ section[data-guest-join] {
   border-color: var(--err);
 }
 
-.guest-join-name-error {
+/* T118: ошибка поля имени гостя (<p role="alert">) — селектор с
+   запасом класс+элемент (0,1,1): tie класса с [role='alert'] (0,1,0)
+   проигрывал бы глобусу (index.css идёт ПОСЛЕ компонентных CSS в
+   сборке); договорка замыкает box-свойства danger-плашки и заодно
+   возвращает --err против глобального --danger, который сейчас
+   побеждает по порядку сборки. */
+p.guest-join-name-error {
   margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   font: italic 12px var(--font-body);
   color: var(--err);
 }

@@ -129,6 +129,19 @@ describe('ConferencePage (009 US1 T026 + US2 T034)', () => {
     expect(screen.queryByText('Ваша роль: модератор')).not.toBeInTheDocument()
   })
 
+  it('T118: loading-подпись — <output class="conference-loading-status">«Загрузка конференции…» (текст/элемент прежние)', () => {
+    // единственная правка разметки T118: класс на голом <output>,
+    // закрывавшемся только success-плашкой глобального element-правила
+    // index.css — conferences.css переводит в тихую подпись
+    conferences.getConference.mockReturnValue(new Promise(() => {}))
+    conferences.getConferenceMe.mockReturnValue(new Promise(() => {}))
+    render(<ConferencePage conferenceId={CONFERENCE_ID} />)
+
+    const loading = screen.getByText('Загрузка конференции…')
+    expect(loading.tagName).toBe('OUTPUT')
+    expect(loading).toHaveClass('conference-loading-status')
+  })
+
   it('T087: шапка .conference-header и identity-строка отсутствуют во всех фазах страницы', async () => {
     // pre-join
     resolveBundle()

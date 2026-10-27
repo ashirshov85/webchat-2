@@ -133,15 +133,37 @@ button.pick-row:hover:not(:disabled) {
   height: 32px;
 }
 
+/* Пустые/загрузочные состояния пикеров: div-варианты («Нет
+   контактов»/«Ничего не найдено»/«Нет участников») и output-варианты
+   загрузки («Загрузка…» ProfileModal/CreateGroupDialog, «Загрузка
+   контактов…» GroupEditModal). T118: <output> тянет за собой
+   success-плашку глобального element-правила index.css (класс бьёт
+   element-селектор только по объявленным свойствам) — договорка
+   (паттерн T051/T102) замыкает каждое box-свойство глобуса: тихая
+   подпись без плашки; div-вариантам договорка безвредна. */
 .pick-empty {
+  display: block;
+  margin: 0;
+  border-radius: 0;
+  background: none;
   font: italic 12.5px var(--font-body);
   color: var(--muted-3);
   padding: 8px;
   text-align: center;
 }
 
-/* Встроенная ошибка формы (прототип .modal-err; №20-сбой и сбои действий). */
-.modal-err {
+/* Встроенная ошибка формы (прототип .modal-err; №20-сбой и сбои
+   действий). T118: девять <div class="modal-err" role="alert"> —
+   селектор с запасом класс+элемент (0,1,1): tie класса с
+   [role='alert'] (0,1,0) проигрывал бы глобусу (index.css идёт
+   ПОСЛЕ компонентных CSS в сборке); договорка замыкает каждое
+   box-свойство глобальной danger-плашки — тихая курсив-опасность
+   без плашки. */
+div.modal-err {
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: none;
   min-height: 17px;
   font: italic 12.5px var(--font-body);
   color: var(--err);

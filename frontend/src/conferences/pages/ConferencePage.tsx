@@ -260,7 +260,9 @@ export default function ConferencePage({ conferenceId }: ConferencePageProps) {
 
   return (
     <section aria-label="Конференция" data-conference-id={conferenceId}>
-      {status === 'loading' && <output>Загрузка конференции…</output>}
+      {status === 'loading' && (
+        <output className="conference-loading-status">Загрузка конференции…</output>
+      )}
       {status === 'error' && (
         <div className="conference-error">
           <p role="alert">{loadErrorMessage(conferenceErrorCode(error))}</p>

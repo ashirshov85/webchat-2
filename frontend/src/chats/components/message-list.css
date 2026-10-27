@@ -480,14 +480,34 @@
    ответ по старой ссылке, Q20=A) и «Конференция недоступна» (единый
    404 conference_not_found, существование не раскрывается) —
    нейтральный muted; транспортный сбой «Не удалось подключиться» —
-   гравированная опасность (лексика .message-status-failed) */
+   гравированная опасность (лексика .message-status-failed).
+   T118: подписи живут в <output>/<span role=alert> — за классами,
+   объявлявшими только типографику, «просвечивали» светлые плашки
+   глобальных element-правил index.css (success/danger, auth-лексика;
+   то же семейство, что и баг T116). Договорка по паттерну T051/T102:
+   КАЖДОЕ box-свойство глобуса объявлено здесь — нейтраль получает
+   латунную плашку машины (лексика hover-строки списка чатов и бейджа
+   «Звонок идёт»), сбой — danger-смывку машины (лексика
+   .error-banner); специфичность (0,2,0) перекрывает обе глобальные. */
 .message-list .sys-status {
+  display: block;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid rgba(201, 162, 74, 0.35);
+  border-radius: var(--r-field);
+  background: rgba(201, 162, 74, 0.08);
   font: 10.5px var(--font-heading);
   letter-spacing: 1px;
   color: var(--muted);
 }
 
 .message-list .sys-status-error {
+  display: inline-block;
+  margin: 0;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 122, 102, 0.4);
+  border-radius: var(--r-field);
+  background: rgba(126, 51, 32, 0.35);
   color: var(--err);
 }
 

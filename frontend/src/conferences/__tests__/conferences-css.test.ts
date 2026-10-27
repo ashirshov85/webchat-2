@@ -1430,6 +1430,14 @@ describe('кнопка «Гостевая ссылка» и модаль гос�
     const copied = conferencesCss.match(/^\.conference-guest-modal-copied\s*\{([^}]*)\}/m)
     expect(copied).not.toBeNull()
     expect(copied?.[1]).toContain('var(--gold-light)')
+    // T118 (перепин T113): <output> тянет success-плашку глобуса —
+    // договорка замыкает КАЖДОЕ box-свойство (display/margin/padding/
+    // border-radius/background): тихая золотая подпись без плашки
+    expect(copied?.[1]).toContain('display: block')
+    expect(copied?.[1]).toContain('margin: 0')
+    expect(copied?.[1]).toContain('padding: 0')
+    expect(copied?.[1]).toContain('border-radius: 0')
+    expect(copied?.[1]).toContain('background: none')
     // 008: фокус с клавиатуры — поле ссылки модали
     const focus = conferencesCss.match(/^\.conference-guest-modal-url:focus-visible\s*\{([^}]*)\}/m)
     expect(focus?.[1]).toContain('outline: 2px solid var(--gold-light)')
@@ -1733,5 +1741,137 @@ describe('терминальные экраны «Конференция зав�
     const refusedPAt = conferencesCss.indexOf('.guest-join-refused p {')
     expect(refusedPAt).toBeGreaterThan(0)
     expect(conferencesCss.slice(Math.max(0, refusedPAt - 900), refusedPAt)).toContain('role')
+  })
+})
+
+describe('замыкание плашек глобуса за уведомлениями конференций (T118): статический пин CSS', () => {
+  /**
+   * T118 (конференц-часть; chats-пикеры — message-list-css.test.ts) —
+   * за статусами/ошибками конференций, чьи классы перекрывали
+   * глобальные element-правила index.css (`output, [role='status']` —
+   * success-плашка, `[role='alert']` — danger-плашка, auth-лексика)
+   * только по типографике/цвету текста, «просвечивала» чужая светлая
+   * заливка. Договорка по паттерну T051/T102: правило компонента
+   * обязано объявить КАЖДОЕ box-свойство глобуса —
+   * display/margin/padding/border-radius/background.
+   *
+   * Специфичность: index.css идёт ПОСЛЕ компонентных CSS в сборке
+   * (main.tsx импортирует App раньше './index.css' — докблок
+   * status-banners.css), поэтому «ties» (0,1,0) с `[role='alert']`
+   * ПРОИГРЫВАЮТ и требуют запаса класс+элемент (0,1,1)+;
+   * element-селектор `output` (0,0,1) класс (0,1,0) бьёт по
+   * объявленным свойствам — договорка добирает необъявленные.
+   * Сами глобальные правила index.css НЕ правятся — ими живут
+   * auth/настройки; закрытые ранее поверхности (T111/T112/T102)
+   * не регрессируют.
+   */
+
+  it('строка отказов модерации .conference-moderation-notice — тихая подпись: договорка всех box-свойств глобуса', () => {
+    // <output> (ParticipantsPanel): отказы «Недостаточно прав» и
+    // др. — нейтральный курсив-muted БЕЗ success-плашки auth
+    const rule = conferencesCss.match(/^\.conference-moderation-notice\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: block')
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    // прежняя лексика тихой подписи
+    expect(rule?.[1]).toContain('font: italic 12px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+  })
+
+  it('статус проверки ссылки .guest-join-status — тихая подпись без success-плашки', () => {
+    // <output> «Проверка ссылки…» (GuestJoinPage №54)
+    const rule = conferencesCss.match(/^\.guest-join-status\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: block')
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    // прежняя лексика тихой подписи
+    expect(rule?.[1]).toContain('font: italic 12.5px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+  })
+
+  it('тексты повторяемых ошибок .conference-error p — договорка необъявленных box-свойств [role=alert]', () => {
+    // p[role=alert] внутри КРАСНОЙ панели (№45/№47 load/join, №54/№55
+    // гостевые): (0,1,1) уже бьёт глобус по порядку — договорка
+    // добирает padding/border-radius/background: тихая подпись
+    // внутри существующей панели, НЕ плашка на плашке
+    const rule = conferencesCss.match(/^\.conference-error p\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    // аварийная лексика панели прежняя
+    expect(rule?.[1]).toContain('font: 13px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--err)')
+    expect(rule?.[1]).not.toContain('var(--danger-bg)')
+  })
+
+  it('loading-подпись конференции .conference-loading-status — новое правило тихой подписи (T118: единственная правка разметки)', () => {
+    // ConferencePage №45: голый <output> «Загрузка конференции…» был
+    // без класса — полная success-плашка глобуса; класс +
+    // паритет лексики .guest-join-status/.message-history
+    const rule = conferencesCss.match(/^\.conference-loading-status\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('display: block')
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    expect(rule?.[1]).toContain('font: italic 12.5px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--muted)')
+    expect(rule?.[1]).not.toContain('var(--success-bg)')
+  })
+
+  it('ошибка имени гостя — селектор с запасом p.guest-join-name-error (0,1,1) + договорка', () => {
+    // <p role="alert" class="guest-join-name-error"> (GuestJoinPage):
+    // tie класса (0,1,0) проигрывал бы глобусу — запас класс+элемент;
+    // договорка заодно возвращает --err против глобального --danger,
+    // который сейчас побеждает по порядку сборки
+    const rule = conferencesCss.match(/^p\.guest-join-name-error\s*\{([^}]*)\}/m)
+    expect(rule).not.toBeNull()
+    expect(rule?.[1]).toContain('margin: 0')
+    expect(rule?.[1]).toContain('padding: 0')
+    expect(rule?.[1]).toContain('border-radius: 0')
+    expect(rule?.[1]).toContain('background: none')
+    // прежняя лексика тихой опасности
+    expect(rule?.[1]).toContain('font: italic 12px var(--font-body)')
+    expect(rule?.[1]).toContain('color: var(--err)')
+    expect(rule?.[1]).not.toContain('var(--danger-bg)')
+    expect(rule?.[1]).not.toContain('var(--danger)')
+    // старый tie-селектор без элемента больше не живёт
+    expect(conferencesCss).not.toMatch(/^\.guest-join-name-error\s*\{/m)
+  })
+
+  it('регресс: глобальные element-правила index.css живы без изменений — ими пользуются auth/настройки', () => {
+    // границы задачи: глобальное правило НЕ правится (паттерн T102)
+    const alert = indexCss.match(/\[role='alert'\]\s*\{([^}]*)\}/)
+    expect(alert?.[1]).toContain('padding: 10px 12px')
+    expect(alert?.[1]).toContain('var(--danger-bg)')
+    const output = indexCss.match(/output,\s*\[role='status'\]\s*\{([^}]*)\}/)
+    expect(output?.[1]).toContain('padding: 10px 12px')
+    expect(output?.[1]).toContain('var(--success-bg)')
+  })
+
+  it('докблоки правил truthfully описывают договорки глобуса (T118)', () => {
+    for (const selector of [
+      '.conference-moderation-notice {',
+      '.conference-guest-modal-copied {',
+      '.guest-join-status {',
+      '.conference-loading-status {',
+      'p.guest-join-name-error {',
+    ]) {
+      const at = conferencesCss.indexOf(selector)
+      expect(at, `селектор ${selector}`).toBeGreaterThan(0)
+      const doc = conferencesCss.slice(Math.max(0, at - 1000), at)
+      expect(doc, `докблок ${selector}`).toContain('T118')
+    }
   })
 })
