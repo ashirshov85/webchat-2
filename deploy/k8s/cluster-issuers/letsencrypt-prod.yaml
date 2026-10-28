@@ -9,7 +9,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: webmaster@lkshr.ru
+    email: webmaster@aethergram.ru
     privateKeySecretRef:
       name: letsencrypt-prod-account-key
     solvers:

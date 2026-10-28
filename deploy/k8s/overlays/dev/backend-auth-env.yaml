@@ -210,10 +210,11 @@ spec:
             # Admin seed (008b US4, T036): stand mailbox of the seeded system
             # account; without this env the row would be created under the dev
             # default admin@webchat.local (warn + email=default metric tag).
-            # Placeholder domain — swap for a mailbox you read before using
-            # the 002 reset flow for the seed account.
+            # Real mailbox on the stand domain — the seed never overwrites an
+            # existing row, so it only matters on fresh deployments; the admin
+            # row of THIS stand was seeded with a personal mailbox earlier.
             - name: ADMIN_SEED_EMAIL
-              value: admin@webchat.lkshr.ru
+              value: admin@aethergram.ru
             # Seed password — OPTIONAL out-of-repo admin-seed Secret (see
             # header, constitution V): absent key leaves the env unset →
             # passwordless JIT form (password_hash IS NULL); the seed never

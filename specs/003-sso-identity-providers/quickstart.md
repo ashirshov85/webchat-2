@@ -115,14 +115,14 @@ dev-only dummy-секрет staticClient dex в `deploy/local/dex/`, см. Assum
 ### S7. Yandex на dev-стенде — oauth2-userinfo (US6, P1; дополнение 2026-09-19)
 
 Проверка реального OAuth2-провайдера без OIDC на dev-стенде
-(`https://dev.webchat.lkshr.ru`); локально — только через MockIdP
+(`https://aethergram.ru`); локально — только через MockIdP
 (автотесты, research §21).
 
 **Предусловия**:
 
 1. Приложение на [oauth.yandex.ru](https://oauth.yandex.ru): платформа
    «Веб-сервисы»; Redirect URI = `SSO_CALLBACK_URL`
-   (`https://dev.webchat.lkshr.ru/api/v1/auth/sso/callback`); доступ
+   (`https://aethergram.ru/api/v1/auth/sso/callback`); доступ
    «Адрес электронной почты» **обязателен** — без него
    `GET login.yandex.ru/info` не возвращает `default_email`, вход
    завершается `email_not_verified` / `provider_error` (research §20).
@@ -191,7 +191,7 @@ authorize-выдаанный `device_id` возвращается в обмен 
 
 1. Приложение на [dev.vk.com](https://dev.vk.com) (тип «Веб-сайт» /
    «Веб»): Redirect URI = `SSO_CALLBACK_URL`
-   (`https://dev.webchat.lkshr.ru/api/v1/auth/sso/callback`); «Доступ к
+   (`https://aethergram.ru/api/v1/auth/sso/callback`); «Доступ к
    e-mail» включён — без него `GET id.vk.com/oauth/user_info` не вернёт
    `user.email`, вход завершится без адреса (no JIT / no auto-link).
    ClientID («ID приложения»)/ClientSecret («Защищённый ключ») — на
