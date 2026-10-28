@@ -18,7 +18,7 @@ resources:
 
 namespace: dev
 
-# Host per environment (DNS A-record dev.webchat.lkshr.ru -> cluster),
+# Host per environment (DNS A-record aethergram.ru -> cluster),
 # TLS via cert-manager (cluster issuer letsencrypt-prod, HTTP-01).
 # Backend OTLP endpoint (US5): traces go to the in-cluster OTel Collector
 # in front of the dev LGTM stack (T028, research.md §21).
