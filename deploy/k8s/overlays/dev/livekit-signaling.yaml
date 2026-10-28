@@ -3,7 +3,7 @@
 # livekit:7880 Service, and the SPA is served over HTTPS, so the
 # wss-capable route must live on the app host (no dedicated livekit DNS
 # record on dev). livekit-client PRESERVES the path prefix of the wsUrl
-# (wss://dev.webchat.lkshr.ru/livekit -> /livekit/rtc?...), so a path
+# (wss://aethergram.ru/livekit -> /livekit/rtc?...), so a path
 # rule with a prefix-strip rewrite routes the signaling websocket and
 # the Twirp/validate POSTs to the media plane. The strip is mandatory:
 # livekit-server serves its endpoints at the root (/rtc, /twirp/...).
@@ -33,10 +33,10 @@ spec:
   ingressClassName: nginx
   tls:
     - hosts:
-        - dev.webchat.lkshr.ru
+        - aethergram.ru
       secretName: webchat-dev-tls
   rules:
-    - host: dev.webchat.lkshr.ru
+    - host: aethergram.ru
       http:
         paths:
           - path: /livekit(/|$)(.*)

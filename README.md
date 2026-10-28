@@ -1,6 +1,6 @@
 # Aethergram
 
-https://dev.webchat.lkshr.ru
+https://aethergram.ru
 
 Веб-мессенджер: личные диалоги, групповые чаты, присутствие пользователей и видеоконференции в реальном времени.
 Монорепозиторий: Kotlin/Spring Boot backend, React frontend, OpenAPI-контракт, Kubernetes-деплой.

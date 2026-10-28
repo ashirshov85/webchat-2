@@ -1,4 +1,4 @@
-# TLS for dev.webchat.lkshr.ru: cert-manager watches the ingresses (annotation below),
+# TLS for aethergram.ru: cert-manager watches the ingresses (annotation below),
 # passes the HTTP-01 challenge through ingress-nginx and fills the webchat-dev-tls
 # secret. ssl-redirect makes HTTP-only access impossible (301 to HTTPS).
 #
@@ -17,5 +17,5 @@ metadata:
 spec:
   tls:
     - hosts:
-        - dev.webchat.lkshr.ru
+        - aethergram.ru
       secretName: webchat-dev-tls

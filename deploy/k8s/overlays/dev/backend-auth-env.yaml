@@ -112,7 +112,7 @@ spec:
                   key: SPRING_MAIL_USERNAME
             # one-time links point at the public SPA, not the local Vite default
             - name: APP_PUBLIC_BASE_URL
-              value: https://dev.webchat.lkshr.ru
+              value: https://aethergram.ru
             - name: AUTH_IP_HASH_PEPPER
               value: dev-only-pepper-placeholder
             # ES256 access-token keys (T028, research.md §4): kid=P-256 PKCS#8
@@ -206,7 +206,7 @@ spec:
             # OIDC redirect_uri for every provider (sso.callback-url) — the
             # browser-facing stand URL, registered in Google Cloud Console
             - name: SSO_CALLBACK_URL
-              value: https://dev.webchat.lkshr.ru/api/v1/auth/sso/callback
+              value: https://aethergram.ru/api/v1/auth/sso/callback
             # Admin seed (008b US4, T036): stand mailbox of the seeded system
             # account; without this env the row would be created under the dev
             # default admin@webchat.local (warn + email=default metric tag).
